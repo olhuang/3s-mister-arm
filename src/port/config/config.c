@@ -49,6 +49,16 @@ typedef struct ConfigEntry {
 #define DEFAULT_ARM_CLOCK "800"
 #define DEFAULT_GAME_MODE "console"
 #define DEFAULT_HOLD_TO_PAUSE "off"
+#define DEFAULT_AI_LUCK_CURRENT_INPUT_CHEAT "2,12,22"
+#define DEFAULT_AI_LUCK_PRECISE_GROUND_CHEAT "2,14,24"
+#define DEFAULT_AI_LUCK_PRECISE_AIR_CHEAT "3,10,20"
+#define DEFAULT_AI_GRIT_BONUS_LOW "0,2,1"
+#define DEFAULT_AI_GRIT_BONUS_MID "2,3,4"
+#define DEFAULT_AI_GRIT_BONUS_HIGH "2,4,6"
+#define DEFAULT_AI_GUARD_SENSE_LAG_BAL "20,17,14,11,9,9,5,3"
+#define DEFAULT_AI_GUARD_SENSE_LAG_RSH "18,15,12,9,7,5,3,2"
+#define DEFAULT_AI_GUARD_SENSE_LAG_TRK "25,23,22,17,14,11,8,5"
+#define DEFAULT_AI_GUARD_SENSE_LAG_MET "14,11,9,7,5,3,2,1"
 
 static const ConfigEntry default_entries[] = {
     { .key = CFG_KEY_FULLSCREEN, .type = CFG_BOOL, .value.b = true },
@@ -65,6 +75,16 @@ static const ConfigEntry default_entries[] = {
     { .key = CFG_KEY_ARM_CLOCK, .type = CFG_STRING, .value.s = DEFAULT_ARM_CLOCK },
     { .key = CFG_KEY_GAME_MODE, .type = CFG_STRING, .value.s = DEFAULT_GAME_MODE },
     { .key = CFG_KEY_HOLD_TO_PAUSE, .type = CFG_STRING, .value.s = DEFAULT_HOLD_TO_PAUSE },
+    { .key = CFG_KEY_AI_LUCK_CURRENT_INPUT_CHEAT, .type = CFG_STRING, .value.s = DEFAULT_AI_LUCK_CURRENT_INPUT_CHEAT },
+    { .key = CFG_KEY_AI_LUCK_PRECISE_GROUND_CHEAT, .type = CFG_STRING, .value.s = DEFAULT_AI_LUCK_PRECISE_GROUND_CHEAT },
+    { .key = CFG_KEY_AI_LUCK_PRECISE_AIR_CHEAT, .type = CFG_STRING, .value.s = DEFAULT_AI_LUCK_PRECISE_AIR_CHEAT },
+    { .key = CFG_KEY_AI_GRIT_BONUS_LOW, .type = CFG_STRING, .value.s = DEFAULT_AI_GRIT_BONUS_LOW },
+    { .key = CFG_KEY_AI_GRIT_BONUS_MID, .type = CFG_STRING, .value.s = DEFAULT_AI_GRIT_BONUS_MID },
+    { .key = CFG_KEY_AI_GRIT_BONUS_HIGH, .type = CFG_STRING, .value.s = DEFAULT_AI_GRIT_BONUS_HIGH },
+    { .key = CFG_KEY_AI_GUARD_SENSE_LAG_BAL, .type = CFG_STRING, .value.s = DEFAULT_AI_GUARD_SENSE_LAG_BAL },
+    { .key = CFG_KEY_AI_GUARD_SENSE_LAG_RSH, .type = CFG_STRING, .value.s = DEFAULT_AI_GUARD_SENSE_LAG_RSH },
+    { .key = CFG_KEY_AI_GUARD_SENSE_LAG_TRK, .type = CFG_STRING, .value.s = DEFAULT_AI_GUARD_SENSE_LAG_TRK },
+    { .key = CFG_KEY_AI_GUARD_SENSE_LAG_MET, .type = CFG_STRING, .value.s = DEFAULT_AI_GUARD_SENSE_LAG_MET },
     { .key = CFG_KEY_SHOW_FPS, .type = CFG_STRING, .value.s = "off" },
     { .key = CFG_KEY_VIDEO_DRIVER_ORDER, .type = CFG_STRING, .value.s = DEFAULT_VIDEO_DRIVER_ORDER },
     { .key = CFG_KEY_RENDER_DRIVER_ORDER, .type = CFG_STRING, .value.s = DEFAULT_RENDER_DRIVER_ORDER },

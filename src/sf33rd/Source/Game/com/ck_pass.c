@@ -4,6 +4,7 @@
  */
 
 #include "sf33rd/Source/Game/com/ck_pass.h"
+#include "sf33rd/Source/Game/com/com_sub.h"
 #include "common.h"
 #include "sf33rd/Source/Game/com/com_data.h"
 #include "sf33rd/Source/Game/com/com_sub.h"
@@ -774,9 +775,9 @@ s32 Check_Catch(PLW* wk, WORK* em, s16 VS_Technique) {
     }
 
     if (wk->wu.id == 0) {
-        xx = p2sw_0;
+        xx = (AI_UseLuckyCurrentInputRead(wk) != 0) ? p2sw_0 : p2sw_1;
     } else {
-        xx = p1sw_0;
+        xx = (AI_UseLuckyCurrentInputRead(wk) != 0) ? p1sw_0 : p1sw_1;
     }
 
     if (wk->wu.rl_waza) {

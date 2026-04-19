@@ -203,12 +203,15 @@ void Main_Program(PLW* wk) {
     Area_Number[wk->wu.id] = Ck_Area(wk);
     Attack_Flag[wk->wu.id] = plw[wk->wu.id ^ 1].caution_flag;
     Check_At_Count(wk);
+    Update_Guard_Sense(wk);
     Disposal_Again[wk->wu.id] = 0;
+    Set_AI_Level_Context(wk);
     Com_Jmp_Tbl[CP_No[wk->wu.id][0]](wk);
 
     if (Disposal_Again[wk->wu.id]) {
         Com_Jmp_Tbl[CP_No[wk->wu.id][0]](wk);
     }
+    Clear_AI_Level_Context();
 }
 
 void Com_Initialize(PLW* wk) {
@@ -252,6 +255,10 @@ void Com_Initialize(PLW* wk) {
     Squat_Master_Timer[wk->wu.id] = Setup_Next_Squat_Timer(wk);
     Squat_Master_Timer[wk->wu.id] = 0;
     Setup_Bullet_Counter(wk);
+    Init_AI_Personality(wk);
+    Init_AI_Luck(wk);
+    Init_AI_Grit(wk);
+    Reset_Guard_Sense(wk);
 
     for (i = 0; i < 20; i++) {
         Resume_Lever[wk->wu.id][i] = 0;

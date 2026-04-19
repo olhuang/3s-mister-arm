@@ -18,6 +18,7 @@
 #include "port/sound/adx.h"
 #include "sf33rd/AcrSDK/ps2/foundaps2.h"
 #include "sf33rd/Source/Game/effect/effect.h"
+#include "sf33rd/Source/Game/com/com_sub.h"
 #include "sf33rd/Source/Game/engine/plcnt.h"
 #include "sf33rd/Source/Game/engine/pls01.h"
 #include "sf33rd/Source/Game/engine/pls03.h"
@@ -9139,6 +9140,9 @@ static void init_show_fps_overlay(void) {
 }
 
 static void publish_fps_overlay_label(void) {
+    char ai_overlay[96];
+    char status_overlay[128];
+
     if (fps_overlay_mode == FPS_OVERLAY_OFF) {
         fps_overlay_label[0] = '\0';
         if (fbdev_presenter_enabled) {
@@ -9147,12 +9151,73 @@ static void publish_fps_overlay_label(void) {
         return;
     }
 
+    ai_overlay[0] = '\0';
+    status_overlay[0] = '\0';
+    if (mpp_w.inGame) {
+        const s8* p1_personality = Get_AI_Personality_Name(&plw[0]);
+        const s8* p2_personality = Get_AI_Personality_Name(&plw[1]);
+        const s8* p1_luck = Get_AI_Luck_Name(&plw[0]);
+        const s8* p2_luck = Get_AI_Luck_Name(&plw[1]);
+        const s8* p1_grit = Get_AI_Grit_Name(&plw[0]);
+        const s8* p2_grit = Get_AI_Grit_Name(&plw[1]);
+        const s16 p1_lv08 = Get_AI_Debug_Lv08(&plw[0]);
+        const s16 p2_lv08 = Get_AI_Debug_Lv08(&plw[1]);
+        const s16 p1_lv10 = Get_AI_Debug_Lv10(&plw[0]);
+        const s16 p2_lv10 = Get_AI_Debug_Lv10(&plw[1]);
+        const s16 p1_lv18 = Get_AI_Debug_Lv18(&plw[0]);
+        const s16 p2_lv18 = Get_AI_Debug_Lv18(&plw[1]);
+        const char* p1_overlay_personality = (const char*)p1_personality;
+        const char* p2_overlay_personality = (const char*)p2_personality;
+        const char* p1_overlay_luck = (const char*)p1_luck;
+        const char* p2_overlay_luck = (const char*)p2_luck;
+        const char* p1_overlay_grit = (const char*)p1_grit;
+        const char* p2_overlay_grit = (const char*)p2_grit;
+
+        if ((p1_overlay_personality[0] != '\0') && (p2_overlay_personality[0] != '\0')) {
+            SDL_snprintf(ai_overlay, sizeof(ai_overlay),
+                         " 1:%s/%s/%s L%d/%d/%d 2:%s/%s/%s L%d/%d/%d",
+                         p1_overlay_personality,
+                         p1_overlay_luck[0] ? p1_overlay_luck : "---",
+                         p1_overlay_grit[0] ? p1_overlay_grit : "---",
+                         p1_lv08,
+                         p1_lv10,
+                         p1_lv18,
+                         p2_overlay_personality,
+                         p2_overlay_luck[0] ? p2_overlay_luck : "---",
+                         p2_overlay_grit[0] ? p2_overlay_grit : "---",
+                         p2_lv08,
+                         p2_lv10,
+                         p2_lv18);
+        } else if (p1_overlay_personality[0] != '\0') {
+            SDL_snprintf(ai_overlay, sizeof(ai_overlay),
+                         " %s %s %s L%d/%d/%d",
+                         p1_overlay_personality,
+                         p1_overlay_luck[0] ? p1_overlay_luck : "---",
+                         p1_overlay_grit[0] ? p1_overlay_grit : "---",
+                         p1_lv08,
+                         p1_lv10,
+                         p1_lv18);
+        } else if (p2_overlay_personality[0] != '\0') {
+            SDL_snprintf(ai_overlay, sizeof(ai_overlay),
+                         " %s %s %s L%d/%d/%d",
+                         p2_overlay_personality,
+                         p2_overlay_luck[0] ? p2_overlay_luck : "---",
+                         p2_overlay_grit[0] ? p2_overlay_grit : "---",
+                         p2_lv08,
+                         p2_lv10,
+                         p2_lv18);
+        }
+    }
+    SDL_snprintf(status_overlay, sizeof(status_overlay), " D%d%s CT%d BIC%d EM%d",
+                 save_w[Present_Mode].Difficulty, ai_overlay, Control_Time, Break_Into_CPU, EM_Rank);
+
     if (fps_overlay_mode == FPS_OVERLAY_FPS) {
-        SDL_snprintf(fps_overlay_label, sizeof(fps_overlay_label), "O.%d", fps_overlay_value);
+        SDL_snprintf(fps_overlay_label, sizeof(fps_overlay_label), "%d%s", fps_overlay_value, status_overlay);
     } else if (fps_overlay_avg_frame_ms > 0.0) {
         int n = SDL_snprintf(fps_overlay_label, sizeof(fps_overlay_label),
-                     "%2d U:%4.1f(T%4.1f G%4.1f S%4.1f D%4.1f[t%4.1f s%4.1f]) R:%4.1f(r%4.1f) =%5.1f",
+                     "%2d%s U:%4.1f(T%4.1f G%4.1f S%4.1f D%4.1f[t%4.1f s%4.1f]) R:%4.1f(r%4.1f) =%5.1f",
                      fps_overlay_value,
+                     "",
                      fps_overlay_avg_update_ms,
                      fps_overlay_avg_texrefresh_ms,
                      fps_overlay_avg_gamelogic_ms,
@@ -9180,7 +9245,7 @@ static void publish_fps_overlay_label(void) {
             }
         }
     } else {
-        SDL_snprintf(fps_overlay_label, sizeof(fps_overlay_label), "O.%d", fps_overlay_value);
+        SDL_snprintf(fps_overlay_label, sizeof(fps_overlay_label), "%d%s", fps_overlay_value, status_overlay);
     }
     if (fbdev_presenter_enabled) {
         FBDevPresenter_SetFPSOverlayText(fps_overlay_label);

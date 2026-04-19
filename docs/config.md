@@ -127,3 +127,99 @@ Comma-separated SDL renderer backend preference list passed via `SDL_HINT_RENDER
 
 Example:
 - `software`
+
+### `ai-luck-current-input-cheat`
+
+Comma-separated `LOW,MID,HIGH` cheat rates for throw-tech / throw-response logic reading the player's current-frame input.
+
+Default:
+- `2,8,16`
+
+Notes:
+- Values are compared against `random_32_com()`, so they are effectively out of `32`.
+- Higher values make `MID` / `HIGH` luck rounds more likely to use the original same-frame input-read behavior.
+
+### `ai-luck-precise-ground-cheat`
+
+Comma-separated `LOW,MID,HIGH` cheat rates for ground guard using exact engine threat data instead of delayed/coarse/fallible sensing.
+
+Default:
+- `2,7,14`
+
+### `ai-luck-precise-air-cheat`
+
+Comma-separated `LOW,MID,HIGH` cheat rates for air guard using exact engine threat data instead of delayed/coarse/fallible sensing.
+
+Default:
+- `3,9,18`
+
+Notes:
+- These two keys control how often luck restores the old "all-knowing" defense path.
+- Air guard is typically set a bit higher than ground guard.
+
+### `ai-grit-bonus-low`
+
+Comma-separated grit bonuses for `LOW` grit at health thresholds:
+- `50%~75%`
+- `25%~50%`
+- `<=25%`
+
+Default:
+- `0,0,1`
+
+### `ai-grit-bonus-mid`
+
+Comma-separated grit bonuses for `MID` grit at health thresholds:
+- `50%~75%`
+- `25%~50%`
+- `<=25%`
+
+Default:
+- `0,1,2`
+
+### `ai-grit-bonus-high`
+
+Comma-separated grit bonuses for `HIGH` grit at health thresholds:
+- `50%~75%`
+- `25%~50%`
+- `<=25%`
+
+Default:
+- `2,4,6`
+
+Notes:
+- These bonuses are added to internal AI level calculations (`Lv08`, `Lv10`, `Lv18`) when the CPU is low on life.
+- Higher values make comeback behavior much stronger, especially on `HIGH` grit rounds.
+
+### `ai-guard-sense-lag-bal`
+
+Comma-separated guard-sense lag values for the `BAL` personality at difficulty levels `0~7`.
+
+Default:
+- `22,19,16,13,11,9,7,5`
+
+### `ai-guard-sense-lag-rsh`
+
+Comma-separated guard-sense lag values for the `RSH` personality at difficulty levels `0~7`.
+
+Default:
+- `20,17,14,11,9,7,5,3`
+
+### `ai-guard-sense-lag-trk`
+
+Comma-separated guard-sense lag values for the `TRK` personality at difficulty levels `0~7`.
+
+Default:
+- `30,27,24,21,18,15,12,9`
+
+### `ai-guard-sense-lag-met`
+
+Comma-separated guard-sense lag values for the `MET` personality at difficulty levels `0~7`.
+
+Default:
+- `16,13,11,9,7,5,3,2`
+
+Notes:
+- These values control how many frames back the CPU looks when sensing threats for guard / air-guard decisions.
+- Lower values mean more responsive defense.
+- Personality-specific base-style modifiers still apply on top of these tables in code.

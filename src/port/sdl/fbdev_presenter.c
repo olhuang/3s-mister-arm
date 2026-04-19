@@ -820,6 +820,11 @@ static void clear_fb_outside_rect(int x0, int y0, int x1, int y1) {
 
 static Uint8 overlay_glyph_row(char ch, int row) {
     static const Uint8 glyph_blank[5] = { 0, 0, 0, 0, 0 };
+    static const Uint8 glyph_A[5] = { 0x2, 0x5, 0x7, 0x5, 0x5 };
+    static const Uint8 glyph_B[5] = { 0x6, 0x5, 0x6, 0x5, 0x6 };
+    static const Uint8 glyph_C[5] = { 0x7, 0x4, 0x4, 0x4, 0x7 };
+    static const Uint8 glyph_D[5] = { 0x6, 0x5, 0x5, 0x5, 0x6 };
+    static const Uint8 glyph_E[5] = { 0x7, 0x4, 0x6, 0x4, 0x7 };
     static const Uint8 glyph_0[5] = { 0x7, 0x5, 0x5, 0x5, 0x7 };
     static const Uint8 glyph_1[5] = { 0x2, 0x6, 0x2, 0x2, 0x7 };
     static const Uint8 glyph_2[5] = { 0x7, 0x1, 0x7, 0x4, 0x7 };
@@ -831,13 +836,24 @@ static Uint8 overlay_glyph_row(char ch, int row) {
     static const Uint8 glyph_8[5] = { 0x7, 0x5, 0x7, 0x5, 0x7 };
     static const Uint8 glyph_9[5] = { 0x7, 0x5, 0x7, 0x1, 0x7 };
     static const Uint8 glyph_F[5] = { 0x7, 0x4, 0x6, 0x4, 0x4 };
+    static const Uint8 glyph_H[5] = { 0x5, 0x5, 0x7, 0x5, 0x5 };
+    static const Uint8 glyph_I[5] = { 0x7, 0x2, 0x2, 0x2, 0x7 };
+    static const Uint8 glyph_J[5] = { 0x1, 0x1, 0x1, 0x5, 0x2 };
+    static const Uint8 glyph_K[5] = { 0x5, 0x5, 0x6, 0x5, 0x5 };
+    static const Uint8 glyph_M[5] = { 0x5, 0x7, 0x7, 0x5, 0x5 };
+    static const Uint8 glyph_N[5] = { 0x5, 0x7, 0x7, 0x7, 0x5 };
     static const Uint8 glyph_P[5] = { 0x6, 0x5, 0x6, 0x4, 0x4 };
+    static const Uint8 glyph_Q[5] = { 0x7, 0x5, 0x5, 0x7, 0x1 };
     static const Uint8 glyph_S[5] = { 0x7, 0x4, 0x7, 0x1, 0x7 };
     static const Uint8 glyph_U[5] = { 0x5, 0x5, 0x5, 0x5, 0x7 };
+    static const Uint8 glyph_V[5] = { 0x5, 0x5, 0x5, 0x5, 0x2 };
+    static const Uint8 glyph_W[5] = { 0x5, 0x5, 0x7, 0x7, 0x5 };
+    static const Uint8 glyph_X[5] = { 0x5, 0x5, 0x2, 0x5, 0x5 };
+    static const Uint8 glyph_Y[5] = { 0x5, 0x5, 0x2, 0x2, 0x2 };
+    static const Uint8 glyph_Z[5] = { 0x7, 0x1, 0x2, 0x4, 0x7 };
     static const Uint8 glyph_R[5] = { 0x6, 0x5, 0x6, 0x5, 0x5 };
     static const Uint8 glyph_T[5] = { 0x7, 0x2, 0x2, 0x2, 0x2 };
     static const Uint8 glyph_G[5] = { 0x7, 0x4, 0x5, 0x5, 0x7 };
-    static const Uint8 glyph_D[5] = { 0x6, 0x5, 0x5, 0x5, 0x6 };
     static const Uint8 glyph_r[5] = { 0x0, 0x5, 0x6, 0x4, 0x4 };
     static const Uint8 glyph_t[5] = { 0x4, 0x7, 0x4, 0x4, 0x3 };
     static const Uint8 glyph_s[5] = { 0x0, 0x3, 0x2, 0x6, 0x0 };
@@ -850,7 +866,6 @@ static Uint8 overlay_glyph_row(char ch, int row) {
     static const Uint8 glyph_rparen[5] = { 0x2, 0x1, 0x1, 0x1, 0x2 };
     static const Uint8 glyph_slash[5] = { 0x1, 0x1, 0x2, 0x4, 0x4 };
     static const Uint8 glyph_pct[5] = { 0x5, 0x1, 0x2, 0x4, 0x5 };
-    static const Uint8 glyph_C[5] = { 0x7, 0x4, 0x4, 0x4, 0x7 };
     static const Uint8 glyph_L[5] = { 0x4, 0x4, 0x4, 0x4, 0x7 };
     static const Uint8 glyph_O[5] = { 0x7, 0x5, 0x5, 0x5, 0x7 };
     static const Uint8 glyph_e[5] = { 0x0, 0x7, 0x5, 0x6, 0x3 };
@@ -859,6 +874,12 @@ static Uint8 overlay_glyph_row(char ch, int row) {
 
     const Uint8* glyph = glyph_blank;
     switch (ch) {
+    case 'A':
+        glyph = glyph_A;
+        break;
+    case 'B':
+        glyph = glyph_B;
+        break;
     case '0':
         glyph = glyph_0;
         break;
@@ -892,14 +913,50 @@ static Uint8 overlay_glyph_row(char ch, int row) {
     case 'F':
         glyph = glyph_F;
         break;
+    case 'H':
+        glyph = glyph_H;
+        break;
+    case 'I':
+        glyph = glyph_I;
+        break;
+    case 'J':
+        glyph = glyph_J;
+        break;
+    case 'K':
+        glyph = glyph_K;
+        break;
+    case 'M':
+        glyph = glyph_M;
+        break;
+    case 'N':
+        glyph = glyph_N;
+        break;
     case 'P':
         glyph = glyph_P;
+        break;
+    case 'Q':
+        glyph = glyph_Q;
         break;
     case 'S':
         glyph = glyph_S;
         break;
     case 'U':
         glyph = glyph_U;
+        break;
+    case 'V':
+        glyph = glyph_V;
+        break;
+    case 'W':
+        glyph = glyph_W;
+        break;
+    case 'X':
+        glyph = glyph_X;
+        break;
+    case 'Y':
+        glyph = glyph_Y;
+        break;
+    case 'Z':
+        glyph = glyph_Z;
         break;
     case 'R':
         glyph = glyph_R;
@@ -909,9 +966,6 @@ static Uint8 overlay_glyph_row(char ch, int row) {
         break;
     case 'G':
         glyph = glyph_G;
-        break;
-    case 'D':
-        glyph = glyph_D;
         break;
     case 'r':
         glyph = glyph_r;
@@ -951,6 +1005,12 @@ static Uint8 overlay_glyph_row(char ch, int row) {
         break;
     case 'C':
         glyph = glyph_C;
+        break;
+    case 'D':
+        glyph = glyph_D;
+        break;
+    case 'E':
+        glyph = glyph_E;
         break;
     case 'L':
         glyph = glyph_L;

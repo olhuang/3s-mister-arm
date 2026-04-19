@@ -34,10 +34,51 @@
 #include "sf33rd/Source/Game/stage/bg.h"
 #include "sf33rd/Source/Game/system/sysdir.h"
 #include "sf33rd/Source/Game/system/work_sys.h"
+#include "port/config/config.h"
 #include "structs.h"
+
+#include <stdlib.h>
 
 s8 Lv;
 s8 Rnd;
+
+#define CPU_GUARD_SENSE_FRAMES 32
+
+static s8 guard_sense_attack_flag[2][CPU_GUARD_SENSE_FRAMES];
+static s16 guard_sense_attack_counter[2][CPU_GUARD_SENSE_FRAMES];
+static s16 guard_sense_distance[2][CPU_GUARD_SENSE_FRAMES];
+static s16 guard_sense_threat_range[2][CPU_GUARD_SENSE_FRAMES];
+static u8 guard_sense_write_index[2];
+static u8 ai_personality_active[2];
+static u8 ai_personality_style[2];
+static u8 ai_personality_phase[2];
+static u8 ai_personality_player_number[2] = { 0xFF, 0xFF };
+static u8 ai_luck_active[2];
+static u8 ai_luck_tier[2];
+static u8 ai_grit_active[2];
+static u8 ai_grit_tier[2];
+static u8 ai_grit_player_number[2] = { 0xFF, 0xFF };
+static u8 ai_adapt_jump_in[2];
+static u8 ai_adapt_throw[2];
+static u8 ai_adapt_low[2];
+static s16 ai_adapt_last_counter[2];
+static u8 ai_bait_timer[2];
+static PLW* ai_level_context;
+static u8 ai_tuning_loaded;
+static u8 ai_luck_current_input_cheat[3] = { 2, 8, 16 };
+static u8 ai_luck_precise_ground_cheat[3] = { 2, 7, 14 };
+static u8 ai_luck_precise_air_cheat[3] = { 3, 9, 18 };
+static u8 ai_grit_bonus_config[3][3] = {
+    { 0, 0, 1 },
+    { 0, 1, 2 },
+    { 2, 4, 6 },
+};
+static u8 ai_guard_sense_lag_config[4][8] = {
+    { 22, 19, 16, 13, 11, 9, 7, 5 },
+    { 20, 17, 14, 11, 9, 7, 5, 3 },
+    { 30, 27, 24, 21, 18, 15, 12, 9 },
+    { 16, 13, 11, 9, 7, 5, 3, 2 },
+};
 
 // forward decls
 void End_Pattern(PLW* wk);
@@ -224,6 +265,1077 @@ s32 ETC_Term_0008(PLW* wk, WORK* em);
 s32 ETC_Term_0009(PLW* wk, WORK* em);
 s32 emLevelRemake(s32 now, s32 max, s32 exd);
 s32 emGetMaxBlocking();
+
+enum {
+    AI_STYLE_BALANCED = 0,
+    AI_STYLE_RELENTLESS = 1,
+    AI_STYLE_TRICKSTER = 2,
+    AI_STYLE_METHODICAL = 3,
+};
+
+enum {
+    AI_BASE_RUSH = 0,
+    AI_BASE_FOOTSIE = 1,
+    AI_BASE_TURTLE = 2,
+    AI_BASE_WEIRD = 3,
+};
+
+enum {
+    AI_LUCK_LOW = 0,
+    AI_LUCK_MID = 1,
+    AI_LUCK_HIGH = 2,
+};
+
+static const s8* ai_personality_names[4] = { "BAL", "RSH", "TRK", "MET" };
+static const s8* ai_luck_names[3] = { "LOW", "MID", "HIGH" };
+static const u8 ai_character_base_style[20] = {
+    AI_BASE_FOOTSIE, /* Ryu */
+    AI_BASE_RUSH,    /* Alex */
+    AI_BASE_RUSH,    /* Dudley */
+    AI_BASE_WEIRD,   /* Necro */
+    AI_BASE_RUSH,    /* Hugo */
+    AI_BASE_WEIRD,   /* Ibuki */
+    AI_BASE_FOOTSIE, /* Elena */
+    AI_BASE_WEIRD,   /* Oro */
+    AI_BASE_RUSH,    /* Yang */
+    AI_BASE_RUSH,    /* Ken */
+    AI_BASE_RUSH,    /* Sean */
+    AI_BASE_TURTLE,  /* Urien */
+    AI_BASE_TURTLE,  /* Gill */
+    AI_BASE_FOOTSIE, /* Chun-Li */
+    AI_BASE_RUSH,    /* Makoto */
+    AI_BASE_TURTLE,  /* Remy */
+    AI_BASE_WEIRD,   /* Twelve */
+    AI_BASE_TURTLE,  /* Q */
+    AI_BASE_RUSH,    /* Yun */
+    AI_BASE_RUSH,    /* Akuma */
+};
+
+static u8 get_ai_base_style(PLW* wk) {
+    if ((wk->player_number < 0) || (wk->player_number >= 20)) {
+        return AI_BASE_FOOTSIE;
+    }
+
+    return ai_character_base_style[wk->player_number];
+}
+
+static u8 sample_ai_pattern_index(s32 use_ex_random) {
+    if (use_ex_random != 0) {
+        return (u8)random_32_ex_com();
+    }
+
+    return (u8)random_32_com();
+}
+
+static u8 choose_distinct_candidate(const u8* candidates, s16 candidate_count, u8 last_pattern, s16 reverse_scan) {
+    s16 i;
+
+    if (reverse_scan != 0) {
+        for (i = candidate_count - 1; i >= 0; i--) {
+            if (candidates[i] != last_pattern) {
+                return candidates[i];
+            }
+        }
+    } else {
+        for (i = 0; i < candidate_count; i++) {
+            if (candidates[i] != last_pattern) {
+                return candidates[i];
+            }
+        }
+    }
+
+    return candidates[0];
+}
+
+static s32 ai_bait_active(PLW* wk);
+
+static u8 clamp_adaptation_value(int value) {
+    if (value < 0) {
+        return 0;
+    }
+    if (value > 12) {
+        return 12;
+    }
+
+    return (u8)value;
+}
+
+static const char* skip_csv_separator(const char* p) {
+    while ((*p == ' ') || (*p == '\t') || (*p == ',')) {
+        p++;
+    }
+
+    return p;
+}
+
+static void parse_config_u8_list(const char* raw_value, u8* values, int expected_count, u8 clamp_max) {
+    const char* p;
+    int i;
+
+    if ((raw_value == NULL) || (raw_value[0] == '\0')) {
+        return;
+    }
+
+    p = raw_value;
+    for (i = 0; i < expected_count; i++) {
+        long parsed;
+        char* end_ptr;
+
+        p = skip_csv_separator(p);
+        if ((*p == '\0') || (*p == '\n') || (*p == '\r')) {
+            return;
+        }
+
+        parsed = strtol(p, &end_ptr, 10);
+        if (end_ptr == p) {
+            return;
+        }
+
+        if (parsed < 0) {
+            parsed = 0;
+        }
+        if (parsed > clamp_max) {
+            parsed = clamp_max;
+        }
+
+        values[i] = (u8)parsed;
+        p = end_ptr;
+    }
+}
+
+static void load_ai_tuning_config(void) {
+    if (ai_tuning_loaded != 0) {
+        return;
+    }
+
+    parse_config_u8_list(Config_GetString(CFG_KEY_AI_LUCK_CURRENT_INPUT_CHEAT), ai_luck_current_input_cheat, 3, 32);
+    parse_config_u8_list(Config_GetString(CFG_KEY_AI_LUCK_PRECISE_GROUND_CHEAT), ai_luck_precise_ground_cheat, 3, 32);
+    parse_config_u8_list(Config_GetString(CFG_KEY_AI_LUCK_PRECISE_AIR_CHEAT), ai_luck_precise_air_cheat, 3, 32);
+    parse_config_u8_list(Config_GetString(CFG_KEY_AI_GRIT_BONUS_LOW), ai_grit_bonus_config[0], 3, 17);
+    parse_config_u8_list(Config_GetString(CFG_KEY_AI_GRIT_BONUS_MID), ai_grit_bonus_config[1], 3, 17);
+    parse_config_u8_list(Config_GetString(CFG_KEY_AI_GRIT_BONUS_HIGH), ai_grit_bonus_config[2], 3, 17);
+    parse_config_u8_list(Config_GetString(CFG_KEY_AI_GUARD_SENSE_LAG_BAL), ai_guard_sense_lag_config[AI_STYLE_BALANCED], 8,
+                         CPU_GUARD_SENSE_FRAMES - 1);
+    parse_config_u8_list(Config_GetString(CFG_KEY_AI_GUARD_SENSE_LAG_RSH), ai_guard_sense_lag_config[AI_STYLE_RELENTLESS], 8,
+                         CPU_GUARD_SENSE_FRAMES - 1);
+    parse_config_u8_list(Config_GetString(CFG_KEY_AI_GUARD_SENSE_LAG_TRK), ai_guard_sense_lag_config[AI_STYLE_TRICKSTER], 8,
+                         CPU_GUARD_SENSE_FRAMES - 1);
+    parse_config_u8_list(Config_GetString(CFG_KEY_AI_GUARD_SENSE_LAG_MET), ai_guard_sense_lag_config[AI_STYLE_METHODICAL], 8,
+                         CPU_GUARD_SENSE_FRAMES - 1);
+
+    ai_tuning_loaded = 1;
+}
+
+void Set_AI_Level_Context(PLW* wk) {
+    ai_level_context = wk;
+}
+
+void Clear_AI_Level_Context(void) {
+    ai_level_context = NULL;
+}
+
+void Init_AI_Luck(PLW* wk) {
+    u8 seed;
+
+    seed = (u8)random_32_com();
+    ai_luck_active[wk->wu.id] = 1;
+    ai_luck_tier[wk->wu.id] = (u8)(seed % 3);
+}
+
+void Init_AI_Grit(PLW* wk) {
+    u8 seed;
+
+    if ((ai_grit_active[wk->wu.id] != 0) && (ai_grit_player_number[wk->wu.id] == (u8)wk->player_number)) {
+        return;
+    }
+
+    seed = (u8)random_32_com();
+    ai_grit_active[wk->wu.id] = 1;
+    ai_grit_tier[wk->wu.id] = (u8)(seed % 3);
+    ai_grit_player_number[wk->wu.id] = (u8)wk->player_number;
+}
+
+const s8* Get_AI_Luck_Name(PLW* wk) {
+    if ((wk == NULL) || (ai_luck_active[wk->wu.id] == 0) || (wk->wu.operator != 0)) {
+        return "";
+    }
+
+    return ai_luck_names[ai_luck_tier[wk->wu.id] % 3];
+}
+
+const s8* Get_AI_Grit_Name(PLW* wk) {
+    if ((wk == NULL) || (ai_grit_active[wk->wu.id] == 0) || (wk->wu.operator != 0)) {
+        return "";
+    }
+
+    return ai_luck_names[ai_grit_tier[wk->wu.id] % 3];
+}
+
+s16 Get_AI_Debug_Lv08(PLW* wk) {
+    s16 level;
+
+    if ((wk == NULL) || (wk->wu.operator != 0)) {
+        return -1;
+    }
+
+    Set_AI_Level_Context(wk);
+    level = (s16)Setup_Lv08(0);
+    Clear_AI_Level_Context();
+    return level;
+}
+
+s16 Get_AI_Debug_Lv10(PLW* wk) {
+    s16 level;
+
+    if ((wk == NULL) || (wk->wu.operator != 0)) {
+        return -1;
+    }
+
+    Set_AI_Level_Context(wk);
+    level = (s16)Setup_Lv10(0);
+    Clear_AI_Level_Context();
+    return level;
+}
+
+s16 Get_AI_Debug_Lv18(PLW* wk) {
+    s16 level;
+
+    if ((wk == NULL) || (wk->wu.operator != 0)) {
+        return -1;
+    }
+
+    Set_AI_Level_Context(wk);
+    level = (s16)Setup_Lv18(0);
+    Clear_AI_Level_Context();
+    return level;
+}
+
+u8 AI_UseLuckyCurrentInputRead(PLW* wk) {
+    u8 tier;
+
+    load_ai_tuning_config();
+
+    if ((wk == NULL) || (ai_luck_active[wk->wu.id] == 0)) {
+        return 0;
+    }
+
+    tier = ai_luck_tier[wk->wu.id] % 3;
+    return (u8)(random_32_com() < ai_luck_current_input_cheat[tier]);
+}
+
+u8 AI_UseLuckyPreciseDefense(PLW* wk, s32 air_guard) {
+    u8 tier;
+    u8 chance;
+
+    load_ai_tuning_config();
+
+    if ((wk == NULL) || (ai_luck_active[wk->wu.id] == 0)) {
+        return 0;
+    }
+
+    tier = ai_luck_tier[wk->wu.id] % 3;
+    chance = (u8)((air_guard != 0) ? ai_luck_precise_air_cheat[tier] : ai_luck_precise_ground_cheat[tier]);
+    return (u8)(random_32_com() < chance);
+}
+
+static s16 get_ai_grit_bonus(PLW* wk, s16 max_bonus) {
+    s32 current_vitality;
+    s32 max_vitality;
+    u8 tier;
+    s16 bonus;
+
+    load_ai_tuning_config();
+
+    if ((wk == NULL) || (ai_grit_active[wk->wu.id] == 0) || (wk->wu.operator != 0)) {
+        return 0;
+    }
+
+    current_vitality = wk->wu.vital_new;
+    max_vitality = wk->wu.vitality;
+    if (max_vitality <= 0) {
+        return 0;
+    }
+
+    tier = ai_grit_tier[wk->wu.id] % 3;
+    if (current_vitality <= (max_vitality / 4)) {
+        bonus = ai_grit_bonus_config[tier][2];
+    } else if (current_vitality <= (max_vitality / 2)) {
+        bonus = ai_grit_bonus_config[tier][1];
+    } else if (current_vitality <= ((max_vitality * 3) / 4)) {
+        bonus = ai_grit_bonus_config[tier][0];
+    } else {
+        bonus = 0;
+    }
+
+    if (bonus > max_bonus) {
+        bonus = max_bonus;
+    }
+
+    return bonus;
+}
+
+static s16 clamp_ai_area_index(s16 area) {
+    if (area < 0) {
+        return 0;
+    }
+    if (area > 3) {
+        return 3;
+    }
+
+    return area;
+}
+
+static s16 choose_active_area_by_personality(PLW* wk, s32 is_follow) {
+    s16 area = Area_Number[wk->wu.id];
+    u8 style = ai_personality_style[wk->wu.id];
+    u8 base_style = get_ai_base_style(wk);
+    s32 hit_follow = ((is_follow != 0) && (CP_No[wk->wu.id][2] != 0));
+
+    switch (style) {
+    case AI_STYLE_RELENTLESS:
+        area -= 2;
+        if ((base_style == AI_BASE_RUSH) || hit_follow) {
+            area--;
+        }
+        if ((base_style == AI_BASE_RUSH) && hit_follow) {
+            area--;
+        }
+        break;
+
+    case AI_STYLE_METHODICAL:
+        if (hit_follow == 0) {
+            area += 2;
+            if ((base_style == AI_BASE_TURTLE) || (base_style == AI_BASE_FOOTSIE)) {
+                area++;
+            }
+        }
+        break;
+
+    case AI_STYLE_TRICKSTER:
+        switch (ai_personality_phase[wk->wu.id] & 3) {
+        case 0:
+            area -= 3;
+            break;
+        case 1:
+            area += 2;
+            break;
+        case 2:
+            area += 3;
+            break;
+        default:
+            area -= 2;
+            break;
+        }
+        break;
+
+    default:
+        if ((base_style == AI_BASE_RUSH) && (area > 0)) {
+            area--;
+        } else if ((base_style == AI_BASE_TURTLE) && (area < 3)) {
+            area++;
+        }
+        break;
+    }
+
+    if ((style == AI_STYLE_RELENTLESS) && (base_style == AI_BASE_TURTLE)) {
+        area++;
+    } else if ((style == AI_STYLE_METHODICAL) && (base_style == AI_BASE_RUSH)) {
+        area--;
+    } else if ((style == AI_STYLE_TRICKSTER) && (base_style == AI_BASE_WEIRD)) {
+        if ((ai_personality_phase[wk->wu.id] & 1) == 0) {
+            area -= 3;
+        } else {
+            area += 3;
+        }
+    }
+
+    if ((ai_bait_active(wk) != 0) && (hit_follow == 0)) {
+        area++;
+        if ((ai_personality_style[wk->wu.id] == AI_STYLE_METHODICAL) || (base_style == AI_BASE_TURTLE)) {
+            area++;
+        }
+    }
+
+    return clamp_ai_area_index(area);
+}
+
+static u8 choose_ai_pattern_by_personality(PLW* wk, const u8* pattern_row, s32 use_ex_random, s32 is_follow) {
+    u8 candidates[10];
+    s16 candidate_count = 4;
+    u8 chosen;
+    s16 i;
+    u8 last_pattern = (u8)Last_Pattern_Index[wk->wu.id];
+    u8 style = ai_personality_style[wk->wu.id];
+    u8 base_style = get_ai_base_style(wk);
+    s32 hit_follow = ((is_follow != 0) && (CP_No[wk->wu.id][2] != 0));
+
+    if (style == AI_STYLE_BALANCED) {
+        candidate_count = 6;
+    } else if (style == AI_STYLE_RELENTLESS) {
+        candidate_count = 8;
+        if ((Area_Number[wk->wu.id] <= 1) || hit_follow) {
+            candidate_count = 10;
+        }
+    } else if (style == AI_STYLE_TRICKSTER) {
+        candidate_count = 10;
+    } else if (style == AI_STYLE_METHODICAL) {
+        candidate_count = 7;
+    }
+
+    if (base_style == AI_BASE_RUSH) {
+        if (((Area_Number[wk->wu.id] <= 1) || hit_follow) && (candidate_count < 10)) {
+            candidate_count++;
+        }
+    } else if (base_style == AI_BASE_TURTLE) {
+        if ((Area_Number[wk->wu.id] >= 2) && (candidate_count < 10)) {
+            candidate_count++;
+        } else if ((Area_Number[wk->wu.id] <= 1) && (candidate_count > 2)) {
+            candidate_count -= (style == AI_STYLE_METHODICAL) ? 1 : 2;
+        }
+    } else if ((base_style == AI_BASE_WEIRD) && (candidate_count < 10)) {
+        candidate_count += (style == AI_STYLE_TRICKSTER) ? 2 : 1;
+    }
+
+    if ((style == AI_STYLE_RELENTLESS) && (base_style == AI_BASE_RUSH) && (candidate_count < 10)) {
+        candidate_count += (hit_follow ? 2 : 1);
+    } else if ((style == AI_STYLE_TRICKSTER) && (base_style == AI_BASE_WEIRD) && (candidate_count < 10)) {
+        candidate_count += 2;
+    } else if ((style == AI_STYLE_METHODICAL) &&
+               ((base_style == AI_BASE_TURTLE) || (base_style == AI_BASE_FOOTSIE)) &&
+               (candidate_count > 3)) {
+        candidate_count--;
+    }
+
+    if ((is_follow != 0) && hit_follow && (candidate_count < 10) && (style != AI_STYLE_METHODICAL)) {
+        candidate_count += (style == AI_STYLE_RELENTLESS) ? 2 : 1;
+    }
+
+    if (candidate_count > 10) {
+        candidate_count = 10;
+    }
+    if (candidate_count < 2) {
+        candidate_count = 2;
+    }
+
+    for (i = 0; i < candidate_count; i++) {
+        candidates[i] = pattern_row[sample_ai_pattern_index(use_ex_random)];
+    }
+
+    chosen = candidates[0];
+
+    switch (style) {
+    case AI_STYLE_RELENTLESS:
+        chosen = choose_distinct_candidate(candidates, candidate_count, last_pattern, 0);
+        if ((candidate_count >= 4) && ((ai_personality_phase[wk->wu.id] & 1) != 0)) {
+            chosen = candidates[candidate_count - 1];
+        }
+        if ((base_style == AI_BASE_RUSH) && (candidate_count >= 3)) {
+            chosen = candidates[candidate_count - 1];
+        }
+        ai_personality_phase[wk->wu.id] = (ai_personality_phase[wk->wu.id] + 1) & 7;
+        break;
+
+    case AI_STYLE_TRICKSTER:
+        chosen = choose_distinct_candidate(candidates, candidate_count, last_pattern, 1);
+        if ((ai_personality_phase[wk->wu.id] & 3) == 0) {
+            chosen = candidates[candidate_count - 1];
+        } else if (((ai_personality_phase[wk->wu.id] & 1) == 0) && (candidate_count >= 3)) {
+            chosen = candidates[candidate_count / 2];
+        }
+        if ((base_style == AI_BASE_WEIRD) && (candidate_count >= 4)) {
+            chosen = candidates[(ai_personality_phase[wk->wu.id] & 1) ? (candidate_count - 1) : (candidate_count / 2)];
+        }
+        ai_personality_phase[wk->wu.id] = (ai_personality_phase[wk->wu.id] + 1) & 7;
+        break;
+
+    case AI_STYLE_METHODICAL:
+        for (i = 0; i < candidate_count; i++) {
+            if (candidates[i] == last_pattern) {
+                chosen = candidates[i];
+                break;
+            }
+        }
+        if (chosen != last_pattern) {
+            chosen = candidates[0];
+            for (i = 1; i < candidate_count; i++) {
+                if (candidates[i] < chosen) {
+                    chosen = candidates[i];
+                }
+            }
+        }
+        if ((base_style == AI_BASE_TURTLE) || (base_style == AI_BASE_FOOTSIE)) {
+            chosen = candidates[0];
+        }
+        break;
+
+    default:
+        if ((ai_personality_phase[wk->wu.id] & 3) == 0) {
+            chosen = choose_distinct_candidate(candidates, candidate_count, last_pattern, 0);
+        } else if ((ai_personality_phase[wk->wu.id] & 3) == 1) {
+            chosen = candidates[candidate_count / 2];
+        } else {
+            chosen = candidates[0];
+        }
+        ai_personality_phase[wk->wu.id] = (ai_personality_phase[wk->wu.id] + 1) & 3;
+        break;
+    }
+
+    return chosen;
+}
+
+static s32 personality_allows_guard(PLW* wk) {
+    static const u8 guard_drop_chance[4][8] = {
+        { 7, 6, 5, 4, 3, 2, 1, 0 },
+        { 24, 22, 20, 18, 15, 12, 10, 8 },
+        { 32, 29, 26, 22, 18, 15, 12, 10 },
+        { 2, 1, 1, 0, 0, 0, 0, 0 },
+    };
+    s32 difficulty = save_w[Present_Mode].Difficulty;
+    u8 style = ai_personality_style[wk->wu.id];
+    u8 base_style = get_ai_base_style(wk);
+    u8 drop_chance;
+
+    if (difficulty < 0) {
+        difficulty = 0;
+    } else if (difficulty > 7) {
+        difficulty = 7;
+    }
+
+    drop_chance = guard_drop_chance[style][difficulty];
+    if (base_style == AI_BASE_TURTLE || base_style == AI_BASE_FOOTSIE) {
+        if (drop_chance > 3) {
+            drop_chance -= 3;
+        }
+    } else if (base_style == AI_BASE_RUSH) {
+        drop_chance += (style == AI_STYLE_RELENTLESS) ? 10 : 8;
+    } else if (base_style == AI_BASE_WEIRD) {
+        drop_chance += (style == AI_STYLE_TRICKSTER) ? 9 : 6;
+    }
+
+    if ((style == AI_STYLE_METHODICAL) && (base_style == AI_BASE_TURTLE)) {
+        if (drop_chance > 2) {
+            drop_chance -= 2;
+        } else {
+            drop_chance = 0;
+        }
+    } else if ((style == AI_STYLE_RELENTLESS) && (base_style == AI_BASE_RUSH)) {
+        drop_chance += 6;
+    } else if ((style == AI_STYLE_TRICKSTER) && (base_style == AI_BASE_WEIRD)) {
+        drop_chance += 6;
+    }
+
+    if (ai_bait_active(wk) != 0) {
+        if (drop_chance > 10) {
+            drop_chance -= 10;
+        } else {
+            drop_chance = 0;
+        }
+    }
+
+    if (random_32_com() < drop_chance) {
+        return 0;
+    }
+
+    return 1;
+}
+
+static u8 choose_guard_type_by_personality(PLW* wk, const s8* guard_row) {
+    u8 style = ai_personality_style[wk->wu.id];
+    u8 base_style = get_ai_base_style(wk);
+    u8 candidates[6];
+    s16 candidate_count = 3;
+    s16 i;
+    u8 chosen;
+
+    if (style == AI_STYLE_BALANCED) {
+        candidate_count = 4;
+    } else if (style == AI_STYLE_TRICKSTER) {
+        candidate_count = 6;
+    } else if (style == AI_STYLE_RELENTLESS) {
+        candidate_count = 6;
+    } else if (style == AI_STYLE_METHODICAL) {
+        candidate_count = 5;
+    }
+
+    if ((base_style == AI_BASE_TURTLE || base_style == AI_BASE_WEIRD) && (candidate_count < 6)) {
+        candidate_count++;
+    }
+
+    for (i = 0; i < candidate_count; i++) {
+        candidates[i] = (u8)guard_row[random_16_ex_com()];
+    }
+
+    chosen = candidates[0];
+
+    if (style == AI_STYLE_METHODICAL) {
+        for (i = 0; i < candidate_count; i++) {
+            if (candidates[i] != 2) {
+                chosen = candidates[i];
+                break;
+            }
+        }
+    } else if (style == AI_STYLE_BALANCED) {
+        for (i = 0; i < candidate_count; i++) {
+            if (candidates[i] == 1) {
+                chosen = candidates[i];
+                break;
+            }
+        }
+    } else if (style == AI_STYLE_TRICKSTER) {
+        for (i = 0; i < candidate_count; i++) {
+            if (candidates[i] == 2) {
+                chosen = candidates[i];
+                break;
+            }
+        }
+    } else if (style == AI_STYLE_RELENTLESS) {
+        chosen = candidates[candidate_count - 1];
+        for (i = 0; i < candidate_count; i++) {
+            if (candidates[i] == 0) {
+                chosen = candidates[i];
+                break;
+            }
+        }
+    }
+
+    if (base_style == AI_BASE_TURTLE && chosen == 2) {
+        chosen = 1;
+    } else if (base_style == AI_BASE_RUSH && chosen == 0) {
+        chosen = 1;
+    }
+
+    return chosen;
+}
+
+static u16 choose_passive_pattern_by_personality(PLW* wk, const u8* pattern_row) {
+    u8 style = ai_personality_style[wk->wu.id];
+    u8 base_style = get_ai_base_style(wk);
+    s32 difficulty = save_w[Present_Mode].Difficulty;
+    u16 candidates[8];
+    s16 candidate_count = 3;
+    s16 i;
+    u16 chosen;
+    u8 throw_threshold;
+
+    if (difficulty < 0) {
+        difficulty = 0;
+    } else if (difficulty > 7) {
+        difficulty = 7;
+    }
+
+    throw_threshold = (difficulty <= 1) ? 10 : (difficulty <= 3) ? 8 : (difficulty <= 5) ? 6 : 4;
+
+    if (style == AI_STYLE_BALANCED) {
+        candidate_count = 5;
+    } else if (style == AI_STYLE_TRICKSTER) {
+        candidate_count = 8;
+    } else if (style == AI_STYLE_RELENTLESS) {
+        candidate_count = 8;
+    } else if (style == AI_STYLE_METHODICAL) {
+        candidate_count = 6;
+    }
+
+    if ((base_style == AI_BASE_RUSH || base_style == AI_BASE_WEIRD) && (candidate_count < 8)) {
+        candidate_count++;
+    }
+
+    if ((style == AI_STYLE_RELENTLESS) && (base_style == AI_BASE_RUSH) && (candidate_count < 8)) {
+        candidate_count += 2;
+    } else if ((style == AI_STYLE_TRICKSTER) && (base_style == AI_BASE_WEIRD) && (candidate_count < 8)) {
+        candidate_count += 2;
+    }
+
+    for (i = 0; i < candidate_count; i++) {
+        candidates[i] = pattern_row[random_16_com()];
+    }
+
+    chosen = candidates[0];
+
+    if (style == AI_STYLE_METHODICAL) {
+        for (i = 0; i < candidate_count; i++) {
+            if (candidates[i] != 0xFF) {
+                chosen = candidates[i];
+                break;
+            }
+        }
+    } else if (style == AI_STYLE_BALANCED) {
+        for (i = 0; i < candidate_count; i++) {
+            if (candidates[i] != 0xFF && candidates[i] != Last_Pattern_Index[wk->wu.id]) {
+                chosen = candidates[i];
+                break;
+            }
+        }
+    } else if (style == AI_STYLE_RELENTLESS) {
+        for (i = 0; i < candidate_count; i++) {
+            if (candidates[i] != 0xFF && candidates[i] != Last_Pattern_Index[wk->wu.id]) {
+                chosen = candidates[i];
+                break;
+            }
+        }
+        if ((base_style == AI_BASE_RUSH) && (chosen == 0xFF)) {
+            chosen = candidates[0];
+        }
+    } else if (style == AI_STYLE_TRICKSTER) {
+        chosen = candidates[candidate_count - 1];
+        for (i = candidate_count - 1; i >= 0; i--) {
+            if (candidates[i] == 0xFF) {
+                chosen = candidates[i];
+                break;
+            }
+        }
+        if ((base_style == AI_BASE_WEIRD) && ((ai_personality_phase[wk->wu.id] & 1) == 0)) {
+            chosen = candidates[candidate_count - 1];
+        }
+    }
+
+    if ((style == AI_STYLE_RELENTLESS) && (chosen == 0xFF)) {
+        for (i = 0; i < candidate_count; i++) {
+            if (candidates[i] != 0xFF) {
+                chosen = candidates[i];
+                break;
+            }
+        }
+    }
+
+    if (base_style == AI_BASE_TURTLE && chosen == 0xFF) {
+        for (i = 0; i < candidate_count; i++) {
+            if (candidates[i] != 0xFF) {
+                chosen = candidates[i];
+                break;
+            }
+        }
+    }
+
+    if ((ai_adapt_throw[wk->wu.id] >= throw_threshold) && chosen == 0xFF) {
+        for (i = 0; i < candidate_count; i++) {
+            if (candidates[i] != 0xFF) {
+                chosen = candidates[i];
+                break;
+            }
+        }
+    }
+
+    if ((ai_bait_active(wk) != 0) && chosen == 0xFF) {
+        for (i = 0; i < candidate_count; i++) {
+            if (candidates[i] != 0xFF) {
+                chosen = candidates[i];
+                break;
+            }
+        }
+    }
+
+    return chosen;
+}
+
+void Init_AI_Personality(PLW* wk) {
+    u8 seed = (u8)random_32_com();
+
+    if ((ai_personality_active[wk->wu.id] != 0) &&
+        (ai_personality_player_number[wk->wu.id] == (u8)wk->player_number)) {
+        return;
+    }
+
+    ai_personality_active[wk->wu.id] = 1;
+    ai_personality_style[wk->wu.id] = (u8)((wk->player_number + seed) & 3);
+    ai_personality_phase[wk->wu.id] = seed & 3;
+    ai_personality_player_number[wk->wu.id] = (u8)wk->player_number;
+}
+
+const s8* Get_AI_Personality_Name(PLW* wk) {
+    if ((wk == NULL) || (ai_personality_active[wk->wu.id] == 0) || (wk->wu.operator != 0)) {
+        return "";
+    }
+
+    return ai_personality_names[ai_personality_style[wk->wu.id] & 3];
+}
+
+static s16 coarse_guard_threat_range(s16 hit_range) {
+    s16 exact_range = Hit_Range_Data[hit_range];
+
+    if (exact_range <= 0x30) {
+        return 0x40;
+    }
+    if (exact_range <= 0x70) {
+        return 0x70;
+    }
+    if (exact_range <= 0xB0) {
+        return 0xA0;
+    }
+
+    return 0xD0;
+}
+
+static u8 get_guard_sense_lag_frames(PLW* wk) {
+    s32 difficulty = save_w[Present_Mode].Difficulty;
+    u8 style = ai_personality_style[wk->wu.id] & 3;
+    u8 base_style = get_ai_base_style(wk);
+    u8 lag;
+
+    load_ai_tuning_config();
+
+    if (difficulty < 0) {
+        difficulty = 0;
+    } else if (difficulty > 7) {
+        difficulty = 7;
+    }
+
+    lag = ai_guard_sense_lag_config[style][difficulty];
+    if ((style == AI_STYLE_RELENTLESS) && (base_style == AI_BASE_RUSH) && (lag > 2)) {
+        lag -= 2;
+    } else if ((style == AI_STYLE_METHODICAL) && (base_style == AI_BASE_TURTLE) && (lag > 2)) {
+        lag -= 2;
+    } else if ((style == AI_STYLE_TRICKSTER) && (base_style == AI_BASE_WEIRD) && (lag < (CPU_GUARD_SENSE_FRAMES - 3))) {
+        lag += 3;
+    }
+    if (lag >= CPU_GUARD_SENSE_FRAMES) {
+        lag = CPU_GUARD_SENSE_FRAMES - 1;
+    }
+
+    return lag;
+}
+
+static u8 get_ai_bait_duration_frames(PLW* wk) {
+    static const u8 bait_duration_table[4] = {
+        66, /* BAL */
+        24, /* RSH */
+        36, /* TRK */
+        108, /* MET */
+    };
+    u8 style = ai_personality_style[wk->wu.id] & 3;
+    u8 base_style = get_ai_base_style(wk);
+    s32 difficulty = save_w[Present_Mode].Difficulty;
+    u8 duration = bait_duration_table[style];
+
+    if (difficulty < 0) {
+        difficulty = 0;
+    } else if (difficulty > 7) {
+        difficulty = 7;
+    }
+
+    if (difficulty <= 1) {
+        duration = (u8)(duration + 18);
+    } else if (difficulty >= 6) {
+        duration = (u8)(duration - 12);
+    } else if (difficulty >= 4) {
+        duration = (u8)(duration - 6);
+    }
+
+    if ((style == AI_STYLE_METHODICAL) && (base_style == AI_BASE_TURTLE)) {
+        duration = (u8)(duration + 18);
+    } else if ((style == AI_STYLE_RELENTLESS) && (base_style == AI_BASE_RUSH)) {
+        duration = (duration > 18) ? (u8)(duration - 18) : duration;
+    } else if ((style == AI_STYLE_TRICKSTER) && (base_style == AI_BASE_WEIRD)) {
+        duration = (duration > 12) ? (u8)(duration - 12) : duration;
+    }
+
+    return duration;
+}
+
+static s32 ai_bait_active(PLW* wk) {
+    return ai_bait_timer[wk->wu.id] != 0;
+}
+
+static void reset_ai_adaptation(PLW* wk) {
+    ai_adapt_jump_in[wk->wu.id] = 0;
+    ai_adapt_throw[wk->wu.id] = 0;
+    ai_adapt_low[wk->wu.id] = 0;
+    ai_adapt_last_counter[wk->wu.id] = -1;
+    ai_bait_timer[wk->wu.id] = 0;
+}
+
+static void update_ai_adaptation(PLW* wk) {
+    WORK* em = (WORK*)wk->wu.target_adrs;
+    s16 attack_counter;
+    s32 difficulty = save_w[Present_Mode].Difficulty;
+    u8 decay_step;
+    u8 jump_gain;
+    u8 throw_gain;
+    u8 low_gain;
+    u8 low_learn_mask;
+
+    if (em == NULL) {
+        return;
+    }
+
+    if (difficulty < 0) {
+        difficulty = 0;
+    } else if (difficulty > 7) {
+        difficulty = 7;
+    }
+
+    decay_step = (difficulty <= 1) ? 2 : 1;
+    jump_gain = (u8)(1 + (difficulty >= 2) + (difficulty >= 5));
+    throw_gain = (u8)(2 + (difficulty >= 3) + (difficulty >= 6));
+    low_gain = (u8)(1 + (difficulty >= 4));
+    low_learn_mask = (difficulty <= 1) ? 7 : (difficulty <= 3) ? 3 : (difficulty <= 5) ? 1 : 0;
+
+    attack_counter = Attack_Counter[wk->wu.id];
+    if (attack_counter == ai_adapt_last_counter[wk->wu.id]) {
+        return;
+    }
+    ai_adapt_last_counter[wk->wu.id] = attack_counter;
+
+    if (ai_bait_timer[wk->wu.id] > 0) {
+        ai_bait_timer[wk->wu.id]--;
+    }
+
+    if (ai_adapt_jump_in[wk->wu.id] > 0) {
+        ai_adapt_jump_in[wk->wu.id] =
+            (ai_adapt_jump_in[wk->wu.id] > decay_step) ? (u8)(ai_adapt_jump_in[wk->wu.id] - decay_step) : 0;
+    }
+    if (ai_adapt_throw[wk->wu.id] > 0) {
+        ai_adapt_throw[wk->wu.id] =
+            (ai_adapt_throw[wk->wu.id] > decay_step) ? (u8)(ai_adapt_throw[wk->wu.id] - decay_step) : 0;
+    }
+    if (ai_adapt_low[wk->wu.id] > 0) {
+        ai_adapt_low[wk->wu.id] =
+            (ai_adapt_low[wk->wu.id] > decay_step) ? (u8)(ai_adapt_low[wk->wu.id] - decay_step) : 0;
+    }
+
+    if (Attack_Flag[wk->wu.id] == 0) {
+        return;
+    }
+
+    if (em->jump_att_flag || em->xyz[1].disp.pos > 0) {
+        if (ai_adapt_jump_in[wk->wu.id] < 12) {
+            ai_adapt_jump_in[wk->wu.id] =
+                clamp_adaptation_value((int)ai_adapt_jump_in[wk->wu.id] + (int)jump_gain);
+        }
+        if (ai_adapt_jump_in[wk->wu.id] >= 6) {
+            ai_bait_timer[wk->wu.id] = get_ai_bait_duration_frames(wk);
+        }
+        return;
+    }
+
+    if ((VS_Tech[wk->wu.id] == 0x0B) || (VS_Tech[wk->wu.id] == 0x1E)) {
+        if (ai_adapt_throw[wk->wu.id] < 12) {
+            ai_adapt_throw[wk->wu.id] =
+                clamp_adaptation_value((int)ai_adapt_throw[wk->wu.id] + (int)throw_gain);
+        }
+        return;
+    }
+
+    if ((Area_Number[wk->wu.id] <= 1) && (ai_adapt_low[wk->wu.id] < 12) && ((random_32_com() & low_learn_mask) == 0)) {
+        ai_adapt_low[wk->wu.id] = clamp_adaptation_value((int)ai_adapt_low[wk->wu.id] + (int)low_gain);
+        if (ai_adapt_low[wk->wu.id] >= 6) {
+            ai_bait_timer[wk->wu.id] = get_ai_bait_duration_frames(wk);
+        }
+    }
+}
+
+static void apply_guard_sense_uncertainty(PLW* wk, s8* attack_flag, s16* distance, s16 threat_range, s32 air_guard) {
+    static const u8 guard_blindspot_chance[8] = { 12, 10, 8, 7, 6, 5, 4, 3 };
+    static const u8 guard_edge_blur_chance[8] = { 18, 16, 14, 12, 10, 8, 6, 4 };
+    s32 difficulty = save_w[Present_Mode].Difficulty;
+    s32 miss_roll;
+    s32 edge_roll;
+    s32 near_edge;
+    u8 jump_threshold;
+    u8 low_threshold;
+
+    if (*attack_flag == 0) {
+        return;
+    }
+
+    if (difficulty < 0) {
+        difficulty = 0;
+    } else if (difficulty > 7) {
+        difficulty = 7;
+    }
+
+    jump_threshold = (difficulty <= 1) ? 9 : (difficulty <= 3) ? 7 : (difficulty <= 5) ? 6 : 4;
+    low_threshold = (difficulty <= 1) ? 10 : (difficulty <= 3) ? 8 : (difficulty <= 5) ? 6 : 4;
+
+    if (air_guard != 0) {
+        if (ai_adapt_jump_in[wk->wu.id] >= jump_threshold) {
+            return;
+        }
+    } else if (ai_adapt_low[wk->wu.id] >= low_threshold) {
+        if (*distance + 0x10 < threat_range) {
+            return;
+        }
+    }
+
+    miss_roll = random_32_com();
+    if (air_guard != 0) {
+        miss_roll >>= 1;
+    }
+    if (miss_roll < guard_blindspot_chance[difficulty]) {
+        *attack_flag = 0;
+        return;
+    }
+
+    near_edge = (*distance + 0x18 >= threat_range);
+    if (near_edge != 0) {
+        edge_roll = random_32_com();
+        if (air_guard != 0) {
+            edge_roll >>= 1;
+        }
+        if (edge_roll < guard_edge_blur_chance[difficulty]) {
+            *distance += 0x20;
+        }
+    }
+}
+
+static void sample_guard_sense(PLW* wk, s8* attack_flag, s16* attack_counter, s16* distance, s16* threat_range) {
+    WORK* em = (WORK*)wk->wu.target_adrs;
+    s16 sampled_distance = em->xyz[0].disp.pos - wk->wu.xyz[0].disp.pos;
+
+    if (sampled_distance < 0) {
+        sampled_distance = (s16)-sampled_distance;
+    }
+
+    *attack_flag = plw[wk->wu.id ^ 1].caution_flag;
+    *attack_counter = Attack_Counter[wk->wu.id];
+    *distance = sampled_distance;
+    *threat_range = coarse_guard_threat_range(em->hit_range);
+}
+
+static void get_delayed_guard_sense(PLW* wk, s8* attack_flag, s16* attack_counter, s16* distance, s16* threat_range) {
+    u8 lag_frames = get_guard_sense_lag_frames(wk);
+    u8 delayed_index = (guard_sense_write_index[wk->wu.id] + CPU_GUARD_SENSE_FRAMES - lag_frames) % CPU_GUARD_SENSE_FRAMES;
+
+    *attack_flag = guard_sense_attack_flag[wk->wu.id][delayed_index];
+    *attack_counter = guard_sense_attack_counter[wk->wu.id][delayed_index];
+    *distance = guard_sense_distance[wk->wu.id][delayed_index];
+    *threat_range = guard_sense_threat_range[wk->wu.id][delayed_index];
+}
+
+void Reset_Guard_Sense(PLW* wk) {
+    s8 attack_flag;
+    s16 attack_counter;
+    s16 distance;
+    s16 threat_range;
+    s16 i;
+
+    sample_guard_sense(wk, &attack_flag, &attack_counter, &distance, &threat_range);
+    guard_sense_write_index[wk->wu.id] = 0;
+
+    for (i = 0; i < CPU_GUARD_SENSE_FRAMES; i++) {
+        guard_sense_attack_flag[wk->wu.id][i] = attack_flag;
+        guard_sense_attack_counter[wk->wu.id][i] = attack_counter;
+        guard_sense_distance[wk->wu.id][i] = distance;
+        guard_sense_threat_range[wk->wu.id][i] = threat_range;
+    }
+
+    reset_ai_adaptation(wk);
+}
+
+void Update_Guard_Sense(PLW* wk) {
+    s8 attack_flag;
+    s16 attack_counter;
+    s16 distance;
+    s16 threat_range;
+    u8 write_index = (guard_sense_write_index[wk->wu.id] + 1) % CPU_GUARD_SENSE_FRAMES;
+
+    sample_guard_sense(wk, &attack_flag, &attack_counter, &distance, &threat_range);
+    guard_sense_write_index[wk->wu.id] = write_index;
+    guard_sense_attack_flag[wk->wu.id][write_index] = attack_flag;
+    guard_sense_attack_counter[wk->wu.id][write_index] = attack_counter;
+    guard_sense_distance[wk->wu.id][write_index] = distance;
+    guard_sense_threat_range[wk->wu.id][write_index] = threat_range;
+    update_ai_adaptation(wk);
+}
 
 void End_Pattern(PLW* wk) {
     Next_Be_Free(wk);
@@ -1831,28 +2943,44 @@ s32 Check_Start_Hi_Jump(PLW* wk) {
 
 s32 Check_Air_Guard(PLW* wk) {
     WORK* em;
+    s16 delayed_attack_counter;
+    s16 delayed_distance;
+    s16 delayed_threat_range;
     s16 xx;
     s16 zz;
+    s8 delayed_attack_flag;
 
     em = (WORK*)wk->wu.target_adrs;
+    if ((em != NULL) && (AI_UseLuckyPreciseDefense(wk, 1) != 0)) {
+        delayed_attack_flag = plw[wk->wu.id ^ 1].caution_flag;
+        delayed_attack_counter = Attack_Counter[wk->wu.id];
+        delayed_distance = em->xyz[0].disp.pos - wk->wu.xyz[0].disp.pos;
+        if (delayed_distance < 0) {
+            delayed_distance = -delayed_distance;
+        }
+        delayed_threat_range = Hit_Range_Data[em->hit_range];
+    } else {
+        get_delayed_guard_sense(wk, &delayed_attack_flag, &delayed_attack_counter, &delayed_distance, &delayed_threat_range);
+        apply_guard_sense_uncertainty(wk, &delayed_attack_flag, &delayed_distance, delayed_threat_range, 1);
+    }
 
     if (Lever_LR[wk->wu.id]) {
         return Lever_LR[wk->wu.id];
     }
-    if (Guard_Counter[wk->wu.id] == Attack_Counter[wk->wu.id]) {
+    if (Guard_Counter[wk->wu.id] == delayed_attack_counter) {
         return Lever_LR[wk->wu.id];
     }
-    if (Attack_Flag[wk->wu.id] == 0) {
+    if (delayed_attack_flag == 0) {
         return Lever_LR[wk->wu.id];
     }
 
-    xx = Hit_Range_Data[em->hit_range] + 0x20;
+    xx = delayed_threat_range + 0x20;
     xx += Com_Width_Data[wk->wu.id];
-    if (PL_Distance[wk->wu.id] > xx) {
+    if (delayed_distance > xx) {
         return 0;
     }
 
-    Guard_Counter[wk->wu.id] = Attack_Counter[wk->wu.id];
+    Guard_Counter[wk->wu.id] = delayed_attack_counter;
     Lv = Setup_Lv10(0);
     if ((Demo_Flag == 0) && (Weak_PL == wk->wu.id)) {
         Lv = 2;
@@ -4111,6 +5239,12 @@ s32 Setup_Lv08(s16 xx) {
             break;
         }
     }
+    if (ai_level_context != NULL) {
+        i += get_ai_grit_bonus(ai_level_context, 3);
+        if (i > 7) {
+            i = 7;
+        }
+    }
     return i;
 }
 
@@ -4125,6 +5259,12 @@ s32 Setup_Lv10(s16 xx) {
             break;
         }
     }
+    if (ai_level_context != NULL) {
+        i += get_ai_grit_bonus(ai_level_context, 3);
+        if (i > 9) {
+            i = 9;
+        }
+    }
     return i;
 }
 
@@ -4137,6 +5277,12 @@ s32 Setup_Lv18(s16 xx) {
     for (i = 0; i < 17; i++) {
         if (Control_Time <= zz[i]) {
             break;
+        }
+    }
+    if (ai_level_context != NULL) {
+        i += get_ai_grit_bonus(ai_level_context, 3);
+        if (i > 17) {
+            i = 17;
         }
     }
     return i;
@@ -4453,6 +5599,8 @@ void Check_First_Menu(PLW* wk) {
 
 void Select_Active(PLW* wk) {
     s16 pl_id;
+    s16 area_index;
+    const u8* pattern_row;
 
     Lv = Setup_Lv08(0);
     if (Break_Into_CPU == 2) {
@@ -4463,8 +5611,7 @@ void Select_Active(PLW* wk) {
     }
 
     Lv = emLevelRemake(Lv, 8, 0);
-
-    Rnd = (u8)random_32_ex_com();
+    area_index = choose_active_area_by_personality(wk, 0);
 
     if (Check_SA_Active(wk, &pl_id) != 0) {
         Lv = Setup_Lv04(0);
@@ -4477,39 +5624,41 @@ void Select_Active(PLW* wk) {
 
         Lv = emLevelRemake(Lv, 4, 0);
 
-        switch (Area_Number[wk->wu.id]) {
+        switch (area_index) {
         case 0:
-            Pattern_Index[wk->wu.id] = SA_Active_A_Unit_Data[pl_id - 1][Lv][Rnd];
+            pattern_row = SA_Active_A_Unit_Data[pl_id - 1][Lv];
             break;
         case 1:
-            Pattern_Index[wk->wu.id] = SA_Active_B_Unit_Data[pl_id - 1][Lv][Rnd];
+            pattern_row = SA_Active_B_Unit_Data[pl_id - 1][Lv];
             break;
         case 2:
-            Pattern_Index[wk->wu.id] = SA_Active_C_Unit_Data[pl_id - 1][Lv][Rnd];
+            pattern_row = SA_Active_C_Unit_Data[pl_id - 1][Lv];
             break;
         default:
-            Pattern_Index[wk->wu.id] = SA_Active_D_Unit_Data[pl_id - 1][Lv][Rnd];
+            pattern_row = SA_Active_D_Unit_Data[pl_id - 1][Lv];
             break;
         }
     } else {
-        switch (Area_Number[wk->wu.id]) {
+        switch (area_index) {
         case 0:
-            Pattern_Index[wk->wu.id] = Active_A_Unit_Data[wk->player_number][Lv][Rnd];
+            pattern_row = Active_A_Unit_Data[wk->player_number][Lv];
             break;
 
         case 1:
-            Pattern_Index[wk->wu.id] = Active_B_Unit_Data[wk->player_number][Lv][Rnd];
+            pattern_row = Active_B_Unit_Data[wk->player_number][Lv];
             break;
 
         case 2:
-            Pattern_Index[wk->wu.id] = Active_C_Unit_Data[wk->player_number][Lv][Rnd];
+            pattern_row = Active_C_Unit_Data[wk->player_number][Lv];
             break;
 
         default:
-            Pattern_Index[wk->wu.id] = Active_D_Unit_Data[wk->player_number][Lv][Rnd];
+            pattern_row = Active_D_Unit_Data[wk->player_number][Lv];
             break;
         }
     }
+
+    Pattern_Index[wk->wu.id] = choose_ai_pattern_by_personality(wk, pattern_row, 1, 0);
 
     if (Debug_w[0x36]) {
         Pattern_Index[wk->wu.id] = (u16)Debug_w[0x36] - 1;
@@ -4572,19 +5721,22 @@ static const_anon13_p Follow_Menu_2nd_Unit_Data[13] = {
 };
 
 void Decide_Follow_Menu(PLW* wk) {
-    s8 xx;
     const _anon6* Menu_Add_Ptr0;
     const _anon13* Menu_Add_Ptr1;
+    s16 area_index;
+    const u8* pattern_row;
 
     Menu_Add_Ptr0 = Follow_Menu_1st_Unit_Data[wk->player_number];
-    Rnd = (u8)random_32_com();
-    xx = Menu_Add_Ptr0->xxxx[CP_No[wk->wu.id][1]][CP_No[wk->wu.id][2]][Rnd];
+    pattern_row = Menu_Add_Ptr0->xxxx[CP_No[wk->wu.id][1]][CP_No[wk->wu.id][2]];
+    area_index = choose_active_area_by_personality(wk, 1);
 
     Menu_Add_Ptr1 = Follow_Menu_2nd_Unit_Data[wk->player_number];
-    Pattern_Index[wk->wu.id] = Menu_Add_Ptr1->zzzz[xx][Area_Number[wk->wu.id]];
+    Pattern_Index[wk->wu.id] =
+        Menu_Add_Ptr1->zzzz[choose_ai_pattern_by_personality(wk, pattern_row, 0, 1)][area_index];
 }
 
 s32 Select_Passive(PLW* wk) {
+    const u8* passive_row;
     u16 xx;
 
     if (VS_Tech[wk->wu.id] == 0xB) {
@@ -4606,7 +5758,8 @@ s32 Select_Passive(PLW* wk) {
 
     switch (Area_Number[wk->wu.id]) {
     case 0:
-        xx = Passive_A_Unit_Data_04[wk->player_number][VS_Tech[wk->wu.id]][Lv][Rnd];
+        passive_row = Passive_A_Unit_Data_04[wk->player_number][VS_Tech[wk->wu.id]][Lv];
+        xx = choose_passive_pattern_by_personality(wk, passive_row);
 
         if (xx == 0xFF) {
             Counter_Attack[wk->wu.id] = 0;
@@ -4620,7 +5773,8 @@ s32 Select_Passive(PLW* wk) {
         break;
 
     case 1:
-        xx = Passive_B_Unit_Data_04[wk->player_number][VS_Tech[wk->wu.id]][Lv][Rnd];
+        passive_row = Passive_B_Unit_Data_04[wk->player_number][VS_Tech[wk->wu.id]][Lv];
+        xx = choose_passive_pattern_by_personality(wk, passive_row);
 
         if (xx == 0xFF) {
             Counter_Attack[wk->wu.id] = 0;
@@ -4634,7 +5788,8 @@ s32 Select_Passive(PLW* wk) {
         break;
 
     case 2:
-        xx = Passive_C_Unit_Data_04[wk->player_number][VS_Tech[wk->wu.id]][Lv][Rnd];
+        passive_row = Passive_C_Unit_Data_04[wk->player_number][VS_Tech[wk->wu.id]][Lv];
+        xx = choose_passive_pattern_by_personality(wk, passive_row);
 
         if (xx == 0xFF) {
             Counter_Attack[wk->wu.id] = 0;
@@ -4648,7 +5803,8 @@ s32 Select_Passive(PLW* wk) {
         break;
 
     default:
-        xx = Passive_D_Unit_Data_04[wk->player_number][VS_Tech[wk->wu.id]][Lv][Rnd];
+        passive_row = Passive_D_Unit_Data_04[wk->player_number][VS_Tech[wk->wu.id]][Lv];
+        xx = choose_passive_pattern_by_personality(wk, passive_row);
 
         if (xx == 0xFF) {
             Counter_Attack[wk->wu.id] = 0;
@@ -4740,12 +5896,6 @@ s32 Check_Passive(PLW* wk) {
         CP_No[wk->wu.id][3] = 0;
         return -1;
     }
-    if (Check_Thrown(wk, em) != 0) {
-        if (Select_Passive(wk) != -1) {
-            return 1;
-        }
-    }
-
     if (Check_Shell(wk) != 0) {
         return 1;
     }
@@ -4786,23 +5936,43 @@ s32 Check_Passive(PLW* wk) {
 
 s32 Check_Guard(PLW* wk) {
     WORK* em;
+    s16 delayed_attack_counter;
+    s16 delayed_distance;
+    s16 delayed_threat_range;
     s16 xx;
     s16 zz;
+    s8 delayed_attack_flag;
 
     em = (WORK*)wk->wu.target_adrs;
+    if ((em != NULL) && (AI_UseLuckyPreciseDefense(wk, 0) != 0)) {
+        delayed_attack_flag = plw[wk->wu.id ^ 1].caution_flag;
+        delayed_attack_counter = Attack_Counter[wk->wu.id];
+        delayed_distance = em->xyz[0].disp.pos - wk->wu.xyz[0].disp.pos;
+        if (delayed_distance < 0) {
+            delayed_distance = -delayed_distance;
+        }
+        delayed_threat_range = Hit_Range_Data[em->hit_range];
+    } else {
+        get_delayed_guard_sense(wk, &delayed_attack_flag, &delayed_attack_counter, &delayed_distance, &delayed_threat_range);
+        apply_guard_sense_uncertainty(wk, &delayed_attack_flag, &delayed_distance, delayed_threat_range, 0);
+    }
 
-    if (Attack_Flag[wk->wu.id] == 0) {
+    if (delayed_attack_flag == 0) {
         return 0;
     }
 
-    if (Guard_Counter[wk->wu.id] == Attack_Counter[wk->wu.id]) {
+    if (Guard_Counter[wk->wu.id] == delayed_attack_counter) {
         return 0;
     }
 
-    xx = Hit_Range_Data[em->hit_range];
+    xx = delayed_threat_range;
     xx += Com_Width_Data[wk->wu.id];
 
-    if (PL_Distance[wk->wu.id] > xx) {
+    if (delayed_distance > xx) {
+        return 0;
+    }
+
+    if (personality_allows_guard(wk) == 0) {
         return 0;
     }
 
@@ -4822,14 +5992,14 @@ s32 Check_Guard(PLW* wk) {
     Lv = emLevelRemake(Lv, 0xB, 1);
 
     if (Guard_Data[zz][Lv][Rnd] == 3) {
-        Guard_Counter[wk->wu.id] = Attack_Counter[wk->wu.id];
+        Guard_Counter[wk->wu.id] = delayed_attack_counter;
         return 0;
     }
 
     if (Check_Flip_Term(wk, NULL) != 0) {
         Next_Be_Flip(wk, 0);
     } else {
-        Next_Be_Guard(wk, em, Guard_Data[zz][Lv][random_16_ex_com()]);
+        Next_Be_Guard(wk, em, choose_guard_type_by_personality(wk, Guard_Data[zz][Lv]));
     }
 
     return 1;

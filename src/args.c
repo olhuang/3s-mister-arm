@@ -1,5 +1,6 @@
 #include "args.h"
 #include "main.h"
+#include "port/config/config.h"
 #include "test/test_runner.h"
 
 #include "argparse/argparse.h"
@@ -36,6 +37,28 @@ static bool is_supported_test_scene_preset(const char* preset) {
            SDL_strcmp(preset, "basic-exchange") == 0 || SDL_strcmp(preset, "pressure-exchange") == 0 ||
            SDL_strcmp(preset, "left-corner-ryu-stage") == 0 || SDL_strcmp(preset, "training-yun-ryu-ryu-stage") == 0;
 }
+
+#if ENABLE_NETPLAY
+static void load_netplay_config(Configuration* configuration) {
+    NetplayConfiguration* netplay = &configuration->netplay;
+
+    if (Config_HasExplicitKey(CFG_KEY_NETPLAY_P2P_LOCAL_PLAYER)) {
+        netplay->p2p_local_player = Config_GetInt(CFG_KEY_NETPLAY_P2P_LOCAL_PLAYER);
+    }
+
+    if (Config_HasExplicitKey(CFG_KEY_NETPLAY_P2P_REMOTE_IP)) {
+        netplay->p2p_remote_ip = Config_GetString(CFG_KEY_NETPLAY_P2P_REMOTE_IP);
+    }
+
+    if (Config_HasExplicitKey(CFG_KEY_NETPLAY_MATCHMAKING_IP)) {
+        netplay->matchmaking_ip = Config_GetString(CFG_KEY_NETPLAY_MATCHMAKING_IP);
+    }
+
+    if (Config_HasExplicitKey(CFG_KEY_NETPLAY_MATCHMAKING_PORT)) {
+        netplay->matchmaking_port = Config_GetInt(CFG_KEY_NETPLAY_MATCHMAKING_PORT);
+    }
+}
+#endif
 
 #if ENABLE_PERF_TELEMETRY
 static bool is_supported_perf_wait_test_phase(const char* phase_name) {
@@ -166,6 +189,10 @@ static void verify_configuration(Configuration* configuration) {
 }
 
 void read_args(int argc, const char* argv[], Configuration* configuration) {
+#if ENABLE_NETPLAY
+    load_netplay_config(configuration);
+#endif
+
     struct argparse_option options[] = {
         OPT_HELP(),
 

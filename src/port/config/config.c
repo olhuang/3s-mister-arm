@@ -73,6 +73,20 @@ static const ConfigEntry default_entries[] = {
 static ConfigEntry entries[CONFIG_ENTRIES_MAX] = { 0 };
 static int entry_count = 0;
 
+static void clear_entries() {
+    for (int i = 0; i < entry_count; i++) {
+        ConfigEntry* entry = &entries[i];
+        SDL_free(entry->key);
+
+        if (entry->type == CFG_STRING) {
+            SDL_free(entry->value.s);
+        }
+    }
+
+    SDL_zeroa(entries);
+    entry_count = 0;
+}
+
 static bool is_int(const char* string) {
     for (int i = 0; i < SDL_strlen(string); i++) {
         if (SDL_isdigit(string[i]) || ((i == 0) && (string[i] == '-'))) {
@@ -180,6 +194,8 @@ static bool dict_iterator(const char* key, const char* value) {
 }
 
 void Config_Init() {
+    clear_entries();
+
     const char* pref_path = Paths_GetPrefPath();
     char* config_path;
     SDL_asprintf(&config_path, "%sconfig", pref_path);
@@ -199,17 +215,7 @@ void Config_Init() {
 }
 
 void Config_Destroy() {
-    for (int i = 0; i < entry_count; i++) {
-        ConfigEntry* entry = &entries[i];
-        SDL_free(entry->key);
-
-        if (entry->type == CFG_STRING) {
-            SDL_free(entry->value.s);
-        }
-    }
-
-    SDL_zeroa(entries);
-    entry_count = 0;
+    clear_entries();
 }
 
 bool Config_GetBool(const char* key) {

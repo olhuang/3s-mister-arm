@@ -20,6 +20,10 @@
 #define CFG_KEY_ARM_CLOCK "arm-clock"
 #define CFG_KEY_GAME_MODE "game-mode"
 #define CFG_KEY_HOLD_TO_PAUSE "hold-to-pause"
+#define CFG_KEY_NETPLAY_P2P_LOCAL_PLAYER "p2p-local-player"
+#define CFG_KEY_NETPLAY_P2P_REMOTE_IP "p2p-remote-ip"
+#define CFG_KEY_NETPLAY_MATCHMAKING_IP "matchmaking-ip"
+#define CFG_KEY_NETPLAY_MATCHMAKING_PORT "matchmaking-port"
 
 /// Initialize config system
 void Config_Init();

@@ -179,7 +179,7 @@ fi
 # GekkoNet
 # -----------------------------
 
-if [ "$PROFILE" = "desktop" ]; then
+if [ "$PROFILE" = "desktop" ] || [ "$PROFILE" = "mister" ]; then
     GEKKONET_REF="7be848c"
     GEKKONET_DIR="$THIRD_PARTY/GekkoNet"
     GEKKONET_BUILD="$GEKKONET_DIR/build"
@@ -215,7 +215,7 @@ fi
 # SDL3_net
 # -----------------------------
 
-if [ "$PROFILE" = "desktop" ]; then
+if [ "$PROFILE" = "desktop" ] || [ "$PROFILE" = "mister" ]; then
     SDL3_NET_REF="92022dc"
     SDL3_NET_DIR="$THIRD_PARTY/SDL_net"
     SDL3_NET_BUILD="$SDL3_NET_DIR/build"

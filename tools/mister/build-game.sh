@@ -145,6 +145,7 @@ build_one() {
     local binary_path="${install_dir}/bin/3s-arm"
 
     cmake -S . -B "${build_dir}" -DCMAKE_BUILD_TYPE=Release -DPORT_MISTER=ON \
+        -DENABLE_NETPLAY=ON \
         -DENABLE_PERF_TELEMETRY="${telemetry_flag}" \
         "${cmake_target_args[@]}"
     cmake --build "${build_dir}" --parallel "${jobs}"

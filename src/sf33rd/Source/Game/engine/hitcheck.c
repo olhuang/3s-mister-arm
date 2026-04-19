@@ -37,6 +37,58 @@ s16 mkm_wk[32];
 s16 hpq_in;
 s8 ca_check_flag;
 
+static s32 get_box_x_range(const WORK* wk, const s16* hd, s32* left, s32* right) {
+    s32 x = hd[0];
+    s32 w = hd[1];
+
+    if (w == 0) {
+        return 0;
+    }
+
+    if (wk->rl_flag) {
+        x = -x - w;
+    }
+
+    x += wk->xyz[0].disp.pos;
+    *left = x;
+    *right = x + w;
+    return 1;
+}
+
+static s32 collect_box_list_x_range(const WORK* wk, s16* const* boxes, s32 count, s32* left, s32* right) {
+    s32 i;
+    s32 box_left;
+    s32 box_right;
+    s32 found = 0;
+
+    for (i = 0; i < count; i++) {
+        if (!get_box_x_range(wk, boxes[i], &box_left, &box_right)) {
+            continue;
+        }
+
+        if (!found) {
+            *left = box_left;
+            *right = box_right;
+            found = 1;
+            continue;
+        }
+
+        if (box_left < *left) {
+            *left = box_left;
+        }
+
+        if (box_right > *right) {
+            *right = box_right;
+        }
+    }
+
+    return found;
+}
+
+static s32 x_ranges_overlap(s32 left1, s32 right1, s32 left2, s32 right2) {
+    return (left1 < right2) && (left2 < right1);
+}
+
 void make_red_blocking_time(s16 id, s16 ix, s16 num) {
     switch (ix) {
     case 3:
@@ -1556,6 +1608,10 @@ void catch_hit_check() {
                 }
             }
 
+            if (!hit_check_x_only(mad, sad, mh, sh)) {
+                continue;
+            }
+
             if (hit_check_subroutine(mad, sad, mh, sh)) {
                 hs[mi].flag.results |= 0x1000;
                 hs[mi].my_hit = (u16)si;
@@ -1577,6 +1633,7 @@ void catch_hit_check() {
 void attack_hit_check() {
     WORK* mad;
     WORK* sad;
+    s16* att_boxes[4];
     s16* mh;
     s16* sh;
     s16 mi;
@@ -1584,6 +1641,10 @@ void attack_hit_check() {
     s16 lp;
     s16 lp2;
     s16 mw;
+    s32 mad_left;
+    s32 mad_right;
+    s32 sad_left;
+    s32 sad_right;
 
     s16* assign1;
     s16* assign2;
@@ -1605,6 +1666,10 @@ void attack_hit_check() {
         dmdat_adrs[8] = &sad->h_att->att_box[2][0];
         dmdat_adrs[9] = &sad->h_att->att_box[3][0];
         dmdat_adrs[10] = &sad->h_hos->hos_box[0];
+
+        if (!collect_box_list_x_range(sad, dmdat_adrs, 11, &sad_left, &sad_right)) {
+            continue;
+        }
 
         for (mi = 0; mi < hpq_in; mi++) {
             if (mi == si) {
@@ -1644,7 +1709,20 @@ void attack_hit_check() {
                 continue;
             }
 
-            mh = &mad->h_att->att_box[0][0];
+            att_boxes[0] = &mad->h_att->att_box[0][0];
+            att_boxes[1] = &mad->h_att->att_box[1][0];
+            att_boxes[2] = &mad->h_att->att_box[2][0];
+            att_boxes[3] = &mad->h_att->att_box[3][0];
+
+            if (!collect_box_list_x_range(mad, att_boxes, 4, &mad_left, &mad_right)) {
+                continue;
+            }
+
+            if (!x_ranges_overlap(mad_left, mad_right, sad_left, sad_right)) {
+                continue;
+            }
+
+            mh = att_boxes[0];
 
             for (lp = 0; lp < 4; lp++, assign2 = mh += 4) {
                 if (mh[1] == 0) {

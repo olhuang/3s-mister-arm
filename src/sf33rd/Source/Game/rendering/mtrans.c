@@ -1691,6 +1691,63 @@ s32 seqsStoreChip(f32 x, f32 y, s32 w, s32 h, s32 gix, s32 code, s32 attr, s32 a
     return 1;
 }
 
+static void mts_active_slots_reset(u16* slot_positions, s32 count) {
+    if (slot_positions) {
+        SDL_memset(slot_positions, 0xFF, count * sizeof(u16));
+    }
+}
+
+static void mts_active_slots_add(u16* active_slots, u16* slot_positions, s32* active_count, u16 slot) {
+    if (!active_slots || !slot_positions) {
+        return;
+    }
+
+    if (slot_positions[slot] != MTS_HASH_EMPTY) {
+        return;
+    }
+
+    slot_positions[slot] = (u16)*active_count;
+    active_slots[*active_count] = slot;
+    *active_count += 1;
+}
+
+static void mts_active_slots_remove(u16* active_slots, u16* slot_positions, s32* active_count, u16 slot) {
+    s32 last_index;
+    u16 slot_position;
+
+    if (!active_slots || !slot_positions) {
+        return;
+    }
+
+    slot_position = slot_positions[slot];
+    if (slot_position == MTS_HASH_EMPTY) {
+        return;
+    }
+
+    last_index = *active_count - 1;
+    if (slot_position != last_index) {
+        u16 last_slot = active_slots[last_index];
+        active_slots[slot_position] = last_slot;
+        slot_positions[last_slot] = slot_position;
+    }
+
+    slot_positions[slot] = MTS_HASH_EMPTY;
+    *active_count = last_index;
+}
+
+static void mts_refresh_slot_lifetime(PatternState* slot_state, s32 lifetime,
+                                      u16* active_slots, u16* slot_positions,
+                                      s32* active_count, u16 slot) {
+    s16 was_active = slot_state->time;
+
+    slot_state->time = lifetime;
+    if ((was_active == 0) && (slot_state->time != 0)) {
+        mts_active_slots_add(active_slots, slot_positions, active_count, slot);
+    } else if ((was_active != 0) && (slot_state->time == 0)) {
+        mts_active_slots_remove(active_slots, slot_positions, active_count, slot);
+    }
+}
+
 static s32 get_mltbuf16(MultiTexture* mt, u32 code, u32 palt, s32* ret) {
     MtsCacheIndex* idx = mt->hash16;
     PatternState* mc = mt->mltcsh16;
@@ -1699,15 +1756,19 @@ static s32 get_mltbuf16(MultiTexture* mt, u32 code, u32 palt, s32* ret) {
     if (idx) {
         s32 slot = mts_hash_lookup(idx, code, palt, mc);
         if (slot >= 0) {
-            mc[slot].time = mt->mltcshtime16;
+            mts_refresh_slot_lifetime(&mc[slot], mt->mltcshtime16,
+                                      mt->active16_slots, mt->active16_pos,
+                                      &mt->active16_count, (u16)slot);
             *ret = slot;
             return 0;
         }
         slot = mts_freelist_pop(&mt->free16);
         if (slot >= 0) {
-            mc[slot].time = mt->mltcshtime16;
             mc[slot].state = palt;
             mc[slot].cs.code = code;
+            mts_refresh_slot_lifetime(&mc[slot], mt->mltcshtime16,
+                                      mt->active16_slots, mt->active16_pos,
+                                      &mt->active16_count, (u16)slot);
             mts_hash_insert(idx, code, palt, (u16)slot);
             *ret = slot;
             return 1;
@@ -1725,7 +1786,9 @@ static s32 get_mltbuf16(MultiTexture* mt, u32 code, u32 palt, s32* ret) {
 
         while (1) {
             if ((mcp->cs.code == code) && (mcp->state == palt)) {
-                mcp->time = mt->mltcshtime16;
+                mts_refresh_slot_lifetime(mcp, mt->mltcshtime16,
+                                          mt->active16_slots, mt->active16_pos,
+                                          &mt->active16_count, (u16)(mt->mltnum16 - i));
                 *ret = mt->mltnum16 - i;
                 if (idx) mts_hash_insert(idx, code, palt, (u16)(mt->mltnum16 - i));
                 return 0;
@@ -1741,9 +1804,11 @@ static s32 get_mltbuf16(MultiTexture* mt, u32 code, u32 palt, s32* ret) {
             if (i <= 0) {
                 if (b >= 0) {
                     b = mt->mltnum16 - b;
-                    mc[b].time = mt->mltcshtime16;
                     mc[b].state = palt;
                     mc[b].cs.code = code;
+                    mts_refresh_slot_lifetime(&mc[b], mt->mltcshtime16,
+                                              mt->active16_slots, mt->active16_pos,
+                                              &mt->active16_count, (u16)b);
                     if (idx) mts_hash_insert(idx, code, palt, (u16)b);
                     *ret = b;
                     return 1;
@@ -1764,15 +1829,19 @@ static s32 get_mltbuf32(MultiTexture* mt, u32 code, u32 palt, s32* ret) {
     if (idx) {
         s32 slot = mts_hash_lookup(idx, code, palt, mc);
         if (slot >= 0) {
-            mc[slot].time = mt->mltcshtime32;
+            mts_refresh_slot_lifetime(&mc[slot], mt->mltcshtime32,
+                                      mt->active32_slots, mt->active32_pos,
+                                      &mt->active32_count, (u16)slot);
             *ret = slot;
             return 0;
         }
         slot = mts_freelist_pop(&mt->free32);
         if (slot >= 0) {
-            mc[slot].time = mt->mltcshtime32;
             mc[slot].state = palt;
             mc[slot].cs.code = code;
+            mts_refresh_slot_lifetime(&mc[slot], mt->mltcshtime32,
+                                      mt->active32_slots, mt->active32_pos,
+                                      &mt->active32_count, (u16)slot);
             mts_hash_insert(idx, code, palt, (u16)slot);
             *ret = slot;
             return 1;
@@ -1790,7 +1859,9 @@ static s32 get_mltbuf32(MultiTexture* mt, u32 code, u32 palt, s32* ret) {
 
         while (1) {
             if ((mcp->cs.code == code) && (mcp->state == palt)) {
-                mcp->time = mt->mltcshtime32;
+                mts_refresh_slot_lifetime(mcp, mt->mltcshtime32,
+                                          mt->active32_slots, mt->active32_pos,
+                                          &mt->active32_count, (u16)(mt->mltnum32 - i));
                 *ret = mt->mltnum32 - i;
                 if (idx) mts_hash_insert(idx, code, palt, (u16)(mt->mltnum32 - i));
                 return 0;
@@ -1806,9 +1877,11 @@ static s32 get_mltbuf32(MultiTexture* mt, u32 code, u32 palt, s32* ret) {
             if (i <= 0) {
                 if (b >= 0) {
                     b = mt->mltnum32 - b;
-                    mc[b].time = mt->mltcshtime32;
                     mc[b].state = palt;
                     mc[b].cs.code = code;
+                    mts_refresh_slot_lifetime(&mc[b], mt->mltcshtime32,
+                                              mt->active32_slots, mt->active32_pos,
+                                              &mt->active32_count, (u16)b);
                     if (idx) mts_hash_insert(idx, code, palt, (u16)b);
                     *ret = b;
                     return 1;
@@ -2229,6 +2302,10 @@ void mlt_obj_trans_init(MultiTexture* mt, s32 mode, u8* adrs) {
 
     mt->texList.tex->be = 0;
     ppgSetupTexChunkSeqs(&mt->tex, &ppg, adrs, mt->mltgidx16, mt->mltnum, mt->attribute);
+    mt->active16_count = 0;
+    mt->active32_count = 0;
+    mts_active_slots_reset(mt->active16_pos, mt->mltnum16);
+    mts_active_slots_reset(mt->active32_pos, mt->mltnum32);
 
     if (!(mode & 0x20)) {
         mc = mt->mltcsh16;
@@ -2260,6 +2337,10 @@ void mlt_obj_trans_init(MultiTexture* mt, s32 mode, u8* adrs) {
             } else {
                 mts_hash_insert(mt->hash16, mc[i].cs.code,
                                 (u32)(u16)mc[i].state, (u16)i);
+                if (mc[i].time != 0) {
+                    mts_active_slots_add(mt->active16_slots, mt->active16_pos,
+                                         &mt->active16_count, (u16)i);
+                }
             }
         }
     }
@@ -2273,6 +2354,10 @@ void mlt_obj_trans_init(MultiTexture* mt, s32 mode, u8* adrs) {
             } else {
                 mts_hash_insert(mt->hash32, mc[i].cs.code,
                                 (u32)(u16)mc[i].state, (u16)i);
+                if (mc[i].time != 0) {
+                    mts_active_slots_add(mt->active32_slots, mt->active32_pos,
+                                         &mt->active32_count, (u16)i);
+                }
             }
         }
     }
@@ -2282,34 +2367,33 @@ void mlt_obj_trans_update(MultiTexture* mt) {
     s32 i;
     PatternState* mc;
 
-    PatternState* assign1;
-    PatternState* assign2;
-
-    for (mc = mt->mltcsh16, i = 0; i < mt->mltnum16; i++, mc += 1, assign1 = mc) {
-        if (mc->time) {
-            if (--mc->time == 0) {
-                /* Remove from hash before invalidating */
-                if (mt->hash16) {
-                    mts_hash_remove(mt->hash16, mc->cs.code,
-                                    (u32)(u16)mc->state, mt->mltcsh16);
-                    mts_freelist_push(&mt->free16, (u16)i);
-                }
-                mc->cs.code = -1;
+    for (i = mt->active16_count - 1; i >= 0; i--) {
+        u16 slot = mt->active16_slots[i];
+        mc = &mt->mltcsh16[slot];
+        if (--mc->time == 0) {
+            if (mt->hash16) {
+                mts_hash_remove(mt->hash16, mc->cs.code,
+                                (u32)(u16)mc->state, mt->mltcsh16);
+                mts_freelist_push(&mt->free16, slot);
             }
+            mc->cs.code = -1;
+            mts_active_slots_remove(mt->active16_slots, mt->active16_pos,
+                                    &mt->active16_count, slot);
         }
     }
 
-    for (mc = mt->mltcsh32, i = 0; i < mt->mltnum32; i++, mc += 1, assign2 = mc) {
-        if (mc->time) {
-            if (--mc->time == 0) {
-                /* Remove from hash before invalidating */
-                if (mt->hash32) {
-                    mts_hash_remove(mt->hash32, mc->cs.code,
-                                    (u32)(u16)mc->state, mt->mltcsh32);
-                    mts_freelist_push(&mt->free32, (u16)i);
-                }
-                mc->cs.code = -1U;
+    for (i = mt->active32_count - 1; i >= 0; i--) {
+        u16 slot = mt->active32_slots[i];
+        mc = &mt->mltcsh32[slot];
+        if (--mc->time == 0) {
+            if (mt->hash32) {
+                mts_hash_remove(mt->hash32, mc->cs.code,
+                                (u32)(u16)mc->state, mt->mltcsh32);
+                mts_freelist_push(&mt->free32, slot);
             }
+            mc->cs.code = -1U;
+            mts_active_slots_remove(mt->active32_slots, mt->active32_pos,
+                                    &mt->active32_count, slot);
         }
     }
 }

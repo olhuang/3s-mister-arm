@@ -9148,7 +9148,7 @@ static void publish_fps_overlay_label(void) {
     }
 
     if (fps_overlay_mode == FPS_OVERLAY_FPS) {
-        SDL_snprintf(fps_overlay_label, sizeof(fps_overlay_label), "%d", fps_overlay_value);
+        SDL_snprintf(fps_overlay_label, sizeof(fps_overlay_label), "O.%d", fps_overlay_value);
     } else if (fps_overlay_avg_frame_ms > 0.0) {
         int n = SDL_snprintf(fps_overlay_label, sizeof(fps_overlay_label),
                      "%2d U:%4.1f(T%4.1f G%4.1f S%4.1f D%4.1f[t%4.1f s%4.1f]) R:%4.1f(r%4.1f) =%5.1f",
@@ -9180,7 +9180,7 @@ static void publish_fps_overlay_label(void) {
             }
         }
     } else {
-        SDL_snprintf(fps_overlay_label, sizeof(fps_overlay_label), "%d FPS", fps_overlay_value);
+        SDL_snprintf(fps_overlay_label, sizeof(fps_overlay_label), "O.%d", fps_overlay_value);
     }
     if (fbdev_presenter_enabled) {
         FBDevPresenter_SetFPSOverlayText(fps_overlay_label);

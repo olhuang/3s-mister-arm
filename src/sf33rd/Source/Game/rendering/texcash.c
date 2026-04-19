@@ -174,6 +174,13 @@ void init_texcash_1st() {
         mts_ok[i].min32 = 0x7FFF;
         mts_ok[i].key0 = 0;
         mts_ok[i].key1 = 0;
+        mts[i].active16_slots = NULL;
+        mts[i].active32_slots = NULL;
+        mts[i].active16_pos = NULL;
+        mts[i].active32_pos = NULL;
+        mts[i].active16_count = 0;
+        mts[i].active32_count = 0;
+        mts[i].ext_rebuild_needed = 0;
         mts[i].mode = -1;
     }
 }
@@ -182,7 +189,7 @@ void init_texcash_before_process() {
     s16 i;
 
     for (i = 1; i < 24; i++) {
-        if ((mts_ok[i].be) && (mts[i].ext)) {
+        if ((mts_ok[i].be) && (mts[i].ext) && (mts[i].ext_rebuild_needed)) {
             init_texcash_2nd(i);
         }
     }
@@ -261,6 +268,8 @@ void init_texcash_2nd(s16 ix) {
             cp->kazu += 1;
         }
     }
+
+    mts[ix].ext_rebuild_needed = 0;
 }
 
 void texture_cash_update() {
@@ -285,6 +294,7 @@ void texture_cash_update() {
                         }
 
                         update_with_tpu_free(&mts[num]);
+                        mts[num].ext_rebuild_needed = 1;
                     }
                 }
             } else {
@@ -397,6 +407,13 @@ void make_texcash_work(s16 ix) {
         mts[ix].mltgidx32 = (u32)page16 + mts_base[ix].gix;
         mts[ix].mltcshtime16 = mts_base[ix].life16;
         mts[ix].mltcshtime32 = mts_base[ix].life32;
+        mts[ix].active16_slots = NULL;
+        mts[ix].active32_slots = NULL;
+        mts[ix].active16_pos = NULL;
+        mts[ix].active32_pos = NULL;
+        mts[ix].active16_count = 0;
+        mts[ix].active32_count = 0;
+        mts[ix].ext_rebuild_needed = 0;
 
         if ((mts[ix].ext = ((mts_base[ix].mode & 0x2000) != 0))) {
             bc16 = mts_hash_bucket_count((u32)mts[ix].mltnum16);
@@ -443,6 +460,7 @@ void make_texcash_work(s16 ix) {
             SDL_zerop(mts[ix].cpat);
             SDL_zerop(mts[ix].tpf);
             SDL_zerop(mts[ix].tpu);
+            mts[ix].ext_rebuild_needed = 1;
             init_texcash_2nd(ix);
         } else {
             bc16 = mts_hash_bucket_count((u32)mts[ix].mltnum16);
@@ -451,6 +469,10 @@ void make_texcash_work(s16 ix) {
                      sizeof(MtsCacheIndex) * 2 +
                      (bc16 * sizeof(u16)) +
                      (bc32 * sizeof(u16)) +
+                     (mts[ix].mltnum16 * sizeof(u16)) +
+                     (mts[ix].mltnum32 * sizeof(u16)) +
+                     (mts[ix].mltnum16 * sizeof(u16)) +
+                     (mts[ix].mltnum32 * sizeof(u16)) +
                      (mts[ix].mltnum16 * sizeof(u16)) +
                      (mts[ix].mltnum32 * sizeof(u16));
             mts_ok[ix].key0 = Pull_ramcnt_key(memreq, mts_base[ix].type, 0, 0);
@@ -474,7 +496,14 @@ void make_texcash_work(s16 ix) {
             mts[ix].free16.slots = (u16*)adrs;
             adrs += mts[ix].mltnum16 * sizeof(u16);
             mts[ix].free32.slots = (u16*)adrs;
-            /* adrs += mts[ix].mltnum32 * sizeof(u16); -- not needed, last item */
+            adrs += mts[ix].mltnum32 * sizeof(u16);
+            mts[ix].active16_slots = (u16*)adrs;
+            adrs += mts[ix].mltnum16 * sizeof(u16);
+            mts[ix].active32_slots = (u16*)adrs;
+            adrs += mts[ix].mltnum32 * sizeof(u16);
+            mts[ix].active16_pos = (u16*)adrs;
+            adrs += mts[ix].mltnum16 * sizeof(u16);
+            mts[ix].active32_pos = (u16*)adrs;
             mts_hash_clear(mts[ix].hash16);
             mts_hash_clear(mts[ix].hash32);
             mts[ix].free16.top = -1;
@@ -490,6 +519,7 @@ void make_texcash_work(s16 ix) {
         mlt_obj_trans_init(&mts[ix], mts_base[ix].mode, (u8*)page16);
 
         if (mts[ix].ext) {
+            mts[ix].ext_rebuild_needed = 1;
             init_texcash_2nd(ix);
         }
 
@@ -536,11 +566,20 @@ void clear_texcash_work(s16 ix) {
             for (i = 0; i < mts[ix].mltnum32; i++)
                 mts[ix].free32.slots[i] = (u16)(mts[ix].mltnum32 - 1 - i);
         }
+        mts[ix].active16_count = 0;
+        mts[ix].active32_count = 0;
+        if (mts[ix].active16_pos) {
+            SDL_memset(mts[ix].active16_pos, 0xFF, mts[ix].mltnum16 * sizeof(u16));
+        }
+        if (mts[ix].active32_pos) {
+            SDL_memset(mts[ix].active32_pos, 0xFF, mts[ix].mltnum32 * sizeof(u16));
+        }
 
         if (mts[ix].ext) {
             SDL_zerop(mts[ix].cpat);
             SDL_zerop(mts[ix].tpf);
             SDL_zerop(mts[ix].tpu);
+            mts[ix].ext_rebuild_needed = 1;
             init_texcash_2nd(ix);
         }
 
@@ -569,6 +608,13 @@ void purge_texcash_work(s16 ix) {
     }
 
     ppgReleaseTextureHandle(&mts[ix].tex, -1);
+    mts[ix].active16_slots = NULL;
+    mts[ix].active32_slots = NULL;
+    mts[ix].active16_pos = NULL;
+    mts[ix].active32_pos = NULL;
+    mts[ix].active16_count = 0;
+    mts[ix].active32_count = 0;
+    mts[ix].ext_rebuild_needed = 0;
     mts_ok[ix].be = 0;
     mts_ok[ix].key0 = 0;
     mts_ok[ix].key1 = 0;

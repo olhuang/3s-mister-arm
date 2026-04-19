@@ -1527,8 +1527,15 @@ typedef struct {
     MtsCacheIndex* hash32;
     MtsFreeList free16;
     MtsFreeList free32;
+    u16* active16_slots;
+    u16* active32_slots;
+    u16* active16_pos;
+    u16* active32_pos;
+    s32 active16_count;
+    s32 active32_count;
     u8 id;
     u8 ext;
+    u8 ext_rebuild_needed;
     s16 mode;
 } MultiTexture;
 

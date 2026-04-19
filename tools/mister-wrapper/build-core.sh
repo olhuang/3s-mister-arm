@@ -7,6 +7,7 @@ OUTPUT_DIR="${OUTPUT_DIR:-${ROOT_DIR}/build/mister-wrapper-core}"
 BUILD_SRC_DIR="${OUTPUT_DIR}/src"
 PROJECT_NAME="${MISTER_WRAPPER_CORE_NAME:-3S-ARM}"
 CORE_SEED="${MISTER_WRAPPER_CORE_SEED:-menu}"
+TIMING_PROFILE="${MISTER_WRAPPER_CORE_TIMING_PROFILE:-default}"
 DOCKER_IMAGE="${MISTER_WRAPPER_CORE_IMAGE:-3s-mister-arm-wrapper-quartus17}"
 DOCKER_PLATFORM="${MISTER_WRAPPER_CORE_DOCKER_PLATFORM:-linux/amd64}"
 DOCKER_BUILD_SCRIPT="${ROOT_DIR}/tools/mister-wrapper/build-quartus-image.sh"
@@ -22,10 +23,10 @@ CONF_STR_TOKEN=""
 usage() {
     cat <<EOF
 Usage:
-  tools/mister-wrapper/build-core.sh [--seed menu] --check-env
-  tools/mister-wrapper/build-core.sh [--seed menu] --prepare-source
-  tools/mister-wrapper/build-core.sh [--seed menu] --build-image
-  tools/mister-wrapper/build-core.sh [--seed menu]
+  tools/mister-wrapper/build-core.sh [--seed menu] [--timing-profile default|all-ones|jt-house|jt-like-384] --check-env
+  tools/mister-wrapper/build-core.sh [--seed menu] [--timing-profile default|all-ones|jt-house|jt-like-384] --prepare-source
+  tools/mister-wrapper/build-core.sh [--seed menu] [--timing-profile default|all-ones|jt-house|jt-like-384] --build-image
+  tools/mister-wrapper/build-core.sh [--seed menu] [--timing-profile default|all-ones|jt-house|jt-like-384]
 
 Purpose:
   Build the minimal FPGA wrapper core that produces ${PROJECT_NAME}.rbf from the
@@ -36,6 +37,16 @@ Planned output:
 
 Default seed:
   ${CORE_SEED}
+
+Timing profiles:
+  default    Use the checked-in native-video timing constants.
+  all-ones   Patch native_video_timing.sv so H/V front porch, sync width,
+             and back porch are all set to 1 for test builds.
+  jt-house   Patch native_video_timing.sv to use the JT Shouse-style test
+             timing profile (288x224 active, 384x264 total).
+  jt-like-384
+             Keep 384x224 active but switch porch/sync distribution to a more
+             JT-like split while preserving the existing 495x264 totals.
 EOF
 }
 
@@ -63,6 +74,13 @@ require_base_tools() {
     have_command ruby || { echo "missing required command: ruby" >&2; return 1; }
     configure_seed || return 1
     [ -d "${SOURCE_DIR}" ] || { echo "missing pinned wrapper-core source (${CORE_SEED}): ${SOURCE_DIR}" >&2; return 1; }
+    case "${TIMING_PROFILE}" in
+        default|all-ones|jt-house|jt-like-384) ;;
+        *)
+            echo "unsupported timing profile: ${TIMING_PROFILE}" >&2
+            return 1
+            ;;
+    esac
 }
 
 quartus_available_locally() {
@@ -154,6 +172,72 @@ end
    "${TEMPLATE_BASENAME}" \
    "${CONF_STR_TOKEN}"
 
+    if [ "${TIMING_PROFILE}" = "all-ones" ]; then
+        ruby -e '
+path = ARGV[0]
+sv = File.read(path)
+
+{
+  "localparam H_FP     = 23;" => "localparam H_FP     = 1;",
+  "localparam H_SYNC   = 38;" => "localparam H_SYNC   = 1;",
+  "localparam H_BP     = 50;" => "localparam H_BP     = 1;",
+  "localparam H_TOTAL  = 495;   // 384+23+38+50" => "localparam H_TOTAL  = 387;   // 384+1+1+1",
+  "localparam V_FP     = 15;" => "localparam V_FP     = 1;",
+  "localparam V_SYNC   = 3;" => "localparam V_SYNC   = 1;",
+  "localparam V_BP     = 22;" => "localparam V_BP     = 1;",
+  "localparam V_TOTAL  = 264;   // 224+15+3+22" => "localparam V_TOTAL  = 227;   // 224+1+1+1"
+}.each do |from, to|
+  sv.sub!(from, to) or abort("failed to patch #{from.inspect} in #{path}")
+end
+
+File.write(path, sv)
+' "${BUILD_SRC_DIR}/rtl/native_video_timing.sv"
+    elif [ "${TIMING_PROFILE}" = "jt-house" ]; then
+        ruby -e '
+path = ARGV[0]
+sv = File.read(path)
+
+{
+  "localparam H_ACTIVE = 384;" => "localparam H_ACTIVE = 288;",
+  "localparam H_FP     = 23;" => "localparam H_FP     = 21;",
+  "localparam H_SYNC   = 38;" => "localparam H_SYNC   = 32;",
+  "localparam H_BP     = 50;" => "localparam H_BP     = 43;",
+  "localparam H_TOTAL  = 495;   // 384+23+38+50" => "localparam H_TOTAL  = 384;   // 288+21+32+43",
+  "localparam V_ACTIVE = 224;" => "localparam V_ACTIVE = 224;",
+  "localparam V_FP     = 15;" => "localparam V_FP     = 15;",
+  "localparam V_SYNC   = 3;" => "localparam V_SYNC   = 8;",
+  "localparam V_BP     = 22;" => "localparam V_BP     = 17;",
+  "localparam V_TOTAL  = 264;   // 224+15+3+22" => "localparam V_TOTAL  = 264;   // 224+15+8+17"
+}.each do |from, to|
+  sv.sub!(from, to) or abort("failed to patch #{from.inspect} in #{path}")
+end
+
+File.write(path, sv)
+' "${BUILD_SRC_DIR}/rtl/native_video_timing.sv"
+    elif [ "${TIMING_PROFILE}" = "jt-like-384" ]; then
+        ruby -e '
+path = ARGV[0]
+sv = File.read(path)
+
+{
+  "localparam H_ACTIVE = 384;" => "localparam H_ACTIVE = 384;",
+  "localparam H_FP     = 23;" => "localparam H_FP     = 21;",
+  "localparam H_SYNC   = 38;" => "localparam H_SYNC   = 32;",
+  "localparam H_BP     = 50;" => "localparam H_BP     = 58;",
+  "localparam H_TOTAL  = 495;   // 384+23+38+50" => "localparam H_TOTAL  = 495;   // 384+21+32+58",
+  "localparam V_ACTIVE = 224;" => "localparam V_ACTIVE = 224;",
+  "localparam V_FP     = 15;" => "localparam V_FP     = 15;",
+  "localparam V_SYNC   = 3;" => "localparam V_SYNC   = 8;",
+  "localparam V_BP     = 22;" => "localparam V_BP     = 17;",
+  "localparam V_TOTAL  = 264;   // 224+15+3+22" => "localparam V_TOTAL  = 264;   // 224+15+8+17"
+}.each do |from, to|
+  sv.sub!(from, to) or abort("failed to patch #{from.inspect} in #{path}")
+end
+
+File.write(path, sv)
+' "${BUILD_SRC_DIR}/rtl/native_video_timing.sv"
+    fi
+
 }
 
 build_project() {
@@ -199,6 +283,9 @@ build_project_in_docker() {
         --platform "${DOCKER_PLATFORM}" \
         -u "$(id -u):$(id -g)" \
         -e HOME=/tmp \
+        -e LANG=en_US.UTF-8 \
+        -e LC_ALL=en_US.UTF-8 \
+        -e LC_CTYPE=en_US.UTF-8 \
         "${docker_license_args[@]}" \
         -v "${ROOT_DIR}:${CONTAINER_ROOT}" \
         -w "${CONTAINER_BUILD_SRC_DIR}" \
@@ -222,6 +309,11 @@ while [ "$#" -gt 0 ]; do
             CORE_SEED="$2"
             shift 2
             ;;
+        --timing-profile)
+            [ "$#" -ge 2 ] || { echo "missing value for --timing-profile" >&2; exit 1; }
+            TIMING_PROFILE="$2"
+            shift 2
+            ;;
         --fast|--release)
             echo "note: $1 is no longer needed (fast settings are now the default)" >&2
             shift
@@ -242,6 +334,7 @@ if [ "${COMMAND}" = "--check-env" ]; then
     require_base_tools || exit 1
     mkdir -p "${OUTPUT_DIR}"
     echo "core_seed=${CORE_SEED}"
+    echo "timing_profile=${TIMING_PROFILE}"
     echo "source_dir=${SOURCE_DIR}"
     if [ -f "${UPSTREAM_FILE}" ]; then
         echo "upstream_metadata=${UPSTREAM_FILE}"

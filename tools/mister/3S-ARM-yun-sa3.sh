@@ -1,0 +1,7 @@
+#!/bin/sh
+set -eu
+
+export THIRDSARM_NATIVE_VIDEO=0
+export THIRDSARM_SCALE_MODE_STARTUP_OVERRIDE=nearest
+
+exec /media/fat/games/3s-arm/scripts/launch-osd.sh --test-enable --test-scene-preset yun-sa3-repeat-pressure

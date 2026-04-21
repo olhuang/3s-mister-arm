@@ -2647,12 +2647,30 @@ void FBDevPresenter_ApplyFPSOverlayToBuffer(Uint32* pixels, int width, int heigh
     const int glyph_w = 3 * scale;
     const int glyph_h = 5 * scale;
     const int char_gap = scale;
-    const int text_len = (int)SDL_strlen(fps_overlay_text);
-    if (text_len <= 0) {
+    int line_count = 1;
+    int max_line_len = 0;
+    int current_line_len = 0;
+    for (const char* cursor = fps_overlay_text; *cursor != '\0'; cursor++) {
+        if (*cursor == '\n') {
+            if (current_line_len > max_line_len) {
+                max_line_len = current_line_len;
+            }
+            current_line_len = 0;
+            line_count++;
+        } else {
+            current_line_len++;
+        }
+    }
+    if (current_line_len > max_line_len) {
+        max_line_len = current_line_len;
+    }
+    if (max_line_len <= 0) {
         return;
     }
 
-    const int text_w = (text_len * glyph_w) + ((text_len - 1) * char_gap);
+    const int line_gap = scale;
+    const int text_w = (max_line_len * glyph_w) + ((max_line_len - 1) * char_gap);
+    const int text_h = (line_count * glyph_h) + ((line_count - 1) * line_gap);
     const int safe_margin = SDL_max(4, scale * 2);
     const int bg_pad = SDL_max(1, scale);
 
@@ -2664,10 +2682,10 @@ void FBDevPresenter_ApplyFPSOverlayToBuffer(Uint32* pixels, int width, int heigh
     } else {
         /* Debug mode: bottom-center */
         layout.draw_x = SDL_max(0, (width - text_w) / 2 - bg_pad);
-        layout.draw_y = SDL_max(0, height - glyph_h - safe_margin - bg_pad);
+        layout.draw_y = SDL_max(0, height - text_h - safe_margin - bg_pad);
     }
     layout.width = SDL_min(text_w + 2 * bg_pad, width - layout.draw_x);
-    layout.height = SDL_min(glyph_h + 2 * bg_pad, height - layout.draw_y);
+    layout.height = SDL_min(text_h + 2 * bg_pad, height - layout.draw_y);
     layout.text_x = bg_pad;
     layout.text_y = bg_pad;
     layout.scale = scale;

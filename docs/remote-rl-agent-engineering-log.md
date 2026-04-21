@@ -768,6 +768,45 @@ Follow-up:
 - validate HP, super, stun, position, facing, round, and input labels against visible gameplay
 - fill out the rest of `RLObservationV1`, especially action-context fields, before closing Milestone 1
 
+### 2026-04-21: Fix RL Debug Overlay Multiline And Low-HP Percent
+
+Milestones:
+
+- Milestone 1: Compact observation builder
+
+Files changed:
+
+- `src/port/sdl/fbdev_presenter.c`
+- `src/rl/rl_observation.c`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+
+- fix the reported issue where MiSTer `RL Debug` only showed the first line of overlay text
+- avoid displaying `HP0` while the fighter still has visible remaining life
+
+Implementation notes:
+
+- updated `FBDevPresenter_ApplyFPSOverlayToBuffer()` to use the same multi-line text layout rules as the main fbdev overlay path
+- this closes the remaining single-line layout path that could still clip RL debug text to the first line
+- updated observation percent formatting so any positive HP value displays at least `1%`
+
+Validation:
+
+```sh
+tools/mister/build-game.sh --flavor telemetry
+```
+
+Result:
+
+- passed
+- package created at `build/mister-telemetry-package`
+
+Follow-up:
+
+- verify on MiSTer that `RL Debug` now shows all expected lines
+- verify that near-empty health now shows `HP1` instead of `HP0`
+
 ## Milestone Notes
 
 ### Milestone 0A: Baseline Match-Flow Confirmation Spike

@@ -24,7 +24,10 @@ static int ratio_percent(s16 value, s16 max_value) {
     }
 
     const int clamped = value < 0 ? 0 : value;
-    const int pct = (clamped * 100) / max_value;
+    int pct = (clamped * 100) / max_value;
+    if (clamped > 0 && pct == 0) {
+        pct = 1;
+    }
     if (pct < 0) {
         return 0;
     }

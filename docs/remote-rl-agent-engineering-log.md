@@ -30,7 +30,7 @@ Project rules:
 
 Last updated: 2026-04-21
 
-- [ ] Milestone 0A: Baseline match-flow confirmation spike
+- [x] Milestone 0A: Baseline match-flow confirmation spike
 - [ ] Milestone 0B: Facing and remap validation micro-spike
 - [ ] Milestone 0C: Local fake agent spike
 - [ ] Milestone 1: Compact observation builder
@@ -394,7 +394,48 @@ Result:
 
 Follow-up:
 
-- continue Milestone 0A validation for round-end, winner-flow, and reset automation behavior
+- use Milestone 0A as the baseline foundation for the next scripted local fake-agent work
+
+### 2026-04-21: Milestone 0A Runtime Validation Matrix Passed
+
+Milestones:
+
+- Milestone 0A: Baseline match-flow confirmation spike
+
+Files changed:
+
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+
+- record that baseline runtime validation has completed successfully on MiSTer hardware
+- close Milestone 0A with an explicit test matrix instead of a generic "seems okay" note
+
+Implementation notes:
+
+- validation was performed using the current baseline mode where the selected RL side remains on player-input routing and the opposite side remains on CPU routing
+- this is still a baseline flow test, not a scripted or remote-agent control test
+
+Validation:
+
+```text
+RL player 1: player wins a round
+RL player 1: CPU wins a round
+RL player 2: player wins a round
+RL player 2: CPU wins a round
+```
+
+Result:
+
+- passed
+- `MODE_VERSUS + rl_session_active` works for RL player 1 and RL player 2
+- round end, winner flow, and next-round reset behaved correctly in all four tested scenarios
+- no blocking reason was found to fall back to a training-based baseline
+
+Follow-up:
+
+- move to Milestone 0B for `rl_flag` and delayed direction remap validation
 
 ## Milestone Notes
 
@@ -413,11 +454,15 @@ Implementation notes:
 Validation notes:
 
 - telemetry build passed on 2026-04-21
-- runtime round-flow validation still pending
+- runtime validation passed on MiSTer hardware for:
+  - RL player 1 with player win
+  - RL player 1 with CPU win
+  - RL player 2 with player win
+  - RL player 2 with CPU win
 
 Open questions:
 
-- exact round/winner/reset automation path
+- exact automation mechanism for unattended round cycling once local scripted control is added
 
 ### Milestone 0B: Facing And Remap Validation Micro-Spike
 

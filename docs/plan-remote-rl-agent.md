@@ -1177,7 +1177,7 @@ Tracking convention:
 
 Milestone index:
 
-- [ ] Milestone 0A: Baseline match-flow confirmation spike
+- [x] Milestone 0A: Baseline match-flow confirmation spike
 - [ ] Milestone 0B: Facing and remap validation micro-spike
 - [ ] Milestone 0C: Local fake agent spike
 - [ ] Milestone 1: Compact observation builder
@@ -1191,27 +1191,27 @@ Milestone index:
 
 Status:
 
-- [ ] Milestone complete
+- [x] Milestone complete
 
 Goal:
 
-- [ ] Confirm that `MODE_VERSUS + rl_session_active` is a workable base flow
+- [x] Confirm that `MODE_VERSUS + rl_session_active` is a workable base flow
 
 Tasks:
 
-- [ ] Force one side to player-controlled input and the other to CPU through `Operator_Status` / `wk->wu.operator`
-- [ ] Run a short end-to-end spike in `MODE_VERSUS`
-- [ ] Verify round start behavior
-- [ ] Verify round end behavior
-- [ ] Verify winner flow behavior
-- [ ] Verify reset behavior
-- [ ] Verify no blocking regressions require falling back to a training-based baseline
+- [x] Force one side to player-controlled input and the other to CPU through `Operator_Status` / `wk->wu.operator`
+- [x] Run a short end-to-end spike in `MODE_VERSUS`
+- [x] Verify round start behavior
+- [x] Verify round end behavior
+- [x] Verify winner flow behavior
+- [x] Verify reset behavior
+- [x] Verify no blocking regressions require falling back to a training-based baseline
 
 Done when:
 
-- [ ] The match runs with one remote-agent slot and one CPU slot
-- [ ] Round and winner flow behave predictably enough to automate
-- [ ] Training flow is not needed as the initial baseline
+- [x] The match runs with one remote-agent slot and one CPU slot
+- [x] Round and winner flow behave predictably enough to automate
+- [x] Training flow is not needed as the initial baseline
 
 ### Milestone 0B: Facing and remap validation micro-spike
 

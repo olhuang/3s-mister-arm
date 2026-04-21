@@ -157,6 +157,9 @@ static void verify_configuration(Configuration* configuration) {
     if (configuration->remote_rl_agent.player != 1 && configuration->remote_rl_agent.player != 2) {
         error_out_with_code("--rl-player must be 1 or 2.", EXIT_CODE_RUNTIME_ERROR);
     }
+    if (configuration->remote_rl_agent.test_movement < 0 || configuration->remote_rl_agent.test_movement > 3) {
+        error_out_with_code("--rl-movement must be between 0 and 3.", EXIT_CODE_RUNTIME_ERROR);
+    }
 
 #if ENABLE_NETPLAY
     {
@@ -242,6 +245,13 @@ void read_args(int argc, const char* argv[], Configuration* configuration) {
                     "rl-opponent-human",
                     &configuration->remote_rl_agent.human_opponent,
                     "Route the non-agent side through player input instead of CPU for RL direction validation.",
+                    NULL,
+                    0,
+                    0),
+        OPT_INTEGER(0,
+                    "rl-movement",
+                    &configuration->remote_rl_agent.test_movement,
+                    "Fixed RL validation movement: 0=forward, 1=back, 2=jump-forward, 3=down-back.",
                     NULL,
                     0,
                     0),

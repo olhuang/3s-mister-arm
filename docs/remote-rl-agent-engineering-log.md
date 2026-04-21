@@ -437,7 +437,7 @@ Follow-up:
 
 - move to Milestone 0B for `rl_flag` and delayed direction remap validation
 
-### 2026-04-21: Add RL Opponent Human Mode For Milestone 0B
+### 2026-04-21: Add RL Settings And Scripted Movement For Milestone 0B
 
 Milestones:
 
@@ -460,17 +460,22 @@ Files changed:
 Purpose:
 
 - support a human-controlled non-agent side during Milestone 0B so facing/remap checks are easier to reproduce than against live CPU behavior
-- extend the RL debug overlay with concise opponent-routing information
+- extend the RL debug overlay with concise opponent-routing and scripted-movement information
+- group RL-related OSD settings under one `RL Settings` submenu
 
 Implementation notes:
 
 - added `--rl-opponent-human` on the game side and `rl-opponent-mode = cpu|human` on the MiSTer wrapper side
-- added `RL Opponent (Restart)` to the MiSTer OSD so 0B can be tested without console-only launch arguments
+- moved `RL Agent (Restart)` and `RL Opponent (Restart)` into a new MiSTer OSD `RL Settings` submenu
+- added `RL Movement` with `Forward`, `Back`, `Jump Forward`, and `Down Back`
 - `RLSession_ApplyVersusOperatorSetup()` now routes the non-agent side to CPU or human input according to the RL opponent mode
+- `RLSession_ApplyScriptedMovementToBuffers()` writes the selected fixed relative movement into the RL side's raw input buffer after `keyConvert()` and before input latch
+- scripted movement is intentionally active only when RL is enabled and the non-agent side is routed to human input
 - `rl-debug` overlay now shows concise routing codes:
   - `P0`: RL agent disabled
   - `P1C` / `P2C`: RL player 1 / 2 with CPU opponent
   - `P1H` / `P2H`: RL player 1 / 2 with human opponent
+  - `:F`, `:B`, `:JF`, or `:DB`: active scripted movement in human-opponent validation mode
 
 Validation:
 
@@ -484,11 +489,13 @@ Result:
 - passed
 - game package built successfully at `build/mister-telemetry-package`
 - HPS wrapper built successfully at `build/mister-wrapper-hps/MiSTer_3S-ARM`
-- FPGA core / `.rbf` rebuild is still required before the new `RL Opponent (Restart)` OSD menu item appears on MiSTer hardware
+- FPGA core / `.rbf` rebuild is still required before the new `RL Settings` submenu appears on MiSTer hardware
 
 Follow-up:
 
+- verify on MiSTer that `RL Settings` contains `RL Agent`, `RL Opponent`, and `RL Movement`
 - verify on MiSTer that `RL Opponent (Restart)` correctly switches the non-agent side between CPU and human input
+- verify each scripted movement remaps correctly for both facings
 - use the new human-opponent mode to run the Milestone 0B facing/remap spot checks
 
 ## Milestone Notes

@@ -16,6 +16,7 @@
 #include "port/sdl/sdl_message_renderer.h"
 #include "port/sdl/sdl_pad.h"
 #include "port/sound/adx.h"
+#include "rl/rl_session.h"
 #include "sf33rd/AcrSDK/ps2/foundaps2.h"
 #include "sf33rd/Source/Game/effect/effect.h"
 #include "sf33rd/Source/Game/com/com_sub.h"
@@ -9163,7 +9164,15 @@ static void publish_fps_overlay_label(void) {
     }
 
     if (fps_overlay_mode == FPS_OVERLAY_RL_DEBUG) {
-        SDL_snprintf(fps_overlay_label, sizeof(fps_overlay_label), "%s", rl_agent_label);
+        if (configuration.remote_rl_agent.enabled && configuration.remote_rl_agent.human_opponent) {
+            SDL_snprintf(fps_overlay_label,
+                         sizeof(fps_overlay_label),
+                         "%s:%s",
+                         rl_agent_label,
+                         RLSession_TestMovementLabel());
+        } else {
+            SDL_snprintf(fps_overlay_label, sizeof(fps_overlay_label), "%s", rl_agent_label);
+        }
         if (fbdev_presenter_enabled) {
             FBDevPresenter_SetFPSOverlayText(fps_overlay_label);
         }

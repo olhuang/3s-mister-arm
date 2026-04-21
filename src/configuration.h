@@ -28,6 +28,7 @@ typedef struct RemoteRLAgentConfiguration {
     bool enabled;
     int player;
     bool human_opponent;
+    int test_movement;
 } RemoteRLAgentConfiguration;
 
 #if ENABLE_PERF_TELEMETRY

@@ -118,6 +118,7 @@ Notes:
 - `P0` means RL agent is disabled.
 - `P1C` / `P2C` mean RL routing is active for player 1 / player 2 and the opponent side is still CPU-controlled.
 - `P1H` / `P2H` mean RL routing is active for player 1 / player 2 and the opponent side is routed through human input for facing/remap validation.
+- When human-opponent validation is active, the current scripted movement is appended as `F`, `B`, `JF`, or `DB`.
 
 ### `rl-agent-player`
 
@@ -147,6 +148,22 @@ Notes:
 - `cpu` keeps the non-agent side on the normal CPU path.
 - `human` keeps the non-agent side on player-input routing, which is useful for Milestone 0B facing/remap validation.
 - Changes take effect on the next wrapper `Restart`; they do not hot-switch the currently running match.
+
+### `rl-movement`
+
+Controls the fixed validation movement used by the RL side when `rl-opponent-mode = human`.
+
+Possible values:
+- `forward`
+- `back`
+- `jump-forward`
+- `down-back`
+
+Notes:
+- This key is primarily written by the MiSTer OSD menu entry `RL Movement`.
+- The movement is relative to the RL-controlled character's current facing and is remapped to raw `SWKey` direction bits immediately before input latch.
+- The movement override is only active when RL agent mode is enabled and the RL opponent is set to `human`.
+- This is a Milestone 0B validation helper, not the final remote-policy action path.
 
 ### `video-driver-order`
 

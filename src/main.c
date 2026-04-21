@@ -6,6 +6,7 @@
 #include "netplay/netplay.h"
 #include "port/sdl/sdl_app.h"
 #include "port/sdl/sdl_game_renderer.h"
+#include "rl/rl_session.h"
 #include "sf33rd/AcrSDK/common/mlPAD.h"
 #include "sf33rd/AcrSDK/ps2/flps2debug.h"
 #include "sf33rd/AcrSDK/ps2/flps2etc.h"
@@ -87,6 +88,7 @@ Configuration configuration = {
             .enabled = false,
             .player = 1,
             .human_opponent = false,
+            .test_movement = 0,
         },
 };
 
@@ -438,6 +440,7 @@ static void game_step_0() {
     appSetupTempPriority();
     flPADGetALL();
     keyConvert();
+    RLSession_ApplyScriptedMovementToBuffers();
 
 #if DEBUG
     if (configuration.test.enabled) {

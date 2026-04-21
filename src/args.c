@@ -238,6 +238,13 @@ void read_args(int argc, const char* argv[], Configuration* configuration) {
                     NULL,
                     0,
                     0),
+        OPT_BOOLEAN(0,
+                    "rl-opponent-human",
+                    &configuration->remote_rl_agent.human_opponent,
+                    "Route the non-agent side through player input instead of CPU for RL direction validation.",
+                    NULL,
+                    0,
+                    0),
 #if ENABLE_PERF_TELEMETRY
         OPT_GROUP("Performance"),
         OPT_INTEGER(0,

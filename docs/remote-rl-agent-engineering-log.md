@@ -437,6 +437,60 @@ Follow-up:
 
 - move to Milestone 0B for `rl_flag` and delayed direction remap validation
 
+### 2026-04-21: Add RL Opponent Human Mode For Milestone 0B
+
+Milestones:
+
+- Milestone 0B: Facing and remap validation micro-spike
+
+Files changed:
+
+- `src/configuration.h`
+- `src/main.c`
+- `src/args.c`
+- `src/rl/rl_session.h`
+- `src/rl/rl_session.c`
+- `src/port/sdl/sdl_app.c`
+- `vendor/Menu_MiSTer/menu.sv`
+- `vendor/Main_MiSTer/thirdsarm_wrapper.cpp`
+- `docs/config.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+
+- support a human-controlled non-agent side during Milestone 0B so facing/remap checks are easier to reproduce than against live CPU behavior
+- extend the RL debug overlay with concise opponent-routing information
+
+Implementation notes:
+
+- added `--rl-opponent-human` on the game side and `rl-opponent-mode = cpu|human` on the MiSTer wrapper side
+- added `RL Opponent (Restart)` to the MiSTer OSD so 0B can be tested without console-only launch arguments
+- `RLSession_ApplyVersusOperatorSetup()` now routes the non-agent side to CPU or human input according to the RL opponent mode
+- `rl-debug` overlay now shows concise routing codes:
+  - `P0`: RL agent disabled
+  - `P1C` / `P2C`: RL player 1 / 2 with CPU opponent
+  - `P1H` / `P2H`: RL player 1 / 2 with human opponent
+
+Validation:
+
+```sh
+/home/olhua/src/3s-mister-arm/tools/mister/build-game.sh --flavor telemetry
+/home/olhua/src/3s-mister-arm/tools/mister-wrapper/build-hps.sh
+```
+
+Result:
+
+- passed
+- game package built successfully at `build/mister-telemetry-package`
+- HPS wrapper built successfully at `build/mister-wrapper-hps/MiSTer_3S-ARM`
+- FPGA core / `.rbf` rebuild is still required before the new `RL Opponent (Restart)` OSD menu item appears on MiSTer hardware
+
+Follow-up:
+
+- verify on MiSTer that `RL Opponent (Restart)` correctly switches the non-agent side between CPU and human input
+- use the new human-opponent mode to run the Milestone 0B facing/remap spot checks
+
 ## Milestone Notes
 
 ### Milestone 0A: Baseline Match-Flow Confirmation Spike

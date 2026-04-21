@@ -7,7 +7,8 @@
 
 bool RLSession_IsActive();
 s16 RLSession_AgentPlayerIndex();
-s16 RLSession_CPUPlayerIndex();
+s16 RLSession_OpponentPlayerIndex();
+bool RLSession_OpponentUsesHumanInput();
 void RLSession_ApplyVersusOperatorSetup();
 
 #endif

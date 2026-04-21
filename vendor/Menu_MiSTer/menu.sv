@@ -279,6 +279,7 @@ localparam CONF_STR = {
 	"MENU;UART31250,MIDI;",
 	"O[13],Game Mode,Console,Arcade;",
 	"O[48:47],RL Agent (Restart),Off,Player 1,Player 2;",
+	"O[29],RL Opponent (Restart),CPU,Human;",
 	"O[24],Hold to Pause,Off,On;",
 	"O[11:10],FPS Counter,Off,FPS,Debug,RL Debug;",
 	"T[23],Button Check;",

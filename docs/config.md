@@ -114,7 +114,10 @@ Notes:
 - On MiSTer fbdev output, the overlay is drawn at the bottom-center of the active picture area so it stays away from overscan-prone corners.
 - The overlay is opt-in and uses a lightweight cached label update path instead of perf capture telemetry.
 - On MiSTer, valid values are `off`, `fps`, `debug`, and `rl-debug`.
-- `rl-debug` is a lightweight RL-specific overlay mode intended for remote-agent bring-up. In v1 it shows the effective RL agent slot state as `P0`, `P1`, or `P2`.
+- `rl-debug` is a lightweight RL-specific overlay mode intended for remote-agent bring-up. In v1 it shows concise RL routing state such as `P0`, `P1C`, `P1H`, `P2C`, or `P2H`.
+- `P0` means RL agent is disabled.
+- `P1C` / `P2C` mean RL routing is active for player 1 / player 2 and the opponent side is still CPU-controlled.
+- `P1H` / `P2H` mean RL routing is active for player 1 / player 2 and the opponent side is routed through human input for facing/remap validation.
 
 ### `rl-agent-player`
 
@@ -129,6 +132,20 @@ Notes:
 - This key is primarily written by the MiSTer OSD menu entry `RL Agent (Restart)`.
 - `1` means the wrapper relaunches the game with `--rl-agent --rl-player 1`.
 - `2` means the wrapper relaunches the game with `--rl-agent --rl-player 2`.
+- Changes take effect on the next wrapper `Restart`; they do not hot-switch the currently running match.
+
+### `rl-opponent-mode`
+
+Controls how the non-agent side is routed when the MiSTer wrapper launches the RL baseline session.
+
+Possible values:
+- `cpu`
+- `human`
+
+Notes:
+- This key is primarily written by the MiSTer OSD menu entry `RL Opponent (Restart)`.
+- `cpu` keeps the non-agent side on the normal CPU path.
+- `human` keeps the non-agent side on player-input routing, which is useful for Milestone 0B facing/remap validation.
 - Changes take effect on the next wrapper `Restart`; they do not hot-switch the currently running match.
 
 ### `video-driver-order`

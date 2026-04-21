@@ -130,6 +130,13 @@ enum RuntimeRLAgentMenu
 	kRLAgentMenuCount
 };
 
+enum RuntimeRLOpponentMenu
+{
+	kRLOpponentCPU = 0,
+	kRLOpponentHuman,
+	kRLOpponentMenuCount
+};
+
 enum RuntimeAspectRatioMenu
 {
 	kAspectRatio4x3 = 0,
@@ -156,6 +163,7 @@ int g_wrapper_arm_clock_active = kArmClockStock;
 int g_wrapper_game_mode = kGameModeConsole;
 int g_wrapper_hold_to_pause = kHoldToPauseOff;
 int g_wrapper_rl_agent_mode = kRLAgentOff;
+int g_wrapper_rl_opponent_mode = kRLOpponentCPU;
 int g_wrapper_aspect_ratio = kAspectRatio4x3;
 int g_wrapper_h_position = 0;
 int g_wrapper_v_position = 0;
@@ -194,6 +202,7 @@ static const RuntimeConfigDefaultEntry kRuntimeGeneratedDefaults[] = {
 	{ "software-frame-mode", "on" },
 	{ "super-effect-quality", "cached-bg" },
 	{ "show-fps", "false" },
+	{ "rl-opponent-mode", "cpu" },
 	{ "video-driver-order", "dummy" },
 	{ "render-driver-order", "software" },
 	{ "game-mode", "console" },
@@ -2069,6 +2078,99 @@ bool write_runtime_rl_agent_default(int mode)
 	return true;
 }
 
+int read_runtime_rl_opponent_default()
+{
+	char value[64] = {};
+	if (!read_runtime_config_value("rl-opponent-mode", value, sizeof(value))) return kRLOpponentCPU;
+
+	if (!strcasecmp(value, "human")) return kRLOpponentHuman;
+	return kRLOpponentCPU;
+}
+
+static const char *runtime_rl_opponent_config_value(int mode)
+{
+	switch (mode)
+	{
+	case kRLOpponentHuman: return "human";
+	default: return "cpu";
+	}
+}
+
+static const char *runtime_rl_opponent_mode_name(int mode)
+{
+	switch (mode)
+	{
+	case kRLOpponentHuman: return "human";
+	default: return "cpu";
+	}
+}
+
+bool write_runtime_rl_opponent_default(int mode)
+{
+	char path[PATH_MAX] = {};
+	char temp_path[PATH_MAX] = {};
+	snprintf(path, sizeof(path), "%s/config", kRuntimeHome);
+	snprintf(temp_path, sizeof(temp_path), "%s/config.tmp", kRuntimeHome);
+
+	FILE *in = fopen(path, "r");
+	FILE *out = fopen(temp_path, "w");
+	if (!out)
+	{
+		if (in) fclose(in);
+		return false;
+	}
+
+	bool wrote_value = false;
+	char line[256] = {};
+	if (in)
+	{
+		while (fgets(line, sizeof(line), in))
+		{
+			char inspect[256] = {};
+			snprintf(inspect, sizeof(inspect), "%s", line);
+
+			char *cursor = inspect;
+			while (*cursor && isspace((unsigned char)*cursor)) cursor++;
+			if (*cursor == '#')
+			{
+				fputs(line, out);
+				continue;
+			}
+
+			char *equals = strchr(cursor, '=');
+			if (equals)
+			{
+				*equals = 0;
+				trim_in_place(cursor);
+				if (!strcasecmp(cursor, "rl-opponent-mode"))
+				{
+					fprintf(out, "rl-opponent-mode = %s\n", runtime_rl_opponent_config_value(mode));
+					wrote_value = true;
+					continue;
+				}
+			}
+
+			fputs(line, out);
+		}
+
+		fclose(in);
+	}
+
+	if (!wrote_value)
+	{
+		fprintf(out, "\nrl-opponent-mode = %s\n", runtime_rl_opponent_config_value(mode));
+	}
+
+	if (fclose(out) != 0) return false;
+	if (rename(temp_path, path) != 0)
+	{
+		remove(temp_path);
+		return false;
+	}
+
+	return true;
+}
+
 void append_runtime_launch_args(std::vector<char *> &child_argv, int argc, char *argv[])
 {
 	for (int i = 2; i < argc; ++i)
@@ -2080,6 +2182,7 @@ void append_runtime_launch_args(std::vector<char *> &child_argv, int argc, char 
 			if (i + 1 < argc) i++;
 			continue;
 		}
+		if (!strcmp(argv[i], "--rl-opponent-human")) continue;
 
 		child_argv.push_back(argv[i]);
 	}
@@ -2089,6 +2192,10 @@ void append_runtime_launch_args(std::vector<char *> &child_argv, int argc, char 
 		child_argv.push_back(const_cast<char *>("--rl-agent"));
 		child_argv.push_back(const_cast<char *>("--rl-player"));
 		child_argv.push_back(const_cast<char *>(g_wrapper_rl_agent_mode == kRLAgentPlayer1 ? "1" : "2"));
+		if (g_wrapper_rl_opponent_mode == kRLOpponentHuman)
+		{
+			child_argv.push_back(const_cast<char *>("--rl-opponent-human"));
+		}
 	}
 }
 
@@ -2105,6 +2212,7 @@ void poll_status_changes(pid_t child)
 	static uint32_t prev_game_mode = 0xFFFFFFFF;
 	static uint32_t prev_hold_to_pause = 0xFFFFFFFF;
 	static uint32_t prev_rl_agent = 0xFFFFFFFF;
+	static uint32_t prev_rl_opponent = 0xFFFFFFFF;
 	static uint32_t prev_aspect_ratio = 0xFFFFFFFF;
 	static uint32_t prev_h_position = 0xFFFFFFFF;
 	static uint32_t prev_v_position = 0xFFFFFFFF;
@@ -2226,6 +2334,18 @@ void poll_status_changes(pid_t child)
 		}
 	}
 
+	uint32_t rl_opponent = user_io_status_get("[29]");
+	if (rl_opponent != prev_rl_opponent) {
+		prev_rl_opponent = rl_opponent;
+		int target = (int)rl_opponent;
+		if (target >= kRLOpponentMenuCount) target = kRLOpponentCPU;
+		if (target != g_wrapper_rl_opponent_mode) {
+			write_runtime_rl_opponent_default(target);
+			g_wrapper_rl_opponent_mode = target;
+			// Opponent mode is a launch-time RL setting. Persist now and apply on restart.
+		}
+	}
+
 	uint32_t aspect_ratio = user_io_status_get("[12]");
 	if (aspect_ratio != prev_aspect_ratio) {
 		prev_aspect_ratio = aspect_ratio;
@@ -2321,6 +2441,7 @@ void poll_status_changes(pid_t child)
 		user_io_status_set("[13]", 0);    // Game Mode = Console
 		user_io_status_set("[24]", 0);    // Hold to Pause = Off
 		user_io_status_set("[48:47]", 0); // RL Agent = Off
+		user_io_status_set("[29]", 0);    // RL Opponent = CPU
 		user_io_status_set("[28:25]", 0); // H Position = 0
 		user_io_status_set("[46:43]", 0); // V Position = 0
 		user_io_status_set("[32]", 0);    // Vertical Crop = Disabled
@@ -2335,6 +2456,7 @@ void poll_status_changes(pid_t child)
 		prev_game_mode = 0xFFFFFFFF;
 		prev_hold_to_pause = 0xFFFFFFFF;
 		prev_rl_agent = 0xFFFFFFFF;
+		prev_rl_opponent = 0xFFFFFFFF;
 		prev_aspect_ratio = 0xFFFFFFFF;
 		prev_h_position = 0xFFFFFFFF;
 		prev_v_position = 0xFFFFFFFF;
@@ -2674,6 +2796,7 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 	g_wrapper_game_mode = read_runtime_game_mode_default();
 	g_wrapper_hold_to_pause = read_runtime_hold_to_pause_default();
 	g_wrapper_rl_agent_mode = read_runtime_rl_agent_default();
+	g_wrapper_rl_opponent_mode = read_runtime_rl_opponent_default();
 	g_wrapper_aspect_ratio = read_runtime_aspect_ratio_default();
 	g_wrapper_h_position = read_runtime_h_position_default();
 	g_wrapper_v_position = read_runtime_v_position_default();
@@ -2739,6 +2862,7 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 		user_io_status_set("[13]", (uint32_t)g_wrapper_game_mode);
 		user_io_status_set("[24]", (uint32_t)g_wrapper_hold_to_pause);
 		user_io_status_set("[48:47]", (uint32_t)g_wrapper_rl_agent_mode);
+		user_io_status_set("[29]", (uint32_t)g_wrapper_rl_opponent_mode);
 		user_io_status_set("[28:25]", (uint32_t)g_wrapper_h_position);
 		user_io_status_set("[46:43]", (uint32_t)g_wrapper_v_position);
 		user_io_status_set("[32]", (uint32_t)g_wrapper_vertical_crop);
@@ -2757,6 +2881,7 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 	write_log_line(wrapper_log, "active_vt=tty%d", active_vt);
 	write_log_line(wrapper_log, "user_io_init_mode=%s", g_wrapper_used_full_user_io_init ? "full" : "slim");
 	write_log_line(wrapper_log, "rl_agent_mode=%s", runtime_rl_agent_mode_name(g_wrapper_rl_agent_mode));
+	write_log_line(wrapper_log, "rl_opponent_mode=%s", runtime_rl_opponent_mode_name(g_wrapper_rl_opponent_mode));
 	write_log_line(wrapper_log, "volume_init global=%d core=%d filter=%d", get_volume(), get_core_volume(), audio_filter_en());
 
 	int validation_rc = validate_runtime_paths(wrapper_log, active_vt, saved_stdout, saved_stderr);
@@ -2947,6 +3072,7 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 		               kRuntimeScaleModeEnv,
 		               getenv(kRuntimeScaleModeEnv) ? getenv(kRuntimeScaleModeEnv) : "");
 		write_log_line(wrapper_log, "runtime_rl_agent_mode=%s", runtime_rl_agent_mode_name(g_wrapper_rl_agent_mode));
+		write_log_line(wrapper_log, "runtime_rl_opponent_mode=%s", runtime_rl_opponent_mode_name(g_wrapper_rl_opponent_mode));
 
 		if (!forced)
 		{
@@ -3048,6 +3174,7 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 			user_io_status_set("[13]", (uint32_t)g_wrapper_game_mode);
 			user_io_status_set("[24]", (uint32_t)g_wrapper_hold_to_pause);
 			user_io_status_set("[48:47]", (uint32_t)g_wrapper_rl_agent_mode);
+			user_io_status_set("[29]", (uint32_t)g_wrapper_rl_opponent_mode);
 			user_io_status_set("[28:25]", (uint32_t)g_wrapper_h_position);
 			user_io_status_set("[46:43]", (uint32_t)g_wrapper_v_position);
 			user_io_status_set("[32]", (uint32_t)g_wrapper_vertical_crop);

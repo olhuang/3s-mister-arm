@@ -1225,6 +1225,8 @@ Goal:
 
 Tasks:
 
+- [ ] Add a temporary RL validation path that can keep the non-agent side on human input for deterministic facing/remap testing
+- [ ] Expose concise RL debug overlay state such as `P1C`, `P1H`, `P2C`, and `P2H` so the current routing is visible during spot checks
 - [ ] Verify `plw[i].wu.rl_flag == 0` means facing world-right and maps to `self_facing_sign = +1`
 - [ ] Verify `plw[i].wu.rl_flag == 1` means facing world-left and maps to `self_facing_sign = -1`
 - [ ] Verify `opp_in_front` matches on-screen relative positioning across side switches

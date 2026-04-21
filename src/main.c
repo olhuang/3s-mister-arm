@@ -86,6 +86,7 @@ Configuration configuration = {
         {
             .enabled = false,
             .player = 1,
+            .human_opponent = false,
         },
 };
 

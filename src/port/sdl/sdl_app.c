@@ -9155,7 +9155,11 @@ static void publish_fps_overlay_label(void) {
     }
 
     if (configuration.remote_rl_agent.enabled) {
-        rl_agent_label = (configuration.remote_rl_agent.player == 2) ? "P2" : "P1";
+        if (configuration.remote_rl_agent.player == 2) {
+            rl_agent_label = configuration.remote_rl_agent.human_opponent ? "P2H" : "P2C";
+        } else {
+            rl_agent_label = configuration.remote_rl_agent.human_opponent ? "P1H" : "P1C";
+        }
     }
 
     if (fps_overlay_mode == FPS_OVERLAY_RL_DEBUG) {

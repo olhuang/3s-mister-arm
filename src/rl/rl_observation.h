@@ -45,6 +45,7 @@ typedef struct RLObservationV1 {
 void RLObservation_OnFrameEnd();
 const RLObservationV1* RLObservation_GetLatest();
 u16 RLObservation_GetDebugInputSwKey();
+u16 RLObservation_GetDebugDisplayMask();
 void RLObservation_FormatDebugOverlay(char* out, size_t out_size, const char* session_label);
 
 #endif

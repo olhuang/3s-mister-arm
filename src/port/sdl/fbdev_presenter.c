@@ -1160,12 +1160,12 @@ static bool overlay_input_token_pressed(int index, Uint16 swkey) {
     case 1: return (swkey & SWK_DOWN) != 0;
     case 2: return (swkey & SWK_LEFT) != 0;
     case 3: return (swkey & SWK_RIGHT) != 0;
-    case 4: return (swkey & SWK_WEST) != 0;
-    case 5: return (swkey & SWK_NORTH) != 0;
-    case 6: return (swkey & SWK_RIGHT_SHOULDER) != 0;
-    case 7: return (swkey & SWK_LEFT_SHOULDER) != 0;
-    case 8: return (swkey & SWK_SOUTH) != 0;
-    case 9: return (swkey & SWK_EAST) != 0;
+    case 4: return (swkey & 0x0010) != 0;
+    case 5: return (swkey & 0x0020) != 0;
+    case 6: return (swkey & 0x0040) != 0;
+    case 7: return (swkey & 0x0100) != 0;
+    case 8: return (swkey & 0x0200) != 0;
+    case 9: return (swkey & 0x0400) != 0;
     default: return false;
     }
 }

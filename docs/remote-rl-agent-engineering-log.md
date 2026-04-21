@@ -855,6 +855,47 @@ Follow-up:
 - verify on MiSTer that line 1 shows raw HP values matching the visible life bar
 - verify on MiSTer that the fixed input legend is always visible and active buttons turn red at the right frames
 
+### 2026-04-21: Fix RL Debug Button Labels To Use Logical Attack Mapping
+
+Milestones:
+
+- Milestone 1: Compact observation builder
+
+Files changed:
+
+- `src/rl/rl_observation.h`
+- `src/rl/rl_observation.c`
+- `src/port/sdl/sdl_app.c`
+- `src/port/sdl/fbdev_presenter.c`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+
+- fix the reported issue where `LK`, `MK`, and `HK` appeared shifted in the RL debug input legend
+- make the attack labels reflect gameplay button meaning instead of raw physical `SWKey` slot ordering
+
+Implementation notes:
+
+- directions still use raw `SWKey` bits for `U`, `D`, `L`, and `R`
+- attack tokens now use a logical display mask built from the same `Convert_User_Setting()` mapping path used by gameplay
+- this means `LP/MP/HP/LK/MK/HK` follow the current `Pad_Infor[].Shot[]` configuration instead of assuming raw `SWKey` slot order
+- SDL and fbdev token highlighting now both read the same logical attack mask
+
+Validation:
+
+```sh
+tools/mister/build-game.sh --flavor telemetry
+```
+
+Result:
+
+- passed
+- package created at `build/mister-telemetry-package`
+
+Follow-up:
+
+- verify on MiSTer that `LK`, `MK`, and `HK` now light the expected tokens
+
 ## Milestone Notes
 
 ### Milestone 0A: Baseline Match-Flow Confirmation Spike

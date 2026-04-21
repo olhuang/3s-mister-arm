@@ -10395,15 +10395,15 @@ static void render_renderer_fps_overlay(const SDL_FRect* content_rect) {
             { "D", SWK_DOWN },
             { "L", SWK_LEFT },
             { "R", SWK_RIGHT },
-            { "LP", SWK_WEST },
-            { "MP", SWK_NORTH },
-            { "HP", SWK_RIGHT_SHOULDER },
-            { "LK", SWK_LEFT_SHOULDER },
-            { "MK", SWK_SOUTH },
-            { "HK", SWK_EAST },
+            { "LP", 0x0010 },
+            { "MP", 0x0020 },
+            { "HP", 0x0040 },
+            { "LK", 0x0100 },
+            { "MK", 0x0200 },
+            { "HK", 0x0400 },
         };
         const size_t input_token_count = sizeof(input_tokens) / sizeof(input_tokens[0]);
-        const u16 swkey = RLObservation_GetDebugInputSwKey();
+        const u16 swkey = RLObservation_GetDebugDisplayMask();
         float token_x = draw_x / (float)scale;
         const float token_y = (draw_y + (float)(line_index * 8 * scale)) / (float)scale;
         for (size_t i = 0; i < input_token_count; i++) {

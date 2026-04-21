@@ -4,6 +4,7 @@
 #include "sf33rd/AcrSDK/common/pad.h"
 #include "sf33rd/Source/Game/engine/plcnt.h"
 #include "sf33rd/Source/Game/engine/stun.h"
+#include "sf33rd/Source/Game/system/sys_sub.h"
 #include "sf33rd/Source/Game/engine/workuser.h"
 #include "sf33rd/Source/Game/system/work_sys.h"
 
@@ -13,6 +14,15 @@ static RLObservationV1 latest_obs;
 static s16 round_start_hp[2];
 static u8 captured_round_num;
 static bool round_start_hp_valid;
+
+enum {
+    RL_DEBUG_BTN_LP = 0x0010,
+    RL_DEBUG_BTN_MP = 0x0020,
+    RL_DEBUG_BTN_HP = 0x0040,
+    RL_DEBUG_BTN_LK = 0x0100,
+    RL_DEBUG_BTN_MK = 0x0200,
+    RL_DEBUG_BTN_HK = 0x0400,
+};
 
 static s16 clamp_s16_nonnegative(s16 value) {
     return (value < 0) ? 0 : value;
@@ -120,6 +130,19 @@ const RLObservationV1* RLObservation_GetLatest() {
 
 u16 RLObservation_GetDebugInputSwKey() {
     return latest_obs.valid ? latest_obs.input_swkey : 0;
+}
+
+u16 RLObservation_GetDebugDisplayMask() {
+    if (!latest_obs.valid) {
+        return 0;
+    }
+
+    const s16 agent = RLSession_AgentPlayerIndex();
+    const u16 logical = Convert_User_Setting(agent) &
+                        (RL_DEBUG_BTN_LP | RL_DEBUG_BTN_MP | RL_DEBUG_BTN_HP |
+                         RL_DEBUG_BTN_LK | RL_DEBUG_BTN_MK | RL_DEBUG_BTN_HK);
+    const u16 directions = latest_obs.input_swkey & (SWK_UP | SWK_DOWN | SWK_LEFT | SWK_RIGHT);
+    return (u16)(directions | logical);
 }
 
 void RLObservation_FormatDebugOverlay(char* out, size_t out_size, const char* session_label) {

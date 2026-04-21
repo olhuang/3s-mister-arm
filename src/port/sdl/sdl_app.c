@@ -16,6 +16,7 @@
 #include "port/sdl/sdl_message_renderer.h"
 #include "port/sdl/sdl_pad.h"
 #include "port/sound/adx.h"
+#include "rl/rl_observation.h"
 #include "rl/rl_session.h"
 #include "sf33rd/AcrSDK/ps2/foundaps2.h"
 #include "sf33rd/Source/Game/effect/effect.h"
@@ -103,7 +104,7 @@ static FpsOverlayMode fps_overlay_mode = FPS_OVERLAY_OFF;
 static Uint64 fps_overlay_window_start_ns = 0;
 static Uint32 fps_overlay_window_frames = 0;
 static int fps_overlay_value = 0;
-static char fps_overlay_label[128] = "";
+static char fps_overlay_label[256] = "";
 
 /* Rolling-average timing breakdown for the FPS overlay (accumulated over the
    same 250 ms measurement window used for the FPS counter). */
@@ -9145,6 +9146,7 @@ static void init_show_fps_overlay(void) {
 static void publish_fps_overlay_label(void) {
     char ai_overlay[96];
     char status_overlay[128];
+    char rl_label[16];
     const char* rl_agent_label = "P0";
 
     if (fps_overlay_mode == FPS_OVERLAY_OFF) {
@@ -9165,14 +9167,11 @@ static void publish_fps_overlay_label(void) {
 
     if (fps_overlay_mode == FPS_OVERLAY_RL_DEBUG) {
         if (configuration.remote_rl_agent.enabled && configuration.remote_rl_agent.human_opponent) {
-            SDL_snprintf(fps_overlay_label,
-                         sizeof(fps_overlay_label),
-                         "%s:%s",
-                         rl_agent_label,
-                         RLSession_TestMovementLabel());
+            SDL_snprintf(rl_label, sizeof(rl_label), "%s:%s", rl_agent_label, RLSession_TestMovementLabel());
         } else {
-            SDL_snprintf(fps_overlay_label, sizeof(fps_overlay_label), "%s", rl_agent_label);
+            SDL_snprintf(rl_label, sizeof(rl_label), "%s", rl_agent_label);
         }
+        RLObservation_FormatDebugOverlay(fps_overlay_label, sizeof(fps_overlay_label), rl_label);
         if (fbdev_presenter_enabled) {
             FBDevPresenter_SetFPSOverlayText(fps_overlay_label);
         }
@@ -10326,9 +10325,25 @@ static void render_renderer_fps_overlay(const SDL_FRect* content_rect) {
     }
 
     const int scale = draw_rect.h >= 420.0f ? 2 : 1;
-    const int text_len = (int)SDL_strlen(fps_overlay_label);
-    const int text_w = text_len * 8 * scale;
-    const int text_h = 8 * scale;
+    int line_count = 1;
+    int max_line_len = 0;
+    int current_line_len = 0;
+    for (const char* cursor = fps_overlay_label; *cursor != '\0'; cursor++) {
+        if (*cursor == '\n') {
+            if (current_line_len > max_line_len) {
+                max_line_len = current_line_len;
+            }
+            current_line_len = 0;
+            line_count++;
+        } else {
+            current_line_len++;
+        }
+    }
+    if (current_line_len > max_line_len) {
+        max_line_len = current_line_len;
+    }
+    const int text_w = max_line_len * 8 * scale;
+    const int text_h = line_count * 8 * scale;
     const int margin = SDL_max(10, scale * 4);
     float draw_x, draw_y;
     if (fps_overlay_mode == FPS_OVERLAY_FPS) {
@@ -10340,10 +10355,27 @@ static void render_renderer_fps_overlay(const SDL_FRect* content_rect) {
     }
 
     SDL_SetRenderScale(renderer, (float)scale, (float)scale);
-    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-    SDL_RenderDebugText(renderer, (draw_x + 1.0f) / (float)scale, (draw_y + 1.0f) / (float)scale, fps_overlay_label);
-    SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
-    SDL_RenderDebugText(renderer, draw_x / (float)scale, draw_y / (float)scale, fps_overlay_label);
+    char line[96];
+    int line_index = 0;
+    const char* cursor = fps_overlay_label;
+    while (*cursor != '\0') {
+        size_t line_len = 0;
+        while (cursor[line_len] != '\0' && cursor[line_len] != '\n' && line_len < sizeof(line) - 1) {
+            line[line_len] = cursor[line_len];
+            line_len++;
+        }
+        line[line_len] = '\0';
+        const float line_y = (draw_y + (float)(line_index * 8 * scale)) / (float)scale;
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        SDL_RenderDebugText(renderer, (draw_x + 1.0f) / (float)scale, line_y + (1.0f / (float)scale), line);
+        SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
+        SDL_RenderDebugText(renderer, draw_x / (float)scale, line_y, line);
+        line_index++;
+        cursor += line_len;
+        if (*cursor == '\n') {
+            cursor++;
+        }
+    }
     SDL_SetRenderScale(renderer, 1.0f, 1.0f);
 }
 

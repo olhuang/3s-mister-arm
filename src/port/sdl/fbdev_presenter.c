@@ -73,7 +73,7 @@ static int frame_tiles_copied = 0;
 static bool frame_full_copy_fallback = false;
 static FBDevPresenter_FrameStats frame_stats = { 0 };
 static int fps_overlay_mode = 0; /* 0=off, 1=fps (top-left), 2=debug (bottom-center), 3=rl-debug (bottom-center) */
-static char fps_overlay_text[128] = "";
+static char fps_overlay_text[256] = "";
 static Uint32* fps_overlay_pixels = NULL;
 static int fps_overlay_width = 0;
 static int fps_overlay_height = 0;
@@ -82,7 +82,7 @@ static int fps_overlay_cached_draw_y = 0;
 static int fps_overlay_cached_text_x = 0;
 static int fps_overlay_cached_text_y = 0;
 static int fps_overlay_cached_scale = 0;
-static char fps_overlay_cached_text[64] = "";
+static char fps_overlay_cached_text[256] = "";
 static bool fps_overlay_cache_valid = false;
 #if ENABLE_PERF_TELEMETRY
 static bool frame_stats_breakdown_enabled = false;
@@ -865,6 +865,7 @@ static Uint8 overlay_glyph_row(char ch, int row) {
     static const Uint8 glyph_lparen[5] = { 0x2, 0x4, 0x4, 0x4, 0x2 };
     static const Uint8 glyph_rparen[5] = { 0x2, 0x1, 0x1, 0x1, 0x2 };
     static const Uint8 glyph_slash[5] = { 0x1, 0x1, 0x2, 0x4, 0x4 };
+    static const Uint8 glyph_dash[5] = { 0x0, 0x0, 0x7, 0x0, 0x0 };
     static const Uint8 glyph_pct[5] = { 0x5, 0x1, 0x2, 0x4, 0x5 };
     static const Uint8 glyph_L[5] = { 0x4, 0x4, 0x4, 0x4, 0x7 };
     static const Uint8 glyph_O[5] = { 0x7, 0x5, 0x5, 0x5, 0x7 };
@@ -1000,6 +1001,9 @@ static Uint8 overlay_glyph_row(char ch, int row) {
     case '/':
         glyph = glyph_slash;
         break;
+    case '-':
+        glyph = glyph_dash;
+        break;
     case '%':
         glyph = glyph_pct;
         break;
@@ -1094,12 +1098,30 @@ static bool compute_fps_overlay_layout(const SDL_FRect* content_rect, FpsOverlay
     const int glyph_w = 3 * scale;
     const int glyph_h = 5 * scale;
     const int char_gap = scale;
-    const int text_len = (int)SDL_strlen(fps_overlay_text);
-    if (text_len <= 0) {
+    int line_count = 1;
+    int max_line_len = 0;
+    int current_line_len = 0;
+    for (const char* cursor = fps_overlay_text; *cursor != '\0'; cursor++) {
+        if (*cursor == '\n') {
+            if (current_line_len > max_line_len) {
+                max_line_len = current_line_len;
+            }
+            current_line_len = 0;
+            line_count++;
+        } else {
+            current_line_len++;
+        }
+    }
+    if (current_line_len > max_line_len) {
+        max_line_len = current_line_len;
+    }
+    if (max_line_len <= 0) {
         return false;
     }
 
-    const int text_w = (text_len * glyph_w) + ((text_len - 1) * char_gap);
+    const int line_gap = scale;
+    const int text_w = (max_line_len * glyph_w) + ((max_line_len - 1) * char_gap);
+    const int text_h = (line_count * glyph_h) + ((line_count - 1) * line_gap);
     const int safe_margin = SDL_max(10, scale * 4);
     const int bg_pad = SDL_max(2, scale);
     int draw_x, draw_y;
@@ -1110,12 +1132,12 @@ static bool compute_fps_overlay_layout(const SDL_FRect* content_rect, FpsOverlay
     } else {
         /* Debug mode: bottom-center */
         draw_x = x0 + ((content_w - text_w) / 2);
-        draw_y = y1 - glyph_h - safe_margin;
+        draw_y = y1 - text_h - safe_margin;
     }
     const int bg_x = clamp_to_range(draw_x - bg_pad, 0, fb_width);
     const int bg_y = clamp_to_range(draw_y - bg_pad, 0, fb_height);
     const int bg_x1 = clamp_to_range(draw_x + text_w + bg_pad, 0, fb_width);
-    const int bg_y1 = clamp_to_range(draw_y + glyph_h + bg_pad, 0, fb_height);
+    const int bg_y1 = clamp_to_range(draw_y + text_h + bg_pad, 0, fb_height);
 
     if ((bg_x1 <= bg_x) || (bg_y1 <= bg_y)) {
         return false;
@@ -1178,16 +1200,27 @@ static bool ensure_rasterized_fps_overlay(const FpsOverlayLayout* layout, bool* 
         fps_overlay_pixels, fps_overlay_width, fps_overlay_height, fps_overlay_width, 0, 0, fps_overlay_width, fps_overlay_height, 0xFF000000u);
 
     const int glyph_w = 3 * layout->scale;
+    const int glyph_h = 5 * layout->scale;
     const int char_gap = layout->scale;
+    const int line_gap = layout->scale;
     const int text_len = (int)SDL_strlen(fps_overlay_text);
+    int line = 0;
+    int column = 0;
     for (int i = 0; i < text_len; i++) {
-        const int glyph_x = layout->text_x + (i * (glyph_w + char_gap));
+        if (fps_overlay_text[i] == '\n') {
+            line++;
+            column = 0;
+            continue;
+        }
+
+        const int glyph_x = layout->text_x + (column * (glyph_w + char_gap));
+        const int glyph_y = layout->text_y + (line * (glyph_h + line_gap));
         draw_overlay_glyph(fps_overlay_pixels,
                            fps_overlay_width,
                            fps_overlay_height,
                            fps_overlay_width,
                            glyph_x + 1,
-                           layout->text_y + 1,
+                           glyph_y + 1,
                            layout->scale,
                            fps_overlay_text[i],
                            0xFF000000u);
@@ -1196,10 +1229,11 @@ static bool ensure_rasterized_fps_overlay(const FpsOverlayLayout* layout, bool* 
                            fps_overlay_height,
                            fps_overlay_width,
                            glyph_x,
-                           layout->text_y,
+                           glyph_y,
                            layout->scale,
                            fps_overlay_text[i],
                            0xFFFFFFFFu);
+        column++;
     }
 
     fps_overlay_cached_draw_x = layout->draw_x;

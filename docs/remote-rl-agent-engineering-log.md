@@ -716,6 +716,58 @@ Follow-up:
 - move to Milestone 1: compact observation builder
 - first implementation step should add a local `RLObservationV1` builder and an end-of-frame hook after `hit_check_main_process()`
 
+### 2026-04-21: Add RL Observation Debug Overlay
+
+Milestones:
+
+- Milestone 1: Compact observation builder
+
+Files changed:
+
+- `src/rl/rl_observation.h`
+- `src/rl/rl_observation.c`
+- `src/sf33rd/Source/Game/game.c`
+- `src/port/sdl/sdl_app.c`
+- `src/port/sdl/fbdev_presenter.c`
+- `docs/config.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+
+- start local observation validation without networking or file logging
+- put compact observation debug output into the existing `RL Debug` overlay
+- show the RL-controlled side's effective raw input buttons on screen
+
+Implementation notes:
+
+- added `RLObservation_OnFrameEnd()` after `hit_check_main_process()`
+- added a compact `RLObservationV1` state cache built from live player, stun, super, round, and input globals
+- captured `round_start_hp[i]` on the first active observed round frame and recaptured on round changes or HP reset increases
+- formatted `RL Debug` as three short lines:
+  - route plus HP percentages
+  - super, stun, X distance, facing sign, and round number
+  - active input labels
+- added multi-line overlay support for both SDL renderer debug text and MiSTer fbdev rasterized text
+- kept output overlay-only for this slice; no disk logging or network path was added
+
+Validation:
+
+```sh
+tools/mister/build-game.sh --flavor telemetry
+```
+
+Result:
+
+- passed
+- package created at `build/mister-telemetry-package`
+
+Follow-up:
+
+- verify on MiSTer that the overlay remains readable and does not cover important gameplay information
+- validate HP, super, stun, position, facing, round, and input labels against visible gameplay
+- fill out the rest of `RLObservationV1`, especially action-context fields, before closing Milestone 1
+
 ## Milestone Notes
 
 ### Milestone 0A: Baseline Match-Flow Confirmation Spike
@@ -793,16 +845,22 @@ Objective:
 
 Implementation notes:
 
-- TBD
+- started with a local `RLObservationV1` builder in `src/rl/rl_observation.c`
+- added an end-of-frame hook after `hit_check_main_process()`
+- `RL Debug` overlay now uses a compact multi-line observation view instead of only the routing label
+- overlay includes RL routing, HP, super, stun, opponent X distance, facing sign, round number, and the RL-side raw input buttons
+- input labels are `U`, `D`, `L`, `R`, `LP`, `MP`, `HP`, `LK`, `MK`, and `HK`
+- fbdev and SDL renderer overlays now support short multi-line debug text
 
 Validation notes:
 
-- TBD
+- telemetry build passed after initial implementation
+- on-device overlay value validation is still pending
 
 Open questions:
 
-- exact first playable frame for `round_start_hp[i]` capture
-- final local debug output format
+- validate whether the current first active-frame `round_start_hp[i]` capture matches round bootstrap on hardware
+- validate positions, HP, super, stun, attack state, guard state, and round state against visible gameplay
 
 ### Milestone 2: Session Handshake, Network Probe, And Delay Budget
 

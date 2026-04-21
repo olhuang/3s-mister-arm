@@ -3,6 +3,7 @@
 #include "main.h"
 #include "port/sdl/sdl_app.h"
 #include "port/utils.h"
+#include "rl/rl_observation.h"
 #include "rl/rl_session.h"
 #include "sf33rd/AcrSDK/common/pad.h"
 #include "sf33rd/Source/Common/PPGWork.h"
@@ -584,6 +585,7 @@ void Game2_1() {
 
     ppgPurgeFromVRAM(0);
     hit_check_main_process();
+    RLObservation_OnFrameEnd();
 }
 
 void Game2_2() {

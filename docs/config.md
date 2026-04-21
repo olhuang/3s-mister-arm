@@ -114,11 +114,12 @@ Notes:
 - On MiSTer fbdev output, the overlay is drawn at the bottom-center of the active picture area so it stays away from overscan-prone corners.
 - The overlay is opt-in and uses a lightweight cached label update path instead of perf capture telemetry.
 - On MiSTer, valid values are `off`, `fps`, `debug`, and `rl-debug`.
-- `rl-debug` is a lightweight RL-specific overlay mode intended for remote-agent bring-up. In v1 it shows concise RL routing state such as `P0`, `P1C`, `P1H`, `P2C`, or `P2H`.
+- `rl-debug` is a lightweight RL-specific overlay mode intended for remote-agent bring-up. In v1 it shows concise RL routing state, compact observation values, and the RL-side raw input buttons.
 - `P0` means RL agent is disabled.
 - `P1C` / `P2C` mean RL routing is active for player 1 / player 2 and the opponent side is still CPU-controlled.
 - `P1H` / `P2H` mean RL routing is active for player 1 / player 2 and the opponent side is routed through human input for facing/remap validation.
 - When human-opponent validation is active, the current scripted movement is appended as `F`, `B`, `JF`, or `DB`.
+- The input line uses `U`, `D`, `L`, `R`, `LP`, `MP`, `HP`, `LK`, `MK`, and `HK` labels.
 
 ### `rl-agent-player`
 

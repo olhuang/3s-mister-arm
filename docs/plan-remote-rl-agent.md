@@ -1280,10 +1280,10 @@ Goal:
 
 Tasks:
 
-- [ ] Add end-of-frame observation hook after `hit_check_main_process()`
-- [ ] Capture `round_start_hp[i]` at the defined playable-round boundary
+- [x] Add end-of-frame observation hook after `hit_check_main_process()`
+- [x] Capture `round_start_hp[i]` at the defined playable-round boundary
 - [ ] Build all fixed `RLObservationV1` fields from the schema table
-- [ ] Serialize compact observations to a local file or debug print
+- [x] Serialize compact observations to a local file or debug print
 - [ ] Validate positions against on-screen movement
 - [ ] Validate HP, super, stun, attack state, guard state, and round state against gameplay
 - [ ] Validate `last_executed_*`, `next_scheduled_*`, and `frames_until_next_action`

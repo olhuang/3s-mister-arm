@@ -334,7 +334,7 @@ Implementation notes:
 - expanded the `FPS Counter` `CONF_STR` entry from `Off/FPS/Debug` to `Off/FPS/Debug/RL Debug`
 - extended wrapper-side `show-fps` parsing and persistence to accept `rl-debug`
 - extended game-side FPS overlay parsing with `FPS_OVERLAY_RL_DEBUG`
-- when `rl-debug` is active, overlay text is now `RL Agent: Off`, `RL Agent: P1`, or `RL Agent: P2`
+- when `rl-debug` is active, overlay text is now the compact slot marker `P0`, `P1`, or `P2`
 - this mode intentionally reuses the existing `show-fps`/`SIGUSR1` path instead of adding a second OSD debug toggle
 
 Validation:
@@ -354,7 +354,47 @@ Result:
 Follow-up:
 
 - verify on MiSTer that `FPS Counter` cycles through all 4 modes
-- verify `RL Debug` shows `Off`, `P1`, or `P2` correctly after wrapper restart
+- verify `RL Debug` shows `P0`, `P1`, or `P2` correctly after wrapper restart
+
+### 2026-04-21: Baseline VS Validation And RL Overlay Simplification
+
+Milestones:
+
+- Milestone 0A: Baseline match-flow confirmation spike
+
+Files changed:
+
+- `src/port/sdl/sdl_app.c`
+- `docs/config.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+
+- record successful MiSTer validation that the RL baseline VS flow works for both agent-side selections
+- simplify the RL debug overlay text from `RL Agent: Off/P1/P2` to compact `P0/P1/P2`
+
+Implementation notes:
+
+- MiSTer validation confirmed that baseline RL VS launch works when the RL agent controls either player 1 or player 2
+- `P0` now means RL agent disabled, while `P1` and `P2` indicate the active controlled slot
+- the overlay remains specific to the dedicated `rl-debug` FPS counter mode
+
+Validation:
+
+```sh
+# Hardware validation reported by MiSTer run testing.
+```
+
+Result:
+
+- passed
+- baseline VS mode works with RL agent configured for player 1
+- baseline VS mode works with RL agent configured for player 2
+- RL debug overlay text simplified to `P0`, `P1`, and `P2`
+
+Follow-up:
+
+- continue Milestone 0A validation for round-end, winner-flow, and reset automation behavior
 
 ## Milestone Notes
 

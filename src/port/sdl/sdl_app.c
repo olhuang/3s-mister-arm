@@ -9144,7 +9144,7 @@ static void init_show_fps_overlay(void) {
 static void publish_fps_overlay_label(void) {
     char ai_overlay[96];
     char status_overlay[128];
-    const char* rl_agent_label = "Off";
+    const char* rl_agent_label = "P0";
 
     if (fps_overlay_mode == FPS_OVERLAY_OFF) {
         fps_overlay_label[0] = '\0';
@@ -9159,7 +9159,7 @@ static void publish_fps_overlay_label(void) {
     }
 
     if (fps_overlay_mode == FPS_OVERLAY_RL_DEBUG) {
-        SDL_snprintf(fps_overlay_label, sizeof(fps_overlay_label), "RL Agent: %s", rl_agent_label);
+        SDL_snprintf(fps_overlay_label, sizeof(fps_overlay_label), "%s", rl_agent_label);
         if (fbdev_presenter_enabled) {
             FBDevPresenter_SetFPSOverlayText(fps_overlay_label);
         }

@@ -1153,6 +1153,13 @@ Existing files likely to change:
   - new config keys
 - `src/port/config/config.c`
   - defaults
+- `vendor/Main_MiSTer/thirdsarm_wrapper.cpp`
+  - MiSTer OSD launch toggle
+  - persisted RL launch-mode config
+  - wrapper-side launch arg injection
+- `vendor/Menu_MiSTer/menu.sv`
+  - `CONF_STR` entry for `RL Agent (Restart)`
+  - status bit allocation for wrapper polling
 
 Potential shared refactor:
 

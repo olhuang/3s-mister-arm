@@ -278,6 +278,7 @@ assign LED_POWER[0]= FB ? led[2] : act_cnt2[26] ? act_cnt2[25:18] > act_cnt2[7:0
 localparam CONF_STR = {
 	"MENU;UART31250,MIDI;",
 	"O[13],Game Mode,Console,Arcade;",
+	"O[48:47],RL Agent (Restart),Off,Player 1,Player 2;",
 	"O[24],Hold to Pause,Off,On;",
 	"O[11:10],FPS Counter,Off,FPS,Debug;",
 	"T[23],Button Check;",
@@ -305,7 +306,7 @@ localparam CONF_STR = {
 };
 
 wire forced_scandoubler;
-wire [46:0] status;
+wire [48:0] status;
 
 hps_io #(.CONF_STR(CONF_STR), .CONF_STR_BRAM(1)) hps_io
 (

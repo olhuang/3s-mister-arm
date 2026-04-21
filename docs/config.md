@@ -114,6 +114,21 @@ Notes:
 - On MiSTer fbdev output, the overlay is drawn at the bottom-center of the active picture area so it stays away from overscan-prone corners.
 - The overlay is opt-in and uses a lightweight cached label update path instead of perf capture telemetry.
 
+### `rl-agent-player`
+
+Controls the MiSTer wrapper's remote RL agent launch mode.
+
+Possible values:
+- `off`
+- `1`
+- `2`
+
+Notes:
+- This key is primarily written by the MiSTer OSD menu entry `RL Agent (Restart)`.
+- `1` means the wrapper relaunches the game with `--rl-agent --rl-player 1`.
+- `2` means the wrapper relaunches the game with `--rl-agent --rl-player 2`.
+- Changes take effect on the next wrapper `Restart`; they do not hot-switch the currently running match.
+
 ### `video-driver-order`
 
 Comma-separated SDL video backend preference list passed via `SDL_HINT_VIDEO_DRIVER` before SDL init.

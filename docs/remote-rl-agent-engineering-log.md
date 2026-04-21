@@ -223,6 +223,55 @@ Follow-up:
 - verify reset behavior
 - only mark Milestone 0A checklist items complete after runtime validation
 
+### 2026-04-21: MiSTer OSD RL Agent Launch Toggle
+
+Milestones:
+
+- Milestone 0A: Baseline match-flow confirmation spike
+
+Files changed:
+
+- `vendor/Menu_MiSTer/menu.sv`
+- `vendor/Main_MiSTer/thirdsarm_wrapper.cpp`
+- `docs/config.md`
+
+Purpose:
+
+- remove the need to launch from the MiSTer console with manual `--rl-agent --rl-player` arguments
+- add an OSD menu toggle that persists RL agent launch mode and injects the correct startup args on relaunch
+
+Implementation notes:
+
+- added `RL Agent (Restart)` to `CONF_STR` with `Off / Player 1 / Player 2`
+- assigned the menu to wrapper status bits `[48:47]`, which required widening the wrapper-side `status` bus
+- added wrapper config read/write helpers for `rl-agent-player = off|1|2`
+- wrapper now strips any forwarded `--rl-agent` / `--rl-player` args and re-injects launch args from the persisted OSD setting so wrapper config stays authoritative on MiSTer
+- RL agent mode is seeded back into the OSD from persisted config on startup and restart
+- changing the OSD option persists immediately, but takes effect only after wrapper `Restart`
+
+Validation:
+
+```sh
+/home/olhua/src/3s-mister-arm/tools/mister-wrapper/build-hps.sh
+/home/olhua/src/3s-mister-arm/tools/mister/build-game.sh --flavor telemetry
+```
+
+Result:
+
+- passed
+- HPS wrapper built at `build/mister-wrapper-hps/MiSTer_3S-ARM`
+- telemetry package still built at `build/mister-telemetry-package`
+- FPGA core / `.rbf` rebuild still pending because the `CONF_STR` change must be rolled into the menu/core image before OSD deployment testing
+
+Follow-up:
+
+- rebuild the menu/core image because `CONF_STR` changed
+- deploy to MiSTer and verify:
+  - `RL Agent (Restart)` appears in the OSD
+  - selecting `Player 1` relaunches with `--rl-agent --rl-player 1`
+  - selecting `Player 2` relaunches with `--rl-agent --rl-player 2`
+  - selecting `Off` removes RL launch args on restart
+
 ## Milestone Notes
 
 ### Milestone 0A: Baseline Match-Flow Confirmation Spike

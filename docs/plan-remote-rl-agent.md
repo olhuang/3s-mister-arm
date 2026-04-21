@@ -495,8 +495,8 @@ Canonical v1 choices:
 - stun uses `sdat[i].cstn / plw[i].py->genkai`
   - `sdat[i].slen` is UI gauge length and should not be used as the normalization base
 - facing uses derived relative features from `plw[i].wu.rl_flag`, not raw left/right button semantics
-  - map `rl_flag == 0` to `+1` / facing world-right
-  - map `rl_flag == 1` to `-1` / facing world-left
+  - map `rl_flag == 0` to `-1` / facing world-left
+  - map `rl_flag == 1` to `+1` / facing world-right
   - keep a compact `self_facing_sign`
   - expose `opp_in_front` rather than raw world-left/world-right labels
 - stage geometry uses per-fighter corner distances derived from `position_x`, `scrl`, and `scrr`
@@ -521,7 +521,7 @@ Recommended fixed logical schema:
 | `self_right_corner_ratio` | `f32` | `(scrr - plw[self].wu.position_x) / max(1, scrr - scrl)` | `plw[self].wu.position_x`, `scrl`, `scrr` | No |
 | `opp_left_corner_ratio` | `f32` | `(plw[opp].wu.position_x - scrl) / max(1, scrr - scrl)` | `plw[opp].wu.position_x`, `scrl`, `scrr` | No |
 | `opp_right_corner_ratio` | `f32` | `(scrr - plw[opp].wu.position_x) / max(1, scrr - scrl)` | `plw[opp].wu.position_x`, `scrl`, `scrr` | No |
-| `self_facing_sign` | `s8` | `+1` when `plw[self].wu.rl_flag == 0`, `-1` when `rl_flag == 1` | `plw[self].wu.rl_flag` | Yes |
+| `self_facing_sign` | `s8` | `-1` when `plw[self].wu.rl_flag == 0`, `+1` when `rl_flag == 1` | `plw[self].wu.rl_flag` | Yes |
 | `opp_in_front` | `u8` | `1` if opponent is in the controlled player's forward direction, else `0` | `plw[self].wu.rl_flag`, `plw[*].wu.position_x` | Yes |
 | `self_guard_flag` | `u8` | raw boolean / categorical as-is | `plw[self].guard_flag` | No |
 | `opp_guard_flag` | `u8` | raw boolean / categorical as-is | `plw[opp].guard_flag` | No |
@@ -1228,8 +1228,8 @@ Tasks:
 - [ ] Add a temporary RL validation path that can keep the non-agent side on human input for deterministic facing/remap testing
 - [ ] Expose concise RL debug overlay state such as `P1C`, `P1H`, `P2C`, and `P2H` so the current routing is visible during spot checks
 - [ ] Add a fixed RL movement validation selector for `forward`, `back`, `jump-forward`, and `down-back`
-- [ ] Verify `plw[i].wu.rl_flag == 0` means facing world-right and maps to `self_facing_sign = +1`
-- [ ] Verify `plw[i].wu.rl_flag == 1` means facing world-left and maps to `self_facing_sign = -1`
+- [ ] Verify `plw[i].wu.rl_flag == 0` means facing world-left and maps to `self_facing_sign = -1`
+- [ ] Verify `plw[i].wu.rl_flag == 1` means facing world-right and maps to `self_facing_sign = +1`
 - [ ] Verify `opp_in_front` matches on-screen relative positioning across side switches
 - [ ] Verify `RL_MOVE_FORWARD` remaps to the correct raw `SWKey` direction bits immediately before input latch
 - [ ] Verify `RL_MOVE_BACK` remaps to the correct raw `SWKey` direction bits immediately before input latch

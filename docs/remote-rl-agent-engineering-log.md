@@ -498,6 +498,48 @@ Follow-up:
 - verify each scripted movement remaps correctly for both facings
 - use the new human-opponent mode to run the Milestone 0B facing/remap spot checks
 
+### 2026-04-21: Fix Scripted Movement Gate And Facing Remap
+
+Milestones:
+
+- Milestone 0B: Facing and remap validation micro-spike
+
+Files changed:
+
+- `src/rl/rl_session.c`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+
+- prevent scripted RL movement from driving the cursor while still inside VS menu flow
+- fix the observed forward/back inversion in the relative movement remap
+
+Implementation notes:
+
+- scripted movement now requires `mpp_w.inGame`, `Play_Mode == 1`, and `Game_pause == 0` in addition to RL active + human-opponent + `MODE_VERSUS`
+- MiSTer testing showed the original `rl_flag` mapping assumption was inverted
+- remap contract is now:
+  - `rl_flag == 0`: facing world-left, so forward maps to `SWK_LEFT`
+  - `rl_flag == 1`: facing world-right, so forward maps to `SWK_RIGHT`
+- plan schema and Milestone 0B checklist were updated to match the observed contract
+
+Validation:
+
+```sh
+/home/olhua/src/3s-mister-arm/tools/mister/build-game.sh --flavor telemetry
+```
+
+Result:
+
+- passed
+- game package built successfully at `build/mister-telemetry-package`
+
+Follow-up:
+
+- verify on MiSTer that scripted movement no longer acts in VS menu
+- verify `Forward`, `Back`, `Jump Forward`, and `Down Back` now move in the intended relative direction for both `P1H` and `P2H`
+
 ## Milestone Notes
 
 ### Milestone 0A: Baseline Match-Flow Confirmation Spike

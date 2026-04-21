@@ -45,11 +45,11 @@ const char* RLSession_TestMovementLabel() {
 }
 
 static u16 RLSession_ForwardDirectionForPlayer(s16 player) {
-    return (plw[player].wu.rl_flag == 0) ? SWK_RIGHT : SWK_LEFT;
+    return (plw[player].wu.rl_flag == 0) ? SWK_LEFT : SWK_RIGHT;
 }
 
 static u16 RLSession_BackDirectionForPlayer(s16 player) {
-    return (plw[player].wu.rl_flag == 0) ? SWK_LEFT : SWK_RIGHT;
+    return (plw[player].wu.rl_flag == 0) ? SWK_RIGHT : SWK_LEFT;
 }
 
 static u16 RLSession_MapTestMovementToSWKey(s16 player) {
@@ -85,7 +85,8 @@ void RLSession_ApplyVersusOperatorSetup() {
 }
 
 void RLSession_ApplyScriptedMovementToBuffers() {
-    if (!RLSession_IsActive() || !RLSession_OpponentUsesHumanInput() || Mode_Type != MODE_VERSUS) {
+    if (!RLSession_IsActive() || !RLSession_OpponentUsesHumanInput() || Mode_Type != MODE_VERSUS ||
+        !mpp_w.inGame || Play_Mode != 1 || Game_pause != 0) {
         return;
     }
 

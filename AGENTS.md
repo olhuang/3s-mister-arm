@@ -28,8 +28,17 @@
 - For planning tasks, use the `/plan` skill (three-agent plan → review → fix loop).
 - For mature MiSTer perf queues, use [docs/agent-memory/mister-ralph-loop-v2.md](docs/agent-memory/mister-ralph-loop-v2.md) to choose the right loop type (`runtime`, `measurement`, or `workload-fidelity`) before starting another Ralph pass.
 
+## Remote RL Agent Workflow
+
+- For any remote RL agent, RL bridge, AI-vs-CPU, RL observation/action protocol, or remote learner work, first load [docs/agent-memory/remote-rl-agent-rules.md](docs/agent-memory/remote-rl-agent-rules.md).
+- At session start, read [docs/plan-remote-rl-agent.md](docs/plan-remote-rl-agent.md) and [docs/remote-rl-agent-engineering-log.md](docs/remote-rl-agent-engineering-log.md) before choosing implementation work.
+- Before code changes, state the milestone, purpose, expected effect, risk/side effect, planned files, and validation approach.
+- Keep substantial RL implementation under `src/rl/*`; do not implement RL work inside `src/netplay/*` or depend on upstream/future P2P netplay session state.
+- After code changes, update the plan checklist and engineering log, then commit code and related docs together unless explicitly told not to commit.
+
 ## Memory Index
 
+- Load [docs/agent-memory/remote-rl-agent-rules.md](docs/agent-memory/remote-rl-agent-rules.md) when working on the remote RL agent, RL bridge, AI-vs-CPU automation, observation/action protocol, session handshake, decision ledger, or remote learner integration.
 - Load [docs/mister-runbook.md](docs/mister-runbook.md) when building, packaging, deploying, probing, or perf-sampling the MiSTer runtime on device. **This is the most important doc for fresh agents doing MiSTer work.**
 - Load [docs/building.md](docs/building.md) when you need baseline host build commands, MiSTer profile setup, or the desktop-vs-MiSTer build split.
 - Load [docs/performance-optimizations.md](docs/performance-optimizations.md) when investigating performance, understanding optimization history, or planning new perf work.

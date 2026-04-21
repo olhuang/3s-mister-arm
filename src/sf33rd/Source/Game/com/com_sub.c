@@ -53,16 +53,57 @@ static u8 ai_personality_active[2];
 static u8 ai_personality_style[2];
 static u8 ai_personality_phase[2];
 static u8 ai_personality_player_number[2] = { 0xFF, 0xFF };
+typedef struct {
+    u8 aggression;
+    u8 patience;
+    u8 anti_air_bias;
+    u8 throw_bias;
+    u8 parry_bias;
+    u8 retreat_bias;
+    u8 confirm_bias;
+    u8 volatility;
+} AIProfile;
+
+typedef struct {
+    u8 preferred_range;
+    u8 aggression;
+    u8 patience;
+    u8 jump_in_bias;
+    u8 anti_air_bias;
+    u8 throw_bias;
+    u8 parry_bias;
+    u8 retreat_bias;
+    u8 confirm_bias;
+    u8 reset_bias;
+    u8 volatility;
+    u8 defense_stability;
+} AICharacterStyleModel;
+
+static AIProfile ai_profile[2];
+static AICharacterStyleModel ai_character_style_runtime[2];
 static u8 ai_luck_active[2];
 static u8 ai_luck_tier[2];
 static u8 ai_grit_active[2];
 static u8 ai_grit_tier[2];
 static u8 ai_grit_player_number[2] = { 0xFF, 0xFF };
+static s16 ai_grit_lowest_vitality[2] = { -1, -1 };
 static u8 ai_adapt_jump_in[2];
 static u8 ai_adapt_throw[2];
 static u8 ai_adapt_low[2];
+static u8 ai_adapt_repeat_pressure[2];
+static u8 ai_adapt_art[2];
+static u8 ai_adapt_super_art[2];
+static u8 ai_adapt_light[2];
+static u8 ai_adapt_medium[2];
+static u8 ai_adapt_heavy[2];
 static s16 ai_adapt_last_counter[2];
+static u8 ai_adapt_player_number[2] = { 0xFF, 0xFF };
+static u8 ai_pressure_chain[2];
 static u8 ai_bait_timer[2];
+static u8 ai_mood_state[2];
+static u8 ai_mood_timer[2];
+static u8 ai_success_streak[2];
+static s16 ai_last_vitality[2];
 static PLW* ai_level_context;
 static u8 ai_tuning_loaded;
 static u8 ai_luck_current_input_cheat[3] = { 2, 8, 16 };
@@ -79,6 +120,24 @@ static u8 ai_guard_sense_lag_config[4][8] = {
     { 30, 27, 24, 21, 18, 15, 12, 9 },
     { 16, 13, 11, 9, 7, 5, 3, 2 },
 };
+static AIProfile ai_profile_config[4] = {
+    { 5, 5, 5, 5, 5, 5, 5, 5 },
+    { 8, 3, 4, 6, 4, 2, 8, 6 },
+    { 5, 4, 5, 6, 7, 4, 4, 9 },
+    { 3, 8, 7, 3, 4, 8, 5, 2 },
+};
+static u8 ai_mood_duration_config[6] = { 0, 30, 0, 36, 48, 45 };
+static u8 ai_mood_confidence_streak = 2;
+static u8 ai_mood_panic_max_lv08 = 3;
+static u8 ai_adapt_threshold_jump[4] = { 6, 5, 4, 3 };
+static u8 ai_adapt_threshold_low[4] = { 6, 5, 4, 3 };
+static u8 ai_adapt_threshold_repeat[4] = { 7, 6, 5, 4 };
+static u8 ai_adapt_threshold_strike[4] = { 6, 5, 4, 3 };
+static u8 ai_adapt_threshold_art[4] = { 5, 4, 3, 2 };
+static u8 ai_adapt_threshold_super[4] = { 3, 3, 2, 2 };
+static u8 ai_adapt_bait_trigger_jump = 6;
+static u8 ai_adapt_bait_trigger_low = 6;
+static u8 ai_adapt_bait_trigger_repeat = 6;
 
 // forward decls
 void End_Pattern(PLW* wk);
@@ -286,8 +345,48 @@ enum {
     AI_LUCK_HIGH = 2,
 };
 
+enum {
+    AI_MOOD_NEUTRAL = 0,
+    AI_MOOD_RUSHDOWN = 1,
+    AI_MOOD_BAIT = 2,
+    AI_MOOD_TILT = 3,
+    AI_MOOD_PANIC = 4,
+    AI_MOOD_CONFIDENCE = 5,
+};
+
 static const s8* ai_personality_names[4] = { "BAL", "RSH", "TRK", "MET" };
 static const s8* ai_luck_names[3] = { "LOW", "MID", "HIGH" };
+/*
+ * Abstract role style for the 20 character-specific Computer00..19 scripts.
+ * Order matches wk->player_number / ComputerXX:
+ * Gill, Alex, Ryu, Yun, Dudley, Necro, Hugo, Ibuki, Elena, Oro,
+ * Yang, Ken, Sean, Urien, Akuma, Chun-Li, Makoto, Q, Twelve, Remy.
+ *
+ * preferred_range:
+ *   0 = close, 1 = mid, 2 = far
+ */
+static const AICharacterStyleModel ai_character_style_model[20] = {
+    { 2, 3, 7, 1, 7, 2, 6, 6, 4, 7, 2, 9 },  /* Gill */
+    { 1, 6, 4, 4, 5, 5, 3, 2, 5, 3, 4, 4 },  /* Alex */
+    { 1, 5, 6, 2, 7, 3, 4, 5, 6, 6, 2, 7 },  /* Ryu */
+    { 0, 8, 3, 4, 5, 6, 3, 2, 8, 2, 7, 4 },  /* Yun */
+    { 0, 7, 4, 3, 5, 6, 3, 2, 7, 2, 4, 5 },  /* Dudley */
+    { 1, 5, 5, 3, 5, 4, 6, 4, 5, 4, 8, 5 },  /* Necro */
+    { 0, 7, 3, 1, 4, 7, 2, 1, 7, 2, 3, 4 },  /* Hugo */
+    { 0, 8, 3, 5, 5, 8, 5, 2, 8, 3, 8, 4 },  /* Ibuki */
+    { 1, 5, 7, 1, 6, 4, 3, 6, 6, 7, 3, 8 },  /* Elena */
+    { 1, 6, 5, 3, 6, 4, 6, 4, 6, 5, 9, 6 },  /* Oro */
+    { 0, 8, 3, 4, 5, 6, 4, 2, 8, 2, 7, 4 },  /* Yang */
+    { 0, 9, 2, 1, 5, 6, 4, 1, 8, 2, 4, 5 },  /* Ken */
+    { 0, 8, 2, 1, 4, 6, 3, 1, 8, 2, 4, 4 },  /* Sean */
+    { 2, 5, 7, 1, 6, 4, 5, 7, 6, 7, 3, 8 },  /* Urien */
+    { 0, 10, 4, 1, 7, 6, 6, 3, 10, 3, 5, 7 }, /* Akuma */
+    { 1, 5, 8, 6, 8, 4, 4, 6, 5, 7, 3, 8 },  /* Chun-Li */
+    { 0, 7, 5, 4, 5, 6, 4, 3, 6, 4, 5, 5 },  /* Makoto */
+    { 2, 5, 8, 4, 6, 5, 4, 7, 6, 7, 4, 8 },  /* Q */
+    { 1, 5, 6, 4, 6, 4, 7, 5, 5, 5, 10, 5 }, /* Twelve */
+    { 2, 4, 8, 4, 7, 3, 4, 8, 5, 8, 3, 8 },  /* Remy */
+};
 static const u8 ai_character_base_style[20] = {
     AI_BASE_FOOTSIE, /* Ryu */
     AI_BASE_RUSH,    /* Alex */
@@ -319,6 +418,75 @@ static u8 get_ai_base_style(PLW* wk) {
     return ai_character_base_style[wk->player_number];
 }
 
+static void load_ai_tuning_config(void);
+
+static u8 clamp_ai_profile_stat(s16 value) {
+    if (value < 0) {
+        return 0;
+    }
+    if (value > 10) {
+        return 10;
+    }
+
+    return (u8)value;
+}
+
+static AIProfile* get_ai_profile(PLW* wk) {
+    return &ai_profile[wk->wu.id];
+}
+
+static AICharacterStyleModel* get_ai_character_style(PLW* wk) {
+    return &ai_character_style_runtime[wk->wu.id];
+}
+
+static void apply_ai_profile_modifier(s16* stat, s16 delta) {
+    *stat += delta;
+}
+
+static void build_ai_profile(PLW* wk) {
+    AIProfile profile;
+    const AICharacterStyleModel* style_model;
+    s16 style_index = wk->player_number;
+    load_ai_tuning_config();
+    profile = ai_profile_config[ai_personality_style[wk->wu.id] & 3];
+    if ((style_index < 0) || (style_index >= 20)) {
+        style_index = 2;
+    }
+    style_model = &ai_character_style_model[style_index];
+
+    s16 aggression = profile.aggression;
+    s16 patience = profile.patience;
+    s16 anti_air_bias = profile.anti_air_bias;
+    s16 throw_bias = profile.throw_bias;
+    s16 parry_bias = profile.parry_bias;
+    s16 retreat_bias = profile.retreat_bias;
+    s16 confirm_bias = profile.confirm_bias;
+    s16 volatility = profile.volatility;
+
+    /* Character style values are centered on 5. Values above/below 5 push the
+     * personality base toward the character's native rhythm without completely
+     * overriding the per-round personality roll. */
+    apply_ai_profile_modifier(&aggression, (s16)style_model->aggression - 5);
+    apply_ai_profile_modifier(&patience, (s16)style_model->patience - 5);
+    apply_ai_profile_modifier(&anti_air_bias, (s16)style_model->anti_air_bias - 5);
+    apply_ai_profile_modifier(&throw_bias, (s16)style_model->throw_bias - 5);
+    apply_ai_profile_modifier(&parry_bias, (s16)style_model->parry_bias - 5);
+    apply_ai_profile_modifier(&retreat_bias, (s16)style_model->retreat_bias - 5);
+    apply_ai_profile_modifier(&confirm_bias, (s16)style_model->confirm_bias - 5);
+    apply_ai_profile_modifier(&volatility, (s16)style_model->volatility - 5);
+
+    profile.aggression = clamp_ai_profile_stat(aggression);
+    profile.patience = clamp_ai_profile_stat(patience);
+    profile.anti_air_bias = clamp_ai_profile_stat(anti_air_bias);
+    profile.throw_bias = clamp_ai_profile_stat(throw_bias);
+    profile.parry_bias = clamp_ai_profile_stat(parry_bias);
+    profile.retreat_bias = clamp_ai_profile_stat(retreat_bias);
+    profile.confirm_bias = clamp_ai_profile_stat(confirm_bias);
+    profile.volatility = clamp_ai_profile_stat(volatility);
+    ai_profile[wk->wu.id] = profile;
+    ai_character_style_runtime[wk->wu.id] = *style_model;
+}
+
 static u8 sample_ai_pattern_index(s32 use_ex_random) {
     if (use_ex_random != 0) {
         return (u8)random_32_ex_com();
@@ -347,7 +515,38 @@ static u8 choose_distinct_candidate(const u8* candidates, s16 candidate_count, u
     return candidates[0];
 }
 
+static u8 choose_min_candidate(const u8* candidates, s16 candidate_count) {
+    s16 i;
+    u8 chosen = candidates[0];
+
+    for (i = 1; i < candidate_count; i++) {
+        if (candidates[i] < chosen) {
+            chosen = candidates[i];
+        }
+    }
+
+    return chosen;
+}
+
+static u8 choose_max_candidate(const u8* candidates, s16 candidate_count) {
+    s16 i;
+    u8 chosen = candidates[0];
+
+    for (i = 1; i < candidate_count; i++) {
+        if (candidates[i] > chosen) {
+            chosen = candidates[i];
+        }
+    }
+
+    return chosen;
+}
+
+static u8 get_ai_bait_duration_frames(PLW* wk);
 static s32 ai_bait_active(PLW* wk);
+static s16 get_effective_ai_control_time(void);
+static u8 ai_mood_active(PLW* wk, u8 mood);
+static u8 get_ai_adapt_strike_peak(PLW* wk);
+static u8 get_ai_adapt_threshold_index(s32 difficulty);
 
 static u8 clamp_adaptation_value(int value) {
     if (value < 0) {
@@ -403,6 +602,29 @@ static void parse_config_u8_list(const char* raw_value, u8* values, int expected
     }
 }
 
+static void parse_config_ai_profile(const char* raw_value, AIProfile* profile) {
+    u8 values[8] = {
+        profile->aggression,
+        profile->patience,
+        profile->anti_air_bias,
+        profile->throw_bias,
+        profile->parry_bias,
+        profile->retreat_bias,
+        profile->confirm_bias,
+        profile->volatility,
+    };
+
+    parse_config_u8_list(raw_value, values, 8, 10);
+    profile->aggression = values[0];
+    profile->patience = values[1];
+    profile->anti_air_bias = values[2];
+    profile->throw_bias = values[3];
+    profile->parry_bias = values[4];
+    profile->retreat_bias = values[5];
+    profile->confirm_bias = values[6];
+    profile->volatility = values[7];
+}
+
 static void load_ai_tuning_config(void) {
     if (ai_tuning_loaded != 0) {
         return;
@@ -422,8 +644,76 @@ static void load_ai_tuning_config(void) {
                          CPU_GUARD_SENSE_FRAMES - 1);
     parse_config_u8_list(Config_GetString(CFG_KEY_AI_GUARD_SENSE_LAG_MET), ai_guard_sense_lag_config[AI_STYLE_METHODICAL], 8,
                          CPU_GUARD_SENSE_FRAMES - 1);
+    parse_config_ai_profile(Config_GetString(CFG_KEY_AI_PROFILE_BAL), &ai_profile_config[AI_STYLE_BALANCED]);
+    parse_config_ai_profile(Config_GetString(CFG_KEY_AI_PROFILE_RSH), &ai_profile_config[AI_STYLE_RELENTLESS]);
+    parse_config_ai_profile(Config_GetString(CFG_KEY_AI_PROFILE_TRK), &ai_profile_config[AI_STYLE_TRICKSTER]);
+    parse_config_ai_profile(Config_GetString(CFG_KEY_AI_PROFILE_MET), &ai_profile_config[AI_STYLE_METHODICAL]);
+    ai_mood_duration_config[AI_MOOD_RUSHDOWN] = (u8)Config_GetInt(CFG_KEY_AI_MOOD_DURATION_RUSHDOWN);
+    ai_mood_duration_config[AI_MOOD_BAIT] = (u8)Config_GetInt(CFG_KEY_AI_MOOD_DURATION_BAIT);
+    ai_mood_duration_config[AI_MOOD_TILT] = (u8)Config_GetInt(CFG_KEY_AI_MOOD_DURATION_TILT);
+    ai_mood_duration_config[AI_MOOD_PANIC] = (u8)Config_GetInt(CFG_KEY_AI_MOOD_DURATION_PANIC);
+    ai_mood_duration_config[AI_MOOD_CONFIDENCE] = (u8)Config_GetInt(CFG_KEY_AI_MOOD_DURATION_CONFIDENCE);
+    ai_mood_confidence_streak = (u8)Config_GetInt(CFG_KEY_AI_MOOD_CONFIDENCE_STREAK);
+    ai_mood_panic_max_lv08 = (u8)Config_GetInt(CFG_KEY_AI_MOOD_PANIC_MAX_LV08);
+    parse_config_u8_list(Config_GetString(CFG_KEY_AI_ADAPT_THRESHOLD_JUMP), ai_adapt_threshold_jump, 4, 12);
+    parse_config_u8_list(Config_GetString(CFG_KEY_AI_ADAPT_THRESHOLD_LOW), ai_adapt_threshold_low, 4, 12);
+    parse_config_u8_list(Config_GetString(CFG_KEY_AI_ADAPT_THRESHOLD_REPEAT), ai_adapt_threshold_repeat, 4, 12);
+    parse_config_u8_list(Config_GetString(CFG_KEY_AI_ADAPT_THRESHOLD_STRIKE), ai_adapt_threshold_strike, 4, 12);
+    parse_config_u8_list(Config_GetString(CFG_KEY_AI_ADAPT_THRESHOLD_ART), ai_adapt_threshold_art, 4, 12);
+    parse_config_u8_list(Config_GetString(CFG_KEY_AI_ADAPT_THRESHOLD_SUPER), ai_adapt_threshold_super, 4, 12);
+    ai_adapt_bait_trigger_jump = (u8)Config_GetInt(CFG_KEY_AI_ADAPT_BAIT_TRIGGER_JUMP);
+    ai_adapt_bait_trigger_low = (u8)Config_GetInt(CFG_KEY_AI_ADAPT_BAIT_TRIGGER_LOW);
+    ai_adapt_bait_trigger_repeat = (u8)Config_GetInt(CFG_KEY_AI_ADAPT_BAIT_TRIGGER_REPEAT);
+    if (ai_mood_confidence_streak == 0) {
+        ai_mood_confidence_streak = 1;
+    }
+    if (ai_mood_panic_max_lv08 > 7) {
+        ai_mood_panic_max_lv08 = 7;
+    }
+    if (ai_adapt_bait_trigger_jump > 12) {
+        ai_adapt_bait_trigger_jump = 12;
+    }
+    if (ai_adapt_bait_trigger_low > 12) {
+        ai_adapt_bait_trigger_low = 12;
+    }
+    if (ai_adapt_bait_trigger_repeat > 12) {
+        ai_adapt_bait_trigger_repeat = 12;
+    }
 
     ai_tuning_loaded = 1;
+}
+
+static u8 get_ai_adapt_threshold_index(s32 difficulty) {
+    if (difficulty <= 1) {
+        return 0;
+    }
+    if (difficulty <= 3) {
+        return 1;
+    }
+    if (difficulty <= 5) {
+        return 2;
+    }
+
+    return 3;
+}
+
+static s16 get_effective_ai_control_time(void) {
+    s16 unit_time;
+    s16 min_time;
+
+    if (!Is_Training_Mode(Mode_Type)) {
+        return Control_Time;
+    }
+
+    unit_time = Limit_Time - 481;
+    unit_time = unit_time / 5;
+    min_time = 481 - (unit_time * 2);
+
+    if (min_time < 0) {
+        min_time = 0;
+    }
+
+    return (s16)(min_time + (unit_time * save_w[Present_Mode].Difficulty));
 }
 
 void Set_AI_Level_Context(PLW* wk) {
@@ -437,15 +727,22 @@ void Clear_AI_Level_Context(void) {
 void Init_AI_Luck(PLW* wk) {
     u8 seed;
 
-    seed = (u8)random_32_com();
+    seed = (u8)(random_32_com() % 10);
     ai_luck_active[wk->wu.id] = 1;
-    ai_luck_tier[wk->wu.id] = (u8)(seed % 3);
+    if (seed < 3) {
+        ai_luck_tier[wk->wu.id] = AI_LUCK_LOW;
+    } else if (seed < 9) {
+        ai_luck_tier[wk->wu.id] = AI_LUCK_MID;
+    } else {
+        ai_luck_tier[wk->wu.id] = AI_LUCK_HIGH;
+    }
 }
 
 void Init_AI_Grit(PLW* wk) {
     u8 seed;
 
     if ((ai_grit_active[wk->wu.id] != 0) && (ai_grit_player_number[wk->wu.id] == (u8)wk->player_number)) {
+        ai_grit_lowest_vitality[wk->wu.id] = wk->wu.vital_new;
         return;
     }
 
@@ -453,6 +750,7 @@ void Init_AI_Grit(PLW* wk) {
     ai_grit_active[wk->wu.id] = 1;
     ai_grit_tier[wk->wu.id] = (u8)(seed % 3);
     ai_grit_player_number[wk->wu.id] = (u8)wk->player_number;
+    ai_grit_lowest_vitality[wk->wu.id] = wk->wu.vital_new;
 }
 
 const s8* Get_AI_Luck_Name(PLW* wk) {
@@ -541,6 +839,7 @@ u8 AI_UseLuckyPreciseDefense(PLW* wk, s32 air_guard) {
 static s16 get_ai_grit_bonus(PLW* wk, s16 max_bonus) {
     s32 current_vitality;
     s32 max_vitality;
+    s32 effective_vitality;
     u8 tier;
     s16 bonus;
 
@@ -556,12 +855,17 @@ static s16 get_ai_grit_bonus(PLW* wk, s16 max_bonus) {
         return 0;
     }
 
+    if ((ai_grit_lowest_vitality[wk->wu.id] < 0) || (current_vitality < ai_grit_lowest_vitality[wk->wu.id])) {
+        ai_grit_lowest_vitality[wk->wu.id] = (s16)current_vitality;
+    }
+    effective_vitality = ai_grit_lowest_vitality[wk->wu.id];
+
     tier = ai_grit_tier[wk->wu.id] % 3;
-    if (current_vitality <= (max_vitality / 4)) {
+    if (effective_vitality <= (max_vitality / 4)) {
         bonus = ai_grit_bonus_config[tier][2];
-    } else if (current_vitality <= (max_vitality / 2)) {
+    } else if (effective_vitality <= (max_vitality / 2)) {
         bonus = ai_grit_bonus_config[tier][1];
-    } else if (current_vitality <= ((max_vitality * 3) / 4)) {
+    } else if (effective_vitality <= ((max_vitality * 3) / 4)) {
         bonus = ai_grit_bonus_config[tier][0];
     } else {
         bonus = 0;
@@ -587,72 +891,92 @@ static s16 clamp_ai_area_index(s16 area) {
 
 static s16 choose_active_area_by_personality(PLW* wk, s32 is_follow) {
     s16 area = Area_Number[wk->wu.id];
-    u8 style = ai_personality_style[wk->wu.id];
+    AIProfile* profile = get_ai_profile(wk);
+    AICharacterStyleModel* style = get_ai_character_style(wk);
     u8 base_style = get_ai_base_style(wk);
     s32 hit_follow = ((is_follow != 0) && (CP_No[wk->wu.id][2] != 0));
+    s16 forward_bias = (s16)(profile->aggression / 3);
+    s16 retreat_bias = (s16)(profile->retreat_bias / 3);
+    s16 confirm_bias = (s16)(profile->confirm_bias / 4);
+    s16 volatility_bias = (s16)(profile->volatility / 3);
 
-    switch (style) {
-    case AI_STYLE_RELENTLESS:
-        area -= 2;
-        if ((base_style == AI_BASE_RUSH) || hit_follow) {
-            area--;
-        }
-        if ((base_style == AI_BASE_RUSH) && hit_follow) {
-            area--;
-        }
-        break;
-
-    case AI_STYLE_METHODICAL:
-        if (hit_follow == 0) {
-            area += 2;
-            if ((base_style == AI_BASE_TURTLE) || (base_style == AI_BASE_FOOTSIE)) {
-                area++;
-            }
-        }
-        break;
-
-    case AI_STYLE_TRICKSTER:
-        switch (ai_personality_phase[wk->wu.id] & 3) {
-        case 0:
-            area -= 3;
-            break;
-        case 1:
-            area += 2;
-            break;
-        case 2:
-            area += 3;
-            break;
-        default:
-            area -= 2;
-            break;
-        }
-        break;
-
-    default:
-        if ((base_style == AI_BASE_RUSH) && (area > 0)) {
-            area--;
-        } else if ((base_style == AI_BASE_TURTLE) && (area < 3)) {
-            area++;
-        }
-        break;
+    area -= forward_bias;
+    if (hit_follow != 0) {
+        area -= confirm_bias;
+    } else {
+        area += retreat_bias;
     }
 
-    if ((style == AI_STYLE_RELENTLESS) && (base_style == AI_BASE_TURTLE)) {
-        area++;
-    } else if ((style == AI_STYLE_METHODICAL) && (base_style == AI_BASE_RUSH)) {
-        area--;
-    } else if ((style == AI_STYLE_TRICKSTER) && (base_style == AI_BASE_WEIRD)) {
-        if ((ai_personality_phase[wk->wu.id] & 1) == 0) {
-            area -= 3;
-        } else {
-            area += 3;
+    if (profile->volatility >= 7) {
+        switch (ai_personality_phase[wk->wu.id] & 3) {
+        case 0:
+            area -= volatility_bias;
+            break;
+        case 1:
+            area += (volatility_bias > 0) ? (volatility_bias - 1) : 0;
+            break;
+        case 2:
+            area += volatility_bias;
+            break;
+        default:
+            area -= (volatility_bias > 0) ? (volatility_bias - 1) : 0;
+            break;
         }
+    }
+
+    if (style->preferred_range == 0) {
+        area -= 1;
+    } else if (style->preferred_range == 2) {
+        area += 1;
+    }
+
+    if ((style->jump_in_bias >= 7) && (hit_follow == 0) && (area > 0)) {
+        area -= 1;
     }
 
     if ((ai_bait_active(wk) != 0) && (hit_follow == 0)) {
         area++;
-        if ((ai_personality_style[wk->wu.id] == AI_STYLE_METHODICAL) || (base_style == AI_BASE_TURTLE)) {
+        if (profile->patience >= 7) {
             area++;
+        }
+    }
+    if (ai_mood_active(wk, AI_MOOD_RUSHDOWN)) {
+        area -= 2;
+    } else if (ai_mood_active(wk, AI_MOOD_BAIT)) {
+        area += 2;
+    } else if (ai_mood_active(wk, AI_MOOD_TILT)) {
+        area -= 1;
+    } else if (ai_mood_active(wk, AI_MOOD_CONFIDENCE)) {
+        area -= 1;
+    } else if (ai_mood_active(wk, AI_MOOD_PANIC)) {
+        area += 1;
+    }
+
+    if ((profile->aggression >= 8) && (profile->retreat_bias <= 2)) {
+        if (hit_follow != 0) {
+            area = 0;
+        } else if (area > 1) {
+            area = 1;
+        }
+    }
+
+    if ((profile->patience >= 8) && (profile->retreat_bias >= 7) && (hit_follow == 0)) {
+        if (area < 2) {
+            area = 2;
+        }
+    }
+
+    if ((profile->volatility >= 8) && (base_style == AI_BASE_WEIRD)) {
+        switch (ai_personality_phase[wk->wu.id] % 3) {
+        case 0:
+            area = 0;
+            break;
+        case 1:
+            area = 3;
+            break;
+        default:
+            area = (area <= 1) ? 2 : 1;
+            break;
         }
     }
 
@@ -661,53 +985,26 @@ static s16 choose_active_area_by_personality(PLW* wk, s32 is_follow) {
 
 static u8 choose_ai_pattern_by_personality(PLW* wk, const u8* pattern_row, s32 use_ex_random, s32 is_follow) {
     u8 candidates[10];
-    s16 candidate_count = 4;
+    s16 candidate_count;
     u8 chosen;
     s16 i;
     u8 last_pattern = (u8)Last_Pattern_Index[wk->wu.id];
-    u8 style = ai_personality_style[wk->wu.id];
-    u8 base_style = get_ai_base_style(wk);
+    AIProfile* profile = get_ai_profile(wk);
+    AICharacterStyleModel* style = get_ai_character_style(wk);
     s32 hit_follow = ((is_follow != 0) && (CP_No[wk->wu.id][2] != 0));
 
-    if (style == AI_STYLE_BALANCED) {
-        candidate_count = 6;
-    } else if (style == AI_STYLE_RELENTLESS) {
-        candidate_count = 8;
-        if ((Area_Number[wk->wu.id] <= 1) || hit_follow) {
-            candidate_count = 10;
-        }
-    } else if (style == AI_STYLE_TRICKSTER) {
-        candidate_count = 10;
-    } else if (style == AI_STYLE_METHODICAL) {
-        candidate_count = 7;
+    candidate_count = 3 + (profile->volatility / 2) + (profile->aggression / 4);
+    if (hit_follow != 0) {
+        candidate_count += (profile->confirm_bias / 2);
     }
-
-    if (base_style == AI_BASE_RUSH) {
-        if (((Area_Number[wk->wu.id] <= 1) || hit_follow) && (candidate_count < 10)) {
-            candidate_count++;
-        }
-    } else if (base_style == AI_BASE_TURTLE) {
-        if ((Area_Number[wk->wu.id] >= 2) && (candidate_count < 10)) {
-            candidate_count++;
-        } else if ((Area_Number[wk->wu.id] <= 1) && (candidate_count > 2)) {
-            candidate_count -= (style == AI_STYLE_METHODICAL) ? 1 : 2;
-        }
-    } else if ((base_style == AI_BASE_WEIRD) && (candidate_count < 10)) {
-        candidate_count += (style == AI_STYLE_TRICKSTER) ? 2 : 1;
+    if (style->jump_in_bias >= 7) {
+        candidate_count++;
     }
-
-    if ((style == AI_STYLE_RELENTLESS) && (base_style == AI_BASE_RUSH) && (candidate_count < 10)) {
-        candidate_count += (hit_follow ? 2 : 1);
-    } else if ((style == AI_STYLE_TRICKSTER) && (base_style == AI_BASE_WEIRD) && (candidate_count < 10)) {
-        candidate_count += 2;
-    } else if ((style == AI_STYLE_METHODICAL) &&
-               ((base_style == AI_BASE_TURTLE) || (base_style == AI_BASE_FOOTSIE)) &&
-               (candidate_count > 3)) {
+    if ((style->reset_bias >= 7) && (hit_follow == 0)) {
         candidate_count--;
     }
-
-    if ((is_follow != 0) && hit_follow && (candidate_count < 10) && (style != AI_STYLE_METHODICAL)) {
-        candidate_count += (style == AI_STYLE_RELENTLESS) ? 2 : 1;
+    if (profile->patience >= 7 && hit_follow == 0) {
+        candidate_count--;
     }
 
     if (candidate_count > 10) {
@@ -723,32 +1020,44 @@ static u8 choose_ai_pattern_by_personality(PLW* wk, const u8* pattern_row, s32 u
 
     chosen = candidates[0];
 
-    switch (style) {
-    case AI_STYLE_RELENTLESS:
+    if ((profile->aggression >= 8) && (profile->confirm_bias >= 7)) {
+        chosen = choose_max_candidate(candidates, candidate_count);
+        if ((hit_follow != 0) || ai_mood_active(wk, AI_MOOD_RUSHDOWN) || ai_mood_active(wk, AI_MOOD_CONFIDENCE)) {
+            chosen = choose_distinct_candidate(candidates, candidate_count, last_pattern, 1);
+            if (candidate_count >= 4) {
+                chosen = candidates[candidate_count - 1];
+            }
+        } else if ((candidate_count >= 3) && ((ai_personality_phase[wk->wu.id] & 1) != 0)) {
+            chosen = candidates[candidate_count - 2];
+        }
+        ai_personality_phase[wk->wu.id] = (ai_personality_phase[wk->wu.id] + 1) & 7;
+    } else if ((profile->patience >= 8) && (profile->retreat_bias >= 7)) {
+        chosen = choose_min_candidate(candidates, candidate_count);
+        if ((hit_follow == 0) && (candidate_count >= 4)) {
+            chosen = candidates[0];
+        } else {
+            for (i = 0; i < candidate_count; i++) {
+                if (candidates[i] == last_pattern) {
+                    chosen = candidates[i];
+                    break;
+                }
+            }
+        }
+    } else if (profile->volatility >= 8) {
+        chosen = choose_distinct_candidate(candidates, candidate_count, last_pattern, 1);
+        if ((ai_personality_phase[wk->wu.id] & 3) == 0) {
+            chosen = candidates[candidate_count - 1];
+        } else if (((ai_personality_phase[wk->wu.id] & 1) == 0) && (candidate_count >= 4)) {
+            chosen = candidates[candidate_count / 2];
+        }
+        ai_personality_phase[wk->wu.id] = (ai_personality_phase[wk->wu.id] + 1) & 7;
+    } else if ((profile->aggression + profile->confirm_bias) >= 14) {
         chosen = choose_distinct_candidate(candidates, candidate_count, last_pattern, 0);
         if ((candidate_count >= 4) && ((ai_personality_phase[wk->wu.id] & 1) != 0)) {
             chosen = candidates[candidate_count - 1];
         }
-        if ((base_style == AI_BASE_RUSH) && (candidate_count >= 3)) {
-            chosen = candidates[candidate_count - 1];
-        }
         ai_personality_phase[wk->wu.id] = (ai_personality_phase[wk->wu.id] + 1) & 7;
-        break;
-
-    case AI_STYLE_TRICKSTER:
-        chosen = choose_distinct_candidate(candidates, candidate_count, last_pattern, 1);
-        if ((ai_personality_phase[wk->wu.id] & 3) == 0) {
-            chosen = candidates[candidate_count - 1];
-        } else if (((ai_personality_phase[wk->wu.id] & 1) == 0) && (candidate_count >= 3)) {
-            chosen = candidates[candidate_count / 2];
-        }
-        if ((base_style == AI_BASE_WEIRD) && (candidate_count >= 4)) {
-            chosen = candidates[(ai_personality_phase[wk->wu.id] & 1) ? (candidate_count - 1) : (candidate_count / 2)];
-        }
-        ai_personality_phase[wk->wu.id] = (ai_personality_phase[wk->wu.id] + 1) & 7;
-        break;
-
-    case AI_STYLE_METHODICAL:
+    } else if ((profile->patience + profile->retreat_bias) >= 14) {
         for (i = 0; i < candidate_count; i++) {
             if (candidates[i] == last_pattern) {
                 chosen = candidates[i];
@@ -763,37 +1072,46 @@ static u8 choose_ai_pattern_by_personality(PLW* wk, const u8* pattern_row, s32 u
                 }
             }
         }
-        if ((base_style == AI_BASE_TURTLE) || (base_style == AI_BASE_FOOTSIE)) {
-            chosen = candidates[0];
-        }
-        break;
-
-    default:
-        if ((ai_personality_phase[wk->wu.id] & 3) == 0) {
+    } else {
+        if ((profile->volatility >= 5) && ((ai_personality_phase[wk->wu.id] & 3) == 0)) {
             chosen = choose_distinct_candidate(candidates, candidate_count, last_pattern, 0);
-        } else if ((ai_personality_phase[wk->wu.id] & 3) == 1) {
+        } else if ((profile->confirm_bias >= 6) && ((ai_personality_phase[wk->wu.id] & 3) == 1)) {
             chosen = candidates[candidate_count / 2];
         } else {
             chosen = candidates[0];
         }
         ai_personality_phase[wk->wu.id] = (ai_personality_phase[wk->wu.id] + 1) & 3;
-        break;
+    }
+
+    if (ai_mood_active(wk, AI_MOOD_CONFIDENCE) && (candidate_count >= 2)) {
+        chosen = candidates[candidate_count - 1];
+    } else if (ai_mood_active(wk, AI_MOOD_BAIT)) {
+        chosen = candidates[0];
+    } else if (ai_mood_active(wk, AI_MOOD_PANIC) && (candidate_count >= 2)) {
+        chosen = candidates[candidate_count / 2];
+    }
+
+    if ((style->jump_in_bias >= 8) && (hit_follow == 0) && (candidate_count >= 2) &&
+        ((ai_personality_phase[wk->wu.id] & 1) == 0)) {
+        chosen = candidates[candidate_count - 1];
+    }
+
+    if ((style->reset_bias >= 8) && (hit_follow == 0)) {
+        chosen = candidates[0];
     }
 
     return chosen;
 }
 
 static s32 personality_allows_guard(PLW* wk) {
-    static const u8 guard_drop_chance[4][8] = {
-        { 7, 6, 5, 4, 3, 2, 1, 0 },
-        { 24, 22, 20, 18, 15, 12, 10, 8 },
-        { 32, 29, 26, 22, 18, 15, 12, 10 },
-        { 2, 1, 1, 0, 0, 0, 0, 0 },
-    };
+    AIProfile* profile = get_ai_profile(wk);
+    AICharacterStyleModel* style = get_ai_character_style(wk);
     s32 difficulty = save_w[Present_Mode].Difficulty;
-    u8 style = ai_personality_style[wk->wu.id];
-    u8 base_style = get_ai_base_style(wk);
-    u8 drop_chance;
+    u8 threshold_index;
+    u8 repeat_threshold;
+    u8 strike_threshold;
+    u8 super_threshold;
+    s16 drop_chance = 6 + (profile->aggression * 2) + profile->volatility - profile->patience - profile->retreat_bias;
 
     if (difficulty < 0) {
         difficulty = 0;
@@ -801,27 +1119,45 @@ static s32 personality_allows_guard(PLW* wk) {
         difficulty = 7;
     }
 
-    drop_chance = guard_drop_chance[style][difficulty];
-    if (base_style == AI_BASE_TURTLE || base_style == AI_BASE_FOOTSIE) {
-        if (drop_chance > 3) {
-            drop_chance -= 3;
-        }
-    } else if (base_style == AI_BASE_RUSH) {
-        drop_chance += (style == AI_STYLE_RELENTLESS) ? 10 : 8;
-    } else if (base_style == AI_BASE_WEIRD) {
-        drop_chance += (style == AI_STYLE_TRICKSTER) ? 9 : 6;
-    }
+    threshold_index = get_ai_adapt_threshold_index(difficulty);
+    repeat_threshold = ai_adapt_threshold_repeat[threshold_index];
+    strike_threshold = ai_adapt_threshold_strike[threshold_index];
+    super_threshold = ai_adapt_threshold_super[threshold_index];
 
-    if ((style == AI_STYLE_METHODICAL) && (base_style == AI_BASE_TURTLE)) {
-        if (drop_chance > 2) {
-            drop_chance -= 2;
-        } else {
-            drop_chance = 0;
-        }
-    } else if ((style == AI_STYLE_RELENTLESS) && (base_style == AI_BASE_RUSH)) {
-        drop_chance += 6;
-    } else if ((style == AI_STYLE_TRICKSTER) && (base_style == AI_BASE_WEIRD)) {
-        drop_chance += 6;
+    if (profile->anti_air_bias >= 7) {
+        drop_chance -= 2;
+    }
+    if (profile->parry_bias >= 7) {
+        drop_chance += 2;
+    }
+    if ((profile->aggression >= 8) && (profile->patience <= 2)) {
+        drop_chance += 5;
+    }
+    if ((profile->patience >= 8) && (profile->retreat_bias >= 7)) {
+        drop_chance -= 5;
+    }
+    if ((profile->volatility >= 8) && (profile->patience <= 4)) {
+        drop_chance += 3;
+    }
+    if (ai_adapt_repeat_pressure[wk->wu.id] >= repeat_threshold) {
+        drop_chance -= 8;
+    }
+    if (ai_adapt_super_art[wk->wu.id] >= super_threshold) {
+        drop_chance -= 12;
+    }
+    if (get_ai_adapt_strike_peak(wk) >= strike_threshold) {
+        drop_chance -= 6;
+    }
+    if (ai_adapt_throw[wk->wu.id] >= 6) {
+        drop_chance -= 8;
+    }
+    if (ai_adapt_art[wk->wu.id] >= ai_adapt_threshold_art[threshold_index]) {
+        drop_chance -= 7;
+    }
+    if (style->defense_stability >= 8) {
+        drop_chance -= 5;
+    } else if (style->defense_stability <= 3) {
+        drop_chance += 3;
     }
 
     if (ai_bait_active(wk) != 0) {
@@ -831,6 +1167,25 @@ static s32 personality_allows_guard(PLW* wk) {
             drop_chance = 0;
         }
     }
+    if (ai_mood_active(wk, AI_MOOD_BAIT)) {
+        if (drop_chance > 8) {
+            drop_chance -= 8;
+        } else {
+            drop_chance = 0;
+        }
+    } else if (ai_mood_active(wk, AI_MOOD_CONFIDENCE)) {
+        drop_chance += 3;
+    } else if (ai_mood_active(wk, AI_MOOD_TILT)) {
+        drop_chance += 5;
+    } else if (ai_mood_active(wk, AI_MOOD_PANIC)) {
+        drop_chance += 8;
+    }
+
+    if (drop_chance < 0) {
+        drop_chance = 0;
+    } else if (drop_chance > 31) {
+        drop_chance = 31;
+    }
 
     if (random_32_com() < drop_chance) {
         return 0;
@@ -839,26 +1194,133 @@ static s32 personality_allows_guard(PLW* wk) {
     return 1;
 }
 
+s32 AI_Decide_Follow_Commitment(PLW* wk) {
+    AIProfile* profile = get_ai_profile(wk);
+    AICharacterStyleModel* style = get_ai_character_style(wk);
+    s32 hit_follow = (CP_No[wk->wu.id][2] != 0);
+    s16 aggression_score = profile->aggression + profile->confirm_bias + (profile->throw_bias / 2);
+    s16 patience_score = profile->patience + profile->retreat_bias + (profile->anti_air_bias / 2);
+    s16 volatility_score = profile->volatility + (profile->parry_bias / 2);
+
+    aggression_score -= (style->reset_bias / 2);
+    patience_score += (style->reset_bias / 2);
+
+    if (ai_mood_active(wk, AI_MOOD_CONFIDENCE) || ai_mood_active(wk, AI_MOOD_RUSHDOWN)) {
+        aggression_score += 3;
+    }
+    if (ai_mood_active(wk, AI_MOOD_BAIT)) {
+        patience_score += 4;
+    }
+    if (ai_mood_active(wk, AI_MOOD_TILT)) {
+        aggression_score += 2;
+        patience_score -= 2;
+    }
+    if (ai_mood_active(wk, AI_MOOD_PANIC)) {
+        patience_score += 2;
+        aggression_score -= 3;
+    }
+
+    if (hit_follow != 0) {
+        aggression_score += 2;
+    } else {
+        patience_score += 1;
+    }
+
+    if ((style->reset_bias >= 8) && (hit_follow == 0)) {
+        return 0;
+    }
+
+    if ((profile->aggression >= 8) && (profile->confirm_bias >= 7)) {
+        return 1;
+    }
+
+    if ((profile->patience >= 8) && (profile->retreat_bias >= 7)) {
+        if ((hit_follow == 0) || ai_mood_active(wk, AI_MOOD_BAIT)) {
+            return 2;
+        }
+
+        return 0;
+    }
+
+    if (profile->volatility >= 8) {
+        switch (ai_personality_phase[wk->wu.id] % 3) {
+        case 0:
+            return 1;
+        case 1:
+            return 0;
+        default:
+            return 2;
+        }
+    }
+
+    if ((aggression_score - patience_score) >= 5) {
+        return 1;
+    }
+
+    if ((patience_score - aggression_score) >= 5) {
+        if ((volatility_score >= 6) || ai_mood_active(wk, AI_MOOD_BAIT)) {
+            return 2;
+        }
+
+        return 0;
+    }
+
+    if ((volatility_score >= 7) && ((ai_personality_phase[wk->wu.id] & 1) != 0)) {
+        return 2;
+    }
+
+    return hit_follow != 0;
+}
+
+s16 AI_Get_Passive_Reposition_Time(PLW* wk) {
+    s16 timer = (s16)(get_ai_bait_duration_frames(wk) / 3);
+
+    if (timer < 8) {
+        timer = 8;
+    } else if (timer > 24) {
+        timer = 24;
+    }
+
+    if (ai_mood_active(wk, AI_MOOD_BAIT)) {
+        timer += 6;
+    } else if (ai_mood_active(wk, AI_MOOD_CONFIDENCE)) {
+        timer -= 2;
+    }
+
+    if (timer < 4) {
+        timer = 4;
+    }
+
+    return timer;
+}
+
 static u8 choose_guard_type_by_personality(PLW* wk, const s8* guard_row) {
-    u8 style = ai_personality_style[wk->wu.id];
-    u8 base_style = get_ai_base_style(wk);
+    AIProfile* profile = get_ai_profile(wk);
+    s32 difficulty = save_w[Present_Mode].Difficulty;
+    u8 threshold_index;
+    u8 jump_threshold;
+    u8 strike_threshold;
+    u8 art_threshold;
+    u8 super_threshold;
     u8 candidates[6];
-    s16 candidate_count = 3;
+    s16 candidate_count = 3 + (profile->parry_bias / 3);
     s16 i;
     u8 chosen;
 
-    if (style == AI_STYLE_BALANCED) {
-        candidate_count = 4;
-    } else if (style == AI_STYLE_TRICKSTER) {
-        candidate_count = 6;
-    } else if (style == AI_STYLE_RELENTLESS) {
-        candidate_count = 6;
-    } else if (style == AI_STYLE_METHODICAL) {
-        candidate_count = 5;
+    if (difficulty < 0) {
+        difficulty = 0;
+    } else if (difficulty > 7) {
+        difficulty = 7;
     }
 
-    if ((base_style == AI_BASE_TURTLE || base_style == AI_BASE_WEIRD) && (candidate_count < 6)) {
-        candidate_count++;
+    threshold_index = get_ai_adapt_threshold_index(difficulty);
+    jump_threshold = ai_adapt_threshold_jump[threshold_index];
+    strike_threshold = ai_adapt_threshold_strike[threshold_index];
+    art_threshold = ai_adapt_threshold_art[threshold_index];
+    super_threshold = ai_adapt_threshold_super[threshold_index];
+
+    if (candidate_count > 6) {
+        candidate_count = 6;
     }
 
     for (i = 0; i < candidate_count; i++) {
@@ -867,28 +1329,14 @@ static u8 choose_guard_type_by_personality(PLW* wk, const s8* guard_row) {
 
     chosen = candidates[0];
 
-    if (style == AI_STYLE_METHODICAL) {
-        for (i = 0; i < candidate_count; i++) {
-            if (candidates[i] != 2) {
-                chosen = candidates[i];
-                break;
-            }
-        }
-    } else if (style == AI_STYLE_BALANCED) {
-        for (i = 0; i < candidate_count; i++) {
-            if (candidates[i] == 1) {
-                chosen = candidates[i];
-                break;
-            }
-        }
-    } else if (style == AI_STYLE_TRICKSTER) {
+    if ((profile->parry_bias >= 7) && (profile->volatility >= 6)) {
         for (i = 0; i < candidate_count; i++) {
             if (candidates[i] == 2) {
                 chosen = candidates[i];
                 break;
             }
         }
-    } else if (style == AI_STYLE_RELENTLESS) {
+    } else if ((profile->aggression >= 8) && (profile->patience <= 2)) {
         chosen = candidates[candidate_count - 1];
         for (i = 0; i < candidate_count; i++) {
             if (candidates[i] == 0) {
@@ -896,26 +1344,67 @@ static u8 choose_guard_type_by_personality(PLW* wk, const s8* guard_row) {
                 break;
             }
         }
+    } else if ((profile->patience + profile->retreat_bias) >= 14) {
+        for (i = 0; i < candidate_count; i++) {
+            if (candidates[i] != 2) {
+                chosen = candidates[i];
+                break;
+            }
+        }
+    } else {
+        for (i = 0; i < candidate_count; i++) {
+            if (candidates[i] == 1) {
+                chosen = candidates[i];
+                break;
+            }
+        }
     }
 
-    if (base_style == AI_BASE_TURTLE && chosen == 2) {
-        chosen = 1;
-    } else if (base_style == AI_BASE_RUSH && chosen == 0) {
-        chosen = 1;
+    if (ai_adapt_super_art[wk->wu.id] >= super_threshold) {
+        for (i = 0; i < candidate_count; i++) {
+            if (candidates[i] == 2) {
+                chosen = candidates[i];
+                break;
+            }
+        }
+    } else if (ai_adapt_art[wk->wu.id] >= art_threshold) {
+        for (i = 0; i < candidate_count; i++) {
+            if (candidates[i] == 1 || candidates[i] == 2) {
+                chosen = candidates[i];
+                break;
+            }
+        }
+    } else if (ai_adapt_jump_in[wk->wu.id] >= jump_threshold) {
+        for (i = 0; i < candidate_count; i++) {
+            if (candidates[i] == 2) {
+                chosen = candidates[i];
+                break;
+            }
+        }
+    } else if (get_ai_adapt_strike_peak(wk) >= strike_threshold) {
+        for (i = 0; i < candidate_count; i++) {
+            if (candidates[i] == 1) {
+                chosen = candidates[i];
+                break;
+            }
+        }
     }
 
     return chosen;
 }
 
 static u16 choose_passive_pattern_by_personality(PLW* wk, const u8* pattern_row) {
-    u8 style = ai_personality_style[wk->wu.id];
-    u8 base_style = get_ai_base_style(wk);
+    AIProfile* profile = get_ai_profile(wk);
+    AICharacterStyleModel* style = get_ai_character_style(wk);
     s32 difficulty = save_w[Present_Mode].Difficulty;
     u16 candidates[8];
-    s16 candidate_count = 3;
+    s16 candidate_count = 3 + (profile->volatility / 3) + (profile->throw_bias / 4);
     s16 i;
     u16 chosen;
+    u8 threshold_index;
     u8 throw_threshold;
+    u8 repeat_threshold;
+    u8 super_threshold;
 
     if (difficulty < 0) {
         difficulty = 0;
@@ -923,26 +1412,17 @@ static u16 choose_passive_pattern_by_personality(PLW* wk, const u8* pattern_row)
         difficulty = 7;
     }
 
-    throw_threshold = (difficulty <= 1) ? 10 : (difficulty <= 3) ? 8 : (difficulty <= 5) ? 6 : 4;
-
-    if (style == AI_STYLE_BALANCED) {
-        candidate_count = 5;
-    } else if (style == AI_STYLE_TRICKSTER) {
-        candidate_count = 8;
-    } else if (style == AI_STYLE_RELENTLESS) {
-        candidate_count = 8;
-    } else if (style == AI_STYLE_METHODICAL) {
-        candidate_count = 6;
+    threshold_index = get_ai_adapt_threshold_index(difficulty);
+    throw_threshold = (u8)(((difficulty <= 1) ? 10 : (difficulty <= 3) ? 8 : (difficulty <= 5) ? 6 : 4) -
+                           (profile->throw_bias / 3));
+    repeat_threshold = ai_adapt_threshold_repeat[threshold_index];
+    super_threshold = ai_adapt_threshold_super[threshold_index];
+    if (throw_threshold < 2) {
+        throw_threshold = 2;
     }
 
-    if ((base_style == AI_BASE_RUSH || base_style == AI_BASE_WEIRD) && (candidate_count < 8)) {
-        candidate_count++;
-    }
-
-    if ((style == AI_STYLE_RELENTLESS) && (base_style == AI_BASE_RUSH) && (candidate_count < 8)) {
-        candidate_count += 2;
-    } else if ((style == AI_STYLE_TRICKSTER) && (base_style == AI_BASE_WEIRD) && (candidate_count < 8)) {
-        candidate_count += 2;
+    if (candidate_count > 8) {
+        candidate_count = 8;
     }
 
     for (i = 0; i < candidate_count; i++) {
@@ -951,31 +1431,24 @@ static u16 choose_passive_pattern_by_personality(PLW* wk, const u8* pattern_row)
 
     chosen = candidates[0];
 
-    if (style == AI_STYLE_METHODICAL) {
+    if ((profile->aggression >= 8) && (profile->throw_bias >= 7)) {
+        for (i = 0; i < candidate_count; i++) {
+            if ((candidates[i] != 0xFF) && (candidates[i] != Last_Pattern_Index[wk->wu.id])) {
+                chosen = candidates[i];
+            }
+        }
+        if ((chosen == 0xFF) && (candidate_count >= 2)) {
+            chosen = candidates[candidate_count - 1];
+        }
+    } else if ((profile->patience >= 8) && (profile->retreat_bias >= 7)) {
+        chosen = 0xFF;
         for (i = 0; i < candidate_count; i++) {
             if (candidates[i] != 0xFF) {
                 chosen = candidates[i];
                 break;
             }
         }
-    } else if (style == AI_STYLE_BALANCED) {
-        for (i = 0; i < candidate_count; i++) {
-            if (candidates[i] != 0xFF && candidates[i] != Last_Pattern_Index[wk->wu.id]) {
-                chosen = candidates[i];
-                break;
-            }
-        }
-    } else if (style == AI_STYLE_RELENTLESS) {
-        for (i = 0; i < candidate_count; i++) {
-            if (candidates[i] != 0xFF && candidates[i] != Last_Pattern_Index[wk->wu.id]) {
-                chosen = candidates[i];
-                break;
-            }
-        }
-        if ((base_style == AI_BASE_RUSH) && (chosen == 0xFF)) {
-            chosen = candidates[0];
-        }
-    } else if (style == AI_STYLE_TRICKSTER) {
+    } else if (profile->volatility >= 8) {
         chosen = candidates[candidate_count - 1];
         for (i = candidate_count - 1; i >= 0; i--) {
             if (candidates[i] == 0xFF) {
@@ -983,21 +1456,41 @@ static u16 choose_passive_pattern_by_personality(PLW* wk, const u8* pattern_row)
                 break;
             }
         }
-        if ((base_style == AI_BASE_WEIRD) && ((ai_personality_phase[wk->wu.id] & 1) == 0)) {
-            chosen = candidates[candidate_count - 1];
-        }
-    }
-
-    if ((style == AI_STYLE_RELENTLESS) && (chosen == 0xFF)) {
+    } else if (style->defense_stability >= 8) {
+        chosen = 0xFF;
         for (i = 0; i < candidate_count; i++) {
             if (candidates[i] != 0xFF) {
                 chosen = candidates[i];
                 break;
             }
         }
+    } else if ((profile->aggression + profile->throw_bias) >= 14) {
+        for (i = 0; i < candidate_count; i++) {
+            if (candidates[i] != 0xFF && candidates[i] != Last_Pattern_Index[wk->wu.id]) {
+                chosen = candidates[i];
+                break;
+            }
+        }
+        if (chosen == 0xFF) {
+            chosen = candidates[0];
+        }
+    } else if ((profile->patience + profile->retreat_bias) >= 14) {
+        for (i = 0; i < candidate_count; i++) {
+            if (candidates[i] != 0xFF) {
+                chosen = candidates[i];
+                break;
+            }
+        }
+    } else {
+        for (i = 0; i < candidate_count; i++) {
+            if (candidates[i] != 0xFF && candidates[i] != Last_Pattern_Index[wk->wu.id]) {
+                chosen = candidates[i];
+                break;
+            }
+        }
     }
 
-    if (base_style == AI_BASE_TURTLE && chosen == 0xFF) {
+    if (((profile->patience + profile->throw_bias) >= 12) && (chosen == 0xFF)) {
         for (i = 0; i < candidate_count; i++) {
             if (candidates[i] != 0xFF) {
                 chosen = candidates[i];
@@ -1014,6 +1507,22 @@ static u16 choose_passive_pattern_by_personality(PLW* wk, const u8* pattern_row)
             }
         }
     }
+    if ((ai_adapt_repeat_pressure[wk->wu.id] >= repeat_threshold) && chosen == 0xFF) {
+        for (i = 0; i < candidate_count; i++) {
+            if (candidates[i] != 0xFF) {
+                chosen = candidates[i];
+                break;
+            }
+        }
+    }
+    if ((ai_adapt_super_art[wk->wu.id] >= super_threshold) && chosen == 0xFF) {
+        for (i = 0; i < candidate_count; i++) {
+            if (candidates[i] != 0xFF) {
+                chosen = candidates[i];
+                break;
+            }
+        }
+    }
 
     if ((ai_bait_active(wk) != 0) && chosen == 0xFF) {
         for (i = 0; i < candidate_count; i++) {
@@ -1023,6 +1532,16 @@ static u16 choose_passive_pattern_by_personality(PLW* wk, const u8* pattern_row)
             }
         }
     }
+    if (ai_mood_active(wk, AI_MOOD_BAIT) && chosen == 0xFF) {
+        for (i = 0; i < candidate_count; i++) {
+            if (candidates[i] != 0xFF) {
+                chosen = candidates[i];
+                break;
+            }
+        }
+    } else if (ai_mood_active(wk, AI_MOOD_CONFIDENCE) && (candidate_count >= 2)) {
+        chosen = candidates[candidate_count - 1];
+    }
 
     return chosen;
 }
@@ -1030,15 +1549,11 @@ static u16 choose_passive_pattern_by_personality(PLW* wk, const u8* pattern_row)
 void Init_AI_Personality(PLW* wk) {
     u8 seed = (u8)random_32_com();
 
-    if ((ai_personality_active[wk->wu.id] != 0) &&
-        (ai_personality_player_number[wk->wu.id] == (u8)wk->player_number)) {
-        return;
-    }
-
     ai_personality_active[wk->wu.id] = 1;
     ai_personality_style[wk->wu.id] = (u8)((wk->player_number + seed) & 3);
     ai_personality_phase[wk->wu.id] = seed & 3;
     ai_personality_player_number[wk->wu.id] = (u8)wk->player_number;
+    build_ai_profile(wk);
 }
 
 const s8* Get_AI_Personality_Name(PLW* wk) {
@@ -1067,8 +1582,8 @@ static s16 coarse_guard_threat_range(s16 hit_range) {
 
 static u8 get_guard_sense_lag_frames(PLW* wk) {
     s32 difficulty = save_w[Present_Mode].Difficulty;
+    AIProfile* profile = get_ai_profile(wk);
     u8 style = ai_personality_style[wk->wu.id] & 3;
-    u8 base_style = get_ai_base_style(wk);
     u8 lag;
 
     load_ai_tuning_config();
@@ -1080,12 +1595,14 @@ static u8 get_guard_sense_lag_frames(PLW* wk) {
     }
 
     lag = ai_guard_sense_lag_config[style][difficulty];
-    if ((style == AI_STYLE_RELENTLESS) && (base_style == AI_BASE_RUSH) && (lag > 2)) {
-        lag -= 2;
-    } else if ((style == AI_STYLE_METHODICAL) && (base_style == AI_BASE_TURTLE) && (lag > 2)) {
-        lag -= 2;
-    } else if ((style == AI_STYLE_TRICKSTER) && (base_style == AI_BASE_WEIRD) && (lag < (CPU_GUARD_SENSE_FRAMES - 3))) {
-        lag += 3;
+    if (lag > (profile->aggression / 3)) {
+        lag = (u8)(lag - (profile->aggression / 3));
+    }
+    if (lag > (profile->anti_air_bias / 3)) {
+        lag = (u8)(lag - (profile->anti_air_bias / 3));
+    }
+    if ((profile->retreat_bias + profile->volatility) >= 14 && (lag < (CPU_GUARD_SENSE_FRAMES - 2))) {
+        lag += 2;
     }
     if (lag >= CPU_GUARD_SENSE_FRAMES) {
         lag = CPU_GUARD_SENSE_FRAMES - 1;
@@ -1095,16 +1612,9 @@ static u8 get_guard_sense_lag_frames(PLW* wk) {
 }
 
 static u8 get_ai_bait_duration_frames(PLW* wk) {
-    static const u8 bait_duration_table[4] = {
-        66, /* BAL */
-        24, /* RSH */
-        36, /* TRK */
-        108, /* MET */
-    };
-    u8 style = ai_personality_style[wk->wu.id] & 3;
-    u8 base_style = get_ai_base_style(wk);
+    AIProfile* profile = get_ai_profile(wk);
     s32 difficulty = save_w[Present_Mode].Difficulty;
-    u8 duration = bait_duration_table[style];
+    u8 duration = (u8)(24 + (profile->patience * 6) - (profile->volatility * 2));
 
     if (difficulty < 0) {
         difficulty = 0;
@@ -1120,12 +1630,8 @@ static u8 get_ai_bait_duration_frames(PLW* wk) {
         duration = (u8)(duration - 6);
     }
 
-    if ((style == AI_STYLE_METHODICAL) && (base_style == AI_BASE_TURTLE)) {
-        duration = (u8)(duration + 18);
-    } else if ((style == AI_STYLE_RELENTLESS) && (base_style == AI_BASE_RUSH)) {
-        duration = (duration > 18) ? (u8)(duration - 18) : duration;
-    } else if ((style == AI_STYLE_TRICKSTER) && (base_style == AI_BASE_WEIRD)) {
-        duration = (duration > 12) ? (u8)(duration - 12) : duration;
+    if (profile->confirm_bias >= 7) {
+        duration = (duration > 6) ? (u8)(duration - 6) : duration;
     }
 
     return duration;
@@ -1135,23 +1641,127 @@ static s32 ai_bait_active(PLW* wk) {
     return ai_bait_timer[wk->wu.id] != 0;
 }
 
-static void reset_ai_adaptation(PLW* wk) {
+static u8 ai_mood_active(PLW* wk, u8 mood) {
+    return (u8)(ai_mood_state[wk->wu.id] == mood);
+}
+
+static u8 get_ai_mood_duration(PLW* wk, u8 mood) {
+    AIProfile* profile = get_ai_profile(wk);
+    u8 base_duration;
+
+    load_ai_tuning_config();
+    base_duration = ai_mood_duration_config[mood];
+
+    switch (mood) {
+    case AI_MOOD_RUSHDOWN:
+        return (u8)(base_duration + (profile->aggression * 3) + (profile->confirm_bias * 2));
+    case AI_MOOD_BAIT:
+        return (base_duration != 0) ? base_duration : get_ai_bait_duration_frames(wk);
+    case AI_MOOD_TILT:
+        return (u8)(base_duration + (profile->aggression * 2) + profile->volatility);
+    case AI_MOOD_PANIC:
+        return (u8)(base_duration + (profile->volatility * 2));
+    case AI_MOOD_CONFIDENCE:
+        return (u8)(base_duration + (profile->aggression * 2) + (profile->confirm_bias * 2));
+    default:
+        return 0;
+    }
+}
+
+static void set_ai_mood(PLW* wk, u8 mood, u8 duration) {
+    ai_mood_state[wk->wu.id] = mood;
+    ai_mood_timer[wk->wu.id] = duration;
+}
+
+static void clear_ai_adaptation(PLW* wk) {
     ai_adapt_jump_in[wk->wu.id] = 0;
     ai_adapt_throw[wk->wu.id] = 0;
     ai_adapt_low[wk->wu.id] = 0;
+    ai_adapt_repeat_pressure[wk->wu.id] = 0;
+    ai_adapt_art[wk->wu.id] = 0;
+    ai_adapt_super_art[wk->wu.id] = 0;
+    ai_adapt_light[wk->wu.id] = 0;
+    ai_adapt_medium[wk->wu.id] = 0;
+    ai_adapt_heavy[wk->wu.id] = 0;
+    ai_adapt_player_number[wk->wu.id] = (u8)wk->player_number;
+}
+
+static void reset_ai_adaptation_runtime(PLW* wk) {
     ai_adapt_last_counter[wk->wu.id] = -1;
+    ai_pressure_chain[wk->wu.id] = 0;
     ai_bait_timer[wk->wu.id] = 0;
+    ai_mood_state[wk->wu.id] = AI_MOOD_NEUTRAL;
+    ai_mood_timer[wk->wu.id] = 0;
+    ai_success_streak[wk->wu.id] = 0;
+    ai_last_vitality[wk->wu.id] = wk->wu.vital_new;
+}
+
+static u8 decay_round_memory_value(u8 value, u8 decay) {
+    return (value > decay) ? (u8)(value - decay) : 0;
+}
+
+static void decay_ai_adaptation_for_round(PLW* wk) {
+    ai_adapt_jump_in[wk->wu.id] = decay_round_memory_value(ai_adapt_jump_in[wk->wu.id], 2);
+    ai_adapt_throw[wk->wu.id] = decay_round_memory_value(ai_adapt_throw[wk->wu.id], 1);
+    ai_adapt_low[wk->wu.id] = decay_round_memory_value(ai_adapt_low[wk->wu.id], 2);
+    ai_adapt_repeat_pressure[wk->wu.id] = decay_round_memory_value(ai_adapt_repeat_pressure[wk->wu.id], 1);
+    ai_adapt_art[wk->wu.id] = decay_round_memory_value(ai_adapt_art[wk->wu.id], 1);
+    ai_adapt_super_art[wk->wu.id] = decay_round_memory_value(ai_adapt_super_art[wk->wu.id], 1);
+    ai_adapt_light[wk->wu.id] = decay_round_memory_value(ai_adapt_light[wk->wu.id], 2);
+    ai_adapt_medium[wk->wu.id] = decay_round_memory_value(ai_adapt_medium[wk->wu.id], 2);
+    ai_adapt_heavy[wk->wu.id] = decay_round_memory_value(ai_adapt_heavy[wk->wu.id], 1);
+}
+
+static u8 get_ai_adapt_strike_peak(PLW* wk) {
+    u8 peak = ai_adapt_low[wk->wu.id];
+
+    if (ai_adapt_light[wk->wu.id] > peak) {
+        peak = ai_adapt_light[wk->wu.id];
+    }
+    if (ai_adapt_medium[wk->wu.id] > peak) {
+        peak = ai_adapt_medium[wk->wu.id];
+    }
+    if (ai_adapt_heavy[wk->wu.id] > peak) {
+        peak = ai_adapt_heavy[wk->wu.id];
+    }
+
+    return peak;
+}
+
+static void reset_ai_adaptation(PLW* wk) {
+    if (ai_adapt_player_number[wk->wu.id] != (u8)wk->player_number) {
+        clear_ai_adaptation(wk);
+    } else {
+        decay_ai_adaptation_for_round(wk);
+    }
+
+    reset_ai_adaptation_runtime(wk);
 }
 
 static void update_ai_adaptation(PLW* wk) {
     WORK* em = (WORK*)wk->wu.target_adrs;
+    PLW* em_pl = (PLW*)em;
+    AIProfile* profile = get_ai_profile(wk);
     s16 attack_counter;
+    s16 prev_attack_counter;
     s32 difficulty = save_w[Present_Mode].Difficulty;
     u8 decay_step;
     u8 jump_gain;
     u8 throw_gain;
     u8 low_gain;
+    u8 pressure_gain;
+    u8 art_gain;
+    u8 super_gain;
+    u8 strike_gain;
     u8 low_learn_mask;
+    s32 is_air_attack;
+    s32 is_throw_attack;
+    s32 is_super_attack;
+    s32 is_normal_attack;
+    s32 is_art_attack;
+    s32 is_close_pressure;
+    s32 attack_power;
+    s32 strength_band;
 
     if (em == NULL) {
         return;
@@ -1164,12 +1774,17 @@ static void update_ai_adaptation(PLW* wk) {
     }
 
     decay_step = (difficulty <= 1) ? 2 : 1;
-    jump_gain = (u8)(1 + (difficulty >= 2) + (difficulty >= 5));
-    throw_gain = (u8)(2 + (difficulty >= 3) + (difficulty >= 6));
+    jump_gain = (u8)(1 + (difficulty >= 2) + (difficulty >= 5) + (profile->anti_air_bias >= 7));
+    throw_gain = (u8)(2 + (difficulty >= 3) + (difficulty >= 6) + (profile->throw_bias >= 7));
     low_gain = (u8)(1 + (difficulty >= 4));
+    pressure_gain = (u8)(1 + (difficulty >= 2) + (difficulty >= 5) + (profile->confirm_bias >= 7));
+    art_gain = (u8)(1 + (difficulty >= 3) + (profile->parry_bias >= 6));
+    super_gain = (u8)(2 + (difficulty >= 3) + (difficulty >= 6) + (profile->parry_bias >= 7));
+    strike_gain = (u8)(1 + (difficulty >= 2) + (difficulty >= 5));
     low_learn_mask = (difficulty <= 1) ? 7 : (difficulty <= 3) ? 3 : (difficulty <= 5) ? 1 : 0;
 
     attack_counter = Attack_Counter[wk->wu.id];
+    prev_attack_counter = ai_adapt_last_counter[wk->wu.id];
     if (attack_counter == ai_adapt_last_counter[wk->wu.id]) {
         return;
     }
@@ -1191,23 +1806,64 @@ static void update_ai_adaptation(PLW* wk) {
         ai_adapt_low[wk->wu.id] =
             (ai_adapt_low[wk->wu.id] > decay_step) ? (u8)(ai_adapt_low[wk->wu.id] - decay_step) : 0;
     }
+    if (ai_adapt_repeat_pressure[wk->wu.id] > 0) {
+        ai_adapt_repeat_pressure[wk->wu.id] = (ai_adapt_repeat_pressure[wk->wu.id] > decay_step)
+                                                  ? (u8)(ai_adapt_repeat_pressure[wk->wu.id] - decay_step)
+                                                  : 0;
+    }
+    if (ai_adapt_art[wk->wu.id] > 0) {
+        ai_adapt_art[wk->wu.id] =
+            (ai_adapt_art[wk->wu.id] > decay_step) ? (u8)(ai_adapt_art[wk->wu.id] - decay_step) : 0;
+    }
+    if (ai_adapt_super_art[wk->wu.id] > 0) {
+        ai_adapt_super_art[wk->wu.id] = (ai_adapt_super_art[wk->wu.id] > decay_step)
+                                            ? (u8)(ai_adapt_super_art[wk->wu.id] - decay_step)
+                                            : 0;
+    }
+    if (ai_adapt_light[wk->wu.id] > 0) {
+        ai_adapt_light[wk->wu.id] =
+            (ai_adapt_light[wk->wu.id] > decay_step) ? (u8)(ai_adapt_light[wk->wu.id] - decay_step) : 0;
+    }
+    if (ai_adapt_medium[wk->wu.id] > 0) {
+        ai_adapt_medium[wk->wu.id] =
+            (ai_adapt_medium[wk->wu.id] > decay_step) ? (u8)(ai_adapt_medium[wk->wu.id] - decay_step) : 0;
+    }
+    if (ai_adapt_heavy[wk->wu.id] > 0) {
+        ai_adapt_heavy[wk->wu.id] =
+            (ai_adapt_heavy[wk->wu.id] > decay_step) ? (u8)(ai_adapt_heavy[wk->wu.id] - decay_step) : 0;
+    }
 
     if (Attack_Flag[wk->wu.id] == 0) {
+        ai_pressure_chain[wk->wu.id] = 0;
         return;
     }
 
-    if (em->jump_att_flag || em->xyz[1].disp.pos > 0) {
+    is_air_attack = (em->jump_att_flag || em->xyz[1].disp.pos > 0);
+    is_throw_attack = ((VS_Tech[wk->wu.id] == 0x0B) || (VS_Tech[wk->wu.id] == 0x1E));
+    is_super_attack = check_super_arts_attack(em_pl);
+    is_normal_attack = check_normal_attack(em->kind_of_waza);
+    is_art_attack = (!is_super_attack && !is_normal_attack);
+    is_close_pressure = (Area_Number[wk->wu.id] <= 1) && ((prev_attack_counter < 0) || (attack_counter <= prev_attack_counter + 2));
+    attack_power = em->attpow;
+    strength_band = -1;
+
+    if (is_normal_attack && ((em->kind_of_waza & 0xF8) == 0)) {
+        strength_band = (em->kind_of_waza / 2) & 3;
+    }
+
+    if (is_air_attack) {
         if (ai_adapt_jump_in[wk->wu.id] < 12) {
             ai_adapt_jump_in[wk->wu.id] =
                 clamp_adaptation_value((int)ai_adapt_jump_in[wk->wu.id] + (int)jump_gain);
         }
-        if (ai_adapt_jump_in[wk->wu.id] >= 6) {
+        if (ai_adapt_jump_in[wk->wu.id] >= ai_adapt_bait_trigger_jump) {
             ai_bait_timer[wk->wu.id] = get_ai_bait_duration_frames(wk);
+            set_ai_mood(wk, AI_MOOD_BAIT, ai_bait_timer[wk->wu.id]);
         }
         return;
     }
 
-    if ((VS_Tech[wk->wu.id] == 0x0B) || (VS_Tech[wk->wu.id] == 0x1E)) {
+    if (is_throw_attack) {
         if (ai_adapt_throw[wk->wu.id] < 12) {
             ai_adapt_throw[wk->wu.id] =
                 clamp_adaptation_value((int)ai_adapt_throw[wk->wu.id] + (int)throw_gain);
@@ -1215,12 +1871,109 @@ static void update_ai_adaptation(PLW* wk) {
         return;
     }
 
-    if ((Area_Number[wk->wu.id] <= 1) && (ai_adapt_low[wk->wu.id] < 12) && ((random_32_com() & low_learn_mask) == 0)) {
-        ai_adapt_low[wk->wu.id] = clamp_adaptation_value((int)ai_adapt_low[wk->wu.id] + (int)low_gain);
-        if (ai_adapt_low[wk->wu.id] >= 6) {
-            ai_bait_timer[wk->wu.id] = get_ai_bait_duration_frames(wk);
+    if (is_super_attack) {
+        ai_adapt_super_art[wk->wu.id] = clamp_adaptation_value((int)ai_adapt_super_art[wk->wu.id] + (int)super_gain);
+    } else if (is_art_attack) {
+        ai_adapt_art[wk->wu.id] = clamp_adaptation_value((int)ai_adapt_art[wk->wu.id] + (int)art_gain);
+    }
+
+    if (is_normal_attack) {
+        if (strength_band == 0) {
+            ai_adapt_light[wk->wu.id] = clamp_adaptation_value((int)ai_adapt_light[wk->wu.id] + (int)strike_gain);
+        } else if (strength_band == 1) {
+            ai_adapt_medium[wk->wu.id] = clamp_adaptation_value((int)ai_adapt_medium[wk->wu.id] + (int)strike_gain);
+        } else if (strength_band >= 2) {
+            ai_adapt_heavy[wk->wu.id] = clamp_adaptation_value((int)ai_adapt_heavy[wk->wu.id] + (int)strike_gain);
+        } else if (attack_power <= 12) {
+            ai_adapt_light[wk->wu.id] = clamp_adaptation_value((int)ai_adapt_light[wk->wu.id] + (int)strike_gain);
+        } else if (attack_power <= 24) {
+            ai_adapt_medium[wk->wu.id] = clamp_adaptation_value((int)ai_adapt_medium[wk->wu.id] + (int)strike_gain);
+        } else {
+            ai_adapt_heavy[wk->wu.id] = clamp_adaptation_value((int)ai_adapt_heavy[wk->wu.id] + (int)strike_gain);
         }
     }
+
+    if (is_close_pressure) {
+        if (ai_pressure_chain[wk->wu.id] < 4) {
+            ai_pressure_chain[wk->wu.id]++;
+        }
+    } else {
+        ai_pressure_chain[wk->wu.id] = 1;
+    }
+
+    if (ai_pressure_chain[wk->wu.id] >= 2) {
+        ai_adapt_repeat_pressure[wk->wu.id] =
+            clamp_adaptation_value((int)ai_adapt_repeat_pressure[wk->wu.id] + (int)pressure_gain);
+        if (ai_adapt_repeat_pressure[wk->wu.id] >= ai_adapt_bait_trigger_repeat) {
+            ai_bait_timer[wk->wu.id] = get_ai_bait_duration_frames(wk);
+            set_ai_mood(wk, AI_MOOD_BAIT, ai_bait_timer[wk->wu.id]);
+        }
+    }
+
+    if ((Area_Number[wk->wu.id] <= 1) && (ai_adapt_low[wk->wu.id] < 12) && ((random_32_com() & low_learn_mask) == 0)) {
+        ai_adapt_low[wk->wu.id] = clamp_adaptation_value((int)ai_adapt_low[wk->wu.id] + (int)low_gain);
+        if (ai_adapt_low[wk->wu.id] >= ai_adapt_bait_trigger_low) {
+            ai_bait_timer[wk->wu.id] = get_ai_bait_duration_frames(wk);
+            set_ai_mood(wk, AI_MOOD_BAIT, ai_bait_timer[wk->wu.id]);
+        }
+    }
+}
+
+static void update_ai_mood(PLW* wk) {
+    AIProfile* profile = get_ai_profile(wk);
+    WORK* em = (WORK*)wk->wu.target_adrs;
+    s32 current_vitality = wk->wu.vital_new;
+    s32 max_vitality = wk->wu.vitality;
+    s32 opponent_vitality = (em != NULL) ? em->vital_new : current_vitality;
+    s32 took_damage = (ai_last_vitality[wk->wu.id] > current_vitality);
+    s32 effective_lv08;
+    u8 new_mood = AI_MOOD_NEUTRAL;
+    u8 duration = 0;
+
+    if (ai_mood_timer[wk->wu.id] > 0) {
+        ai_mood_timer[wk->wu.id]--;
+    }
+    if ((ai_mood_timer[wk->wu.id] == 0) && (ai_mood_state[wk->wu.id] != AI_MOOD_NEUTRAL)) {
+        ai_mood_state[wk->wu.id] = AI_MOOD_NEUTRAL;
+    }
+
+    if ((Stock_Hit_Flag[wk->wu.id] != 0) || (Counter_Attack[wk->wu.id] != 0)) {
+        if (ai_success_streak[wk->wu.id] < 8) {
+            ai_success_streak[wk->wu.id]++;
+        }
+    } else if (ai_success_streak[wk->wu.id] > 0) {
+        ai_success_streak[wk->wu.id]--;
+    }
+
+    Set_AI_Level_Context(wk);
+    effective_lv08 = Setup_Lv08(0);
+    Clear_AI_Level_Context();
+
+    if ((max_vitality > 0) && (current_vitality <= (max_vitality / 4)) && (effective_lv08 <= ai_mood_panic_max_lv08) &&
+        !(ai_grit_active[wk->wu.id] && ((ai_grit_tier[wk->wu.id] % 3) == AI_LUCK_HIGH))) {
+        new_mood = AI_MOOD_PANIC;
+        duration = get_ai_mood_duration(wk, new_mood);
+    } else if (ai_bait_active(wk) != 0) {
+        new_mood = AI_MOOD_BAIT;
+        duration = ai_bait_timer[wk->wu.id];
+    } else if (ai_success_streak[wk->wu.id] >= ai_mood_confidence_streak) {
+        new_mood = AI_MOOD_CONFIDENCE;
+        duration = get_ai_mood_duration(wk, new_mood);
+    } else if (took_damage && (current_vitality + (max_vitality / 8) < opponent_vitality)) {
+        new_mood = AI_MOOD_TILT;
+        duration = get_ai_mood_duration(wk, new_mood);
+    } else if ((profile->aggression >= 7) && (Area_Number[wk->wu.id] <= 1) && !Guard_Flag[wk->wu.id]) {
+        new_mood = AI_MOOD_RUSHDOWN;
+        duration = get_ai_mood_duration(wk, new_mood);
+    }
+
+    if (new_mood != AI_MOOD_NEUTRAL) {
+        if ((ai_mood_state[wk->wu.id] != new_mood) || (ai_mood_timer[wk->wu.id] < duration)) {
+            set_ai_mood(wk, new_mood, duration);
+        }
+    }
+
+    ai_last_vitality[wk->wu.id] = (s16)current_vitality;
 }
 
 static void apply_guard_sense_uncertainty(PLW* wk, s8* attack_flag, s16* distance, s16 threat_range, s32 air_guard) {
@@ -1230,8 +1983,13 @@ static void apply_guard_sense_uncertainty(PLW* wk, s8* attack_flag, s16* distanc
     s32 miss_roll;
     s32 edge_roll;
     s32 near_edge;
+    u8 threshold_index;
     u8 jump_threshold;
     u8 low_threshold;
+    u8 repeat_threshold;
+    u8 strike_threshold;
+    u8 art_threshold;
+    u8 super_threshold;
 
     if (*attack_flag == 0) {
         return;
@@ -1243,8 +2001,13 @@ static void apply_guard_sense_uncertainty(PLW* wk, s8* attack_flag, s16* distanc
         difficulty = 7;
     }
 
-    jump_threshold = (difficulty <= 1) ? 9 : (difficulty <= 3) ? 7 : (difficulty <= 5) ? 6 : 4;
-    low_threshold = (difficulty <= 1) ? 10 : (difficulty <= 3) ? 8 : (difficulty <= 5) ? 6 : 4;
+    threshold_index = get_ai_adapt_threshold_index(difficulty);
+    jump_threshold = ai_adapt_threshold_jump[threshold_index];
+    low_threshold = ai_adapt_threshold_low[threshold_index];
+    repeat_threshold = ai_adapt_threshold_repeat[threshold_index];
+    strike_threshold = ai_adapt_threshold_strike[threshold_index];
+    art_threshold = ai_adapt_threshold_art[threshold_index];
+    super_threshold = ai_adapt_threshold_super[threshold_index];
 
     if (air_guard != 0) {
         if (ai_adapt_jump_in[wk->wu.id] >= jump_threshold) {
@@ -1256,9 +2019,31 @@ static void apply_guard_sense_uncertainty(PLW* wk, s8* attack_flag, s16* distanc
         }
     }
 
+    if (air_guard == 0) {
+        if (ai_adapt_super_art[wk->wu.id] >= super_threshold) {
+            return;
+        }
+        if ((ai_adapt_art[wk->wu.id] >= art_threshold) && (*distance + 0x20 < threat_range + 0x20)) {
+            return;
+        }
+        if ((ai_adapt_repeat_pressure[wk->wu.id] >= repeat_threshold) && (*distance + 0x18 < threat_range + 0x18)) {
+            return;
+        }
+        if ((get_ai_adapt_strike_peak(wk) >= strike_threshold) && (*distance + 0x10 < threat_range + 0x20)) {
+            return;
+        }
+    }
+
     miss_roll = random_32_com();
     if (air_guard != 0) {
         miss_roll >>= 1;
+    }
+    if (ai_mood_active(wk, AI_MOOD_CONFIDENCE)) {
+        miss_roll += 2;
+    } else if (ai_mood_active(wk, AI_MOOD_PANIC)) {
+        miss_roll >>= 1;
+    } else if (ai_mood_active(wk, AI_MOOD_BAIT)) {
+        miss_roll += 1;
     }
     if (miss_roll < guard_blindspot_chance[difficulty]) {
         *attack_flag = 0;
@@ -1335,6 +2120,7 @@ void Update_Guard_Sense(PLW* wk) {
     guard_sense_distance[wk->wu.id][write_index] = distance;
     guard_sense_threat_range[wk->wu.id][write_index] = threat_range;
     update_ai_adaptation(wk);
+    update_ai_mood(wk);
 }
 
 void End_Pattern(PLW* wk) {
@@ -5217,11 +6003,13 @@ s32 Select_Reflection_Time(PLW* wk) {
 s32 Setup_Lv04(s16 xx) {
     s16 i;
     s16* zz;
+    s16 control_time;
 
     zz = (s16*)&Level_04_Data[xx];
+    control_time = get_effective_ai_control_time();
 
     for (i = 0; i < 3; i++) {
-        if (Control_Time <= zz[i]) {
+        if (control_time <= zz[i]) {
             return i;
         }
     }
@@ -5231,11 +6019,13 @@ s32 Setup_Lv04(s16 xx) {
 s32 Setup_Lv08(s16 xx) {
     s16 i;
     s16* zz;
+    s16 control_time;
 
     zz = (s16*)&Level_08_Data[xx];
+    control_time = get_effective_ai_control_time();
 
     for (i = 0; i < 7; i++) {
-        if (Control_Time <= zz[i]) {
+        if (control_time <= zz[i]) {
             break;
         }
     }
@@ -5251,11 +6041,13 @@ s32 Setup_Lv08(s16 xx) {
 s32 Setup_Lv10(s16 xx) {
     s16 i;
     s16* zz;
+    s16 control_time;
 
     zz = (s16*)&Level_10_Data[xx];
+    control_time = get_effective_ai_control_time();
 
     for (i = 0; i < 9; i++) {
-        if (Control_Time <= zz[i]) {
+        if (control_time <= zz[i]) {
             break;
         }
     }
@@ -5271,11 +6063,13 @@ s32 Setup_Lv10(s16 xx) {
 s32 Setup_Lv18(s16 xx) {
     s16 i;
     s16* zz;
+    s16 control_time;
 
     zz = (s16*)&Level_18_Data[xx];
+    control_time = get_effective_ai_control_time();
 
     for (i = 0; i < 17; i++) {
-        if (Control_Time <= zz[i]) {
+        if (control_time <= zz[i]) {
             break;
         }
     }
@@ -5901,6 +6695,11 @@ s32 Check_Passive(PLW* wk) {
     }
     if ((Passive_Flag[wk->wu.id]) || (Flip_Flag[wk->wu.id])) {
         return Check_Guard(wk);
+    }
+    if (Check_Thrown(wk, em) != 0) {
+        if (Select_Passive(wk) != -1) {
+            return 1;
+        }
     }
     if (Check_Lie(wk) == 1) {
         return 1;

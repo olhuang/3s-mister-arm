@@ -304,6 +304,8 @@ void Com_Free(PLW* wk) {
 }
 
 void Com_Before_Follow(PLW* wk) {
+    s32 follow_commitment;
+
     Lever_Buff[wk->wu.id] = Lever_LR[wk->wu.id];
 
     if (Check_Damage(wk)) {
@@ -323,6 +325,26 @@ void Com_Before_Follow(PLW* wk) {
     }
 
     if (--Timer_00[wk->wu.id] != 0) {
+        return;
+    }
+
+    follow_commitment = AI_Decide_Follow_Commitment(wk);
+    if (follow_commitment == 0) {
+        Next_Be_Free(wk);
+        return;
+    }
+
+    if (follow_commitment == 2) {
+        CP_No[wk->wu.id][0] = 5;
+        CP_No[wk->wu.id][1] = 0;
+        CP_No[wk->wu.id][2] = 0;
+        CP_No[wk->wu.id][3] = 0;
+        CP_Index[wk->wu.id][0] = 0;
+        CP_Index[wk->wu.id][1] = 0;
+        CP_Index[wk->wu.id][2] = 0;
+        CP_Index[wk->wu.id][3] = 0;
+        Timer_00[wk->wu.id] = AI_Get_Passive_Reposition_Time(wk);
+        Clear_Com_Flag(wk);
         return;
     }
 

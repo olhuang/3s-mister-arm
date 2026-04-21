@@ -77,6 +77,8 @@ void Init_AI_Luck(PLW* wk);
 void Init_AI_Grit(PLW* wk);
 void Set_AI_Level_Context(PLW* wk);
 void Clear_AI_Level_Context(void);
+s32 AI_Decide_Follow_Commitment(PLW* wk);
+s16 AI_Get_Passive_Reposition_Time(PLW* wk);
 const s8* Get_AI_Personality_Name(PLW* wk);
 const s8* Get_AI_Luck_Name(PLW* wk);
 const s8* Get_AI_Grit_Name(PLW* wk);

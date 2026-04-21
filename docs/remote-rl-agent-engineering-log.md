@@ -32,7 +32,7 @@ Last updated: 2026-04-21
 
 - [x] Milestone 0A: Baseline match-flow confirmation spike
 - [x] Milestone 0B: Facing and remap validation micro-spike
-- [ ] Milestone 0C: Local fake agent spike
+- [x] Milestone 0C: Local fake agent spike
 - [ ] Milestone 1: Compact observation builder
 - [ ] Milestone 2: Session handshake, network probe, and delay budget
 - [ ] Milestone 3: Remote inference only
@@ -674,6 +674,48 @@ Follow-up:
 - verify the non-agent side still runs CPU behavior
 - verify held actions and sequence reset behavior across round transitions/menu exits
 
+### 2026-04-21: Milestone 0C Runtime Validation Passed
+
+Milestones:
+
+- Milestone 0C: Local fake agent spike
+
+Files changed:
+
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+
+- record successful MiSTer validation for the local CPU-opponent fake-agent path
+- close Milestone 0C before moving to observation work
+
+Implementation notes:
+
+- runtime validation was reported for the local fake-agent path
+- validation covered the selected RL side writing held scripted movement/attack input into the raw input buffer
+- validation covered the non-agent side continuing to use CPU behavior
+- no menu or round-flow regression was reported
+
+Validation:
+
+```text
+P1C/P2C local fake-agent runtime validation passed.
+Agent-controlled side moves and attacks.
+CPU-controlled side fights normally.
+Held scripted actions and reset behavior are acceptable for closing Milestone 0C.
+```
+
+Result:
+
+- passed
+- Milestone 0C checklist closed in the plan
+
+Follow-up:
+
+- move to Milestone 1: compact observation builder
+- first implementation step should add a local `RLObservationV1` builder and an end-of-frame hook after `hit_check_main_process()`
+
 ## Milestone Notes
 
 ### Milestone 0A: Baseline Match-Flow Confirmation Spike
@@ -737,11 +779,11 @@ Implementation notes:
 Validation notes:
 
 - telemetry build passed after initial implementation
-- on-device `P1C` / `P2C` runtime validation is still pending
+- on-device local fake-agent runtime validation passed
 
 Open questions:
 
-- exact on-device validation matrix for CPU-opponent local scripted action flow
+- exact first playable frame for `round_start_hp[i]` capture now moves to Milestone 1
 
 ### Milestone 1: Compact Observation Builder
 

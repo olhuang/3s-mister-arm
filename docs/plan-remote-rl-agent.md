@@ -1179,7 +1179,7 @@ Milestone index:
 
 - [x] Milestone 0A: Baseline match-flow confirmation spike
 - [x] Milestone 0B: Facing and remap validation micro-spike
-- [ ] Milestone 0C: Local fake agent spike
+- [x] Milestone 0C: Local fake agent spike
 - [ ] Milestone 1: Compact observation builder
 - [ ] Milestone 2: Session handshake, network probe, and delay budget
 - [ ] Milestone 3: Remote inference only
@@ -1248,25 +1248,25 @@ Done when:
 
 Status:
 
-- [ ] Milestone complete
+- [x] Milestone complete
 
 Goal:
 
-- [ ] Prove AI-vs-CPU control and reset behavior without networking
+- [x] Prove AI-vs-CPU control and reset behavior without networking
 
 Tasks:
 
 - [x] Add a local scripted override path that writes scheduled actions into the chosen player's raw input buffer
-- [ ] Confirm `wk->wu.operator` split behaves correctly
-- [ ] Confirm the non-agent side still runs `cpu_algorithm()`
-- [ ] Confirm action hold behavior locally
-- [ ] Confirm local reset behavior clears stale scheduled actions
+- [x] Confirm `wk->wu.operator` split behaves correctly
+- [x] Confirm the non-agent side still runs `cpu_algorithm()`
+- [x] Confirm action hold behavior locally
+- [x] Confirm local reset behavior clears stale scheduled actions
 
 Done when:
 
-- [ ] The agent-controlled side can move and attack
-- [ ] The CPU side still fights normally
-- [ ] No menu or round-flow regressions are observed
+- [x] The agent-controlled side can move and attack
+- [x] The CPU side still fights normally
+- [x] No menu or round-flow regressions are observed
 
 ### Milestone 1: Compact observation builder
 

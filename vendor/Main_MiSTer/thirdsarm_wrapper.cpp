@@ -152,6 +152,7 @@ int g_wrapper_v_position = 0;
 int g_wrapper_vertical_crop = 0;
 int g_wrapper_crop_offset = 0;
 int g_wrapper_scale = 0;
+int g_wrapper_h_size = 0;
 int g_wrapper_restart_requested = 0;
 int g_wrapper_used_full_user_io_init = 0;
 static bool g_native_video_mode = false;
@@ -1293,12 +1294,30 @@ int read_runtime_h_position_default()
 int read_runtime_v_position_default()
 {
 	char value[64] = {};
-	if (!read_runtime_config_value("v-position", value, sizeof(value))) return 0;
 
-	int val = atoi(value);
-	if (val < 0) val = 0;
-	if (val > 7) val = 7;
-	return val;
+	// Prefer new 4-bit signed schema (values 0..15).
+	if (read_runtime_config_value("v-position-v2", value, sizeof(value)))
+	{
+		int val = atoi(value);
+		if (val < 0) val = 0;
+		if (val > 15) val = 15;
+		return val;
+	}
+
+	// Fall back to legacy 3-bit signed schema (values 0..7). Remap the
+	// old negative half (4..7 meant -4..-1) to the new negative half
+	// (12..15 = -4..-1 in 4-bit two's complement). Old positives (0..3)
+	// keep the same raw value.
+	if (read_runtime_config_value("v-position", value, sizeof(value)))
+	{
+		int val = atoi(value);
+		if (val < 0) val = 0;
+		if (val > 7) val = 7;
+		if (val >= 4) val += 8;
+		return val;
+	}
+
+	return 0;
 }
 
 bool write_runtime_h_position_default(int value)
@@ -1404,10 +1423,15 @@ bool write_runtime_v_position_default(int value)
 			{
 				*equals = 0;
 				trim_in_place(cursor);
+				if (!strcasecmp(cursor, "v-position-v2"))
+				{
+					fprintf(out, "v-position-v2 = %d\n", value);
+					wrote_value = true;
+					continue;
+				}
 				if (!strcasecmp(cursor, "v-position"))
 				{
-					fprintf(out, "v-position = %d\n", value);
-					wrote_value = true;
+					// Drop the legacy 3-bit key now that we write v-position-v2.
 					continue;
 				}
 			}
@@ -1420,7 +1444,7 @@ bool write_runtime_v_position_default(int value)
 
 	if (!wrote_value)
 	{
-		fprintf(out, "\nv-position = %d\n", value);
+		fprintf(out, "\nv-position-v2 = %d\n", value);
 	}
 
 	if (fclose(out) != 0) return false;
@@ -1463,6 +1487,17 @@ int read_runtime_scale_default()
 	int val = atoi(value);
 	if (val < 0) val = 0;
 	if (val > 3) val = 3;
+	return val;
+}
+
+int read_runtime_h_size_default()
+{
+	char value[64] = {};
+	if (!read_runtime_config_value("h-size", value, sizeof(value))) return 0;
+
+	int val = atoi(value);
+	if (val < 0) val = 0;
+	if (val > 8) val = 8;
 	return val;
 }
 
@@ -1652,6 +1687,72 @@ bool write_runtime_scale_default(int value)
 	if (!wrote_value)
 	{
 		fprintf(out, "\nscale = %d\n", value);
+	}
+
+	if (fclose(out) != 0) return false;
+	if (rename(temp_path, path) != 0)
+	{
+		remove(temp_path);
+		return false;
+	}
+
+	return true;
+}
+
+bool write_runtime_h_size_default(int value)
+{
+	char path[PATH_MAX] = {};
+	char temp_path[PATH_MAX] = {};
+	snprintf(path, sizeof(path), "%s/config", kRuntimeHome);
+	snprintf(temp_path, sizeof(temp_path), "%s/config.tmp", kRuntimeHome);
+
+	FILE *in = fopen(path, "r");
+	FILE *out = fopen(temp_path, "w");
+	if (!out)
+	{
+		if (in) fclose(in);
+		return false;
+	}
+
+	bool wrote_value = false;
+	char line[256] = {};
+	if (in)
+	{
+		while (fgets(line, sizeof(line), in))
+		{
+			char inspect[256] = {};
+			snprintf(inspect, sizeof(inspect), "%s", line);
+
+			char *cursor = inspect;
+			while (*cursor && isspace((unsigned char)*cursor)) cursor++;
+			if (*cursor == '#')
+			{
+				fputs(line, out);
+				continue;
+			}
+
+			char *equals = strchr(cursor, '=');
+			if (equals)
+			{
+				*equals = 0;
+				trim_in_place(cursor);
+				if (!strcasecmp(cursor, "h-size"))
+				{
+					fprintf(out, "h-size = %d\n", value);
+					wrote_value = true;
+					continue;
+				}
+			}
+
+			fputs(line, out);
+		}
+
+		fclose(in);
+	}
+
+	if (!wrote_value)
+	{
+		fprintf(out, "\nh-size = %d\n", value);
 	}
 
 	if (fclose(out) != 0) return false;
@@ -1874,6 +1975,7 @@ void poll_status_changes(pid_t child)
 	static uint32_t prev_vertical_crop = 0xFFFFFFFF;
 	static uint32_t prev_crop_offset = 0xFFFFFFFF;
 	static uint32_t prev_scale = 0xFFFFFFFF;
+	static uint32_t prev_h_size = 0xFFFFFFFF;
 
 	// --- Option bits: detect changes and apply ---
 
@@ -1998,7 +2100,7 @@ void poll_status_changes(pid_t child)
 		}
 	}
 
-	uint32_t v_position = user_io_status_get("[31:29]");
+	uint32_t v_position = user_io_status_get("[46:43]");
 	if (v_position != prev_v_position) {
 		prev_v_position = v_position;
 		int target = (int)v_position;
@@ -2042,6 +2144,17 @@ void poll_status_changes(pid_t child)
 		}
 	}
 
+	uint32_t h_size = user_io_status_get("[42:39]");
+	if (h_size != prev_h_size) {
+		prev_h_size = h_size;
+		int target = (int)h_size;
+		if (target != g_wrapper_h_size) {
+			write_runtime_h_size_default(target);
+			g_wrapper_h_size = target;
+			// No child signal: H size is pure FPGA/scaler state.
+		}
+	}
+
 	// --- T-type triggers (Reset/Restart) ---
 	// HandleUI() pulses T bits (set 1 then 0) within a single call.
 	// user_io_status_trigger_take() captures the pulse via a sticky flag
@@ -2059,10 +2172,11 @@ void poll_status_changes(pid_t child)
 		user_io_status_set("[13]", 0);    // Game Mode = Console
 		user_io_status_set("[24]", 0);    // Hold to Pause = Off
 		user_io_status_set("[28:25]", 0); // H Position = 0
-		user_io_status_set("[31:29]", 0); // V Position = 0
+		user_io_status_set("[46:43]", 0); // V Position = 0
 		user_io_status_set("[32]", 0);    // Vertical Crop = Disabled
 		user_io_status_set("[36:33]", 0); // Crop Offset = 0
 		user_io_status_set("[38:37]", 0); // Scale = Normal
+		user_io_status_set("[42:39]", 0); // H Size = 0
 		prev_fps = 0xFFFFFFFF;
 		prev_sa_activation = 0xFFFFFFFF;
 		prev_ghost_res = 0xFFFFFFFF;
@@ -2076,6 +2190,7 @@ void poll_status_changes(pid_t child)
 		prev_vertical_crop = 0xFFFFFFFF;
 		prev_crop_offset = 0xFFFFFFFF;
 		prev_scale = 0xFFFFFFFF;
+		prev_h_size = 0xFFFFFFFF;
 	}
 
 	if (triggers & (1u << 22)) {
@@ -2259,7 +2374,7 @@ int show_error_and_return(const char *message, FILE *wrapper_log, int active_vt,
 	video_fb_enable(0);
 	video_refresh_yc_mode();
 	show_wrapper_message(kCoreName, message);
-	usleep(1500 * 1000);
+	usleep(5000 * 1000);
 	disable_wrapper_osd();
 	restore_console(active_vt);
 	restart_to_menu(wrapper_log, saved_stdout, saved_stderr, active_vt);
@@ -2280,12 +2395,27 @@ int validate_runtime_paths(FILE *wrapper_log, int active_vt, int saved_stdout, i
 {
 	if (!FileExists(kRuntimeBinary, 0))
 	{
-		return show_error_and_return("Missing /media/fat/games/3s-arm/bin/3s-arm", wrapper_log, active_vt, saved_stdout, saved_stderr);
+		return show_error_and_return("Missing 3s-arm binary\nCheck /games/3s-arm/bin/", wrapper_log, active_vt, saved_stdout, saved_stderr);
 	}
 
 	if (!FileExists(kRuntimeArchive, 0))
 	{
-		return show_error_and_return("Missing /media/fat/games/3s-arm/resources/SF33RD.AFS", wrapper_log, active_vt, saved_stdout, saved_stderr);
+		return show_error_and_return("Missing SF33RD.AFS\nCheck /games/3s-arm/resources/", wrapper_log, active_vt, saved_stdout, saved_stderr);
+	}
+
+	{
+		FILE *f = fopen(kRuntimeArchive, "rb");
+		if (!f)
+		{
+			return show_error_and_return("Missing SF33RD.AFS\nCheck /games/3s-arm/resources/", wrapper_log, active_vt, saved_stdout, saved_stderr);
+		}
+		uint32_t magic = 0;
+		size_t n = fread(&magic, sizeof(magic), 1, f);
+		fclose(f);
+		if (n != 1 || magic != 0x00534641) // "AFS\0" little-endian
+		{
+			return show_error_and_return("Invalid SF33RD.AFS\nReplace the file and relaunch", wrapper_log, active_vt, saved_stdout, saved_stderr);
+		}
 	}
 
 	return 0;
@@ -2398,6 +2528,7 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 	g_wrapper_vertical_crop = read_runtime_vertical_crop_default();
 	g_wrapper_crop_offset = read_runtime_crop_offset_default();
 	g_wrapper_scale = read_runtime_scale_default();
+	g_wrapper_h_size = read_runtime_h_size_default();
 	g_wrapper_restart_requested = 0;
 	g_wrapper_signal = 0;
 
@@ -2412,11 +2543,19 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 	char init_error[128] = {};
 	if (init_wrapper_context(forced, (argc > 1) ? argv[1] : nullptr, init_error, sizeof(init_error)) != 0)
 	{
+		/* Flush stdio before write_log_line — stdout/stderr and wrapper_log
+		   share the same file via dup2 but use separate FILE* buffers.
+		   Without this, framework printf output from init is overwritten. */
+		fflush(stdout);
+		fflush(stderr);
 		write_log_line(wrapper_log, "error=%s", init_error);
 		restore_stdio(saved_stdout, saved_stderr);
 		if (wrapper_log) fclose(wrapper_log);
 		return 1;
 	}
+	fflush(stdout);
+	fflush(stderr);
+	if (wrapper_log) fseek(wrapper_log, 0, SEEK_END);
 
 	int active_vt = get_active_vt();
 	char cwd_buffer[512] = {};
@@ -2448,10 +2587,11 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 		user_io_status_set("[13]", (uint32_t)g_wrapper_game_mode);
 		user_io_status_set("[24]", (uint32_t)g_wrapper_hold_to_pause);
 		user_io_status_set("[28:25]", (uint32_t)g_wrapper_h_position);
-		user_io_status_set("[31:29]", (uint32_t)g_wrapper_v_position);
+		user_io_status_set("[46:43]", (uint32_t)g_wrapper_v_position);
 		user_io_status_set("[32]", (uint32_t)g_wrapper_vertical_crop);
 		user_io_status_set("[36:33]", (uint32_t)g_wrapper_crop_offset);
 		user_io_status_set("[38:37]", (uint32_t)g_wrapper_scale);
+		user_io_status_set("[42:39]", (uint32_t)g_wrapper_h_size);
 	}
 
 	write_log_line(wrapper_log, "==== 3S-ARM wrapper launch ====");
@@ -2753,10 +2893,11 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 			user_io_status_set("[13]", (uint32_t)g_wrapper_game_mode);
 			user_io_status_set("[24]", (uint32_t)g_wrapper_hold_to_pause);
 			user_io_status_set("[28:25]", (uint32_t)g_wrapper_h_position);
-			user_io_status_set("[31:29]", (uint32_t)g_wrapper_v_position);
+			user_io_status_set("[46:43]", (uint32_t)g_wrapper_v_position);
 			user_io_status_set("[32]", (uint32_t)g_wrapper_vertical_crop);
 			user_io_status_set("[36:33]", (uint32_t)g_wrapper_crop_offset);
 			user_io_status_set("[38:37]", (uint32_t)g_wrapper_scale);
+			user_io_status_set("[42:39]", (uint32_t)g_wrapper_h_size);
 
 			continue;
 		}

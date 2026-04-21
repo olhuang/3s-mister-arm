@@ -19,7 +19,7 @@ module native_video_top (
 
     // OSD position offsets (two's complement, passed to timing generator)
     input  wire signed [3:0] h_offset,   // -8 to +7 pixels
-    input  wire signed [2:0] v_offset,   // -4 to +3 lines
+    input  wire signed [3:0] v_offset,   // -8 to +7 lines
 
     // DDR3 Avalon-MM master
     input  wire        ddr_busy,
@@ -39,6 +39,8 @@ module native_video_top (
     output wire        vga_hs,
     output wire        vga_vs,
     output wire        vga_de,
+    output wire        vga_hblank,
+    output wire        vga_vblank,
 
     // Control
     input  wire        enable,           // from ARM: activate native video
@@ -135,6 +137,8 @@ assign vga_b  = reader_b;
 assign vga_hs = tim_hsync;
 assign vga_vs = tim_vsync;
 assign vga_de = tim_de;
+assign vga_hblank = tim_hblank;
+assign vga_vblank = tim_vblank;
 
 // active: module is enabled and outputting valid frame data
 assign active    = enable & reader_frame_ready;

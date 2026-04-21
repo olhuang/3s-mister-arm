@@ -18,6 +18,7 @@
 #include "port/sound/adx.h"
 #include "rl/rl_observation.h"
 #include "rl/rl_session.h"
+#include "sf33rd/AcrSDK/common/pad.h"
 #include "sf33rd/AcrSDK/ps2/foundaps2.h"
 #include "sf33rd/Source/Game/effect/effect.h"
 #include "sf33rd/Source/Game/com/com_sub.h"
@@ -9174,6 +9175,7 @@ static void publish_fps_overlay_label(void) {
         RLObservation_FormatDebugOverlay(fps_overlay_label, sizeof(fps_overlay_label), rl_label);
         if (fbdev_presenter_enabled) {
             FBDevPresenter_SetFPSOverlayText(fps_overlay_label);
+            FBDevPresenter_SetFPSOverlayInputSwKey(RLObservation_GetDebugInputSwKey());
         }
         return;
     }
@@ -10342,6 +10344,13 @@ static void render_renderer_fps_overlay(const SDL_FRect* content_rect) {
     if (current_line_len > max_line_len) {
         max_line_len = current_line_len;
     }
+    if (fps_overlay_mode == FPS_OVERLAY_RL_DEBUG) {
+        const int input_line_len = (int)SDL_strlen("U D L R LP MP HP LK MK HK");
+        if (input_line_len > max_line_len) {
+            max_line_len = input_line_len;
+        }
+        line_count += 1;
+    }
     const int text_w = max_line_len * 8 * scale;
     const int text_h = line_count * 8 * scale;
     const int margin = SDL_max(10, scale * 4);
@@ -10374,6 +10383,42 @@ static void render_renderer_fps_overlay(const SDL_FRect* content_rect) {
         cursor += line_len;
         if (*cursor == '\n') {
             cursor++;
+        }
+    }
+
+    if (fps_overlay_mode == FPS_OVERLAY_RL_DEBUG) {
+        static const struct {
+            const char* label;
+            Uint16 mask;
+        } input_tokens[] = {
+            { "U", SWK_UP },
+            { "D", SWK_DOWN },
+            { "L", SWK_LEFT },
+            { "R", SWK_RIGHT },
+            { "LP", SWK_WEST },
+            { "MP", SWK_NORTH },
+            { "HP", SWK_RIGHT_SHOULDER },
+            { "LK", SWK_LEFT_SHOULDER },
+            { "MK", SWK_SOUTH },
+            { "HK", SWK_EAST },
+        };
+        const size_t input_token_count = sizeof(input_tokens) / sizeof(input_tokens[0]);
+        const u16 swkey = RLObservation_GetDebugInputSwKey();
+        float token_x = draw_x / (float)scale;
+        const float token_y = (draw_y + (float)(line_index * 8 * scale)) / (float)scale;
+        for (size_t i = 0; i < input_token_count; i++) {
+            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+            SDL_RenderDebugText(renderer,
+                                token_x + (1.0f / (float)scale),
+                                token_y + (1.0f / (float)scale),
+                                input_tokens[i].label);
+            if ((swkey & input_tokens[i].mask) != 0) {
+                SDL_SetRenderDrawColor(renderer, 255, 64, 64, 255);
+            } else {
+                SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
+            }
+            SDL_RenderDebugText(renderer, token_x, token_y, input_tokens[i].label);
+            token_x += (float)(8 * ((int)SDL_strlen(input_tokens[i].label) + 1));
         }
     }
     SDL_SetRenderScale(renderer, 1.0f, 1.0f);

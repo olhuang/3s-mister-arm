@@ -98,6 +98,7 @@ void FBDevPresenter_SetFPSOverlayMode(int mode);
 
 /// Update the on-screen FPS overlay label.
 void FBDevPresenter_SetFPSOverlayText(const char* text);
+void FBDevPresenter_SetFPSOverlayInputSwKey(Uint16 swkey);
 
 /// Composite the FPS overlay onto an arbitrary ARGB8888 buffer.
 /// Used by the native video writer path which bypasses the fbdev presenter.

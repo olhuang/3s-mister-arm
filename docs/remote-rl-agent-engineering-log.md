@@ -807,6 +807,54 @@ Follow-up:
 - verify on MiSTer that `RL Debug` now shows all expected lines
 - verify that near-empty health now shows `HP1` instead of `HP0`
 
+### 2026-04-21: Switch RL Debug Overlay To Raw HP And Colored Input Tokens
+
+Milestones:
+
+- Milestone 1: Compact observation builder
+
+Files changed:
+
+- `src/rl/rl_observation.h`
+- `src/rl/rl_observation.c`
+- `src/port/sdl/sdl_app.c`
+- `src/port/sdl/fbdev_presenter.h`
+- `src/port/sdl/fbdev_presenter.c`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+
+- make the RL debug overlay more useful for direct gameplay inspection
+- avoid misleading `HP0` display while the fighter is still alive
+- show a fixed input legend where active buttons are highlighted in red
+
+Implementation notes:
+
+- line 1 now shows raw HP values instead of percentages, using `current/max`
+- line 2 keeps compact state values using raw super and stun gauges
+- line 3 is now a fixed token row:
+  - `U D L R LP MP HP LK MK HK`
+- inactive tokens stay white
+- active tokens are drawn red
+- SDL renderer and MiSTer fbdev presenter now both render the token row through dedicated per-token draw logic instead of the generic single-color text path
+- fbdev presenter now receives the current RL input `SWKey` through a dedicated setter so token highlighting matches the active input on hardware
+
+Validation:
+
+```sh
+tools/mister/build-game.sh --flavor telemetry
+```
+
+Result:
+
+- passed
+- package created at `build/mister-telemetry-package`
+
+Follow-up:
+
+- verify on MiSTer that line 1 shows raw HP values matching the visible life bar
+- verify on MiSTer that the fixed input legend is always visible and active buttons turn red at the right frames
+
 ## Milestone Notes
 
 ### Milestone 0A: Baseline Match-Flow Confirmation Spike

@@ -18,25 +18,6 @@ static s16 clamp_s16_nonnegative(s16 value) {
     return (value < 0) ? 0 : value;
 }
 
-static int ratio_percent(s16 value, s16 max_value) {
-    if (max_value <= 0) {
-        return 0;
-    }
-
-    const int clamped = value < 0 ? 0 : value;
-    int pct = (clamped * 100) / max_value;
-    if (clamped > 0 && pct == 0) {
-        pct = 1;
-    }
-    if (pct < 0) {
-        return 0;
-    }
-    if (pct > 100) {
-        return 100;
-    }
-    return pct;
-}
-
 static s16 safe_stun_max(s16 player) {
     if (plw[player].py == NULL || plw[player].py->genkai <= 0) {
         return 1;
@@ -137,52 +118,11 @@ const RLObservationV1* RLObservation_GetLatest() {
     return &latest_obs;
 }
 
-static void append_button(char* out, size_t out_size, size_t* offset, const char* label, bool pressed) {
-    if (!pressed || *offset >= out_size) {
-        return;
-    }
-
-    const int written = snprintf(out + *offset, out_size - *offset, "%s ", label);
-    if (written > 0) {
-        *offset += (size_t)written;
-        if (*offset >= out_size) {
-            *offset = out_size - 1;
-        }
-    }
-}
-
-static void format_input_line(char* out, size_t out_size, u16 swkey) {
-    size_t offset = 0;
-
-    if (out_size == 0) {
-        return;
-    }
-
-    out[0] = '\0';
-    append_button(out, out_size, &offset, "U", (swkey & SWK_UP) != 0);
-    append_button(out, out_size, &offset, "D", (swkey & SWK_DOWN) != 0);
-    append_button(out, out_size, &offset, "L", (swkey & SWK_LEFT) != 0);
-    append_button(out, out_size, &offset, "R", (swkey & SWK_RIGHT) != 0);
-    append_button(out, out_size, &offset, "LP", (swkey & SWK_WEST) != 0);
-    append_button(out, out_size, &offset, "MP", (swkey & SWK_NORTH) != 0);
-    append_button(out, out_size, &offset, "HP", (swkey & SWK_RIGHT_SHOULDER) != 0);
-    append_button(out, out_size, &offset, "LK", (swkey & SWK_LEFT_SHOULDER) != 0);
-    append_button(out, out_size, &offset, "MK", (swkey & SWK_SOUTH) != 0);
-    append_button(out, out_size, &offset, "HK", (swkey & SWK_EAST) != 0);
-
-    if (offset == 0) {
-        snprintf(out, out_size, "NONE");
-        return;
-    }
-
-    if (offset > 0 && out[offset - 1] == ' ') {
-        out[offset - 1] = '\0';
-    }
+u16 RLObservation_GetDebugInputSwKey() {
+    return latest_obs.valid ? latest_obs.input_swkey : 0;
 }
 
 void RLObservation_FormatDebugOverlay(char* out, size_t out_size, const char* session_label) {
-    char input_line[48];
-
     if (out_size == 0) {
         return;
     }
@@ -192,22 +132,23 @@ void RLObservation_FormatDebugOverlay(char* out, size_t out_size, const char* se
         return;
     }
 
-    format_input_line(input_line, sizeof(input_line), latest_obs.input_swkey);
-
     const char dx_side = latest_obs.opp_dx < 0 ? 'L' : 'R';
     const int dx_abs = latest_obs.opp_dx < 0 ? -latest_obs.opp_dx : latest_obs.opp_dx;
 
     snprintf(out,
              out_size,
-             "%s HP%d OP%d\nSA%d ST%d DX%c%d F%d R%d\nIN %s",
+             "%s HP%d/%d OP%d/%d\nSA%d/%d ST%d/%d DX%c%d F%d R%d",
              session_label != NULL ? session_label : "P0",
-             ratio_percent(latest_obs.self_hp, latest_obs.self_hp_start),
-             ratio_percent(latest_obs.opp_hp, latest_obs.opp_hp_start),
-             ratio_percent(latest_obs.self_super, latest_obs.self_super_max),
-             ratio_percent(latest_obs.self_stun, latest_obs.self_stun_max),
+             latest_obs.self_hp,
+             latest_obs.self_hp_start,
+             latest_obs.opp_hp,
+             latest_obs.opp_hp_start,
+             latest_obs.self_super,
+             latest_obs.self_super_max,
+             latest_obs.self_stun,
+             latest_obs.self_stun_max,
              dx_side,
              dx_abs,
              latest_obs.self_facing_sign,
-             latest_obs.round_num,
-             input_line);
+             latest_obs.round_num);
 }

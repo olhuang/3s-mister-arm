@@ -9,6 +9,7 @@
 #include "netplay/netplay.h"
 #include "port/config/training_config.h"
 #include "port/sdl/sdl_app.h"
+#include "rl/rl_session.h"
 #include "sf33rd/AcrSDK/common/pad.h"
 #include "sf33rd/Source/Game/animation/appear.h"
 #include "sf33rd/Source/Game/debug/Debug.h"
@@ -486,6 +487,7 @@ void Setup_VS_Mode(struct _TASK* task_ptr) {
     plw[1].wu.operator = 1;
     Operator_Status[0] = 1;
     Operator_Status[1] = 1;
+    RLSession_ApplyVersusOperatorSetup();
     grade_check_work_1st_init(0, 0);
     grade_check_work_1st_init(0, 1);
     grade_check_work_1st_init(1, 0);

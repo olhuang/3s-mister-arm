@@ -3,6 +3,7 @@
 #include "main.h"
 #include "port/sdl/sdl_app.h"
 #include "port/utils.h"
+#include "rl/rl_session.h"
 #include "sf33rd/AcrSDK/common/pad.h"
 #include "sf33rd/Source/Common/PPGWork.h"
 #include "sf33rd/Source/Game/debug/Debug.h"
@@ -465,6 +466,8 @@ void Game2_0() {
                 Operator_Status[ix] = 0;
             }
         }
+
+        RLSession_ApplyVersusOperatorSetup();
 
         cpExitTask(TASK_ENTRY);
         /* fallthrough */

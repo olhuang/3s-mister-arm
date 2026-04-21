@@ -82,6 +82,11 @@ Configuration configuration = {
             .delay_gameplay_inputs_until_active = false,
             .stage = -1,
         },
+    .remote_rl_agent =
+        {
+            .enabled = false,
+            .player = 1,
+        },
 };
 
 static u8 dctex_linear_mem[0x800];

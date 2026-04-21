@@ -154,6 +154,9 @@ static void verify_configuration(Configuration* configuration) {
                             "basic-exchange, pressure-exchange, left-corner-ryu-stage, or training-yun-ryu-ryu-stage.",
                             EXIT_CODE_RUNTIME_ERROR);
     }
+    if (configuration->remote_rl_agent.player != 1 && configuration->remote_rl_agent.player != 2) {
+        error_out_with_code("--rl-player must be 1 or 2.", EXIT_CODE_RUNTIME_ERROR);
+    }
 
 #if ENABLE_NETPLAY
     {
@@ -220,6 +223,21 @@ void read_args(int argc, const char* argv[], Configuration* configuration) {
                     0,
                     0),
         OPT_BOOLEAN(0, "headless", &configuration->headless, "Run with non-interactive event handling.", NULL, 0, 0),
+        OPT_GROUP("Remote RL agent"),
+        OPT_BOOLEAN(0,
+                    "rl-agent",
+                    &configuration->remote_rl_agent.enabled,
+                    "Enable remote RL agent baseline session hooks.",
+                    NULL,
+                    0,
+                    0),
+        OPT_INTEGER(0,
+                    "rl-player",
+                    &configuration->remote_rl_agent.player,
+                    "Player controlled by the remote RL agent baseline hooks (1 or 2).",
+                    NULL,
+                    0,
+                    0),
 #if ENABLE_PERF_TELEMETRY
         OPT_GROUP("Performance"),
         OPT_INTEGER(0,

@@ -168,6 +168,61 @@ Results:
 - project rules exist at `docs/agent-memory/remote-rl-agent-rules.md`
 - root agent instructions now point to the remote RL agent rules
 
+### 2026-04-21: Milestone 0A Operator Setup Hook
+
+Milestones:
+
+- Milestone 0A: Baseline match-flow confirmation spike
+
+Files changed:
+
+- `src/configuration.h`
+- `src/args.c`
+- `src/main.c`
+- `src/rl/rl_session.h`
+- `src/rl/rl_session.c`
+- `src/sf33rd/Source/Game/menu/menu.c`
+- `src/sf33rd/Source/Game/game.c`
+
+Purpose:
+
+- add a default-off RL session flag for the baseline `MODE_VERSUS + rl_session_active` spike
+- allow `--rl-agent --rl-player 1|2` to force one side to player-input control and the other side to CPU control
+
+Implementation notes:
+
+- added `RemoteRLAgentConfiguration`
+- added CLI flags `--rl-agent` and `--rl-player`
+- added `RLSession_ApplyVersusOperatorSetup()`
+- hook is called after `Setup_VS_Mode()` sets both players to human
+- hook is also called in `Game2_0()` after existing `Partner_Type` logic can set a side to CPU
+- implementation stays under `src/rl/*` and does not touch `src/netplay/*`
+
+Validation:
+
+```sh
+tools/mister/build-game.sh --flavor telemetry
+```
+
+Result:
+
+- passed
+- package created at `build/mister-telemetry-package`
+
+Failures or surprises:
+
+- first build failed because `rl_session.c` included `workuser.h` but not `plcnt.h`, so `plw` was undeclared
+- fixed by including `sf33rd/Source/Game/engine/plcnt.h`
+
+Follow-up:
+
+- run the game with `--rl-agent --rl-player 1` or `--rl-agent --rl-player 2`
+- verify round start behavior
+- verify round end behavior
+- verify winner flow behavior
+- verify reset behavior
+- only mark Milestone 0A checklist items complete after runtime validation
+
 ## Milestone Notes
 
 ### Milestone 0A: Baseline Match-Flow Confirmation Spike
@@ -178,15 +233,17 @@ Objective:
 
 Implementation notes:
 
-- TBD
+- `--rl-agent` and `--rl-player` config/CLI path added
+- `RLSession_ApplyVersusOperatorSetup()` applies operator flags for the baseline spike
+- hook sites are `Setup_VS_Mode()` and `Game2_0()`
 
 Validation notes:
 
-- TBD
+- telemetry build passed on 2026-04-21
+- runtime round-flow validation still pending
 
 Open questions:
 
-- exact setup hook for `Operator_Status` / `wk->wu.operator`
 - exact round/winner/reset automation path
 
 ### Milestone 0B: Facing And Remap Validation Micro-Spike

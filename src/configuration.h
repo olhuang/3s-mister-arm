@@ -24,6 +24,11 @@ typedef struct TestRunnerConfiguration {
     int stage;
 } TestRunnerConfiguration;
 
+typedef struct RemoteRLAgentConfiguration {
+    bool enabled;
+    int player;
+} RemoteRLAgentConfiguration;
+
 #if ENABLE_PERF_TELEMETRY
 typedef struct PerfCaptureConfiguration {
     int frame_count;
@@ -48,6 +53,7 @@ typedef struct PerfCaptureConfiguration {
 typedef struct Configuration {
     NetplayConfiguration netplay;
     TestRunnerConfiguration test;
+    RemoteRLAgentConfiguration remote_rl_agent;
 #if ENABLE_PERF_TELEMETRY
     PerfCaptureConfiguration perf;
 #endif

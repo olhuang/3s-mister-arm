@@ -440,7 +440,7 @@ static void game_step_0() {
     appSetupTempPriority();
     flPADGetALL();
     keyConvert();
-    RLSession_ApplyScriptedMovementToBuffers();
+    RLSession_ApplyInputOverrideToBuffers();
 
 #if DEBUG
     if (configuration.test.enabled) {

@@ -1178,7 +1178,7 @@ Tracking convention:
 Milestone index:
 
 - [x] Milestone 0A: Baseline match-flow confirmation spike
-- [ ] Milestone 0B: Facing and remap validation micro-spike
+- [x] Milestone 0B: Facing and remap validation micro-spike
 - [ ] Milestone 0C: Local fake agent spike
 - [ ] Milestone 1: Compact observation builder
 - [ ] Milestone 2: Session handshake, network probe, and delay budget
@@ -1217,32 +1217,32 @@ Done when:
 
 Status:
 
-- [ ] Milestone complete
+- [x] Milestone complete
 
 Goal:
 
-- [ ] Verify the `rl_flag` facing contract before building the rest of the relative-direction stack
+- [x] Verify the `rl_flag` facing contract before building the rest of the relative-direction stack
 
 Tasks:
 
-- [ ] Add a temporary RL validation path that can keep the non-agent side on human input for deterministic facing/remap testing
-- [ ] Expose concise RL debug overlay state such as `P1C`, `P1H`, `P2C`, and `P2H` so the current routing is visible during spot checks
-- [ ] Add a fixed RL movement validation selector for `forward`, `back`, `jump-forward`, and `down-back`
-- [ ] Verify `plw[i].wu.rl_flag == 0` means facing world-left and maps to `self_facing_sign = -1`
-- [ ] Verify `plw[i].wu.rl_flag == 1` means facing world-right and maps to `self_facing_sign = +1`
-- [ ] Verify `opp_in_front` matches on-screen relative positioning across side switches
-- [ ] Verify `RL_MOVE_FORWARD` remaps to the correct raw `SWKey` direction bits immediately before input latch
-- [ ] Verify `RL_MOVE_BACK` remaps to the correct raw `SWKey` direction bits immediately before input latch
-- [ ] Verify a delayed relative action still moves in the intended direction if characters switch sides between `obs_frame` and `target_frame`
-- [ ] Verify `down_back_static` fallback uses the same remap logic
-- [ ] Verify `down_back_when_movable` fallback uses the same remap logic
+- [x] Add a temporary RL validation path that can keep the non-agent side on human input for deterministic facing/remap testing
+- [x] Expose concise RL debug overlay state such as `P1C`, `P1H`, `P2C`, and `P2H` so the current routing is visible during spot checks
+- [x] Add a fixed RL movement validation selector for `forward`, `back`, `jump-forward`, and `down-back`
+- [x] Verify `plw[i].wu.rl_flag == 0` means facing world-left and maps to `self_facing_sign = -1`
+- [x] Verify `plw[i].wu.rl_flag == 1` means facing world-right and maps to `self_facing_sign = +1`
+- [x] Verify `opp_in_front` matches on-screen relative positioning across side switches
+- [x] Verify `RL_MOVE_FORWARD` remaps to the correct raw `SWKey` direction bits immediately before input latch
+- [x] Verify `RL_MOVE_BACK` remaps to the correct raw `SWKey` direction bits immediately before input latch
+- [x] Verify a delayed relative action still moves in the intended direction if characters switch sides between `obs_frame` and `target_frame`
+- [x] Verify `down_back_static` fallback uses the same remap logic
+- [x] Verify `down_back_when_movable` fallback uses the same remap logic
 
 Done when:
 
-- [ ] Facing signs match observed character facing on both sides
-- [ ] Forward/back remapping is correct before and after side switches
-- [ ] Delayed execution does not invert intended forward/back movement
-- [ ] Fallback directional actions use the same verified remap path
+- [x] Facing signs match observed character facing on both sides
+- [x] Forward/back remapping is correct before and after side switches
+- [x] Delayed execution does not invert intended forward/back movement
+- [x] Fallback directional actions use the same verified remap path
 
 ### Milestone 0C: Local fake agent spike
 
@@ -1256,7 +1256,7 @@ Goal:
 
 Tasks:
 
-- [ ] Add a local scripted override path that writes scheduled actions into the chosen player's raw input buffer
+- [x] Add a local scripted override path that writes scheduled actions into the chosen player's raw input buffer
 - [ ] Confirm `wk->wu.operator` split behaves correctly
 - [ ] Confirm the non-agent side still runs `cpu_algorithm()`
 - [ ] Confirm action hold behavior locally

@@ -12,5 +12,6 @@ bool RLSession_OpponentUsesHumanInput();
 const char* RLSession_TestMovementLabel();
 void RLSession_ApplyVersusOperatorSetup();
 void RLSession_ApplyScriptedMovementToBuffers();
+void RLSession_ApplyInputOverrideToBuffers();
 
 #endif

@@ -31,7 +31,7 @@ Project rules:
 Last updated: 2026-04-21
 
 - [x] Milestone 0A: Baseline match-flow confirmation spike
-- [ ] Milestone 0B: Facing and remap validation micro-spike
+- [x] Milestone 0B: Facing and remap validation micro-spike
 - [ ] Milestone 0C: Local fake agent spike
 - [ ] Milestone 1: Compact observation builder
 - [ ] Milestone 2: Session handshake, network probe, and delay budget
@@ -581,6 +581,99 @@ Follow-up:
 
 - verify on MiSTer that repeated `Jump Forward` remains toward the opponent immediately after crossing over
 
+### 2026-04-21: Milestone 0B P1H/P2H Runtime Validation Passed
+
+Milestones:
+
+- Milestone 0B: Facing and remap validation micro-spike
+
+Files changed:
+
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+
+- record successful MiSTer validation for the human-opponent relative movement checks
+- close Milestone 0B before starting local fake-agent work
+
+Implementation notes:
+
+- runtime validation was reported for both `P1H` and `P2H`
+- the tested RL movement selector values were:
+  - `Forward`
+  - `Back`
+  - `Jump Forward`
+  - `Down Back`
+- validation covered the practical remap contract needed by the next local fake-agent step, including cross-over behavior after the position-based remap stabilization
+
+Validation:
+
+```text
+P1H: RL Forward passed
+P1H: RL Back passed
+P1H: RL Jump Forward passed
+P1H: RL Down Back passed
+P2H: RL Forward passed
+P2H: RL Back passed
+P2H: RL Jump Forward passed
+P2H: RL Down Back passed
+```
+
+Result:
+
+- passed
+- Milestone 0B checklist closed in the plan
+
+Follow-up:
+
+- start Milestone 0C by adding a CPU-opponent local fake-agent path that writes held scripted actions into the selected RL player's raw input buffer
+
+### 2026-04-21: Start Milestone 0C Local Fake-Agent Sequence
+
+Milestones:
+
+- Milestone 0C: Local fake agent spike
+
+Files changed:
+
+- `src/main.c`
+- `src/rl/rl_session.h`
+- `src/rl/rl_session.c`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+
+- start proving AI-vs-CPU control without networking
+- add a local held-action sequence that drives the selected RL player while the non-agent side remains CPU-controlled
+
+Implementation notes:
+
+- renamed the main input hook call site to `RLSession_ApplyInputOverrideToBuffers()`
+- retained the existing human-opponent 0B movement validation path
+- added a CPU-opponent local fake-agent sequence with held forward, neutral attack, down-back, jump-forward attack, and back actions
+- the sequence writes to `p1sw_buff` or `p2sw_buff` after `keyConvert()` and before the input latch
+- local fake-agent state resets whenever the override is inactive, when human-opponent validation is active, or when gameplay is outside active unpaused VS play
+- the implementation remains in `src/rl/*` plus the existing small `src/main.c` hook and does not touch `src/netplay/*`
+
+Validation:
+
+```sh
+tools/mister/build-game.sh --flavor telemetry
+```
+
+Result:
+
+- passed
+- package created at `build/mister-telemetry-package`
+
+Follow-up:
+
+- verify on MiSTer with `P1C` and `P2C` that the agent-controlled side moves and attacks
+- verify the non-agent side still runs CPU behavior
+- verify held actions and sequence reset behavior across round transitions/menu exits
+
 ## Milestone Notes
 
 ### Milestone 0A: Baseline Match-Flow Confirmation Spike
@@ -616,16 +709,18 @@ Objective:
 
 Implementation notes:
 
-- TBD
+- human-opponent validation mode added for deterministic spot checks
+- RL debug overlay reports `P1H` / `P2H` during human-opponent validation and appends the selected movement label
+- fixed movement selector covers forward, back, jump-forward, and down-back
+- remap now uses relative X position first, with `rl_flag` as the same-X fallback, to avoid stale-facing behavior immediately after cross-over
 
 Validation notes:
 
-- TBD
+- MiSTer runtime validation passed for `P1H` and `P2H` with forward, back, jump-forward, and down-back
 
 Open questions:
 
-- exact debug visualization or logging path for `rl_flag`
-- exact forced side-switch scenario for delayed action validation
+- final remote action path still needs to choose whether to use facing, position, or an explicit negotiated remap rule for delayed side-switch execution
 
 ### Milestone 0C: Local Fake Agent Spike
 
@@ -635,15 +730,18 @@ Objective:
 
 Implementation notes:
 
-- TBD
+- started with a local CPU-opponent fake-agent sequence in `src/rl/rl_session.c`
+- the sequence writes held movement and attack actions into the selected RL player's raw input buffer after `keyConvert()` and before input latch
+- the local fake-agent sequence is active only for RL-enabled `MODE_VERSUS` gameplay when the opponent is CPU-controlled
 
 Validation notes:
 
-- TBD
+- telemetry build passed after initial implementation
+- on-device `P1C` / `P2C` runtime validation is still pending
 
 Open questions:
 
-- whether to start with compile-time debug toggle, config flag, or CLI flag
+- exact on-device validation matrix for CPU-opponent local scripted action flow
 
 ### Milestone 1: Compact Observation Builder
 

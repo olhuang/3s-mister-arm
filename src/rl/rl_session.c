@@ -13,6 +13,33 @@ typedef enum RLTestMovement {
     RL_TEST_MOVEMENT_DOWN_BACK = 3,
 } RLTestMovement;
 
+typedef enum RLLocalMove {
+    RL_LOCAL_MOVE_NEUTRAL,
+    RL_LOCAL_MOVE_FORWARD,
+    RL_LOCAL_MOVE_BACK,
+    RL_LOCAL_MOVE_JUMP_FORWARD,
+    RL_LOCAL_MOVE_DOWN_BACK,
+} RLLocalMove;
+
+typedef struct RLLocalFakeAction {
+    RLLocalMove move;
+    u16 attacks;
+    u16 hold_frames;
+} RLLocalFakeAction;
+
+static const RLLocalFakeAction kLocalFakeAgentSequence[] = {
+    { RL_LOCAL_MOVE_FORWARD, 0, 30 },
+    { RL_LOCAL_MOVE_NEUTRAL, SWK_WEST, 8 },
+    { RL_LOCAL_MOVE_DOWN_BACK, 0, 24 },
+    { RL_LOCAL_MOVE_NEUTRAL, 0, 8 },
+    { RL_LOCAL_MOVE_JUMP_FORWARD, SWK_NORTH, 10 },
+    { RL_LOCAL_MOVE_BACK, 0, 18 },
+    { RL_LOCAL_MOVE_NEUTRAL, 0, 8 },
+};
+
+static u16 local_fake_action_index;
+static u16 local_fake_action_frame;
+
 bool RLSession_IsActive() {
     return configuration.remote_rl_agent.enabled;
 }
@@ -61,21 +88,46 @@ static u16 RLSession_BackDirectionForPlayer(s16 player) {
     return (plw[player].wu.rl_flag == 0) ? SWK_RIGHT : SWK_LEFT;
 }
 
-static u16 RLSession_MapTestMovementToSWKey(s16 player) {
+static u16 RLSession_MapLocalMoveToSWKey(s16 player, RLLocalMove move) {
     const u16 forward = RLSession_ForwardDirectionForPlayer(player);
     const u16 back = RLSession_BackDirectionForPlayer(player);
 
+    switch (move) {
+    case RL_LOCAL_MOVE_BACK:
+        return back;
+    case RL_LOCAL_MOVE_JUMP_FORWARD:
+        return (u16)(SWK_UP | forward);
+    case RL_LOCAL_MOVE_DOWN_BACK:
+        return (u16)(SWK_DOWN | back);
+    case RL_LOCAL_MOVE_FORWARD:
+        return forward;
+    case RL_LOCAL_MOVE_NEUTRAL:
+    default:
+        return 0;
+    }
+}
+
+static u16 RLSession_MapTestMovementToSWKey(s16 player) {
     switch (configuration.remote_rl_agent.test_movement) {
     case RL_TEST_MOVEMENT_BACK:
-        return back;
+        return RLSession_MapLocalMoveToSWKey(player, RL_LOCAL_MOVE_BACK);
     case RL_TEST_MOVEMENT_JUMP_FORWARD:
-        return (u16)(SWK_UP | forward);
+        return RLSession_MapLocalMoveToSWKey(player, RL_LOCAL_MOVE_JUMP_FORWARD);
     case RL_TEST_MOVEMENT_DOWN_BACK:
-        return (u16)(SWK_DOWN | back);
+        return RLSession_MapLocalMoveToSWKey(player, RL_LOCAL_MOVE_DOWN_BACK);
     case RL_TEST_MOVEMENT_FORWARD:
     default:
-        return forward;
+        return RLSession_MapLocalMoveToSWKey(player, RL_LOCAL_MOVE_FORWARD);
     }
+}
+
+static bool RLSession_CanOverrideGameplayInput() {
+    return RLSession_IsActive() && Mode_Type == MODE_VERSUS && mpp_w.inGame && Play_Mode == 1 && Game_pause == 0;
+}
+
+static void RLSession_ResetLocalFakeAgent() {
+    local_fake_action_index = 0;
+    local_fake_action_frame = 0;
 }
 
 void RLSession_ApplyVersusOperatorSetup() {
@@ -94,14 +146,41 @@ void RLSession_ApplyVersusOperatorSetup() {
 }
 
 void RLSession_ApplyScriptedMovementToBuffers() {
-    if (!RLSession_IsActive() || !RLSession_OpponentUsesHumanInput() || Mode_Type != MODE_VERSUS ||
-        !mpp_w.inGame || Play_Mode != 1 || Game_pause != 0) {
+    if (!RLSession_OpponentUsesHumanInput() || !RLSession_CanOverrideGameplayInput()) {
         return;
     }
+
+    RLSession_ResetLocalFakeAgent();
 
     const s16 agent = RLSession_AgentPlayerIndex();
     const u16 movement = RLSession_MapTestMovementToSWKey(agent);
     u16* target = (agent == 0) ? &p1sw_buff : &p2sw_buff;
 
     *target = (u16)((*target & ~SWK_DIRECTIONS) | movement);
+}
+
+static void RLSession_ApplyLocalFakeAgentToBuffers() {
+    if (RLSession_OpponentUsesHumanInput() || !RLSession_CanOverrideGameplayInput()) {
+        RLSession_ResetLocalFakeAgent();
+        return;
+    }
+
+    const u16 action_count = (u16)(sizeof(kLocalFakeAgentSequence) / sizeof(kLocalFakeAgentSequence[0]));
+    const RLLocalFakeAction* action = &kLocalFakeAgentSequence[local_fake_action_index];
+    const s16 agent = RLSession_AgentPlayerIndex();
+    const u16 movement = RLSession_MapLocalMoveToSWKey(agent, action->move);
+    u16* target = (agent == 0) ? &p1sw_buff : &p2sw_buff;
+
+    *target = (u16)((*target & ~(SWK_DIRECTIONS | SWK_ATTACKS)) | movement | action->attacks);
+
+    local_fake_action_frame++;
+    if (local_fake_action_frame >= action->hold_frames) {
+        local_fake_action_frame = 0;
+        local_fake_action_index = (u16)((local_fake_action_index + 1) % action_count);
+    }
+}
+
+void RLSession_ApplyInputOverrideToBuffers() {
+    RLSession_ApplyScriptedMovementToBuffers();
+    RLSession_ApplyLocalFakeAgentToBuffers();
 }

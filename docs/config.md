@@ -113,6 +113,8 @@ Defaults:
 Notes:
 - On MiSTer fbdev output, the overlay is drawn at the bottom-center of the active picture area so it stays away from overscan-prone corners.
 - The overlay is opt-in and uses a lightweight cached label update path instead of perf capture telemetry.
+- On MiSTer, valid values are `off`, `fps`, `debug`, and `rl-debug`.
+- `rl-debug` is a lightweight RL-specific overlay mode intended for remote-agent bring-up. In v1 it shows the effective RL agent slot state such as `Off`, `P1`, or `P2`.
 
 ### `rl-agent-player`
 

@@ -280,7 +280,7 @@ localparam CONF_STR = {
 	"O[13],Game Mode,Console,Arcade;",
 	"O[48:47],RL Agent (Restart),Off,Player 1,Player 2;",
 	"O[24],Hold to Pause,Off,On;",
-	"O[11:10],FPS Counter,Off,FPS,Debug;",
+	"O[11:10],FPS Counter,Off,FPS,Debug,RL Debug;",
 	"T[23],Button Check;",
 	"-;",
 	"O[12],Aspect Ratio,4:3,Full;",

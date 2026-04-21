@@ -96,6 +96,7 @@ typedef enum FpsOverlayMode {
     FPS_OVERLAY_OFF = 0,
     FPS_OVERLAY_FPS = 1,
     FPS_OVERLAY_DEBUG = 2,
+    FPS_OVERLAY_RL_DEBUG = 3,
 } FpsOverlayMode;
 static FpsOverlayMode fps_overlay_mode = FPS_OVERLAY_OFF;
 static Uint64 fps_overlay_window_start_ns = 0;
@@ -9104,6 +9105,7 @@ static FpsOverlayMode parse_fps_overlay_mode(const char* value) {
     if (value == NULL) return FPS_OVERLAY_OFF;
     if (SDL_strcasecmp(value, "fps") == 0) return FPS_OVERLAY_FPS;
     if (SDL_strcasecmp(value, "debug") == 0) return FPS_OVERLAY_DEBUG;
+    if (SDL_strcasecmp(value, "rl-debug") == 0) return FPS_OVERLAY_RL_DEBUG;
     return FPS_OVERLAY_OFF;
 }
 
@@ -9142,11 +9144,24 @@ static void init_show_fps_overlay(void) {
 static void publish_fps_overlay_label(void) {
     char ai_overlay[96];
     char status_overlay[128];
+    const char* rl_agent_label = "Off";
 
     if (fps_overlay_mode == FPS_OVERLAY_OFF) {
         fps_overlay_label[0] = '\0';
         if (fbdev_presenter_enabled) {
             FBDevPresenter_SetFPSOverlayText(NULL);
+        }
+        return;
+    }
+
+    if (configuration.remote_rl_agent.enabled) {
+        rl_agent_label = (configuration.remote_rl_agent.player == 2) ? "P2" : "P1";
+    }
+
+    if (fps_overlay_mode == FPS_OVERLAY_RL_DEBUG) {
+        SDL_snprintf(fps_overlay_label, sizeof(fps_overlay_label), "RL Agent: %s", rl_agent_label);
+        if (fbdev_presenter_enabled) {
+            FBDevPresenter_SetFPSOverlayText(fps_overlay_label);
         }
         return;
     }
@@ -9426,7 +9441,7 @@ void SDLApp_ToggleFPSOverlay(void) {
         FBDevPresenter_SetFPSOverlayMode(fps_overlay_mode);
     }
 
-    static const char* mode_names[] = { "off", "fps", "debug" };
+    static const char* mode_names[] = { "off", "fps", "debug", "rl-debug" };
     backend_logf("FPS overlay: %s", mode_names[fps_overlay_mode]);
 }
 

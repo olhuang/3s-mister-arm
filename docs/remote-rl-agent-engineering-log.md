@@ -310,6 +310,52 @@ Follow-up:
 - confirm on-device that the VS option cursor jumps over the two player-type rows while RL agent mode is enabled
 - if stronger UX is needed later, add a visible `managed by RL agent` label or dimmed-state treatment
 
+### 2026-04-21: Add RL Debug FPS Overlay Mode
+
+Milestones:
+
+- Milestone 0A: Baseline match-flow confirmation spike
+
+Files changed:
+
+- `vendor/Menu_MiSTer/menu.sv`
+- `vendor/Main_MiSTer/thirdsarm_wrapper.cpp`
+- `src/port/sdl/sdl_app.c`
+- `src/port/sdl/fbdev_presenter.c`
+- `docs/config.md`
+
+Purpose:
+
+- extend the MiSTer OSD `FPS Counter` menu with a fourth mode, `RL Debug`
+- display RL baseline session state directly in the overlay during bring-up
+
+Implementation notes:
+
+- expanded the `FPS Counter` `CONF_STR` entry from `Off/FPS/Debug` to `Off/FPS/Debug/RL Debug`
+- extended wrapper-side `show-fps` parsing and persistence to accept `rl-debug`
+- extended game-side FPS overlay parsing with `FPS_OVERLAY_RL_DEBUG`
+- when `rl-debug` is active, overlay text is now `RL Agent: Off`, `RL Agent: P1`, or `RL Agent: P2`
+- this mode intentionally reuses the existing `show-fps`/`SIGUSR1` path instead of adding a second OSD debug toggle
+
+Validation:
+
+```sh
+/home/olhua/src/3s-mister-arm/tools/mister/build-game.sh --flavor telemetry
+/home/olhua/src/3s-mister-arm/tools/mister-wrapper/build-hps.sh
+```
+
+Result:
+
+- passed
+- game package built successfully at `build/mister-telemetry-package`
+- HPS wrapper built successfully at `build/mister-wrapper-hps/MiSTer_3S-ARM`
+- FPGA core / `.rbf` rebuild is still required before the new `RL Debug` OSD menu item appears on MiSTer hardware
+
+Follow-up:
+
+- verify on MiSTer that `FPS Counter` cycles through all 4 modes
+- verify `RL Debug` shows `Off`, `P1`, or `P2` correctly after wrapper restart
+
 ## Milestone Notes
 
 ### Milestone 0A: Baseline Match-Flow Confirmation Spike

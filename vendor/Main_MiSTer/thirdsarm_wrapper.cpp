@@ -142,7 +142,8 @@ enum FpsOverlayMode
 	kFpsOverlayOff = 0,
 	kFpsOverlayFps = 1,
 	kFpsOverlayDebug = 2,
-	kFpsOverlayModeCount = 3,
+	kFpsOverlayRLDebug = 3,
+	kFpsOverlayModeCount = 4,
 };
 
 volatile sig_atomic_t g_wrapper_signal = 0;
@@ -1886,6 +1887,7 @@ int read_runtime_fps_default()
 	if (!read_runtime_config_value("show-fps", value, sizeof(value))) return kFpsOverlayOff;
 	if (!strcasecmp(value, "fps")) return kFpsOverlayFps;
 	if (!strcasecmp(value, "debug")) return kFpsOverlayDebug;
+	if (!strcasecmp(value, "rl-debug")) return kFpsOverlayRLDebug;
 	return kFpsOverlayOff;
 }
 
@@ -1895,6 +1897,7 @@ static const char *runtime_fps_mode_config_value(int mode)
 	{
 	case kFpsOverlayFps: return "fps";
 	case kFpsOverlayDebug: return "debug";
+	case kFpsOverlayRLDebug: return "rl-debug";
 	default: return "off";
 	}
 }
@@ -2115,7 +2118,7 @@ void poll_status_changes(pid_t child)
 	uint32_t fps = user_io_status_get("[11:10]");
 	if (fps != prev_fps) {
 		prev_fps = fps;
-		// CONF_STR: 0=Off, 1=FPS, 2=Debug (matches kFpsOverlay* enums)
+		// CONF_STR: 0=Off, 1=FPS, 2=Debug, 3=RL Debug
 		int target = (int)fps;
 		if (target != g_wrapper_fps_mode) {
 			write_runtime_fps_default(target);

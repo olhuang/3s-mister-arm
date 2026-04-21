@@ -72,7 +72,7 @@ static int frame_tiles_total = 0;
 static int frame_tiles_copied = 0;
 static bool frame_full_copy_fallback = false;
 static FBDevPresenter_FrameStats frame_stats = { 0 };
-static int fps_overlay_mode = 0; /* 0=off, 1=fps (top-left), 2=debug (bottom-center) */
+static int fps_overlay_mode = 0; /* 0=off, 1=fps (top-left), 2=debug (bottom-center), 3=rl-debug (bottom-center) */
 static char fps_overlay_text[128] = "";
 static Uint32* fps_overlay_pixels = NULL;
 static int fps_overlay_width = 0;

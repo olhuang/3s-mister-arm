@@ -272,6 +272,44 @@ Follow-up:
   - selecting `Player 2` relaunches with `--rl-agent --rl-player 2`
   - selecting `Off` removes RL launch args on restart
 
+### 2026-04-21: Lock VS Player-Type Menu Rows While RL Agent Is Active
+
+Milestones:
+
+- Milestone 0A: Baseline match-flow confirmation spike
+
+Files changed:
+
+- `src/sf33rd/Source/Game/menu/menu.c`
+
+Purpose:
+
+- keep the in-game VS option menu aligned with the actual RL baseline behavior
+- avoid letting users interact with P1/P2 player-type rows that are later overridden by `RLSession_ApplyVersusOperatorSetup()`
+
+Implementation notes:
+
+- added a small local helper that treats game-option rows `8` and `9` as RL-managed when `RLSession_IsActive()`
+- when RL is active, cursor movement skips those rows
+- when RL is active, left/right modification is ignored on those rows
+- this is a minimal v1 UX fix; it prevents contradictory editing without introducing new menu text assets
+
+Validation:
+
+```sh
+/home/olhua/src/3s-mister-arm/tools/mister/build-game.sh --flavor telemetry
+```
+
+Result:
+
+- passed
+- telemetry package created at `build/mister-telemetry-package`
+
+Follow-up:
+
+- confirm on-device that the VS option cursor jumps over the two player-type rows while RL agent mode is enabled
+- if stronger UX is needed later, add a visible `managed by RL agent` label or dimmed-state treatment
+
 ## Milestone Notes
 
 ### Milestone 0A: Baseline Match-Flow Confirmation Spike

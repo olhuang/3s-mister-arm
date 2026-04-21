@@ -1788,6 +1788,32 @@ s32 Load_Replay_MC_Sub(struct _TASK* task_ptr, s16 PL_id) {
 
 const u8 Setup_Index_64[10] = { 1, 2, 3, 3, 4, 5, 6, 7, 8, 8 };
 
+static bool RLSession_ManagesVSPartnerTypeMenuRow(s16 row) {
+    return RLSession_IsActive() && (row == 8 || row == 9);
+}
+
+static void RLSession_SkipManagedVSPartnerTypeRows(u16 sw, s16 cursor_id, s16 menu_max) {
+    if (!RLSession_ManagesVSPartnerTypeMenuRow(Menu_Cursor_Y[cursor_id])) {
+        return;
+    }
+
+    if (sw == SWK_UP) {
+        while (RLSession_ManagesVSPartnerTypeMenuRow(Menu_Cursor_Y[cursor_id])) {
+            Menu_Cursor_Y[cursor_id]--;
+            if (Menu_Cursor_Y[cursor_id] < 0) {
+                Menu_Cursor_Y[cursor_id] = menu_max;
+            }
+        }
+    } else if (sw == SWK_DOWN) {
+        while (RLSession_ManagesVSPartnerTypeMenuRow(Menu_Cursor_Y[cursor_id])) {
+            Menu_Cursor_Y[cursor_id]++;
+            if (Menu_Cursor_Y[cursor_id] > menu_max) {
+                Menu_Cursor_Y[cursor_id] = 0;
+            }
+        }
+    }
+}
+
 void Game_Option(struct _TASK* task_ptr) {
     s16 char_index;
     s16 ix;
@@ -1806,6 +1832,7 @@ void Game_Option(struct _TASK* task_ptr) {
         Menu_Suicide[2] = 0;
         Menu_Cursor_Y[0] = 0;
         Menu_Cursor_Y[1] = 0;
+        RLSession_SkipManagedVSPartnerTypeRows(SWK_DOWN, 0, 0xB);
         Order[0x4F] = 4;
         Order_Timer[0x4F] = 1;
         Order[0x4E] = 2;
@@ -1867,6 +1894,7 @@ u16 Game_Option_Sub(s16 PL_id) {
     sw = ~plsw_01[PL_id] & plsw_00[PL_id];
     sw = Check_Menu_Lever(PL_id, 0);
     ret = MC_Move_Sub(sw, 0, 0xB, 0xFF);
+    RLSession_SkipManagedVSPartnerTypeRows(sw, 0, 0xB);
     ret |= GO_Move_Sub_LR(sw, 0);
     ret &= 0x20F;
     return ret;
@@ -1876,6 +1904,10 @@ const u8 Game_Option_Index_Data[10] = { 7, 3, 3, 3, 3, 1, 1, 1, 1, 1 };
 
 u16 GO_Move_Sub_LR(u16 sw, s16 cursor_id) {
     if (Menu_Cursor_Y[cursor_id] > 9) {
+        return 0;
+    }
+
+    if (RLSession_ManagesVSPartnerTypeMenuRow(Menu_Cursor_Y[cursor_id])) {
         return 0;
     }
 

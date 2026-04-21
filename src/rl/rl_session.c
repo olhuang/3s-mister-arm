@@ -45,6 +45,15 @@ const char* RLSession_TestMovementLabel() {
 }
 
 static u16 RLSession_ForwardDirectionForPlayer(s16 player) {
+    const s16 opponent = player ^ 1;
+
+    if (plw[player].wu.position_x < plw[opponent].wu.position_x) {
+        return SWK_RIGHT;
+    }
+    if (plw[player].wu.position_x > plw[opponent].wu.position_x) {
+        return SWK_LEFT;
+    }
+
     return (plw[player].wu.rl_flag == 0) ? SWK_LEFT : SWK_RIGHT;
 }
 

@@ -540,6 +540,47 @@ Follow-up:
 - verify on MiSTer that scripted movement no longer acts in VS menu
 - verify `Forward`, `Back`, `Jump Forward`, and `Down Back` now move in the intended relative direction for both `P1H` and `P2H`
 
+### 2026-04-21: Stabilize Scripted Jump-Forward Across Cross-Over
+
+Milestones:
+
+- Milestone 0B: Facing and remap validation micro-spike
+
+Files changed:
+
+- `src/rl/rl_session.c`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+
+- avoid one stale-facing jump after the RL side crosses over the human opponent
+
+Implementation notes:
+
+- MiSTer validation showed `Forward`, `Back`, `Jump Forward`, and `Down Back` were basically correct after the previous fix
+- one remaining issue was observed: after a jump-forward crossed over the opponent, the next jump-forward could jump backward once, then recover on the following jump
+- this suggests `rl_flag` can lag the cross-over by one input decision at the scripted-input hook point
+- the 0B scripted movement helper now maps forward/back from current relative X position:
+  - agent left of opponent -> forward is `SWK_RIGHT`
+  - agent right of opponent -> forward is `SWK_LEFT`
+  - exact same X position falls back to the current `rl_flag` mapping
+- this change is intentionally scoped to the validation helper; the final remote action path can still decide whether to use facing, position, or explicit wire-mode semantics
+
+Validation:
+
+```sh
+/home/olhua/src/3s-mister-arm/tools/mister/build-game.sh --flavor telemetry
+```
+
+Result:
+
+- passed
+- game package built successfully at `build/mister-telemetry-package`
+
+Follow-up:
+
+- verify on MiSTer that repeated `Jump Forward` remains toward the opponent immediately after crossing over
+
 ## Milestone Notes
 
 ### Milestone 0A: Baseline Match-Flow Confirmation Spike

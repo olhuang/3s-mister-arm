@@ -1978,6 +1978,8 @@ Current first-pass action outcome / delta fields:
 
 - runtime `RLObservationV1` now exposes:
   - `delta_self_hp`, `delta_opp_hp`
+  - `delta_self_x`, `delta_self_y`
+  - `delta_opp_x`, `delta_opp_y`
   - `delta_self_stun`, `delta_opp_stun`
   - `self_airborne`, `opp_airborne`
   - `self_entered_hit_stop`, `opp_entered_hit_stop`
@@ -1992,6 +1994,7 @@ Current first-pass action outcome / delta fields:
   - `self_entered_hit_stop`, `opp_entered_hit_stop`
   - `self_entered_contact_state`, `opp_entered_contact_state`
   - `self_entered_damage_state`, `opp_entered_damage_state`
+- the decision-span delta/event aggregation is now driven from `RLObservation_OnFrameEnd()` so it tracks post-logic frame results instead of pre-logic input staging
 - deferred for a later schema revision because the current runtime source is not yet trustworthy enough:
   - `self_crouching`, `opp_crouching`
   - richer movement phase labels

@@ -134,6 +134,7 @@ Purpose:
 Implementation notes:
 - `RLObservationV1` now includes per-frame derived fields for:
   - HP delta
+  - X/Y delta
   - stun delta
   - airborne
   - entered hit-stop
@@ -149,6 +150,7 @@ Implementation notes:
   - airborne uses `position_y != 0`
   - contact state uses `guard_flag != 0 || hit_stop`
   - damage state uses HP loss or stun increase
+- moved the aggregation source to `RLObservation_OnFrameEnd()` so the ledger records post-logic frame results rather than pre-logic input staging
 - explicitly deferred crouching and richer action-phase labels until a more trustworthy runtime source is identified
 
 Validation:

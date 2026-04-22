@@ -12,6 +12,10 @@ typedef struct RLObservationV1 {
     f32 opp_hp_ratio;
     s16 delta_self_hp;
     s16 delta_opp_hp;
+    s16 delta_self_x;
+    s16 delta_self_y;
+    s16 delta_opp_x;
+    s16 delta_opp_y;
     u8 self_super_stock;
     u8 self_super_stock_max;
     u8 opp_super_stock;

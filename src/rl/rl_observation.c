@@ -19,6 +19,8 @@ static bool round_start_hp_valid;
 static u16 debug_input_swkey;
 static s16 prev_frame_hp[2];
 static s16 prev_frame_stun[2];
+static s16 prev_frame_pos_x[2];
+static s16 prev_frame_pos_y[2];
 static u8 prev_frame_hit_stop[2];
 static u8 prev_frame_contact_state[2];
 static bool prev_frame_valid;
@@ -228,6 +230,10 @@ void RLObservation_OnFrameEnd() {
     if (prev_frame_valid) {
         const s16 self_hp_delta = clamp_s16_delta((s32)prev_frame_hp[self] - (s32)debug.self_hp);
         const s16 opp_hp_delta = clamp_s16_delta((s32)prev_frame_hp[opp] - (s32)debug.opp_hp);
+        const s16 self_x_delta = clamp_s16_delta((s32)plw[self].wu.position_x - (s32)prev_frame_pos_x[self]);
+        const s16 opp_x_delta = clamp_s16_delta((s32)plw[opp].wu.position_x - (s32)prev_frame_pos_x[opp]);
+        const s16 self_y_delta = clamp_s16_delta((s32)plw[self].wu.position_y - (s32)prev_frame_pos_y[self]);
+        const s16 opp_y_delta = clamp_s16_delta((s32)plw[opp].wu.position_y - (s32)prev_frame_pos_y[opp]);
         const s16 self_stun_delta = clamp_s16_delta((s32)debug.self_stun - (s32)prev_frame_stun[self]);
         const s16 opp_stun_delta = clamp_s16_delta((s32)debug.opp_stun - (s32)prev_frame_stun[opp]);
         const u8 self_contact_state = (u8)((obs.self_guard_flag != 0) || obs.self_hit_stop);
@@ -235,6 +241,10 @@ void RLObservation_OnFrameEnd() {
 
         obs.delta_self_hp = self_hp_delta;
         obs.delta_opp_hp = opp_hp_delta;
+        obs.delta_self_x = self_x_delta;
+        obs.delta_self_y = self_y_delta;
+        obs.delta_opp_x = opp_x_delta;
+        obs.delta_opp_y = opp_y_delta;
         obs.delta_self_stun = self_stun_delta;
         obs.delta_opp_stun = opp_stun_delta;
         obs.self_entered_hit_stop = (u8)(!prev_frame_hit_stop[self] && obs.self_hit_stop);
@@ -271,11 +281,16 @@ void RLObservation_OnFrameEnd() {
     debug_input_swkey = agent_input_swkey(self);
     prev_frame_hp[self] = debug.self_hp;
     prev_frame_hp[opp] = debug.opp_hp;
+    prev_frame_pos_x[self] = plw[self].wu.position_x;
+    prev_frame_pos_x[opp] = plw[opp].wu.position_x;
+    prev_frame_pos_y[self] = plw[self].wu.position_y;
+    prev_frame_pos_y[opp] = plw[opp].wu.position_y;
     prev_frame_stun[self] = debug.self_stun;
     prev_frame_stun[opp] = debug.opp_stun;
     prev_frame_hit_stop[self] = obs.self_hit_stop;
     prev_frame_hit_stop[opp] = obs.opp_hit_stop;
     prev_frame_valid = true;
+    RLSession_OnObservationFrameEnd(&latest_obs);
 
     {
         const Uint64 build_ns = SDL_GetTicksNS() - build_start_ns;

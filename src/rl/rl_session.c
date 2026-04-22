@@ -70,10 +70,6 @@ typedef struct RLDecisionLedgerEntry {
     u32 execution_frame_actual;
     u16 requested_action_wire;
     u16 executed_action_wire;
-    s16 executed_start_self_x;
-    s16 executed_start_self_y;
-    s16 executed_start_opp_x;
-    s16 executed_start_opp_y;
     s16 delta_self_hp;
     s16 delta_opp_hp;
     s16 delta_self_stun;
@@ -94,7 +90,6 @@ typedef struct RLDecisionLedgerEntry {
     u8 opp_entered_contact_state;
     u8 self_entered_damage_state;
     u8 opp_entered_damage_state;
-    bool executed_position_valid;
     float reward_accum;
 } RLDecisionLedgerEntry;
 
@@ -125,19 +120,6 @@ static RLDecisionLedgerEntry decision_ledger[RL_DECISION_LEDGER_CAP];
 static RLRemoteActiveAction active_remote_action;
 static RLDecisionLedgerEntry* active_ledger_entry;
 static u16 last_executed_action_wire;
-static s16 reward_prev_self_hp;
-static s16 reward_prev_opp_hp;
-static s16 reward_prev_self_stun;
-static s16 reward_prev_opp_stun;
-static s16 reward_prev_self_x;
-static s16 reward_prev_opp_x;
-static s16 reward_prev_self_y;
-static s16 reward_prev_opp_y;
-static u8 reward_prev_self_hit_stop;
-static u8 reward_prev_opp_hit_stop;
-static u8 reward_prev_self_contact_state;
-static u8 reward_prev_opp_contact_state;
-static bool reward_state_valid;
 static RLActionContext action_context = {
     .last_executed_move_intent = RL_MOVE_NEUTRAL,
     .last_executed_attack_bits = 0,
@@ -192,7 +174,6 @@ static void RLSession_ClearRemoteQueue() {
     memset(&active_remote_action, 0, sizeof(active_remote_action));
     active_ledger_entry = NULL;
     last_executed_action_wire = 0;
-    reward_state_valid = false;
     remote_debug.queue_depth = 0;
 }
 
@@ -470,14 +451,6 @@ static void RLSession_FinalizeLedgerEntry(RLDecisionLedgerEntry* entry, bool don
     entry->active = false;
     entry->done = done;
     entry->terminal_reason = terminal_reason;
-    if (entry->was_executed && entry->executed_position_valid && terminal_reason != 2) {
-        const s16 self = RLSession_AgentPlayerIndex();
-        const s16 opp = RLSession_OpponentPlayerIndex();
-        entry->delta_self_x = RLSession_ClampDeltaS16((s32)plw[self].wu.position_x - (s32)entry->executed_start_self_x);
-        entry->delta_self_y = RLSession_ClampDeltaS16((s32)plw[self].wu.position_y - (s32)entry->executed_start_self_y);
-        entry->delta_opp_x = RLSession_ClampDeltaS16((s32)plw[opp].wu.position_x - (s32)entry->executed_start_opp_x);
-        entry->delta_opp_y = RLSession_ClampDeltaS16((s32)plw[opp].wu.position_y - (s32)entry->executed_start_opp_y);
-    }
     RLSession_AppendTransitionLog(entry);
     entry->exported = true;
     remote_debug.transition_export_count++;
@@ -493,91 +466,15 @@ static void RLSession_SetActiveLedgerEntry(RLDecisionLedgerEntry* entry) {
     }
 }
 
-static void RLSession_UpdateRewardAccumulator() {
-    const s16 self = RLSession_AgentPlayerIndex();
-    const s16 opp = RLSession_OpponentPlayerIndex();
-    const s16 self_hp = SDL_max(0, plw[self].wu.vital_new);
-    const s16 opp_hp = SDL_max(0, plw[opp].wu.vital_new);
-    const s16 self_stun = sdat[self].cstn;
-    const s16 opp_stun = sdat[opp].cstn;
-    const s16 self_x = plw[self].wu.position_x;
-    const s16 opp_x = plw[opp].wu.position_x;
-    const s16 self_y = plw[self].wu.position_y;
-    const s16 opp_y = plw[opp].wu.position_y;
-    const u8 self_hit_stop = (u8)(plw[self].wu.hit_stop != 0);
-    const u8 opp_hit_stop = (u8)(plw[opp].wu.hit_stop != 0);
-    const u8 self_contact_state = (u8)((plw[self].guard_flag != 0) || self_hit_stop);
-    const u8 opp_contact_state = (u8)((plw[opp].guard_flag != 0) || opp_hit_stop);
-
-    if (!reward_state_valid) {
-        reward_prev_self_hp = self_hp;
-        reward_prev_opp_hp = opp_hp;
-        reward_prev_self_stun = self_stun;
-        reward_prev_opp_stun = opp_stun;
-        reward_prev_self_x = self_x;
-        reward_prev_opp_x = opp_x;
-        reward_prev_self_y = self_y;
-        reward_prev_opp_y = opp_y;
-        reward_prev_self_hit_stop = self_hit_stop;
-        reward_prev_opp_hit_stop = opp_hit_stop;
-        reward_prev_self_contact_state = self_contact_state;
-        reward_prev_opp_contact_state = opp_contact_state;
-        reward_state_valid = true;
-        return;
-    }
-
-    if (active_ledger_entry != NULL && active_ledger_entry->valid && active_ledger_entry->active) {
-        active_ledger_entry->reward_accum += (float)((reward_prev_opp_hp - opp_hp) - (reward_prev_self_hp - self_hp));
-        RLSession_AccumulateDeltaS16(&active_ledger_entry->delta_self_hp,
-                                     (s32)reward_prev_self_hp - (s32)self_hp);
-        RLSession_AccumulateDeltaS16(&active_ledger_entry->delta_opp_hp,
-                                     (s32)reward_prev_opp_hp - (s32)opp_hp);
-        RLSession_AccumulateDeltaS16(&active_ledger_entry->delta_self_stun,
-                                     (s32)self_stun - (s32)reward_prev_self_stun);
-        RLSession_AccumulateDeltaS16(&active_ledger_entry->delta_opp_stun,
-                                     (s32)opp_stun - (s32)reward_prev_opp_stun);
-        RLSession_AccumulateDeltaS16(&active_ledger_entry->delta_self_x,
-                                     (s32)self_x - (s32)reward_prev_self_x);
-        RLSession_AccumulateDeltaS16(&active_ledger_entry->delta_opp_x,
-                                     (s32)opp_x - (s32)reward_prev_opp_x);
-        RLSession_AccumulateDeltaS16(&active_ledger_entry->delta_self_y,
-                                     (s32)self_y - (s32)reward_prev_self_y);
-        RLSession_AccumulateDeltaS16(&active_ledger_entry->delta_opp_y,
-                                     (s32)opp_y - (s32)reward_prev_opp_y);
-        active_ledger_entry->self_airborne_seen |= (u8)(self_y != 0);
-        active_ledger_entry->opp_airborne_seen |= (u8)(opp_y != 0);
-        active_ledger_entry->self_entered_hit_stop |= (u8)(!reward_prev_self_hit_stop && self_hit_stop);
-        active_ledger_entry->opp_entered_hit_stop |= (u8)(!reward_prev_opp_hit_stop && opp_hit_stop);
-        active_ledger_entry->self_entered_contact_state |=
-            (u8)(!reward_prev_self_contact_state && self_contact_state);
-        active_ledger_entry->opp_entered_contact_state |=
-            (u8)(!reward_prev_opp_contact_state && opp_contact_state);
-        active_ledger_entry->self_entered_damage_state |=
-            (u8)((reward_prev_self_hp > self_hp) || (self_stun > reward_prev_self_stun));
-        active_ledger_entry->opp_entered_damage_state |=
-            (u8)((reward_prev_opp_hp > opp_hp) || (opp_stun > reward_prev_opp_stun));
-    }
-
-    reward_prev_self_hp = self_hp;
-    reward_prev_opp_hp = opp_hp;
-    reward_prev_self_stun = self_stun;
-    reward_prev_opp_stun = opp_stun;
-    reward_prev_self_x = self_x;
-    reward_prev_opp_x = opp_x;
-    reward_prev_self_y = self_y;
-    reward_prev_opp_y = opp_y;
-    reward_prev_self_hit_stop = self_hit_stop;
-    reward_prev_opp_hit_stop = opp_hit_stop;
-    reward_prev_self_contact_state = self_contact_state;
-    reward_prev_opp_contact_state = opp_contact_state;
-}
-
 static void RLSession_FinalizeEpisodeLedger(u32 episode_id) {
-    if (active_ledger_entry != NULL && active_ledger_entry->valid && active_ledger_entry->episode_id == episode_id &&
-        reward_state_valid) {
-        if (reward_prev_opp_hp <= 0 && reward_prev_self_hp > 0) {
+    if (active_ledger_entry != NULL && active_ledger_entry->valid && active_ledger_entry->episode_id == episode_id) {
+        const s16 self = RLSession_AgentPlayerIndex();
+        const s16 opp = RLSession_OpponentPlayerIndex();
+        const s16 self_hp = SDL_max(0, plw[self].wu.vital_new);
+        const s16 opp_hp = SDL_max(0, plw[opp].wu.vital_new);
+        if (opp_hp <= 0 && self_hp > 0) {
             active_ledger_entry->reward_accum += 100.0f;
-        } else if (reward_prev_self_hp <= 0 && reward_prev_opp_hp > 0) {
+        } else if (self_hp <= 0 && opp_hp > 0) {
             active_ledger_entry->reward_accum -= 100.0f;
         }
     }
@@ -588,6 +485,33 @@ static void RLSession_FinalizeEpisodeLedger(u32 episode_id) {
         RLSession_FinalizeLedgerEntry(&decision_ledger[i], true, 2);
     }
     active_ledger_entry = NULL;
+}
+
+void RLSession_OnObservationFrameEnd(const RLObservationV1* obs) {
+    if (obs == NULL || !obs->valid) {
+        return;
+    }
+    if (active_ledger_entry == NULL || !active_ledger_entry->valid || !active_ledger_entry->active) {
+        return;
+    }
+
+    active_ledger_entry->reward_accum += (float)(obs->delta_opp_hp - obs->delta_self_hp);
+    RLSession_AccumulateDeltaS16(&active_ledger_entry->delta_self_hp, obs->delta_self_hp);
+    RLSession_AccumulateDeltaS16(&active_ledger_entry->delta_opp_hp, obs->delta_opp_hp);
+    RLSession_AccumulateDeltaS16(&active_ledger_entry->delta_self_stun, obs->delta_self_stun);
+    RLSession_AccumulateDeltaS16(&active_ledger_entry->delta_opp_stun, obs->delta_opp_stun);
+    RLSession_AccumulateDeltaS16(&active_ledger_entry->delta_self_x, obs->delta_self_x);
+    RLSession_AccumulateDeltaS16(&active_ledger_entry->delta_opp_x, obs->delta_opp_x);
+    RLSession_AccumulateDeltaS16(&active_ledger_entry->delta_self_y, obs->delta_self_y);
+    RLSession_AccumulateDeltaS16(&active_ledger_entry->delta_opp_y, obs->delta_opp_y);
+    active_ledger_entry->self_airborne_seen |= obs->self_airborne;
+    active_ledger_entry->opp_airborne_seen |= obs->opp_airborne;
+    active_ledger_entry->self_entered_hit_stop |= obs->self_entered_hit_stop;
+    active_ledger_entry->opp_entered_hit_stop |= obs->opp_entered_hit_stop;
+    active_ledger_entry->self_entered_contact_state |= obs->self_entered_contact_state;
+    active_ledger_entry->opp_entered_contact_state |= obs->opp_entered_contact_state;
+    active_ledger_entry->self_entered_damage_state |= obs->self_entered_damage_state;
+    active_ledger_entry->opp_entered_damage_state |= obs->opp_entered_damage_state;
 }
 
 static RLExpectedRemoteDecision* RLSession_FindExpectedDecision(u32 episode_id, u32 decision_id) {
@@ -801,19 +725,12 @@ static void RLSession_StartActiveRemoteAction(u32 episode_id,
     action_context.last_executed_attack_bits = attack_bits;
     last_executed_action_wire = executed_action_wire;
     if (ledger != NULL) {
-        const s16 self = RLSession_AgentPlayerIndex();
-        const s16 opp = RLSession_OpponentPlayerIndex();
         ledger->was_executed = true;
         ledger->executed_action_wire = executed_action_wire;
         ledger->execution_frame_actual = remote_debug.frame_id;
         ledger->execution_source = (u8)source;
         ledger->executed_move_intent = move_intent;
         ledger->executed_attack_bits = attack_bits;
-        ledger->executed_start_self_x = plw[self].wu.position_x;
-        ledger->executed_start_self_y = plw[self].wu.position_y;
-        ledger->executed_start_opp_x = plw[opp].wu.position_x;
-        ledger->executed_start_opp_y = plw[opp].wu.position_y;
-        ledger->executed_position_valid = true;
         RLSession_SetActiveLedgerEntry(ledger);
     }
     if (source == RL_EXECUTION_SOURCE_REMOTE) {
@@ -882,7 +799,6 @@ static void RLSession_ApplyRemoteActionToBuffers() {
 
     RLSession_MaybeInitRemoteRuntime();
     RLSession_ClearScheduledActionContext();
-    RLSession_UpdateRewardAccumulator();
 
     if (!RLNet_IsHandshakeAccepted()) {
         return;

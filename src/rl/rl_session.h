@@ -7,6 +7,8 @@
 
 #include <stdbool.h>
 
+typedef struct RLObservationV1 RLObservationV1;
+
 typedef enum RLMoveIntent {
     RL_MOVE_NEUTRAL = 0,
     RL_MOVE_UP = 1,
@@ -66,6 +68,7 @@ const RLRemoteDebugState* RLSession_GetRemoteDebugState();
 u32 RLSession_GetCurrentFrameId();
 RLRemoteActionSubmitResult RLSession_SubmitRemoteAction(const RLActionPacket* packet);
 bool RLSession_SendRemoteObservationIfDue();
+void RLSession_OnObservationFrameEnd(const RLObservationV1* obs);
 void RLSession_ApplyVersusOperatorSetup();
 void RLSession_ApplyScriptedMovementToBuffers();
 void RLSession_ApplyInputOverrideToBuffers();

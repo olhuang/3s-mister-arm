@@ -628,6 +628,97 @@ Recommended first training stance:
 - keep `do_not_move` and `high_jump_flag` available in debug logs, but do not rely on them for the first reward/policy iteration
 - if jump-state ambiguity becomes a training blocker, add an explicit `self_airborne` / `opp_airborne` feature in the next schema revision rather than overloading `high_jump_flag`
 
+#### Human-Fighter Observer Gap Review
+
+This review captures the gap between the current MVP observer and what a human player naturally reasons about during a match. Revisit it after Milestone 2 networking is working and before Milestone 4 transition logging / reward design is finalized.
+
+Already covered well enough for MVP:
+
+- spacing and stage geometry:
+  - `opp_dx_ratio`
+  - `opp_dy_ratio`
+  - corner distances
+  - `self_facing_sign`
+  - `opp_in_front`
+- resource state:
+  - HP
+  - SA stock
+  - SA gauge fill
+  - stun
+- coarse combat state:
+  - attack button-category code through `current_attack`
+  - raw combat/contact state through `guard_flag`
+  - contact stop through `hit_stop`
+  - routine triplets for normal / damage / catch / caught / attack state
+- own control pipeline context:
+  - last executed action
+  - next scheduled action
+  - frames until next action
+
+Likely missing or too implicit for strong training:
+
+- opponent movement intent:
+  - walking forward / backward
+  - crouching
+  - neutral jump / forward jump / back jump
+  - dash forward / dash back
+  - airborne state
+- opponent action phase:
+  - startup
+  - active
+  - recovery
+  - blockstun
+  - hitstun
+  - knockdown / wakeup
+- own action outcome:
+  - requested movement actually changed position
+  - requested jump actually entered airborne state
+  - requested attack actually entered attack state
+  - own attack hit
+  - own attack was blocked
+  - own attack likely whiffed
+  - opponent hit self
+  - self blocked opponent attack
+  - self was thrown / threw opponent
+- event deltas for credit assignment:
+  - `delta_self_hp`
+  - `delta_opp_hp`
+  - `delta_self_stun`
+  - `delta_opp_stun`
+  - `entered_hit_stop`
+  - `entered_damage_state`
+  - `entered_contact_state`
+
+Recommended derived-feature candidates:
+
+- `round_active`
+- `self_can_act`, `opp_can_act`
+- `self_airborne`, `opp_airborne`
+- `self_crouching`, `opp_crouching`
+- `self_movement_state`, `opp_movement_state`
+- `self_action_phase`, `opp_action_phase`
+- `self_contact_result`, `opp_contact_result`
+- `last_action_result`
+- `last_action_delta_x`, `last_action_delta_y`
+- `self_knockdown`, `opp_knockdown`
+- `self_blockstun`, `opp_blockstun`
+- `self_hitstun`, `opp_hitstun`
+- `self_throw_state`, `opp_throw_state`
+- `timer_remaining`
+
+Deferred but likely important later:
+
+- projectile / object positions
+- parry / blocking result
+- combo or hit-sequence counters
+- full move id once the code path for concrete normal / special / SA identity is decoded
+
+Milestone placement:
+
+- Milestone 2 should not block on these additions; it only needs the current MVP observer to exercise the transport and delay budget.
+- Milestone 4 should revisit action-outcome and delta fields because they directly affect transition logging, reward shaping, and credit assignment.
+- Milestone 6 should revisit movement/action-phase derived fields for stronger policies and curriculum learning.
+
 ### 4B. `RLObservationV1` 中文欄位導讀
 
 這一節不是新的 schema。它是上面 canonical table 的中文解讀，重點放在:
@@ -1593,6 +1684,7 @@ Current read:
 - [x] `RL Debug` overlay now exposes enough state to validate position / guard / attack / round / action-context on MiSTer
 - [x] `RL Debug` labels and docs now reflect validated raw-state semantics for `guard_flag`, `current_attack`, `do_not_move`, `hit_stop`, `high_jump_flag`, and `routine_no`
 - [x] Observation build-cost measurement is now available in `RL Debug`
+- [x] Human-fighter observer gaps are documented for Milestone 4 / Milestone 6 review without blocking Milestone 2
 
 MiSTer validation matrix:
 
@@ -1713,6 +1805,7 @@ Goal:
 Tasks:
 
 - [ ] Add decision ledger keyed by `(episode_id, decision_id)`
+- [ ] Review the action-outcome and event-delta candidates from the Human-Fighter Observer Gap Review
 - [ ] Record `obs_frame`
 - [ ] Record `target_frame`
 - [ ] Record `requested_action_wire`
@@ -1735,6 +1828,7 @@ Done when:
 - [ ] Each transition includes execution frame actual
 - [ ] Each transition includes reward span
 - [ ] Each transition includes done flag
+- [ ] Transition schema has an explicit decision on whether to include first-pass action outcome / delta fields
 - [ ] Learner-side replay buffer can distinguish remote action, repeated-last-action, down-back fallback, and neutral fallback
 
 ### Milestone 5: Async learner and model hot-swap
@@ -1784,10 +1878,12 @@ Tasks:
 - [ ] Add stage curriculum
 - [ ] Add automated reset loops
 - [ ] Evaluate higher control rate after latency p95/p99 is stable
+- [ ] Review derived movement/action-phase candidates from the Human-Fighter Observer Gap Review before changing the observation schema
 
 Done when:
 
 - [ ] Control timing improvements are backed by telemetry
+- [ ] Any promoted derived observation features have schema-versioned docs and validation notes
 - [ ] Curriculum changes are reflected in logs and reproducible configs
 - [ ] Policy strength improves without destabilizing the transport/control path
 

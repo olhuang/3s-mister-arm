@@ -1231,6 +1231,40 @@ MiSTer follow-up:
 - verify `RW` resets when a new match starts
 - verify `M` still tracks cumulative VS match wins
 
+### 2026-04-22: Document Human-Fighter Observer Gap Review
+
+Milestones:
+
+- Milestone 1: Compact observation builder follow-up
+- Milestone 4 / Milestone 6 planning input
+
+Purpose:
+
+- capture the gap between the current MVP observer and the information a human player naturally uses during a match
+- keep Milestone 2 unblocked while preserving the review items for transition logging, reward design, and later observation expansion
+
+Changes:
+
+- updated `docs/plan-remote-rl-agent.md`
+  - added `Human-Fighter Observer Gap Review` under the observation schema section
+  - marked the Milestone 1 current read to say these gaps are documented and do not block Milestone 2
+  - added Milestone 4 tasks to review action-outcome and event-delta candidates
+  - added Milestone 6 tasks to review derived movement/action-phase candidates before schema expansion
+
+Summary:
+
+- current MVP is sufficient for spacing, resources, coarse combat state, and delayed action context
+- likely missing or implicit fields include opponent movement intent, action phase, own action outcome, and event deltas
+- priority follow-up areas are:
+  - action outcomes and deltas for Milestone 4 transition/reward design
+  - derived movement/action-phase features for Milestone 6 policy strength
+
+Validation:
+
+```sh
+# Documentation-only update.
+```
+
 ### Milestone 2: Session Handshake, Network Probe, And Delay Budget
 
 Objective:

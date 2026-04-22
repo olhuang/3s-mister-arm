@@ -61,6 +61,7 @@ typedef struct RLDecisionLedgerEntry {
     bool active;
     bool exported;
     bool done;
+    bool was_executed;
     u32 episode_id;
     u32 decision_id;
     u32 obs_frame;
@@ -71,6 +72,7 @@ typedef struct RLDecisionLedgerEntry {
     u8 executed_move_intent;
     u16 executed_attack_bits;
     u8 execution_source;
+    u8 terminal_reason;
     float reward_accum;
 } RLDecisionLedgerEntry;
 
@@ -300,6 +302,19 @@ static const char* RLSession_ExecutionSourceLabel(RLExecutionSource source) {
     }
 }
 
+static const char* RLSession_TerminalReasonLabel(u8 terminal_reason) {
+    switch (terminal_reason) {
+    case 1:
+        return "decision_replaced";
+    case 2:
+        return "episode_end";
+    case 3:
+        return "not_terminal";
+    default:
+        return "unknown";
+    }
+}
+
 static RLDecisionLedgerEntry* RLSession_FindLedgerEntry(u32 episode_id, u32 decision_id) {
     for (u32 i = 0; i < RL_DECISION_LEDGER_CAP; i++) {
         if (decision_ledger[i].valid && decision_ledger[i].episode_id == episode_id &&
@@ -335,21 +350,27 @@ static void RLSession_AppendTransitionLog(const RLDecisionLedgerEntry* entry) {
         SDL_snprintf(line,
                      sizeof(line),
                      "{\"episode_id\":%u,\"decision_id\":%u,\"obs_frame\":%u,\"target_frame\":%u,"
-                     "\"requested_action_wire\":%u,\"executed_action_wire\":%u,\"execution_frame_actual\":%u,"
-                     "\"execution_source\":\"%s\",\"executed_move_intent\":%u,\"executed_attack_bits\":%u,"
-                     "\"reward_accum\":%.3f,\"done\":%s}\n",
+                     "\"requested_action_wire\":%u,\"requested_move_intent\":%u,\"requested_attack_bits\":%u,"
+                     "\"executed_action_wire\":%u,\"executed_move_intent\":%u,\"executed_attack_bits\":%u,"
+                     "\"was_executed\":%s,\"execution_frame_actual\":%u,"
+                     "\"execution_source\":\"%s\",\"reward_accum\":%.3f,\"done\":%s,"
+                     "\"terminal_reason\":\"%s\"}\n",
                      entry->episode_id,
                      entry->decision_id,
                      entry->obs_frame,
                      entry->target_frame,
                      entry->requested_action_wire,
+                     RLSession_DecodeMoveIntent(entry->requested_action_wire),
+                     RLSession_DecodeAttackBits(entry->requested_action_wire),
                      entry->executed_action_wire,
-                     entry->execution_frame_actual,
-                     RLSession_ExecutionSourceLabel((RLExecutionSource)entry->execution_source),
                      entry->executed_move_intent,
                      entry->executed_attack_bits,
+                     entry->was_executed ? "true" : "false",
+                     entry->execution_frame_actual,
+                     RLSession_ExecutionSourceLabel((RLExecutionSource)entry->execution_source),
                      (double)entry->reward_accum,
-                     entry->done ? "true" : "false");
+                     entry->done ? "true" : "false",
+                     RLSession_TerminalReasonLabel(entry->terminal_reason));
 
     if (written <= 0) {
         return;
@@ -371,12 +392,13 @@ static void RLSession_AppendTransitionLog(const RLDecisionLedgerEntry* entry) {
     SDL_free(logs_dir);
 }
 
-static void RLSession_FinalizeLedgerEntry(RLDecisionLedgerEntry* entry, bool done) {
+static void RLSession_FinalizeLedgerEntry(RLDecisionLedgerEntry* entry, bool done, u8 terminal_reason) {
     if (entry == NULL || !entry->valid || entry->exported) {
         return;
     }
     entry->active = false;
     entry->done = done;
+    entry->terminal_reason = terminal_reason;
     RLSession_AppendTransitionLog(entry);
     entry->exported = true;
     remote_debug.transition_export_count++;
@@ -384,7 +406,7 @@ static void RLSession_FinalizeLedgerEntry(RLDecisionLedgerEntry* entry, bool don
 
 static void RLSession_SetActiveLedgerEntry(RLDecisionLedgerEntry* entry) {
     if (active_ledger_entry != NULL && active_ledger_entry != entry) {
-        RLSession_FinalizeLedgerEntry(active_ledger_entry, false);
+        RLSession_FinalizeLedgerEntry(active_ledger_entry, false, 1);
     }
     active_ledger_entry = entry;
     if (entry != NULL) {
@@ -426,7 +448,7 @@ static void RLSession_FinalizeEpisodeLedger(u32 episode_id) {
         if (!decision_ledger[i].valid || decision_ledger[i].episode_id != episode_id || decision_ledger[i].exported) {
             continue;
         }
-        RLSession_FinalizeLedgerEntry(&decision_ledger[i], true);
+        RLSession_FinalizeLedgerEntry(&decision_ledger[i], true, 2);
     }
     active_ledger_entry = NULL;
 }
@@ -642,6 +664,7 @@ static void RLSession_StartActiveRemoteAction(u32 episode_id,
     action_context.last_executed_attack_bits = attack_bits;
     last_executed_action_wire = executed_action_wire;
     if (ledger != NULL) {
+        ledger->was_executed = true;
         ledger->executed_action_wire = executed_action_wire;
         ledger->execution_frame_actual = remote_debug.frame_id;
         ledger->execution_source = (u8)source;
@@ -865,6 +888,7 @@ bool RLSession_SendRemoteObservationIfDue() {
     ledger->decision_id = header.decision_id;
     ledger->obs_frame = header.obs_frame;
     ledger->target_frame = header.target_frame;
+    ledger->terminal_reason = 3;
     remote_debug.obs_sent_count++;
     return true;
 }

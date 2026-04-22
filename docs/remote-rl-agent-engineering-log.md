@@ -96,6 +96,11 @@ Implementation notes:
   - `execution_source`
   - decoded `executed_move_intent`
   - decoded `executed_attack_bits`
+- exported transitions now also include:
+  - decoded `requested_move_intent`
+  - decoded `requested_attack_bits`
+  - `was_executed`
+  - `terminal_reason`
 - reward now accumulates onto the currently active ledger entry using:
   - per-frame `delta_opp_hp - delta_self_hp`
   - plus `+100/-100` round result bonus at episode closeout

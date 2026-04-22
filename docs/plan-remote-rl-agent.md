@@ -1953,13 +1953,17 @@ Implementation notes:
   - `obs_frame`
   - `target_frame`
   - `requested_action_wire`
+  - decoded `requested_move_intent`
+  - decoded `requested_attack_bits`
   - `executed_action_wire`
+  - `was_executed`
   - `execution_frame_actual`
   - `execution_source`
   - `executed_move_intent`
   - `executed_attack_bits`
   - `reward_accum`
   - `done`
+  - `terminal_reason`
 - Transitions are appended as NDJSON to:
   - `logs/rl-transitions.ndjson` under `Paths_GetPrefPath()`
 - Current reward baseline:

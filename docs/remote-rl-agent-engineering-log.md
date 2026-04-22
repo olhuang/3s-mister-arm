@@ -68,6 +68,49 @@ Further Milestone 3 closeout work:
   - `--obs-reply-mode wrong-target`
   so MiSTer-side `DU/TM` counters can be validated deterministically on hardware
 
+Milestone 3 closeout:
+- hardware validation also confirmed delayed relative `forward/back` behavior remains correct across side switches
+- Milestone 3 is now considered complete
+
+## 2026-04-22: Milestone 4 Decision Ledger And Transition Export MVP
+
+Milestone:
+- Milestone 4: Decision ledger and transition logging
+
+Files changed:
+- `src/rl/rl_session.h`
+- `src/rl/rl_session.c`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- make the remote control loop trainable by recording what was requested, what actually executed, and what reward span that executed decision accrued
+
+Implementation notes:
+- added a fixed-size decision ledger keyed by `(episode_id, decision_id)` in `src/rl/rl_session.c`
+- ledger entries are created when MiSTer sends an observation header
+- when an action packet arrives, the ledger entry records `requested_action_wire`
+- when the decision becomes active, the ledger entry records:
+  - `executed_action_wire`
+  - `execution_frame_actual`
+  - `execution_source`
+  - decoded `executed_move_intent`
+  - decoded `executed_attack_bits`
+- reward now accumulates onto the currently active ledger entry using:
+  - per-frame `delta_opp_hp - delta_self_hp`
+  - plus `+100/-100` round result bonus at episode closeout
+- round changes now finalize the previous episode's ledger entries with `done=true`
+- transitions are exported as NDJSON to `logs/rl-transitions.ndjson` under `Paths_GetPrefPath()`
+
+Validation:
+- `git diff --check` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed.
+
+Follow-up:
+- run a short MiSTer session and inspect `rl-transitions.ndjson`
+- revisit richer event-delta fields from the Human-Fighter Observer Gap Review
+- add remote-side transition transport after the local ledger output is validated
+
 ## 2026-04-22: Milestone 2 Action Session Gate
 
 Milestone:

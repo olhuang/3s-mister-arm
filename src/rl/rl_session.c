@@ -2,13 +2,14 @@
 
 #include "rl/rl_net.h"
 #include "rl/rl_observation.h"
+#include "port/paths.h"
 #include "sf33rd/AcrSDK/common/pad.h"
 #include "main.h"
 #include "sf33rd/Source/Game/engine/plcnt.h"
 #include "sf33rd/Source/Game/engine/workuser.h"
 #include "sf33rd/Source/Game/system/work_sys.h"
 
-#include <SDL3/SDL_stdinc.h>
+#include <SDL3/SDL.h>
 #include <string.h>
 
 typedef enum RLTestMovement {
@@ -55,6 +56,24 @@ typedef struct RLRemoteActiveAction {
     u8 attack_remaining_frames;
 } RLRemoteActiveAction;
 
+typedef struct RLDecisionLedgerEntry {
+    bool valid;
+    bool active;
+    bool exported;
+    bool done;
+    u32 episode_id;
+    u32 decision_id;
+    u32 obs_frame;
+    u32 target_frame;
+    u32 execution_frame_actual;
+    u16 requested_action_wire;
+    u16 executed_action_wire;
+    u8 executed_move_intent;
+    u16 executed_attack_bits;
+    u8 execution_source;
+    float reward_accum;
+} RLDecisionLedgerEntry;
+
 static const RLLocalFakeAction kLocalFakeAgentSequence[] = {
     { RL_MOVE_FORWARD, 0, 30 },
     { RL_MOVE_NEUTRAL, SWK_WEST, 8 },
@@ -68,6 +87,7 @@ static const RLLocalFakeAction kLocalFakeAgentSequence[] = {
 #define RL_REMOTE_QUEUE_CAP 16u
 #define RL_REMOTE_EXPECTED_CAP 16u
 #define RL_REMOTE_SEEN_CAP 32u
+#define RL_DECISION_LEDGER_CAP 128u
 
 static u16 local_fake_action_index;
 static u16 local_fake_action_frame;
@@ -77,7 +97,13 @@ static RLRemoteDebugState remote_debug;
 static RLQueuedRemoteAction remote_queue[RL_REMOTE_QUEUE_CAP];
 static RLExpectedRemoteDecision expected_decisions[RL_REMOTE_EXPECTED_CAP];
 static RLSeenRemoteDecision seen_decisions[RL_REMOTE_SEEN_CAP];
+static RLDecisionLedgerEntry decision_ledger[RL_DECISION_LEDGER_CAP];
 static RLRemoteActiveAction active_remote_action;
+static RLDecisionLedgerEntry* active_ledger_entry;
+static u16 last_executed_action_wire;
+static s16 reward_prev_self_hp;
+static s16 reward_prev_opp_hp;
+static bool reward_state_valid;
 static RLActionContext action_context = {
     .last_executed_move_intent = RL_MOVE_NEUTRAL,
     .last_executed_attack_bits = 0,
@@ -128,7 +154,11 @@ static void RLSession_ClearRemoteQueue() {
     memset(remote_queue, 0, sizeof(remote_queue));
     memset(expected_decisions, 0, sizeof(expected_decisions));
     memset(seen_decisions, 0, sizeof(seen_decisions));
+    memset(decision_ledger, 0, sizeof(decision_ledger));
     memset(&active_remote_action, 0, sizeof(active_remote_action));
+    active_ledger_entry = NULL;
+    last_executed_action_wire = 0;
+    reward_state_valid = false;
     remote_debug.queue_depth = 0;
 }
 
@@ -252,6 +282,155 @@ static u16 RLSession_DecodeAttackBits(u16 action_wire) {
     return (u16)(action_wire & (u16)SWK_ATTACKS & 0xFFF0u);
 }
 
+static u16 RLSession_EncodeActionWire(u8 move_intent, u16 attack_bits) {
+    return (u16)((move_intent & 0x000Fu) | (attack_bits & 0xFFF0u));
+}
+
+static const char* RLSession_ExecutionSourceLabel(RLExecutionSource source) {
+    switch (source) {
+    case RL_EXECUTION_SOURCE_REMOTE:
+        return "remote";
+    case RL_EXECUTION_SOURCE_REPEATED_LAST_ACTION:
+        return "repeated-last-action";
+    case RL_EXECUTION_SOURCE_NEUTRAL_FALLBACK:
+        return "neutral-fallback";
+    case RL_EXECUTION_SOURCE_NONE:
+    default:
+        return "none";
+    }
+}
+
+static RLDecisionLedgerEntry* RLSession_FindLedgerEntry(u32 episode_id, u32 decision_id) {
+    for (u32 i = 0; i < RL_DECISION_LEDGER_CAP; i++) {
+        if (decision_ledger[i].valid && decision_ledger[i].episode_id == episode_id &&
+            decision_ledger[i].decision_id == decision_id) {
+            return &decision_ledger[i];
+        }
+    }
+    return NULL;
+}
+
+static RLDecisionLedgerEntry* RLSession_AllocLedgerEntry() {
+    for (u32 i = 0; i < RL_DECISION_LEDGER_CAP; i++) {
+        if (!decision_ledger[i].valid) {
+            return &decision_ledger[i];
+        }
+    }
+    for (u32 i = 0; i < RL_DECISION_LEDGER_CAP; i++) {
+        if (!decision_ledger[i].active) {
+            memset(&decision_ledger[i], 0, sizeof(decision_ledger[i]));
+            return &decision_ledger[i];
+        }
+    }
+    return NULL;
+}
+
+static void RLSession_AppendTransitionLog(const RLDecisionLedgerEntry* entry) {
+    char* logs_dir = NULL;
+    char* log_path = NULL;
+    char line[512];
+    SDL_IOStream* io = NULL;
+    const char* pref_path = NULL;
+    const int written =
+        SDL_snprintf(line,
+                     sizeof(line),
+                     "{\"episode_id\":%u,\"decision_id\":%u,\"obs_frame\":%u,\"target_frame\":%u,"
+                     "\"requested_action_wire\":%u,\"executed_action_wire\":%u,\"execution_frame_actual\":%u,"
+                     "\"execution_source\":\"%s\",\"executed_move_intent\":%u,\"executed_attack_bits\":%u,"
+                     "\"reward_accum\":%.3f,\"done\":%s}\n",
+                     entry->episode_id,
+                     entry->decision_id,
+                     entry->obs_frame,
+                     entry->target_frame,
+                     entry->requested_action_wire,
+                     entry->executed_action_wire,
+                     entry->execution_frame_actual,
+                     RLSession_ExecutionSourceLabel((RLExecutionSource)entry->execution_source),
+                     entry->executed_move_intent,
+                     entry->executed_attack_bits,
+                     (double)entry->reward_accum,
+                     entry->done ? "true" : "false");
+
+    if (written <= 0) {
+        return;
+    }
+
+    pref_path = Paths_GetPrefPath();
+    if (pref_path == NULL) {
+        return;
+    }
+    SDL_asprintf(&logs_dir, "%slogs", pref_path);
+    SDL_CreateDirectory(logs_dir);
+    SDL_asprintf(&log_path, "%s/rl-transitions.ndjson", logs_dir);
+    io = SDL_IOFromFile(log_path, "a");
+    if (io != NULL) {
+        SDL_WriteIO(io, line, (size_t)written);
+        SDL_CloseIO(io);
+    }
+    SDL_free(log_path);
+    SDL_free(logs_dir);
+}
+
+static void RLSession_FinalizeLedgerEntry(RLDecisionLedgerEntry* entry, bool done) {
+    if (entry == NULL || !entry->valid || entry->exported) {
+        return;
+    }
+    entry->active = false;
+    entry->done = done;
+    RLSession_AppendTransitionLog(entry);
+    entry->exported = true;
+    remote_debug.transition_export_count++;
+}
+
+static void RLSession_SetActiveLedgerEntry(RLDecisionLedgerEntry* entry) {
+    if (active_ledger_entry != NULL && active_ledger_entry != entry) {
+        RLSession_FinalizeLedgerEntry(active_ledger_entry, false);
+    }
+    active_ledger_entry = entry;
+    if (entry != NULL) {
+        entry->active = true;
+    }
+}
+
+static void RLSession_UpdateRewardAccumulator() {
+    const s16 self = RLSession_AgentPlayerIndex();
+    const s16 opp = RLSession_OpponentPlayerIndex();
+    const s16 self_hp = SDL_max(0, plw[self].wu.vital_new);
+    const s16 opp_hp = SDL_max(0, plw[opp].wu.vital_new);
+
+    if (!reward_state_valid) {
+        reward_prev_self_hp = self_hp;
+        reward_prev_opp_hp = opp_hp;
+        reward_state_valid = true;
+        return;
+    }
+
+    if (active_ledger_entry != NULL && active_ledger_entry->valid && active_ledger_entry->active) {
+        active_ledger_entry->reward_accum += (float)((reward_prev_opp_hp - opp_hp) - (reward_prev_self_hp - self_hp));
+    }
+
+    reward_prev_self_hp = self_hp;
+    reward_prev_opp_hp = opp_hp;
+}
+
+static void RLSession_FinalizeEpisodeLedger(u32 episode_id) {
+    if (active_ledger_entry != NULL && active_ledger_entry->valid && active_ledger_entry->episode_id == episode_id &&
+        reward_state_valid) {
+        if (reward_prev_opp_hp <= 0 && reward_prev_self_hp > 0) {
+            active_ledger_entry->reward_accum += 100.0f;
+        } else if (reward_prev_self_hp <= 0 && reward_prev_opp_hp > 0) {
+            active_ledger_entry->reward_accum -= 100.0f;
+        }
+    }
+    for (u32 i = 0; i < RL_DECISION_LEDGER_CAP; i++) {
+        if (!decision_ledger[i].valid || decision_ledger[i].episode_id != episode_id || decision_ledger[i].exported) {
+            continue;
+        }
+        RLSession_FinalizeLedgerEntry(&decision_ledger[i], true);
+    }
+    active_ledger_entry = NULL;
+}
+
 static RLExpectedRemoteDecision* RLSession_FindExpectedDecision(u32 episode_id, u32 decision_id) {
     for (u32 i = 0; i < RL_REMOTE_EXPECTED_CAP; i++) {
         if (expected_decisions[i].valid && expected_decisions[i].episode_id == episode_id &&
@@ -348,6 +527,7 @@ static void RLSession_MaybeInitRemoteRuntime() {
         remote_runtime_initialized = true;
     }
     if (active_round_num != Round_num) {
+        RLSession_FinalizeEpisodeLedger(remote_debug.episode_id);
         active_round_num = Round_num;
         remote_debug.episode_id = Round_num;
         RLSession_ClearRemoteQueue();
@@ -445,7 +625,14 @@ static void RLSession_ApplyLocalFakeAgentToBuffers() {
     }
 }
 
-static void RLSession_StartActiveRemoteAction(u8 move_intent, u16 attack_bits, bool fallback_used) {
+static void RLSession_StartActiveRemoteAction(u32 episode_id,
+                                              u32 decision_id,
+                                              u8 move_intent,
+                                              u16 attack_bits,
+                                              RLExecutionSource source) {
+    RLDecisionLedgerEntry* ledger = RLSession_FindLedgerEntry(episode_id, decision_id);
+    const u16 executed_action_wire = RLSession_EncodeActionWire(move_intent, attack_bits);
+
     active_remote_action.valid = true;
     active_remote_action.move_intent = move_intent;
     active_remote_action.attack_bits = attack_bits;
@@ -453,10 +640,19 @@ static void RLSession_StartActiveRemoteAction(u8 move_intent, u16 attack_bits, b
     active_remote_action.attack_remaining_frames = (attack_bits != 0) ? 1 : 0;
     action_context.last_executed_move_intent = move_intent;
     action_context.last_executed_attack_bits = attack_bits;
-    if (fallback_used) {
-        remote_debug.fallback_count++;
-    } else {
+    last_executed_action_wire = executed_action_wire;
+    if (ledger != NULL) {
+        ledger->executed_action_wire = executed_action_wire;
+        ledger->execution_frame_actual = remote_debug.frame_id;
+        ledger->execution_source = (u8)source;
+        ledger->executed_move_intent = move_intent;
+        ledger->executed_attack_bits = attack_bits;
+        RLSession_SetActiveLedgerEntry(ledger);
+    }
+    if (source == RL_EXECUTION_SOURCE_REMOTE) {
         remote_debug.executed_count++;
+    } else {
+        remote_debug.fallback_count++;
     }
 }
 
@@ -476,9 +672,11 @@ static bool RLSession_ExecuteDueQueuedAction() {
         return false;
     }
 
-    RLSession_StartActiveRemoteAction(RLSession_DecodeMoveIntent(best->action_wire),
+    RLSession_StartActiveRemoteAction(best->episode_id,
+                                      best->decision_id,
+                                      RLSession_DecodeMoveIntent(best->action_wire),
                                       RLSession_DecodeAttackBits(best->action_wire),
-                                      false);
+                                      RL_EXECUTION_SOURCE_REMOTE);
     RLSession_RemoveExpectedDecision(RLSession_FindExpectedDecision(best->episode_id, best->decision_id));
     memset(best, 0, sizeof(*best));
     if (remote_debug.queue_depth > 0) {
@@ -490,13 +688,19 @@ static bool RLSession_ExecuteDueQueuedAction() {
 static void RLSession_ApplyExpectedFallbackIfDue() {
     for (u32 i = 0; i < RL_REMOTE_EXPECTED_CAP; i++) {
         RLExpectedRemoteDecision* entry = &expected_decisions[i];
+        u8 move_intent = RL_MOVE_NEUTRAL;
+        u16 attack_bits = 0;
+        RLExecutionSource source = RL_EXECUTION_SOURCE_NEUTRAL_FALLBACK;
         if (!entry->valid || entry->episode_id != remote_debug.episode_id || entry->target_frame > remote_debug.frame_id) {
             continue;
         }
         if (!entry->fulfilled && RLSession_FindQueuedAction(entry->episode_id, entry->decision_id, entry->target_frame) == NULL) {
-            RLSession_StartActiveRemoteAction(action_context.last_executed_move_intent,
-                                              action_context.last_executed_attack_bits,
-                                              true);
+            if (last_executed_action_wire != 0) {
+                move_intent = RLSession_DecodeMoveIntent(last_executed_action_wire);
+                attack_bits = RLSession_DecodeAttackBits(last_executed_action_wire);
+                source = RL_EXECUTION_SOURCE_REPEATED_LAST_ACTION;
+            }
+            RLSession_StartActiveRemoteAction(entry->episode_id, entry->decision_id, move_intent, attack_bits, source);
         }
         RLSession_RemoveExpectedDecision(entry);
         return;
@@ -511,6 +715,7 @@ static void RLSession_ApplyRemoteActionToBuffers() {
 
     RLSession_MaybeInitRemoteRuntime();
     RLSession_ClearScheduledActionContext();
+    RLSession_UpdateRewardAccumulator();
 
     if (!RLNet_IsHandshakeAccepted()) {
         return;
@@ -598,6 +803,12 @@ RLRemoteActionSubmitResult RLSession_SubmitRemoteAction(const RLActionPacket* pa
     seen->episode_id = packet->episode_id;
     seen->decision_id = packet->decision_id;
     seen->target_frame = packet->target_frame;
+    {
+        RLDecisionLedgerEntry* ledger = RLSession_FindLedgerEntry(packet->episode_id, packet->decision_id);
+        if (ledger != NULL) {
+            ledger->requested_action_wire = packet->action_wire;
+        }
+    }
     expected->fulfilled = true;
     remote_debug.queued_count++;
     remote_debug.queue_depth++;
@@ -608,6 +819,7 @@ RLRemoteActionSubmitResult RLSession_SubmitRemoteAction(const RLActionPacket* pa
 bool RLSession_SendRemoteObservationIfDue() {
     RLObsPacketHeader header;
     RLExpectedRemoteDecision* expected = NULL;
+    RLDecisionLedgerEntry* ledger = NULL;
     const RLObservationV1* obs = RLObservation_GetLatest();
 
     if (!RLSession_RemoteControlEnabled() || !RLSession_CanOverrideGameplayInput() || !RLNet_IsHandshakeAccepted()) {
@@ -621,7 +833,8 @@ bool RLSession_SendRemoteObservationIfDue() {
     }
 
     expected = RLSession_AllocExpectedDecision();
-    if (expected == NULL) {
+    ledger = RLSession_AllocLedgerEntry();
+    if (expected == NULL || ledger == NULL) {
         return false;
     }
 
@@ -646,6 +859,12 @@ bool RLSession_SendRemoteObservationIfDue() {
     expected->episode_id = header.episode_id;
     expected->decision_id = header.decision_id;
     expected->target_frame = header.target_frame;
+    memset(ledger, 0, sizeof(*ledger));
+    ledger->valid = true;
+    ledger->episode_id = header.episode_id;
+    ledger->decision_id = header.decision_id;
+    ledger->obs_frame = header.obs_frame;
+    ledger->target_frame = header.target_frame;
     remote_debug.obs_sent_count++;
     return true;
 }

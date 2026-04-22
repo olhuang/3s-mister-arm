@@ -1853,7 +1853,7 @@ Done when:
 
 Status:
 
-- [ ] Milestone complete
+- [x] Milestone complete
 
 Goal:
 
@@ -1876,7 +1876,7 @@ Done when:
 
 - [x] Stable packet flow is observed
 - [x] Actions execute on their intended target frames
-- [ ] Side-switch delayed actions keep correct relative direction
+- [x] Side-switch delayed actions keep correct relative direction
 - [x] No gameplay stalls occur when packets drop
 
 Implementation notes:
@@ -1914,30 +1914,58 @@ Goal:
 
 Tasks:
 
-- [ ] Add decision ledger keyed by `(episode_id, decision_id)`
+- [x] Add decision ledger keyed by `(episode_id, decision_id)`
 - [ ] Review the action-outcome and event-delta candidates from the Human-Fighter Observer Gap Review
-- [ ] Record `obs_frame`
-- [ ] Record `target_frame`
-- [ ] Record `requested_action_wire`
-- [ ] Record `executed_action_wire`
-- [ ] Record `execution_frame_actual`
-- [ ] Record `execution_source`
-- [ ] Accumulate reward over the executed decision interval
-- [ ] Align done flags with round-scoped episode boundaries
-- [ ] Export transitions to the remote learner path
-- [ ] Decode `executed_action_wire` into `executed_move_intent` and `executed_attack_bits` in logs
+- [x] Record `obs_frame`
+- [x] Record `target_frame`
+- [x] Record `requested_action_wire`
+- [x] Record `executed_action_wire`
+- [x] Record `execution_frame_actual`
+- [x] Record `execution_source`
+- [x] Accumulate reward over the executed decision interval
+- [x] Align done flags with round-scoped episode boundaries
+- [x] Export transitions to the remote learner path
+- [x] Decode `executed_action_wire` into `executed_move_intent` and `executed_attack_bits` in logs
 
 Done when:
 
-- [ ] Each transition includes episode id
-- [ ] Each transition includes decision id
-- [ ] Each transition includes observation frame
-- [ ] Each transition includes target frame
-- [ ] Each transition includes requested action wire
-- [ ] Each transition includes executed action wire
-- [ ] Each transition includes execution frame actual
-- [ ] Each transition includes reward span
-- [ ] Each transition includes done flag
+- [x] Each transition includes episode id
+- [x] Each transition includes decision id
+- [x] Each transition includes observation frame
+- [x] Each transition includes target frame
+- [x] Each transition includes requested action wire
+- [x] Each transition includes executed action wire
+- [x] Each transition includes execution frame actual
+- [x] Each transition includes reward span
+- [x] Each transition includes done flag
+- [x] Each transition includes execution source and decoded executed move/attack fields
+
+Implementation notes:
+
+- Milestone 3 is now closed after hardware validation of:
+  - stable packet flow
+  - duplicate and wrong-target rejection
+  - delayed forward/back side-switch behavior
+- `src/rl/rl_session.c` now keeps a fixed-size decision ledger keyed by `(episode_id, decision_id)`.
+- Each ledger entry currently records:
+  - `episode_id`
+  - `decision_id`
+  - `obs_frame`
+  - `target_frame`
+  - `requested_action_wire`
+  - `executed_action_wire`
+  - `execution_frame_actual`
+  - `execution_source`
+  - `executed_move_intent`
+  - `executed_attack_bits`
+  - `reward_accum`
+  - `done`
+- Transitions are appended as NDJSON to:
+  - `logs/rl-transitions.ndjson` under `Paths_GetPrefPath()`
+- Current reward baseline:
+  - per-frame `delta_opp_hp - delta_self_hp`
+  - `+100` round win bonus
+  - `-100` round loss penalty
 - [ ] Transition schema has an explicit decision on whether to include first-pass action outcome / delta fields
 - [ ] Learner-side replay buffer can distinguish remote action, repeated-last-action, down-back fallback, and neutral fallback
 

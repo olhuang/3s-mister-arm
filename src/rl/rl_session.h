@@ -34,6 +34,13 @@ typedef enum RLRemoteActionSubmitResult {
     RL_REMOTE_ACTION_SUBMIT_TARGET_MISMATCH = 3,
 } RLRemoteActionSubmitResult;
 
+typedef enum RLExecutionSource {
+    RL_EXECUTION_SOURCE_NONE = 0,
+    RL_EXECUTION_SOURCE_REMOTE = 1,
+    RL_EXECUTION_SOURCE_REPEATED_LAST_ACTION = 2,
+    RL_EXECUTION_SOURCE_NEUTRAL_FALLBACK = 3,
+} RLExecutionSource;
+
 typedef struct RLRemoteDebugState {
     u32 frame_id;
     u32 episode_id;
@@ -46,6 +53,7 @@ typedef struct RLRemoteDebugState {
     u32 duplicate_drop_count;
     u32 target_mismatch_count;
     u32 fallback_count;
+    u32 transition_export_count;
 } RLRemoteDebugState;
 
 bool RLSession_IsActive();

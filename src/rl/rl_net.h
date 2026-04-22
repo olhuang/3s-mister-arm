@@ -33,5 +33,6 @@ void RLNet_Tick(void);
 void RLNet_Shutdown(void);
 const RLNetState* RLNet_GetState(void);
 bool RLNet_IsHandshakeAccepted(void);
+bool RLNet_SendObservationHeader(const RLObsPacketHeader* header);
 
 #endif

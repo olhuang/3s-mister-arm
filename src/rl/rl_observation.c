@@ -274,6 +274,7 @@ void RLObservation_FormatDebugOverlay(char* out, size_t out_size, const char* se
     const char dx_side = latest_debug.opp_dx < 0 ? 'L' : 'R';
     const int dx_abs = latest_debug.opp_dx < 0 ? -latest_debug.opp_dx : latest_debug.opp_dx;
     const RLNetState* net = RLNet_GetState();
+    const RLRemoteDebugState* remote = RLSession_GetRemoteDebugState();
     const char* net_state = "OFF";
     if (net->enabled) {
         net_state = net->handshake_accepted ? "OK" : (net->socket_open ? "HELLO" : "ERR");
@@ -290,7 +291,8 @@ void RLObservation_FormatDebugOverlay(char* out, size_t out_size, const char* se
              "SR%d,%d,%d OR%d,%d,%d\n"
              "X%d/%03X N%d/%03X T%d O%lu/%luus\n"
              "NET%s S%u P%u/%u/%u MAX%uus E%u\n"
-             "ACT%u OK%u UA%u SN%u BV%u BM%u",
+             "ACT%u OK%u UA%u SN%u BV%u BM%u\n"
+             "OBS%u Q%u/%u EX%u LT%u DU%u TM%u FB%u",
              session_label != NULL ? session_label : "P0",
              latest_debug.self_hp,
              latest_debug.self_hp_start,
@@ -350,5 +352,13 @@ void RLObservation_FormatDebugOverlay(char* out, size_t out_size, const char* se
              (unsigned int)net->action_rejected_unacked_count,
              (unsigned int)net->action_rejected_nonce_count,
              (unsigned int)net->action_rejected_version_count,
-             (unsigned int)net->action_rejected_malformed_count);
+             (unsigned int)net->action_rejected_malformed_count,
+             (unsigned int)remote->obs_sent_count,
+             (unsigned int)remote->queue_depth,
+             (unsigned int)remote->queued_count,
+             (unsigned int)remote->executed_count,
+             (unsigned int)remote->late_drop_count,
+             (unsigned int)remote->duplicate_drop_count,
+             (unsigned int)remote->target_mismatch_count,
+             (unsigned int)remote->fallback_count);
 }

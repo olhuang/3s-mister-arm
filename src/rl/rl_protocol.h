@@ -85,7 +85,25 @@ typedef struct RL_PROTOCOL_PACKED RLActionPacket {
     u32 model_version;
 } RLActionPacket;
 
+typedef struct RL_PROTOCOL_PACKED RLObsPacketHeader {
+    u32 magic;
+    u16 version;
+    u16 packet_type;
+    u64 session_nonce;
+    u32 episode_id;
+    u32 decision_id;
+    u32 obs_frame;
+    u32 target_frame;
+    u16 obs_len;
+    u16 action_hold_frames;
+    u32 model_version_expected;
+} RLObsPacketHeader;
+
 #undef RL_PROTOCOL_PACKED
+
+typedef enum RLObsPacketType {
+    RL_OBS_PACKET_TYPE_V1 = 5,
+} RLObsPacketType;
 
 RLSessionConfig RLProtocol_DefaultConfig(void);
 u32 RLProtocol_ComputeConfigHash(const RLSessionConfig* config);

@@ -1,6 +1,8 @@
 #ifndef RL_SESSION_H
 #define RL_SESSION_H
 
+#include "rl/rl_protocol.h"
+
 #include "types.h"
 
 #include <stdbool.h>
@@ -25,12 +27,37 @@ typedef struct RLActionContext {
     u8 frames_until_next_action;
 } RLActionContext;
 
+typedef enum RLRemoteActionSubmitResult {
+    RL_REMOTE_ACTION_SUBMIT_ACCEPTED = 0,
+    RL_REMOTE_ACTION_SUBMIT_LATE = 1,
+    RL_REMOTE_ACTION_SUBMIT_DUPLICATE = 2,
+    RL_REMOTE_ACTION_SUBMIT_TARGET_MISMATCH = 3,
+} RLRemoteActionSubmitResult;
+
+typedef struct RLRemoteDebugState {
+    u32 frame_id;
+    u32 episode_id;
+    u32 next_decision_id;
+    u32 obs_sent_count;
+    u32 queue_depth;
+    u32 queued_count;
+    u32 executed_count;
+    u32 late_drop_count;
+    u32 duplicate_drop_count;
+    u32 target_mismatch_count;
+    u32 fallback_count;
+} RLRemoteDebugState;
+
 bool RLSession_IsActive();
 s16 RLSession_AgentPlayerIndex();
 s16 RLSession_OpponentPlayerIndex();
 bool RLSession_OpponentUsesHumanInput();
 const char* RLSession_TestMovementLabel();
 const RLActionContext* RLSession_GetActionContext();
+const RLRemoteDebugState* RLSession_GetRemoteDebugState();
+u32 RLSession_GetCurrentFrameId();
+RLRemoteActionSubmitResult RLSession_SubmitRemoteAction(const RLActionPacket* packet);
+bool RLSession_SendRemoteObservationIfDue();
 void RLSession_ApplyVersusOperatorSetup();
 void RLSession_ApplyScriptedMovementToBuffers();
 void RLSession_ApplyInputOverrideToBuffers();

@@ -1,4 +1,5 @@
 #include "rl/rl_net.h"
+#include "rl/rl_session.h"
 
 #include <SDL3/SDL.h>
 
@@ -291,9 +292,18 @@ static void handle_action_packet(const RLActionPacket* packet) {
         return;
     }
 
-    /* Milestone 2 gate only: packet is accepted by session/nonce rules but
-       not yet inserted into an execution queue. */
     rl_net_state.action_accepted_count++;
+    switch (RLSession_SubmitRemoteAction(packet)) {
+    case RL_REMOTE_ACTION_SUBMIT_LATE:
+        break;
+    case RL_REMOTE_ACTION_SUBMIT_DUPLICATE:
+        break;
+    case RL_REMOTE_ACTION_SUBMIT_TARGET_MISMATCH:
+        break;
+    case RL_REMOTE_ACTION_SUBMIT_ACCEPTED:
+    default:
+        break;
+    }
 }
 
 static void receive_packets(void) {
@@ -375,4 +385,22 @@ const RLNetState* RLNet_GetState(void) {
 
 bool RLNet_IsHandshakeAccepted(void) {
     return RLNet_GetState()->handshake_accepted;
+}
+
+bool RLNet_SendObservationHeader(const RLObsPacketHeader* header) {
+    if (header == NULL || !rl_net_state.socket_open || !rl_net_state.handshake_accepted) {
+        return false;
+    }
+
+#if !defined(_WIN32)
+    const ssize_t sent = send(probe_socket, header, sizeof(*header), 0);
+    if (sent == (ssize_t)sizeof(*header)) {
+        rl_net_state.sent_count++;
+        return true;
+    }
+    if (errno != EAGAIN && errno != EWOULDBLOCK) {
+        rl_net_state.last_error_count++;
+    }
+#endif
+    return false;
 }

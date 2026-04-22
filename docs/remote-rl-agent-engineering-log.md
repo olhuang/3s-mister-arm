@@ -2,6 +2,51 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-22: Milestone 3 Remote Queue And Execution MVP
+
+Milestone:
+- Milestone 3: Remote inference only
+
+Files changed:
+- `src/rl/rl_protocol.h`
+- `src/rl/rl_net.h`
+- `src/rl/rl_net.c`
+- `src/rl/rl_session.h`
+- `src/rl/rl_session.c`
+- `src/rl/rl_observation.c`
+- `tools/rl_probe_server.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- move Milestone 3 from packet counting into the first real remote control loop
+- queue accepted remote actions by `target_frame` and execute them through the existing raw-input override path
+
+Implementation notes:
+- added a packed `RLObsPacketHeader` for the first decision-frame observation send path
+- MiSTer now sends an observation header every `decision_interval_frames` once hello/ack is accepted
+- `src/rl/rl_session.c` now owns a small pending action queue plus a small in-flight expectation table keyed by `(episode_id, decision_id, target_frame)`
+- accepted `RLActionPacket` now flows through:
+  - Milestone 2 session gate in `src/rl/rl_net.c`
+  - minimal expectation-table match in `src/rl/rl_session.c`
+  - pending queue insertion by `target_frame`
+  - execution on the intended frame through `p1sw_buff/p2sw_buff`
+- added a first fallback policy:
+  - if a due expected target frame has no valid queued action, reuse the last executed remote action for `action_hold_frames`
+- extended `RL Debug` with Milestone 3 counters:
+  - `OBS`, `Q`, `EX`, `LT`, `DU`, `TM`, `FB`
+- extended `tools/rl_probe_server.py` so it can receive Milestone 3 observation headers and reply with a fixed action policy while still preserving the Milestone 2 gate-test modes
+
+Validation:
+- `python3 -c "import ast, pathlib; ast.parse(pathlib.Path('tools/rl_probe_server.py').read_text())"` passed.
+- `git diff --check` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed.
+
+Follow-up:
+- run MiSTer-side validation for fixed remote actions and confirm `OBS/Q/EX` move together on hardware
+- separate real duplicate-rule handling from queue-capacity fallback once the first hardware run is in
+- keep the full decision ledger / transition logging work for Milestone 4
+
 ## 2026-04-22: Milestone 2 Action Session Gate
 
 Milestone:

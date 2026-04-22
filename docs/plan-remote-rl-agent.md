@@ -1861,16 +1861,16 @@ Goal:
 
 Tasks:
 
-- [ ] Add non-blocking UDP socket setup
-- [ ] Add `ObsPacket` send path on decision frames
-- [ ] Add `ActionPacket` receive path
-- [ ] Add pending action queue keyed by `target_frame`
+- [x] Add non-blocking UDP socket setup
+- [x] Add minimal `ObsPacket` header send path on decision frames
+- [x] Add `ActionPacket` receive path
+- [x] Add pending action queue keyed by `target_frame`
 - [ ] Validate `(episode_id, decision_id, target_frame)` duplicate rules
-- [ ] Reject `ActionPacket.target_frame` mismatches against the ledger
-- [ ] Add default fallback mode using `action_hold_frames`
-- [ ] Add telemetry counters for packet miss, late packet, duplicate packet, and fallback usage
-- [ ] Start with fixed measured `k`
-- [ ] Implement a remote rule-based or heuristic server
+- [x] Reject `ActionPacket.target_frame` mismatches against the minimal in-flight expectation table
+- [x] Add default fallback mode using `action_hold_frames`
+- [x] Add telemetry counters for packet miss, late packet, duplicate packet, target mismatch, and fallback usage
+- [x] Start with fixed measured `k`
+- [x] Implement a minimal remote heuristic server path in `tools/rl_probe_server.py`
 
 Done when:
 
@@ -1878,6 +1878,20 @@ Done when:
 - [ ] Actions execute on their intended target frames
 - [ ] Side-switch delayed actions keep correct relative direction
 - [ ] No gameplay stalls occur when packets drop
+
+Implementation notes:
+
+- MiSTer now sends a minimal `RLObsPacketHeader` on decision frames and records in-flight expectations as `(episode_id, decision_id, target_frame)` tuples.
+- `RLActionPacket` that passes the Milestone 2 gate is now checked against that in-flight expectation table before queueing.
+- `RL Debug` keeps the Milestone 2 gate counters and adds Milestone 3 counters:
+  - `OBS`: observation headers successfully sent
+  - `Qx/y`: current queue depth / total queued accepted actions
+  - `EX`: executed queued actions
+  - `LT`: late action drops
+  - `DU`: duplicate action drops or queue-capacity collisions
+  - `TM`: target-mismatch rejects against the minimal expectation table
+  - `FB`: fallback executions when a due target frame had no valid queued action
+- `tools/rl_probe_server.py` now also accepts Milestone 3 observation headers and sends a fixed action that echoes the incoming `episode_id`, `decision_id`, and `target_frame`.
 
 ### Milestone 4: Decision ledger and transition logging
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Minimal UDP server for Milestone 2 RL hello/ack, ping/pong, and action-gate probing."""
+"""Minimal UDP server for Milestone 2/3 RL hello/ack, ping/pong, and remote-action probing."""
 
 from __future__ import annotations
 
@@ -15,8 +15,10 @@ TYPE_HELLO = 1
 TYPE_ACK = 2
 TYPE_PING = 3
 TYPE_PONG = 4
+TYPE_OBS = 5
 PACKET = struct.Struct("<IHHQIIQ")
 ACTION_PACKET = struct.Struct("<IHHQIIIHHI")
+OBS_HEADER = struct.Struct("<IHHQIIIIHHI")
 
 
 def packet_name(packet_type: int) -> str:
@@ -25,6 +27,7 @@ def packet_name(packet_type: int) -> str:
         TYPE_ACK: "ACK",
         TYPE_PING: "PING",
         TYPE_PONG: "PONG",
+        TYPE_OBS: "OBS",
     }.get(packet_type, f"UNKNOWN({packet_type})")
 
 
@@ -70,7 +73,23 @@ def maybe_send_action(
         print(f"{target} ACTION mode={action_mode} nonce={send_nonce} decision={sequence}")
 
 
-def serve(host: str, port: int, verbose: bool, action_port: int | None, action_mode: str) -> None:
+def fixed_action_wire(policy: str) -> int:
+    return {
+        "forward": 0x0004,
+        "back": 0x0003,
+        "hp": 0x0040,
+        "forward-hp": 0x0044,
+    }.get(policy, 0x0004)
+
+
+def serve(
+    host: str,
+    port: int,
+    verbose: bool,
+    action_port: int | None,
+    action_mode: str,
+    policy: str,
+) -> None:
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind((host, port))
     print(f"RL probe server listening on {host}:{port}")
@@ -78,6 +97,40 @@ def serve(host: str, port: int, verbose: bool, action_port: int | None, action_m
 
     while True:
         data, addr = sock.recvfrom(2048)
+        if len(data) == OBS_HEADER.size:
+            (
+                magic,
+                version,
+                packet_type,
+                nonce,
+                episode_id,
+                decision_id,
+                obs_frame,
+                target_frame,
+                obs_len,
+                action_hold_frames,
+                model_version_expected,
+            ) = OBS_HEADER.unpack(data)
+            if magic != MAGIC or version != PACKET_VERSION or packet_type != TYPE_OBS:
+                if verbose:
+                    print(f"{addr} bad_obs_header magic=0x{magic:08x} version={version} type={packet_type}")
+                continue
+            if action_port is not None:
+                payload = make_action_packet(
+                    nonce,
+                    episode_id,
+                    decision_id,
+                    target_frame,
+                    fixed_action_wire(policy),
+                )
+                target = (addr[0], action_port)
+                sock.sendto(payload, target)
+                if verbose:
+                    print(
+                        f"{target} OBS-ACTION policy={policy} ep={episode_id} dec={decision_id} "
+                        f"obs={obs_frame} target={target_frame} hold={action_hold_frames}"
+                    )
+            continue
         if len(data) != PACKET.size:
             if verbose:
                 print(f"{addr} bad_size {len(data)}")
@@ -127,9 +180,15 @@ def main() -> None:
         default="off",
         help="Optionally send test action packets for gate validation",
     )
+    parser.add_argument(
+        "--policy",
+        choices=["forward", "back", "hp", "forward-hp"],
+        default="forward",
+        help="Fixed action used when MiSTer sends Milestone 3 observation headers",
+    )
     parser.add_argument("--verbose", action="store_true", help="Log every valid packet")
     args = parser.parse_args()
-    serve(args.host, args.port, args.verbose, args.action_port, args.action_mode)
+    serve(args.host, args.port, args.verbose, args.action_port, args.action_mode, args.policy)
 
 
 if __name__ == "__main__":

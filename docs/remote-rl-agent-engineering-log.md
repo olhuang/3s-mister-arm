@@ -47,6 +47,16 @@ Follow-up:
 - separate real duplicate-rule handling from queue-capacity fallback once the first hardware run is in
 - keep the full decision ledger / transition logging work for Milestone 4
 
+Update after hardware retest:
+- MiSTer hardware produced stable packet flow with:
+  - `OBS891 Q1/890 EX886 LT1 DU0 TM0 FB1`
+- `--policy hp` exposed one MVP behavior bug:
+  - the overlay showed HP pressed, but the character often did not punch because remote attack bits were held for the full `action_hold_frames` window instead of producing a one-frame press edge
+- fixed in `src/rl/rl_session.c`:
+  - movement bits still hold for `action_hold_frames`
+  - attack bits now pulse for one frame only
+- hardware retest confirmed `--policy hp` now produces visible punches as expected
+
 ## 2026-04-22: Milestone 2 Action Session Gate
 
 Milestone:

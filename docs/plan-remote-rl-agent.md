@@ -1874,10 +1874,10 @@ Tasks:
 
 Done when:
 
-- [ ] Stable packet flow is observed
-- [ ] Actions execute on their intended target frames
+- [x] Stable packet flow is observed
+- [x] Actions execute on their intended target frames
 - [ ] Side-switch delayed actions keep correct relative direction
-- [ ] No gameplay stalls occur when packets drop
+- [x] No gameplay stalls occur when packets drop
 
 Implementation notes:
 
@@ -1892,6 +1892,10 @@ Implementation notes:
   - `TM`: target-mismatch rejects against the minimal expectation table
   - `FB`: fallback executions when a due target frame had no valid queued action
 - `tools/rl_probe_server.py` now also accepts Milestone 3 observation headers and sends a fixed action that echoes the incoming `episode_id`, `decision_id`, and `target_frame`.
+- Hardware validation on 2026-04-22:
+  - fixed `forward` policy reached steady-state packet flow with `OBS891 Q1/890 EX886 LT1 DU0 TM0 FB1`
+  - fixed `hp` policy originally lit the overlay without producing a punch because the MVP path held attack buttons for the full action-hold window
+  - remote execution now pulses attack bits for one frame while still holding movement for `action_hold_frames`; hardware retest confirmed `hp` now throws punches correctly
 
 ### Milestone 4: Decision ledger and transition logging
 

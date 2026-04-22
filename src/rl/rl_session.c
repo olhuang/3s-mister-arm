@@ -44,7 +44,8 @@ typedef struct RLRemoteActiveAction {
     bool valid;
     u8 move_intent;
     u16 attack_bits;
-    u8 remaining_frames;
+    u8 movement_remaining_frames;
+    u8 attack_remaining_frames;
 } RLRemoteActiveAction;
 
 static const RLLocalFakeAction kLocalFakeAgentSequence[] = {
@@ -419,7 +420,8 @@ static void RLSession_StartActiveRemoteAction(u8 move_intent, u16 attack_bits, b
     active_remote_action.valid = true;
     active_remote_action.move_intent = move_intent;
     active_remote_action.attack_bits = attack_bits;
-    active_remote_action.remaining_frames = RLSession_ActionHoldFrames();
+    active_remote_action.movement_remaining_frames = RLSession_ActionHoldFrames();
+    active_remote_action.attack_remaining_frames = (attack_bits != 0) ? 1 : 0;
     action_context.last_executed_move_intent = move_intent;
     action_context.last_executed_attack_bits = attack_bits;
     if (fallback_used) {
@@ -489,15 +491,22 @@ static void RLSession_ApplyRemoteActionToBuffers() {
         RLSession_ApplyExpectedFallbackIfDue();
     }
 
-    if (active_remote_action.valid && active_remote_action.remaining_frames > 0) {
+    if (active_remote_action.valid &&
+        (active_remote_action.movement_remaining_frames > 0 || active_remote_action.attack_remaining_frames > 0)) {
         const s16 agent = RLSession_AgentPlayerIndex();
         const u16 movement = RLSession_MapMoveIntentToSWKey(agent, active_remote_action.move_intent);
+        const u16 attacks = (active_remote_action.attack_remaining_frames > 0) ? active_remote_action.attack_bits : 0;
         u16* target = (agent == 0) ? &p1sw_buff : &p2sw_buff;
-        *target = (u16)((*target & ~(SWK_DIRECTIONS | SWK_ATTACKS)) | movement | active_remote_action.attack_bits);
+        *target = (u16)((*target & ~(SWK_DIRECTIONS | SWK_ATTACKS)) | movement | attacks);
         action_context.last_executed_move_intent = active_remote_action.move_intent;
-        action_context.last_executed_attack_bits = active_remote_action.attack_bits;
-        active_remote_action.remaining_frames--;
-        if (active_remote_action.remaining_frames == 0) {
+        action_context.last_executed_attack_bits = attacks;
+        if (active_remote_action.movement_remaining_frames > 0) {
+            active_remote_action.movement_remaining_frames--;
+        }
+        if (active_remote_action.attack_remaining_frames > 0) {
+            active_remote_action.attack_remaining_frames--;
+        }
+        if (active_remote_action.movement_remaining_frames == 0 && active_remote_action.attack_remaining_frames == 0) {
             active_remote_action.valid = false;
         }
     }

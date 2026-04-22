@@ -1915,7 +1915,7 @@ Goal:
 Tasks:
 
 - [x] Add decision ledger keyed by `(episode_id, decision_id)`
-- [ ] Review the action-outcome and event-delta candidates from the Human-Fighter Observer Gap Review
+- [x] Review the action-outcome and event-delta candidates from the Human-Fighter Observer Gap Review
 - [x] Record `obs_frame`
 - [x] Record `target_frame`
 - [x] Record `requested_action_wire`
@@ -1971,7 +1971,31 @@ Implementation notes:
   - `+100` round win bonus
   - `-100` round loss penalty
 - [ ] Transition schema has an explicit decision on whether to include first-pass action outcome / delta fields
+- [x] Transition schema has a first-pass action outcome / delta field set
 - [ ] Learner-side replay buffer can distinguish remote action, repeated-last-action, down-back fallback, and neutral fallback
+
+Current first-pass action outcome / delta fields:
+
+- runtime `RLObservationV1` now exposes:
+  - `delta_self_hp`, `delta_opp_hp`
+  - `delta_self_stun`, `delta_opp_stun`
+  - `self_airborne`, `opp_airborne`
+  - `self_entered_hit_stop`, `opp_entered_hit_stop`
+  - `self_entered_contact_state`, `opp_entered_contact_state`
+  - `self_entered_damage_state`, `opp_entered_damage_state`
+- transition NDJSON now exports decision-span aggregates for:
+  - `delta_self_hp`, `delta_opp_hp`
+  - `delta_self_stun`, `delta_opp_stun`
+  - `delta_self_x`, `delta_self_y`
+  - `delta_opp_x`, `delta_opp_y`
+  - `self_airborne_seen`, `opp_airborne_seen`
+  - `self_entered_hit_stop`, `opp_entered_hit_stop`
+  - `self_entered_contact_state`, `opp_entered_contact_state`
+  - `self_entered_damage_state`, `opp_entered_damage_state`
+- deferred for a later schema revision because the current runtime source is not yet trustworthy enough:
+  - `self_crouching`, `opp_crouching`
+  - richer movement phase labels
+  - explicit `hit / blocked / whiff / throw` outcome enums
 
 ### Milestone 5: Async learner and model hot-swap
 

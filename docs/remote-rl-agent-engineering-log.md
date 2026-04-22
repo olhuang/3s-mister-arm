@@ -116,6 +116,50 @@ Follow-up:
 - revisit richer event-delta fields from the Human-Fighter Observer Gap Review
 - add remote-side transition transport after the local ledger output is validated
 
+## 2026-04-22: Milestone 4 First-Pass Action Outcome And Event Delta Fields
+
+Milestone:
+- Milestone 4: Decision ledger and transition logging
+
+Files changed:
+- `src/rl/rl_observation.h`
+- `src/rl/rl_observation.c`
+- `src/rl/rl_session.c`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- make the local observer and exported transitions more useful for training by adding first-pass action-outcome and event-delta signals that are already derivable from stable runtime state
+
+Implementation notes:
+- `RLObservationV1` now includes per-frame derived fields for:
+  - HP delta
+  - stun delta
+  - airborne
+  - entered hit-stop
+  - entered contact state
+  - entered damage state
+- the transition ledger now accumulates and exports decision-span aggregates for:
+  - HP delta
+  - stun delta
+  - self / opponent X and Y movement
+  - airborne-seen flags
+  - entered hit-stop / contact / damage flags
+- kept the derivation conservative:
+  - airborne uses `position_y != 0`
+  - contact state uses `guard_flag != 0 || hit_stop`
+  - damage state uses HP loss or stun increase
+- explicitly deferred crouching and richer action-phase labels until a more trustworthy runtime source is identified
+
+Validation:
+- `git diff --check` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed.
+
+Follow-up:
+- verify the new `DH/DS/AB/EH/EC/ED` RL debug overlay lines on MiSTer
+- inspect `rl-transitions.ndjson` for the new delta / event fields during hit, block, jump, and whiff cases
+- revisit explicit `hit / blocked / whiff / throw` outcome enums in a later Milestone 4 refinement
+
 ## 2026-04-22: Milestone 2 Action Session Gate
 
 Milestone:

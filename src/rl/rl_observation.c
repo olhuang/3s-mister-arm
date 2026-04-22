@@ -17,6 +17,11 @@ static s16 round_start_hp[2];
 static u8 captured_round_num;
 static bool round_start_hp_valid;
 static u16 debug_input_swkey;
+static s16 prev_frame_hp[2];
+static s16 prev_frame_stun[2];
+static u8 prev_frame_hit_stop[2];
+static u8 prev_frame_contact_state[2];
+static bool prev_frame_valid;
 static Uint64 obs_build_total_ns;
 static Uint64 obs_build_max_ns;
 static u32 obs_build_count;
@@ -61,6 +66,16 @@ enum {
 
 static s16 clamp_s16_nonnegative(s16 value) {
     return (value < 0) ? 0 : value;
+}
+
+static s16 clamp_s16_delta(s32 value) {
+    if (value > 32767) {
+        return 32767;
+    }
+    if (value < -32768) {
+        return -32768;
+    }
+    return (s16)value;
 }
 
 static f32 clamp_ratio(s32 numerator, s32 denominator) {
@@ -143,6 +158,7 @@ void RLObservation_OnFrameEnd() {
         latest_obs.valid = false;
         round_start_hp_valid = false;
         debug_input_swkey = 0;
+        prev_frame_valid = false;
         return;
     }
 
@@ -180,6 +196,8 @@ void RLObservation_OnFrameEnd() {
     debug.opp_right_corner = clamp_s16_nonnegative(scrr - plw[opp].wu.position_x);
     obs.self_hp_ratio = clamp_ratio(debug.self_hp, debug.self_hp_start);
     obs.opp_hp_ratio = clamp_ratio(debug.opp_hp, debug.opp_hp_start);
+    obs.self_airborne = (u8)(plw[self].wu.position_y != 0);
+    obs.opp_airborne = (u8)(plw[opp].wu.position_y != 0);
     obs.self_super_stock = (u8)debug.self_super_stock;
     obs.self_super_stock_max = (u8)debug.self_super_stock_max;
     obs.opp_super_stock = (u8)debug.opp_super_stock;
@@ -207,6 +225,30 @@ void RLObservation_OnFrameEnd() {
     obs.opp_hit_stop = plw[opp].wu.hit_stop != 0;
     obs.self_high_jump_flag = plw[self].high_jump_flag;
     obs.opp_high_jump_flag = plw[opp].high_jump_flag;
+    if (prev_frame_valid) {
+        const s16 self_hp_delta = clamp_s16_delta((s32)prev_frame_hp[self] - (s32)debug.self_hp);
+        const s16 opp_hp_delta = clamp_s16_delta((s32)prev_frame_hp[opp] - (s32)debug.opp_hp);
+        const s16 self_stun_delta = clamp_s16_delta((s32)debug.self_stun - (s32)prev_frame_stun[self]);
+        const s16 opp_stun_delta = clamp_s16_delta((s32)debug.opp_stun - (s32)prev_frame_stun[opp]);
+        const u8 self_contact_state = (u8)((obs.self_guard_flag != 0) || obs.self_hit_stop);
+        const u8 opp_contact_state = (u8)((obs.opp_guard_flag != 0) || obs.opp_hit_stop);
+
+        obs.delta_self_hp = self_hp_delta;
+        obs.delta_opp_hp = opp_hp_delta;
+        obs.delta_self_stun = self_stun_delta;
+        obs.delta_opp_stun = opp_stun_delta;
+        obs.self_entered_hit_stop = (u8)(!prev_frame_hit_stop[self] && obs.self_hit_stop);
+        obs.opp_entered_hit_stop = (u8)(!prev_frame_hit_stop[opp] && obs.opp_hit_stop);
+        obs.self_entered_contact_state = (u8)(!prev_frame_contact_state[self] && self_contact_state);
+        obs.opp_entered_contact_state = (u8)(!prev_frame_contact_state[opp] && opp_contact_state);
+        obs.self_entered_damage_state = (u8)(self_hp_delta > 0 || self_stun_delta > 0);
+        obs.opp_entered_damage_state = (u8)(opp_hp_delta > 0 || opp_stun_delta > 0);
+        prev_frame_contact_state[self] = self_contact_state;
+        prev_frame_contact_state[opp] = opp_contact_state;
+    } else {
+        prev_frame_contact_state[self] = (u8)((obs.self_guard_flag != 0) || obs.self_hit_stop);
+        prev_frame_contact_state[opp] = (u8)((obs.opp_guard_flag != 0) || obs.opp_hit_stop);
+    }
     obs.self_routine[0] = (u16)plw[self].wu.routine_no[0];
     obs.self_routine[1] = (u16)plw[self].wu.routine_no[1];
     obs.self_routine[2] = (u16)plw[self].wu.routine_no[2];
@@ -227,6 +269,13 @@ void RLObservation_OnFrameEnd() {
     latest_obs = obs;
     latest_debug = debug;
     debug_input_swkey = agent_input_swkey(self);
+    prev_frame_hp[self] = debug.self_hp;
+    prev_frame_hp[opp] = debug.opp_hp;
+    prev_frame_stun[self] = debug.self_stun;
+    prev_frame_stun[opp] = debug.opp_stun;
+    prev_frame_hit_stop[self] = obs.self_hit_stop;
+    prev_frame_hit_stop[opp] = obs.opp_hit_stop;
+    prev_frame_valid = true;
 
     {
         const Uint64 build_ns = SDL_GetTicksNS() - build_start_ns;
@@ -288,6 +337,8 @@ void RLObservation_FormatDebugOverlay(char* out, size_t out_size, const char* se
              "CL%d CR%d OL%d OR%d\n"
              "CF%d/%d AK%03X/%03X\n"
              "NM%d/%d HS%d/%d HJ%d/%d\n"
+             "DH%d/%d DS%d/%d AB%d/%d\n"
+             "EH%d/%d EC%d/%d ED%d/%d\n"
              "SR%d,%d,%d OR%d,%d,%d\n"
              "X%d/%03X N%d/%03X T%d O%lu/%luus\n"
              "NET%s S%u P%u/%u/%u MAX%uus E%u\n"
@@ -327,6 +378,18 @@ void RLObservation_FormatDebugOverlay(char* out, size_t out_size, const char* se
              latest_obs.opp_hit_stop,
              latest_obs.self_high_jump_flag,
              latest_obs.opp_high_jump_flag,
+             latest_obs.delta_self_hp,
+             latest_obs.delta_opp_hp,
+             latest_obs.delta_self_stun,
+             latest_obs.delta_opp_stun,
+             latest_obs.self_airborne,
+             latest_obs.opp_airborne,
+             latest_obs.self_entered_hit_stop,
+             latest_obs.opp_entered_hit_stop,
+             latest_obs.self_entered_contact_state,
+             latest_obs.opp_entered_contact_state,
+             latest_obs.self_entered_damage_state,
+             latest_obs.opp_entered_damage_state,
              latest_obs.self_routine[0],
              latest_obs.self_routine[1],
              latest_obs.self_routine[2],

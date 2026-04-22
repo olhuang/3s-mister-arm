@@ -10,6 +10,8 @@ typedef struct RLObservationV1 {
     bool valid;
     f32 self_hp_ratio;
     f32 opp_hp_ratio;
+    s16 delta_self_hp;
+    s16 delta_opp_hp;
     u8 self_super_stock;
     u8 self_super_stock_max;
     u8 opp_super_stock;
@@ -18,6 +20,8 @@ typedef struct RLObservationV1 {
     f32 opp_super_gauge_ratio;
     f32 self_stun_ratio;
     f32 opp_stun_ratio;
+    s16 delta_self_stun;
+    s16 delta_opp_stun;
     f32 opp_dx_ratio;
     f32 opp_dy_ratio;
     f32 self_left_corner_ratio;
@@ -36,6 +40,14 @@ typedef struct RLObservationV1 {
     u8 opp_hit_stop;
     u8 self_high_jump_flag;
     u8 opp_high_jump_flag;
+    u8 self_airborne;
+    u8 opp_airborne;
+    u8 self_entered_hit_stop;
+    u8 opp_entered_hit_stop;
+    u8 self_entered_contact_state;
+    u8 opp_entered_contact_state;
+    u8 self_entered_damage_state;
+    u8 opp_entered_damage_state;
     u16 self_routine[3];
     u16 opp_routine[3];
     u8 round_num;

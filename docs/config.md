@@ -115,13 +115,13 @@ Notes:
 - The overlay is opt-in and uses a lightweight cached label update path instead of perf capture telemetry.
 - On MiSTer, valid values are `off`, `fps`, `debug`, and `rl-debug`.
 - `rl-debug` is a lightweight RL-specific overlay mode intended for remote-agent bring-up. It now shows:
-  - raw HP plus round / win state
+  - raw HP plus round / cumulative-versus-win state
   - `SA` full-stock count plus `SG` current gauge fill, then raw stun
   - `DX`, `DY`, and facing
   - self / opponent corner distances
-  - guard flags and current attack ids
-  - do-not-move / hit-stop / high-jump flags
-  - self / opponent routine triplets
+  - `CF` raw combat/contact state from `guard_flag` plus `AK` attack button-category codes from `current_attack`
+  - `NM` raw `do_not_move`, `HS` contact-oriented `hit_stop`, and `HJ` high-jump-only flags
+  - `SR` / `OR` self / opponent routine triplets
   - action-context (`last_executed_*`, `next_scheduled_*`, `frames_until_next_action`)
   - observation build cost as `avg/max` microseconds
   - a fixed RL input row using `U D L R LP MP HP LK MK HK`, white when idle and red when active

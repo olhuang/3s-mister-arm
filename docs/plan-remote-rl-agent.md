@@ -453,7 +453,7 @@ Build `RLObservationV1` directly from live state such as:
   - `src/sf33rd/Source/Game/engine/workuser.h:524-525`
 - round and win state
   - `Round_num`
-  - `Win_Record[2]`
+  - `VS_Win_Record[2]`
   - `src/sf33rd/Source/Game/engine/workuser.h:109,518-519`
 
 Recommended observation groups:
@@ -530,16 +530,16 @@ Recommended fixed logical schema:
 | `opp_right_corner_ratio` | `f32` | `(scrr - plw[opp].wu.position_x) / max(1, scrr - scrl)` | `plw[opp].wu.position_x`, `scrl`, `scrr` | No |
 | `self_facing_sign` | `s8` | `-1` when `plw[self].wu.rl_flag == 0`, `+1` when `rl_flag == 1` | `plw[self].wu.rl_flag` | Yes |
 | `opp_in_front` | `u8` | `1` if opponent is in the controlled player's forward direction, else `0` | `plw[self].wu.rl_flag`, `plw[*].wu.position_x` | Yes |
-| `self_guard_flag` | `u8` | raw boolean / categorical as-is | `plw[self].guard_flag` | No |
-| `opp_guard_flag` | `u8` | raw boolean / categorical as-is | `plw[opp].guard_flag` | No |
-| `self_current_attack` | `u16` | raw categorical id, embedded or one-hot on remote side | `plw[self].current_attack` | No |
-| `opp_current_attack` | `u16` | raw categorical id, embedded or one-hot on remote side | `plw[opp].current_attack` | No |
-| `self_do_not_move` | `u8` | raw boolean | `plw[self].do_not_move` | No |
-| `opp_do_not_move` | `u8` | raw boolean | `plw[opp].do_not_move` | No |
-| `self_hit_stop` | `u8` | `1` if `plw[self].wu.hit_stop != 0`, else `0` | `plw[self].wu.hit_stop` | No |
-| `opp_hit_stop` | `u8` | `1` if `plw[opp].wu.hit_stop != 0`, else `0` | `plw[opp].wu.hit_stop` | No |
-| `self_high_jump_flag` | `u8` | raw boolean | `plw[self].high_jump_flag` | No |
-| `opp_high_jump_flag` | `u8` | raw boolean | `plw[opp].high_jump_flag` | No |
+| `self_guard_flag` | `u8` | raw combat/contact categorical value as-is; not a pure blocking boolean | `plw[self].guard_flag` | No |
+| `opp_guard_flag` | `u8` | raw combat/contact categorical value as-is; not a pure blocking boolean | `plw[opp].guard_flag` | No |
+| `self_current_attack` | `u16` | raw attack button-category code; currently `0x010/0x020/0x040/0x100/0x200/0x400` for `LP/MP/HP/LK/MK/HK` | `plw[self].current_attack` | No |
+| `opp_current_attack` | `u16` | raw attack button-category code; currently `0x010/0x020/0x040/0x100/0x200/0x400` for `LP/MP/HP/LK/MK/HK` | `plw[opp].current_attack` | No |
+| `self_do_not_move` | `u8` | raw movement-gate flag; currently observed as low-signal in normal versus runtime | `plw[self].do_not_move` | No |
+| `opp_do_not_move` | `u8` | raw movement-gate flag; currently observed as low-signal in normal versus runtime | `plw[opp].do_not_move` | No |
+| `self_hit_stop` | `u8` | `1` if `plw[self].wu.hit_stop != 0`, else `0`; often behaves as shared contact stop | `plw[self].wu.hit_stop` | No |
+| `opp_hit_stop` | `u8` | `1` if `plw[opp].wu.hit_stop != 0`, else `0`; often behaves as shared contact stop | `plw[opp].wu.hit_stop` | No |
+| `self_high_jump_flag` | `u8` | raw high-jump-only flag; not a generic airborne flag | `plw[self].high_jump_flag` | No |
+| `opp_high_jump_flag` | `u8` | raw high-jump-only flag; not a generic airborne flag | `plw[opp].high_jump_flag` | No |
 | `self_routine_0` | `u16` | raw categorical id | `plw[self].wu.routine_no[0]` | No |
 | `self_routine_1` | `u16` | raw categorical id | `plw[self].wu.routine_no[1]` | No |
 | `self_routine_2` | `u16` | raw categorical id | `plw[self].wu.routine_no[2]` | No |
@@ -547,8 +547,8 @@ Recommended fixed logical schema:
 | `opp_routine_1` | `u16` | raw categorical id | `plw[opp].wu.routine_no[1]` | No |
 | `opp_routine_2` | `u16` | raw categorical id | `plw[opp].wu.routine_no[2]` | No |
 | `round_num` | `u8` | raw categorical round index | `Round_num` | No |
-| `self_round_wins` | `u8` | raw VS round-win count | `VS_Win_Record[self]` | No |
-| `opp_round_wins` | `u8` | raw VS round-win count | `VS_Win_Record[opp]` | No |
+| `self_round_wins` | `u8` | raw VS cumulative match-win count; field name is retained for v1 compatibility even though source is not per-round | `VS_Win_Record[self]` | No |
+| `opp_round_wins` | `u8` | raw VS cumulative match-win count; field name is retained for v1 compatibility even though source is not per-round | `VS_Win_Record[opp]` | No |
 | `last_executed_move_intent` | `u8` | relative-direction wire enum from the last action that actually executed | RL session state | Yes |
 | `last_executed_attack_bits` | `u16` | attack/button bits from the last action that actually executed | RL session state | No |
 | `next_scheduled_move_intent` | `u8` | relative-direction wire enum for the next queued action | pending action queue | Yes |
@@ -560,6 +560,7 @@ Notes:
 - `self` / `opp` are always from the controlled agent's perspective, not player-1/player-2 fixed slots
 - if `frames_until_next_action == 255`, set `next_scheduled_move_intent = RL_MOVE_NEUTRAL` and `next_scheduled_attack_bits = 0`
 - `opp_dy_ratio` intentionally uses the same stage-width denominator as `opp_dx_ratio` in v1 as a pragmatic scale; a later version can switch to a fixed vertical scale or jump-range-based scale with a protocol version bump
+- `self_round_wins` / `opp_round_wins` are legacy field names from the original plan; the current runtime source is `VS_Win_Record[*]`, which counts cumulative versus match wins rather than intra-match rounds
 - if a source field is later found to be unavailable or unstable in one build target, the replacement must preserve the same logical meaning and require a version bump if that meaning changes
 - if the wire payload later switches to quantized integers instead of `f32`, the logical schema above still remains the canonical contract
 
@@ -624,30 +625,37 @@ Notes:
 
 - `self_current_attack`, `opp_current_attack`
   - 這是判斷「自己 / 對手有沒有出招」的核心欄位。
-  - 它是 raw attack id，不是單純的拳 / 腳布林值。
+  - 目前這個 source 更接近 raw 攻擊按鍵類別碼，不是完整招式 id。
+  - 現行 code path 會看到:
+    - `0x010` = `LP`
+    - `0x020` = `MP`
+    - `0x040` = `HP`
+    - `0x100` = `LK`
+    - `0x200` = `MK`
+    - `0x400` = `HK`
   - RL 可用來學:
     - 對手是否正在出招
-    - 對手目前是哪一類攻擊 / 哪一個招式
-    - 自己目前正在做什麼招
+    - 對手目前是哪一類攻擊按鍵
+    - 自己目前正在做什麼攻擊輸入類別
 - `self_guard_flag`, `opp_guard_flag`
-  - 表示 guard 狀態。
+  - 名字雖然叫 `guard_flag`，但目前實機與 code audit 都顯示它比較像廣義 combat/contact state。
+  - 很多 hit / guard / throw 相關流程都會把它設成 `3`，所以不能把它當成純「正在防禦」布林值。
   - 可用來推測:
-    - 自己的攻擊是否被擋
-    - 對手是不是正在防禦
+    - 自己的攻擊是否進入了防禦或接觸處理
+    - 對手是否進入了防禦、受擊、摔投等互動狀態
 - `self_hit_stop`, `opp_hit_stop`
-  - 表示 hit stop。
+  - 表示 `hit_stop != 0`。
+  - 在目前實機行為裡，它常常更像「雙方共享的 contact stop」，不是彼此完全獨立的局部事件。
   - 配合 guard / HP 變化時，能幫助 RL 區分:
     - 打中
     - 被擋
     - 純空揮
 - `self_do_not_move`, `opp_do_not_move`
-  - 表示角色是否不能自由移動。
-  - 可用來推測:
-    - 硬直
-    - 某些被定住或招式中狀態
+  - 原始欄位名是 movement gate，但在目前 versus bring-up 觀測裡幾乎一直是 `0`。
+  - 先保留在 schema 裡，但暫時不要高估它的訓練價值。
 - `self_high_jump_flag`, `opp_high_jump_flag`
-  - 表示是否 high jump。
-  - 對辨識跳躍狀態有幫助，但不是完整 airborne 判定。
+  - 表示是否進入特定 high-jump / hijump-cancel 路徑。
+  - 它不是一般 jump / airborne 判定，所以普通跳躍時常常不會亮。
 - `self_routine_0..2`, `opp_routine_0..2`
   - 表示角色內部 state machine / routine 狀態。
   - 這些欄位很原始，但對 RL 很有價值，因為它們常常比高階文字標籤更穩定地反映:
@@ -662,18 +670,18 @@ Notes:
   - 再配 `opp_routine_*`
 - RL 怎麼知道對手站著還是在跳?
   - 主要看 `opp_dy_ratio`
-  - 再配 `opp_high_jump_flag`
   - 再配 `opp_routine_*`
+  - `opp_high_jump_flag` 只能當 high-jump 特例補充，不足以覆蓋一般跳躍
   - 如果後續驗證覺得這樣不夠直觀，可以再加明確 `opp_airborne`
 - RL 怎麼知道對手是出拳還是出腳?
   - v1 不直接給 punch / kick 布林值
   - 主要靠 `opp_current_attack`
   - remote side 可以:
-    - 直接把 attack id 當 categorical feature
-    - 或建立 attack-id -> semantic tag 對照
+    - 直接把 button-category code 當 categorical feature
+    - 或建立 code -> semantic tag 對照
 - RL 怎麼知道對手出了什麼絕招?
-  - 也是主要靠 `opp_current_attack`
-  - 它比單純拳 / 腳分類更細，能保留具體招式資訊
+  - v1 目前還不能只靠 `opp_current_attack` 直接回答這件事
+  - 真正要區分具體招式，仍要再配 `opp_routine_*`、hit/throw 子狀態，或後續額外欄位
 - RL 怎麼知道自己的招有沒有打中 / 被擋 / 空揮?
   - v1 不打算只靠單一 observation 欄位回答這件事
   - 一般會綜合:
@@ -689,10 +697,48 @@ Notes:
 #### 回合資訊
 
 - `round_num`, `self_round_wins`, `opp_round_wins`
-  - 讓 RL 知道目前是第幾回合、比分如何。
+  - `round_num` 是目前回合。
+  - `self_round_wins` / `opp_round_wins` 這兩個欄位名雖然沿用原計畫，但目前 runtime source 其實是 VS mode 累積 match 勝負數。
   - 這對多回合策略很重要，例如:
     - 領先時保守
     - 落後時提高風險
+
+### 4C. `RL Debug` Overlay 實機驗證語意
+
+以下內容以 2026-04-22 的 MiSTer 實測與 code audit 為準，優先描述 overlay 上每個縮寫實際代表的意思。
+
+- line 1: `%s HP%d/%d OP%d/%d R%d M%d-%d`
+  - `HP/OP`: raw HP / round-start HP
+  - `R`: current round number
+  - `M`: VS mode 累積 match 勝負數，不是回合內小局比分
+- line 2: `SA%d/%d SG%d/%d ST%d/%d`
+  - `SA`: full-stock count
+  - `SG`: in-progress super gauge fill
+  - `ST`: raw stun / max stun
+- line 3: `DX%c%d DY%d F%d`
+  - `DX/DY`: relative spacing
+  - `F`: facing sign derived from `rl_flag`
+- line 4: `CL%d CR%d OL%d OR%d`
+  - self / opponent corner distances
+- line 5: `CF%d/%d AK%03X/%03X`
+  - `CF`: raw combat/contact state from `guard_flag`; many hit / guard / catch paths set this to `3`
+  - `AK`: attack button-category code from `current_attack`
+- line 6: `NM%d/%d HS%d/%d HJ%d/%d`
+  - `NM`: raw `do_not_move` gate; currently low-signal in normal versus play
+  - `HS`: `hit_stop != 0`; often shows as shared contact stop on both players
+  - `HJ`: high-jump-only flag, not general jump state
+- line 7: `SR%d,%d,%d OR%d,%d,%d`
+  - `SR/OR`: self / opponent `routine_no[0..2]`
+  - `routine_no[0]` separates pre-fight from active-fight stages; live battle commonly reaches `4`
+  - `routine_no[1]` is the clearest high-level state bucket:
+    - `0` normal
+    - `1` damage
+    - `2` catch
+    - `3` caught
+    - `4` attack
+  - `routine_no[2]` is a substate index whose meaning depends on `routine_no[1]`
+- line 8: `X%d/%03X N%d/%03X T%d O%lu/%luus`
+  - action context plus observation build cost
 
 #### 動作排程上下文
 
@@ -1207,7 +1253,7 @@ Why:
 
 - round transitions fully reset the most important control state: positions, HP, super, stun, timers, and pending actions
 - clearing queue/ledger/RNN state at each round boundary is much simpler and safer for v1 than carrying one episode across multiple rounds
-- the agent still sees match-level context through round-win features in the next round's initial observation
+- the agent still sees match-level context through cumulative match-win features in the next round's initial observation
 
 Recommended reset events:
 
@@ -1479,6 +1525,7 @@ Current read:
 - [x] The runtime `RLObservationV1` implementation now matches the canonical schema in section `4A`
 - [x] Corner-distance and action-context fields are now in the implementation path
 - [x] `RL Debug` overlay now exposes enough state to validate position / guard / attack / round / action-context on MiSTer
+- [x] `RL Debug` labels and docs now reflect validated raw-state semantics for `guard_flag`, `current_attack`, `do_not_move`, `hit_stop`, `high_jump_flag`, and `routine_no`
 - [x] Observation build-cost measurement is now available in `RL Debug`
 
 MiSTer validation matrix:
@@ -1493,18 +1540,18 @@ MiSTer validation matrix:
    - turning `FPS Counter = Off` hides the overlay
 3. Summary / resource check:
    - line 1: `HP` / `OP` raw values track visible health bars
-   - line 1: `R` and win counts track round flow
-   - line 2: `SA` / `ST` track super and stun gain/reset
+   - line 1: `R` tracks the current round and `M` tracks cumulative VS match wins
+   - line 2: `SA` / `SG` / `ST` track stock count, gauge fill, and stun gain/reset
 4. Space / facing / corner check:
    - line 2: `DX` changes with horizontal spacing
    - line 2: `DY` changes when one side jumps
    - line 2: `F` flips after side switch
    - line 3: `CL/CR/OL/OR` shrink toward the corresponding corner and expand away from it
 5. Combat-state check:
-   - line 4: `Gself/opp` changes when attacks are blocked
-   - line 4: `Aself/opp` changes when either side enters an attack
-   - line 5: `D`, `H`, and `J` react to movement lock, hit stop, and high-jump cases
-   - line 6: routine triplets move as characters transition between neutral / jump / attack / hit states
+   - line 5: `CFself/opp` enters the expected combat/contact states during block, hit, and throw interactions
+   - line 5: `AKself/opp` changes when either side enters an attack and matches the expected button-category code
+   - line 6: `NM`, `HS`, and `HJ` are interpreted as raw movement-gate / contact-stop / high-jump flags, not generic movement or airborne booleans
+   - line 7: routine triplets move as characters transition between pre-fight / neutral / attack / damage / catch states
 6. Action-context check:
    - line 7: `Xmove/atk` matches the action executing this frame
    - line 7: `Nmove/atk` matches the next scripted fake-agent action
@@ -1516,7 +1563,7 @@ MiSTer validation matrix:
 
 Recommended runtime matrix:
 
-- `P1C`: watch fake-agent movement, attack ids, guard transitions, and action-context countdown
+- `P1C`: watch fake-agent movement, attack button-category codes, combat/contact transitions, and action-context countdown
 - `P2C`: repeat the same checks from the opposite side to catch self/opp perspective mistakes
 - `P1H` / `P2H`: use `RL Movement = Forward / Back / Jump Forward / Down Back` to sanity-check that relative move-intent labels still agree with remapped directions
 

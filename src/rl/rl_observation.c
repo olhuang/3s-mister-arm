@@ -273,13 +273,13 @@ void RLObservation_FormatDebugOverlay(char* out, size_t out_size, const char* se
 
     snprintf(out,
              out_size,
-             "%s HP%d/%d OP%d/%d R%d %d-%d\n"
+             "%s HP%d/%d OP%d/%d R%d M%d-%d\n"
              "SA%d/%d SG%d/%d ST%d/%d\n"
              "DX%c%d DY%d F%d\n"
              "CL%d CR%d OL%d OR%d\n"
-             "G%d/%d A%03X/%03X\n"
-             "D%d/%d H%d/%d J%d/%d\n"
-             "R%d,%d,%d O%d,%d,%d\n"
+             "CF%d/%d AK%03X/%03X\n"
+             "NM%d/%d HS%d/%d HJ%d/%d\n"
+             "SR%d,%d,%d OR%d,%d,%d\n"
              "X%d/%03X N%d/%03X T%d O%lu/%luus",
              session_label != NULL ? session_label : "P0",
              latest_debug.self_hp,

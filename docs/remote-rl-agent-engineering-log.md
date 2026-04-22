@@ -1141,6 +1141,56 @@ Result:
 
 - RL overlay semantics now better match actual versus runtime behavior
 
+### 2026-04-22: Audit RL Debug Raw-State Semantics And Rename Overlay Labels
+
+Milestones:
+
+- Milestone 1: Compact observation builder follow-up
+
+Purpose:
+
+- reconcile the remaining RL Debug raw-state labels with MiSTer runtime observations and code audit results
+- make the overlay names less misleading before moving on to networking work
+
+Changes:
+
+- updated `src/rl/rl_observation.c`
+  - renamed the multiline overlay labels to better match current runtime semantics:
+    - `M` for cumulative versus match wins
+    - `CF` for raw combat/contact state from `guard_flag`
+    - `AK` for `current_attack` button-category codes
+    - `NM` for raw `do_not_move`
+    - `HS` for contact-oriented `hit_stop`
+    - `HJ` for the high-jump-only flag
+    - `SR` / `OR` for self / opponent routine triplets
+- updated docs:
+  - `docs/plan-remote-rl-agent.md`
+    - corrected canonical-field notes for `guard_flag`, `current_attack`, `do_not_move`, `hit_stop`, `high_jump_flag`, and `VS_Win_Record`
+    - added a dedicated `RL Debug` validated-semantics section based on MiSTer observations plus code audit
+    - updated the Milestone 1 MiSTer validation matrix to use the new labels and meanings
+  - `docs/config.md`
+    - updated `show-fps = rl-debug` notes to explain the renamed overlay abbreviations
+
+Code-audit conclusions captured in docs:
+
+- `guard_flag` is not a pure block boolean; many hit / guard / catch paths set it to `3`
+- `current_attack` comes from `shot_data_refresh()` and currently behaves as an attack button-category code (`LP/MP/HP/LK/MK/HK`)
+- `do_not_move` appears to be low-signal in the current versus path and is commonly `0`
+- `hit_stop` often behaves like a shared contact stop on both players
+- `high_jump_flag` is specific to high-jump / hijump-cancel logic, not generic airborne state
+- `routine_no[0..2]` remains the most informative raw state bundle; `routine_no[1]` cleanly separates normal / damage / catch / caught / attack
+
+Validation:
+
+```sh
+tools/mister/build-game.sh --flavor telemetry
+git diff --check
+```
+
+Result:
+
+- RL Debug labels and docs now line up with the current raw-state interpretation used during MiSTer bring-up
+
 ### Milestone 2: Session Handshake, Network Probe, And Delay Budget
 
 Objective:

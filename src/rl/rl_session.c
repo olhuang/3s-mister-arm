@@ -70,6 +70,10 @@ typedef struct RLDecisionLedgerEntry {
     u32 execution_frame_actual;
     u16 requested_action_wire;
     u16 executed_action_wire;
+    s16 executed_start_self_x;
+    s16 executed_start_self_y;
+    s16 executed_start_opp_x;
+    s16 executed_start_opp_y;
     s16 delta_self_hp;
     s16 delta_opp_hp;
     s16 delta_self_stun;
@@ -90,6 +94,7 @@ typedef struct RLDecisionLedgerEntry {
     u8 opp_entered_contact_state;
     u8 self_entered_damage_state;
     u8 opp_entered_damage_state;
+    bool executed_position_valid;
     float reward_accum;
 } RLDecisionLedgerEntry;
 
@@ -465,6 +470,14 @@ static void RLSession_FinalizeLedgerEntry(RLDecisionLedgerEntry* entry, bool don
     entry->active = false;
     entry->done = done;
     entry->terminal_reason = terminal_reason;
+    if (entry->was_executed && entry->executed_position_valid && terminal_reason != 2) {
+        const s16 self = RLSession_AgentPlayerIndex();
+        const s16 opp = RLSession_OpponentPlayerIndex();
+        entry->delta_self_x = RLSession_ClampDeltaS16((s32)plw[self].wu.position_x - (s32)entry->executed_start_self_x);
+        entry->delta_self_y = RLSession_ClampDeltaS16((s32)plw[self].wu.position_y - (s32)entry->executed_start_self_y);
+        entry->delta_opp_x = RLSession_ClampDeltaS16((s32)plw[opp].wu.position_x - (s32)entry->executed_start_opp_x);
+        entry->delta_opp_y = RLSession_ClampDeltaS16((s32)plw[opp].wu.position_y - (s32)entry->executed_start_opp_y);
+    }
     RLSession_AppendTransitionLog(entry);
     entry->exported = true;
     remote_debug.transition_export_count++;
@@ -788,12 +801,19 @@ static void RLSession_StartActiveRemoteAction(u32 episode_id,
     action_context.last_executed_attack_bits = attack_bits;
     last_executed_action_wire = executed_action_wire;
     if (ledger != NULL) {
+        const s16 self = RLSession_AgentPlayerIndex();
+        const s16 opp = RLSession_OpponentPlayerIndex();
         ledger->was_executed = true;
         ledger->executed_action_wire = executed_action_wire;
         ledger->execution_frame_actual = remote_debug.frame_id;
         ledger->execution_source = (u8)source;
         ledger->executed_move_intent = move_intent;
         ledger->executed_attack_bits = attack_bits;
+        ledger->executed_start_self_x = plw[self].wu.position_x;
+        ledger->executed_start_self_y = plw[self].wu.position_y;
+        ledger->executed_start_opp_x = plw[opp].wu.position_x;
+        ledger->executed_start_opp_y = plw[opp].wu.position_y;
+        ledger->executed_position_valid = true;
         RLSession_SetActiveLedgerEntry(ledger);
     }
     if (source == RL_EXECUTION_SOURCE_REMOTE) {

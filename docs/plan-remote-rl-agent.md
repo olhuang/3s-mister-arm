@@ -1696,27 +1696,37 @@ MiSTer validation matrix:
 2. Routing check:
    - overlay label shows `P1C` or `P2C`
    - turning `FPS Counter = Off` hides the overlay
-3. Summary / resource check:
+3. Overlay line layout:
+   - line 1: `P1C HP160/160 OP160/160 R2 RW1-0 M3-2`
+   - line 2: `SA0/2 SG24/72 ST0/64`
+   - line 3: `DXR42 DY0 F1`
+   - line 4: `CL20 CR364 OL280 OR104`
+   - line 5: `CF0/3 AK010/000`
+   - line 6: `NM0/0 HS0/0 HJ0/0`
+   - line 7: `SR4,0,1 OR4,4,18`
+   - line 8: `X4/010 N0/000 T12 O8/67us`
+   - input row: `U D L R LP MP HP LK MK HK`, white when idle and red when active
+4. Summary / resource check:
    - line 1: `HP` / `OP` raw values track visible health bars
    - line 1: `R` tracks the current round, `RW` tracks current-match round wins, and `M` tracks cumulative VS match wins
    - line 2: `SA` / `SG` / `ST` track stock count, gauge fill, and stun gain/reset
-4. Space / facing / corner check:
-   - line 2: `DX` changes with horizontal spacing
-   - line 2: `DY` changes when one side jumps
-   - line 2: `F` flips after side switch
-   - line 3: `CL/CR/OL/OR` shrink toward the corresponding corner and expand away from it
-5. Combat-state check:
+5. Space / facing / corner check:
+   - line 3: `DX` changes with horizontal spacing
+   - line 3: `DY` changes when one side jumps
+   - line 3: `F` flips after side switch
+   - line 4: `CL/CR/OL/OR` shrink toward the corresponding corner and expand away from it
+6. Combat-state check:
    - line 5: `CFself/opp` enters the expected combat/contact states during block, hit, and throw interactions
    - line 5: `AKself/opp` changes when either side enters an attack and matches the expected button-category code
    - line 6: `NM`, `HS`, and `HJ` are interpreted as raw movement-gate / contact-stop / high-jump flags, not generic movement or airborne booleans
    - line 7: routine triplets move as characters transition between pre-fight / neutral / attack / damage / catch states
-6. Action-context check:
-   - line 7: `Xmove/atk` matches the action executing this frame
-   - line 7: `Nmove/atk` matches the next scripted fake-agent action
-   - line 7: `T` counts down toward the next action swap
-   - line 8 button tokens stay white when released and turn red only for active RL-side buttons
-7. Cost check:
-   - line 7: `Oavg/maxus` is the observation build cost in microseconds
+7. Action-context check:
+   - line 8: `Xmove/atk` matches the action executing this frame
+   - line 8: `Nmove/atk` matches the next scripted fake-agent action
+   - line 8: `T` counts down toward the next action swap
+   - input row button tokens stay white when released and turn red only for active RL-side buttons
+8. Cost check:
+   - line 8: `Oavg/maxus` is the observation build cost in microseconds
    - pass criteria for Milestone 1: cost remains low, stable, and comfortably below frame-budget concern during live play
 
 Recommended runtime matrix:

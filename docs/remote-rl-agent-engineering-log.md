@@ -1265,6 +1265,29 @@ Validation:
 # Documentation-only update.
 ```
 
+### 2026-04-22: Refresh Milestone 1 RL Debug Validation Matrix
+
+Milestones:
+
+- Milestone 1: Compact observation builder follow-up
+
+Purpose:
+
+- keep the Milestone 1 MiSTer validation matrix aligned with the latest `RL Debug` overlay layout
+
+Changes:
+
+- updated `docs/plan-remote-rl-agent.md`
+  - added the current line-by-line overlay example to the Milestone 1 validation matrix
+  - corrected line references for `DX/DY/F`, `CL/CR/OL/OR`, action-context, input-row tokens, and observation cost
+  - documented the first-line `R`, `RW`, and `M` meanings in the matrix itself
+
+Validation:
+
+```sh
+git diff --check
+```
+
 ### Milestone 2: Session Handshake, Network Probe, And Delay Budget
 
 Objective:

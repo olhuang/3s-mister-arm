@@ -66,7 +66,13 @@ typedef struct RLProbeStats {
     u32 jitter_us;
 } RLProbeStats;
 
-typedef struct RLActionPacket {
+#if defined(__GNUC__) || defined(__clang__)
+#define RL_PROTOCOL_PACKED __attribute__((packed))
+#else
+#define RL_PROTOCOL_PACKED
+#endif
+
+typedef struct RL_PROTOCOL_PACKED RLActionPacket {
     u32 magic;
     u16 version;
     u16 flags;
@@ -78,6 +84,8 @@ typedef struct RLActionPacket {
     u16 reserved0;
     u32 model_version;
 } RLActionPacket;
+
+#undef RL_PROTOCOL_PACKED
 
 RLSessionConfig RLProtocol_DefaultConfig(void);
 u32 RLProtocol_ComputeConfigHash(const RLSessionConfig* config);

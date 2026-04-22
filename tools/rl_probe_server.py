@@ -74,6 +74,7 @@ def serve(host: str, port: int, verbose: bool, action_port: int | None, action_m
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind((host, port))
     print(f"RL probe server listening on {host}:{port}")
+    hello_count: dict[int, int] = {}
 
     while True:
         data, addr = sock.recvfrom(2048)
@@ -91,8 +92,17 @@ def serve(host: str, port: int, verbose: bool, action_port: int | None, action_m
         if packet_type == TYPE_HELLO:
             if action_mode == "pre-ack":
                 maybe_send_action(sock, addr, action_port, "valid", nonce, sequence, verbose)
-            reply = make_packet(TYPE_ACK, nonce, sequence, config_hash, int(time.monotonic_ns() / 1000))
-            sock.sendto(reply, addr)
+                count = hello_count.get(nonce, 0) + 1
+                hello_count[nonce] = count
+                if count < 4:
+                    if verbose:
+                        print(f"{addr} PRE-ACK hold nonce={nonce} hello_count={count}")
+                else:
+                    reply = make_packet(TYPE_ACK, nonce, sequence, config_hash, int(time.monotonic_ns() / 1000))
+                    sock.sendto(reply, addr)
+            else:
+                reply = make_packet(TYPE_ACK, nonce, sequence, config_hash, int(time.monotonic_ns() / 1000))
+                sock.sendto(reply, addr)
         elif packet_type == TYPE_PING:
             reply = make_packet(TYPE_PONG, nonce, sequence, config_hash, send_time_us)
             sock.sendto(reply, addr)

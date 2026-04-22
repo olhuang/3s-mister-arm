@@ -1763,12 +1763,12 @@ Tasks:
 - [x] Add local p50 latency calculation helper
 - [x] Add local p95 latency calculation helper
 - [x] Add local p99 latency calculation helper
-- [ ] Measure p50 latency on target network
-- [ ] Measure p95 latency on target network
-- [ ] Measure p99 latency on target network
-- [ ] Choose `k` from measured data
-- [ ] Choose `decision_interval_frames` from measured data
-- [ ] Choose `action_hold_frames` from measured data
+- [x] Measure p50 latency on target network
+- [x] Measure p95 latency on target network
+- [x] Measure p99 latency on target network
+- [x] Choose `k` from measured data
+- [x] Choose `decision_interval_frames` from measured data
+- [x] Choose `action_hold_frames` from measured data
 
 Current implementation notes:
 
@@ -1783,7 +1783,7 @@ Current implementation notes:
   - no socket is opened unless RL agent mode is active, RL network mode is enabled, and `rl-agent-remote-ip` / `--rl-remote-ip` is set
   - the first live path sends `HELLO`, waits for `ACK`, then sends periodic `PING` packets and accepts `PONG`
   - gameplay input behavior is unchanged; the probe only updates network state and RTT statistics
-  - default timing placeholders are `decision_interval_frames = 4`, `action_hold_frames = 4`, `candidate_k_delay_frames = 3`
+  - current default timing is `decision_interval_frames = 4`, `action_hold_frames = 4`, `candidate_k_delay_frames = 4`
 - `tools/rl_probe_server.py` is the first remote-side validation server for this path.
 - `RL Debug` overlay appends a compact network line:
   - `NETOFF`: no remote probe configured
@@ -1794,7 +1794,16 @@ Current implementation notes:
   - `P`: p50/p95/p99 RTT in microseconds
   - `MAX`: max RTT in microseconds
   - `E`: socket/send/recv error count
-- target-network measurements remain open until this is run on the actual MiSTer + remote PC network.
+- target-network measurement has now been run on the actual MiSTer + remote PC network:
+  - `S128`
+  - `p50 = 16819us`
+  - `p95 = 17568us`
+  - `p99 = 20752us`
+  - `max = 30718us`
+- chosen first measured baseline:
+  - `candidate_k_delay_frames = 4`
+  - `decision_interval_frames = 4`
+  - `action_hold_frames = 4`
 
 Local / MiSTer validation steps:
 
@@ -1813,7 +1822,9 @@ Local / MiSTer validation steps:
    - with remote IP before ack: `NETHELLO`
    - after ack/pong: `NETOK S... Pp50/p95/p99 MAX...us E0`
 5. Record p50/p95/p99/max RTT from the overlay after at least 128 samples.
-6. Choose `k`, `decision_interval_frames`, and `action_hold_frames` only after target-network values are recorded.
+6. Current measured baseline result:
+   - `NETOK S128 P16819/17568/20752 MAX30718`
+   - use `k = 4`, `decision_interval_frames = 4`, `action_hold_frames = 4` as the first conservative runtime baseline
 
 Done when:
 

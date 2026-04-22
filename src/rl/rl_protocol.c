@@ -28,7 +28,7 @@ RLSessionConfig RLProtocol_DefaultConfig(void) {
     config.action_encoding_mode = RL_ACTION_ENCODING_RELATIVE_MOVE_WITH_ATTACK_BITS;
     config.decision_interval_frames = 4;
     config.action_hold_frames = 4;
-    config.candidate_k_delay_frames = 3;
+    config.candidate_k_delay_frames = 4;
     config.feature_flags = RL_PROTOCOL_FEATURE_RELATIVE_MOVEMENT | RL_PROTOCOL_FEATURE_FIXED_HOLD;
     config.config_hash = RLProtocol_ComputeConfigHash(&config);
     return config;

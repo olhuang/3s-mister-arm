@@ -95,7 +95,7 @@ Configuration configuration = {
             .remote_ip = NULL,
             .obs_port = 37330,
             .action_port = 37331,
-            .delay_frames = 3,
+            .delay_frames = 4,
             .decision_interval_frames = 4,
             .action_hold_frames = 4,
         },

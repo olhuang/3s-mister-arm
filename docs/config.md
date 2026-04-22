@@ -217,7 +217,7 @@ Default:
 Candidate delayed-action frame offset `k` used in the negotiated RL session config.
 
 Default:
-- `3`
+- `4`
 
 ### `rl-agent-decision-interval`
 
@@ -232,6 +232,11 @@ Frames to hold each executed RL wire action.
 
 Default:
 - `4`
+
+Recommended first measured baseline on the current MiSTer <-> Windows probe path:
+- `rl-agent-delay-frames = 4`
+- `rl-agent-decision-interval = 4`
+- `rl-agent-action-hold = 4`
 
 ### `video-driver-order`
 

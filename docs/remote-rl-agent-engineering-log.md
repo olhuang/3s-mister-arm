@@ -2,6 +2,45 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-22: Milestone 2 Target-Network Timing Baseline
+
+Milestone:
+- Milestone 2: Session handshake, network probe, and delay budget
+
+Files changed:
+- `src/rl/rl_protocol.c`
+- `src/port/config/config.c`
+- `src/main.c`
+- `docs/config.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- record the first real MiSTer <-> remote PC RTT measurement
+- stop treating `k / decision_interval / action_hold` as placeholders
+
+Implementation notes:
+- measured on the actual MiSTer + Windows probe path using the `RL Debug` overlay:
+  - `NETOK S128 P16819/17568/20752 MAX30718`
+  - `p50 = 16819us`
+  - `p95 = 17568us`
+  - `p99 = 20752us`
+  - `max = 30718us`
+- one frame at 60fps is about `16667us`, so this path sits around one frame at p50 and can burst toward two frames at the max sample.
+- selected the first conservative baseline as:
+  - `candidate_k_delay_frames = 4`
+  - `decision_interval_frames = 4`
+  - `action_hold_frames = 4`
+- updated runtime defaults so config-generated and protocol-default timing now match the chosen baseline.
+
+Validation:
+- MiSTer runtime probe reached `NETOK` and accumulated 128 samples on the actual target network.
+- `git diff --check` pending local re-run after this doc/default sync.
+
+Follow-up:
+- keep Milestone 2 open until stale/unacknowledged action rejection rules are fully wired into the later action path
+- use `4/4/4` as the Milestone 3 starting point unless new measurements on the target network meaningfully change
+
 ## 2026-04-22: Milestone 2 OSD Network Toggle
 
 Milestone:

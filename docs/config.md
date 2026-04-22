@@ -176,12 +176,26 @@ Notes:
 - The movement override is only active when RL agent mode is enabled and the RL opponent is set to `human`.
 - This is a Milestone 0B validation helper, not the final remote-policy action path.
 
+### `rl-network`
+
+Controls whether the Milestone 2 remote RL UDP probe is enabled when RL agent mode is active.
+
+Possible values:
+- `off`
+- `on`
+
+Notes:
+- This key is primarily written by the MiSTer OSD menu entry `RL Network (Restart)`.
+- `on` means the wrapper relaunches the game with RL network probing enabled.
+- Changes take effect on the next wrapper `Restart`; they do not hot-switch the currently running match.
+- The remote IP, observation port, action port, and timing knobs are intentionally read from this same config file so they can be edited directly.
+
 ### `rl-agent-remote-ip`
 
 Remote learner/probe host used by the Milestone 2 UDP RL probe.
 
 Notes:
-- The UDP probe is enabled only when RL agent mode is active and this key or `--rl-remote-ip` is set.
+- The UDP probe is enabled only when RL agent mode is active, `rl-network = on`, and this key or `--rl-remote-ip` is set.
 - The first Milestone 2 probe talks to the observation/probe port only; the action port is reserved for the later action path.
 
 ### `rl-agent-obs-port`

@@ -54,6 +54,7 @@
 #define CFG_KEY_NETPLAY_P2P_REMOTE_IP "p2p-remote-ip"
 #define CFG_KEY_NETPLAY_MATCHMAKING_IP "matchmaking-ip"
 #define CFG_KEY_NETPLAY_MATCHMAKING_PORT "matchmaking-port"
+#define CFG_KEY_RL_NETWORK "rl-network"
 #define CFG_KEY_RL_AGENT_REMOTE_IP "rl-agent-remote-ip"
 #define CFG_KEY_RL_AGENT_OBS_PORT "rl-agent-obs-port"
 #define CFG_KEY_RL_AGENT_ACTION_PORT "rl-agent-action-port"

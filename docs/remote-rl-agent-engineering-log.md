@@ -2,6 +2,47 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-22: Milestone 2 OSD Network Toggle
+
+Milestone:
+- Milestone 2: Session handshake, network probe, and delay budget
+
+Files changed:
+- `vendor/Menu_MiSTer/menu.sv`
+- `vendor/Main_MiSTer/thirdsarm_wrapper.cpp`
+- `src/configuration.h`
+- `src/args.c`
+- `src/main.c`
+- `src/port/config/config.h`
+- `src/port/config/config.c`
+- `src/rl/rl_net.c`
+- `docs/config.md`
+- `docs/plan-remote-rl-agent.md`
+
+Purpose:
+- put the RL network probe enable/disable control in MiSTer OSD
+- keep remote IP, obs/action ports, and timing knobs in `games/3s-arm/config` for easy manual editing
+
+Implementation notes:
+- added OSD `RL Settings -> RL Network (Restart), Off/On`
+- wrapper persists that menu item as `rl-network = off|on`
+- wrapper strips forwarded RL network CLI/config knobs and injects only `--rl-network` from the persisted setting, keeping the config file authoritative for IP/ports/timing
+- runtime now requires all three conditions before opening a UDP socket:
+  - `--rl-agent` / RL agent mode active
+  - `rl-network = on` / `--rl-network`
+  - `rl-agent-remote-ip` / `--rl-remote-ip` is set
+- `rl-agent-remote-ip`, `rl-agent-obs-port`, `rl-agent-action-port`, `rl-agent-delay-frames`, `rl-agent-decision-interval`, and `rl-agent-action-hold` are read from config after `Config_Init()`
+
+Validation:
+- `git diff --check` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed.
+- `/home/olhua/src/3s-mister-arm/tools/mister-wrapper/build-hps.sh` passed and produced `build/mister-wrapper-hps/MiSTer_3S-ARM`.
+- FPGA wrapper core / `.rbf` rebuild is still required before `RL Network (Restart)` appears on MiSTer OSD hardware.
+
+Follow-up:
+- rebuild wrapper/core so the new `CONF_STR` entry appears on MiSTer OSD
+- on hardware, verify `RL Network (Restart)` writes `rl-network = on/off` and that `RL Debug` stays `NETOFF` until network is on plus a remote IP is configured
+
 ## 2026-04-22: Milestone 2 UDP Probe Path
 
 Milestone:

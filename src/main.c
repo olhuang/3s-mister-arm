@@ -85,9 +85,10 @@ Configuration configuration = {
             .delay_gameplay_inputs_until_active = false,
             .stage = -1,
         },
-    .remote_rl_agent =
+        .remote_rl_agent =
         {
             .enabled = false,
+            .network_enabled = false,
             .player = 1,
             .human_opponent = false,
             .test_movement = 0,
@@ -209,6 +210,12 @@ static void set_netplay_params() {
 static void apply_remote_rl_config_file_values() {
     RemoteRLAgentConfiguration* rl = &configuration.remote_rl_agent;
 
+    if (Config_HasExplicitKey(CFG_KEY_RL_NETWORK)) {
+        const char* value = Config_GetString(CFG_KEY_RL_NETWORK);
+        rl->network_enabled = value != NULL &&
+                              (SDL_strcmp(value, "on") == 0 || SDL_strcmp(value, "true") == 0 ||
+                               SDL_strcmp(value, "1") == 0);
+    }
     if (rl->remote_ip == NULL && Config_HasExplicitKey(CFG_KEY_RL_AGENT_REMOTE_IP)) {
         rl->remote_ip = Config_GetString(CFG_KEY_RL_AGENT_REMOTE_IP);
     }

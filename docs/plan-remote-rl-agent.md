@@ -1473,6 +1473,7 @@ Suggested config keys in `src/port/config/config.h` / `config.c`:
 
 - `rl-agent-enabled`
 - `rl-agent-player`
+- `rl-network`
 - `rl-agent-remote-ip`
 - `rl-agent-obs-port`
 - `rl-agent-action-port`
@@ -1486,6 +1487,7 @@ Suggested config keys in `src/port/config/config.h` / `config.c`:
 Suggested CLI flags in `src/args.c`:
 
 - `--rl-agent`
+- `--rl-network`
 - `--rl-player`
 - `--rl-remote-ip`
 - `--rl-obs-port`
@@ -1778,7 +1780,7 @@ Current implementation notes:
   - ack/config validation helpers
   - sorted-sample p50/p95/p99 probe-stat helper
 - `src/rl/rl_net.*` currently provides a no-op disabled network state:
-  - no socket is opened unless RL agent mode is active and `rl-agent-remote-ip` / `--rl-remote-ip` is set
+  - no socket is opened unless RL agent mode is active, RL network mode is enabled, and `rl-agent-remote-ip` / `--rl-remote-ip` is set
   - the first live path sends `HELLO`, waits for `ACK`, then sends periodic `PING` packets and accepts `PONG`
   - gameplay input behavior is unchanged; the probe only updates network state and RTT statistics
   - default timing placeholders are `decision_interval_frames = 4`, `action_hold_frames = 4`, `candidate_k_delay_frames = 3`
@@ -1799,7 +1801,12 @@ Local / MiSTer validation steps:
 1. On the remote PC, run:
    - `python3 tools/rl_probe_server.py --host 0.0.0.0 --port 37330 --verbose`
 2. Launch MiSTer with RL enabled and remote probe settings:
-   - `--rl-agent --rl-player 1 --rl-remote-ip <remote_pc_ip> --rl-obs-port 37330 --rl-action-port 37331`
+   - set `games/3s-arm/config`:
+     - `rl-agent-remote-ip = <remote_pc_ip>`
+     - `rl-agent-obs-port = 37330`
+     - `rl-agent-action-port = 37331`
+   - set OSD `RL Settings -> RL Network (Restart) = On`
+   - restart through the wrapper
 3. In OSD, set `FPS Counter = RL Debug`.
 4. Expected overlay progression:
    - without remote IP: `NETOFF`

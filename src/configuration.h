@@ -26,6 +26,7 @@ typedef struct TestRunnerConfiguration {
 
 typedef struct RemoteRLAgentConfiguration {
     bool enabled;
+    bool network_enabled;
     int player;
     bool human_opponent;
     int test_movement;

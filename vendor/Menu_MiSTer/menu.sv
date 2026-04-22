@@ -299,6 +299,7 @@ localparam CONF_STR = {
 	"P2O[48:47],RL Agent (Restart),Off,Player 1,Player 2;",
 	"P2O[29],RL Opponent (Restart),CPU,Human;",
 	"P2O[31:30],RL Movement,Forward,Back,Jump Forward,Down Back;",
+	"P2O[49],RL Network (Restart),Off,On;",
 	"-;",
 	"T[21],Reset to Default;",
 	"T[22],Restart;",
@@ -309,7 +310,7 @@ localparam CONF_STR = {
 };
 
 wire forced_scandoubler;
-wire [48:0] status;
+wire [49:0] status;
 
 hps_io #(.CONF_STR(CONF_STR), .CONF_STR_BRAM(1)) hps_io
 (

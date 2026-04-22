@@ -75,6 +75,13 @@ static bool is_supported_perf_wait_runtime_state(const char* state_name) {
 static void load_remote_rl_agent_config(Configuration* configuration) {
     RemoteRLAgentConfiguration* rl = &configuration->remote_rl_agent;
 
+    if (Config_HasExplicitKey(CFG_KEY_RL_NETWORK)) {
+        const char* value = Config_GetString(CFG_KEY_RL_NETWORK);
+        rl->network_enabled = value != NULL &&
+                              (SDL_strcmp(value, "on") == 0 || SDL_strcmp(value, "true") == 0 ||
+                               SDL_strcmp(value, "1") == 0);
+    }
+
     if (Config_HasExplicitKey(CFG_KEY_RL_AGENT_REMOTE_IP)) {
         rl->remote_ip = Config_GetString(CFG_KEY_RL_AGENT_REMOTE_IP);
     }
@@ -267,6 +274,13 @@ void read_args(int argc, const char* argv[], Configuration* configuration) {
                     "rl-agent",
                     &configuration->remote_rl_agent.enabled,
                     "Enable remote RL agent baseline session hooks.",
+                    NULL,
+                    0,
+                    0),
+        OPT_BOOLEAN(0,
+                    "rl-network",
+                    &configuration->remote_rl_agent.network_enabled,
+                    "Enable remote RL UDP probe using rl-agent-remote-ip / --rl-remote-ip.",
                     NULL,
                     0,
                     0),

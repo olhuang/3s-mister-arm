@@ -130,8 +130,8 @@ static bool open_probe_socket(const char* remote_ip, int remote_port) {
 void RLNet_Init(const RemoteRLAgentConfiguration* config) {
     RLNet_InitDisabled();
 
-    if (config == NULL || !config->enabled || config->remote_ip == NULL || config->remote_ip[0] == '\0' ||
-        config->obs_port <= 0) {
+    if (config == NULL || !config->enabled || !config->network_enabled || config->remote_ip == NULL ||
+        config->remote_ip[0] == '\0' || config->obs_port <= 0) {
         return;
     }
     if (config->obs_port > 65535 || config->action_port < 0 || config->action_port > 65535 ||

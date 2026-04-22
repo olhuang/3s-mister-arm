@@ -1460,6 +1460,15 @@ Done when:
 - [ ] Observation action-context fields use relative move intent plus attack bits, not raw absolute direction masks
 - [ ] Observation build cost is acceptable on MiSTer
 
+Current read:
+
+- [x] Observation bring-up is good enough to continue development
+- [x] `RL Debug` overlay is now trustworthy for raw HP and logical input display
+- [ ] The runtime `RLObservationV1` implementation is still only a partial subset of the canonical schema in section `4A`
+- [ ] Corner-distance and action-context fields are still missing from the implementation path
+- [ ] Full MiSTer validation of position / guard / attack / round-state coverage is still pending
+- [ ] Observation build-cost measurement is still pending
+
 ### Milestone 2: Session handshake, network probe, and delay budget
 
 Status:

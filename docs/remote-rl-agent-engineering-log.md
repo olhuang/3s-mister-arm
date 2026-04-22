@@ -896,6 +896,54 @@ Follow-up:
 
 - verify on MiSTer that `LK`, `MK`, and `HK` now light the expected tokens
 
+### 2026-04-22: Milestone 1 Status Review
+
+Milestones:
+
+- Milestone 1: Compact observation builder
+
+Files changed:
+
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+
+- reconcile the current implementation against the Milestone 1 checklist
+- record whether Milestone 1 can be closed or still has meaningful gaps
+
+Implementation notes:
+
+- current state is strong enough for observation bring-up and iterative debug:
+  - end-of-frame hook exists
+  - `RL Debug` overlay is readable on MiSTer
+  - raw HP and logical button display now match runtime behavior well enough for spot checks
+- Milestone 1 is still not ready to close because the implementation does not yet cover the full canonical schema from the plan
+- remaining gaps include:
+  - no implemented `last_executed_*`
+  - no implemented `next_scheduled_*`
+  - no implemented `frames_until_next_action`
+  - no implemented corner-distance fields in the runtime observation path
+  - no systematic MiSTer validation pass for position / guard / attack / round-state coverage
+  - no observation build-cost measurement yet
+
+Validation:
+
+```text
+Overlay bring-up looks healthy, but milestone-close criteria are still only partially satisfied.
+```
+
+Result:
+
+- Milestone 1 remains open
+- the right next step is still to finish Milestone 1 rather than start Milestone 2
+
+Follow-up:
+
+- finish the remaining canonical `RLObservationV1` fields in code
+- validate the missing observation groups on MiSTer
+- measure observation build cost on MiSTer or the closest equivalent target
+
 ## Milestone Notes
 
 ### Milestone 0A: Baseline Match-Flow Confirmation Spike
@@ -979,16 +1027,20 @@ Implementation notes:
 - overlay includes RL routing, HP, super, stun, opponent X distance, facing sign, round number, and the RL-side raw input buttons
 - input labels are `U`, `D`, `L`, `R`, `LP`, `MP`, `HP`, `LK`, `MK`, and `HK`
 - fbdev and SDL renderer overlays now support short multi-line debug text
+- raw HP display and logical attack-button display are now working well enough for runtime spot checks
+- the runtime struct is still only a partial subset of the full canonical schema from the plan
 
 Validation notes:
 
 - telemetry build passed after initial implementation
-- on-device overlay value validation is still pending
+- on-device overlay readability and button-label correctness are now good
+- full observation-group validation and build-cost measurement are still pending
 
 Open questions:
 
 - validate whether the current first active-frame `round_start_hp[i]` capture matches round bootstrap on hardware
 - validate positions, HP, super, stun, attack state, guard state, and round state against visible gameplay
+- decide whether to finish the remaining schema fields in the current runtime struct or refactor it to mirror the plan table more literally
 
 ### Milestone 2: Session Handshake, Network Probe, And Delay Budget
 

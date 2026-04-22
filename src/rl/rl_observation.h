@@ -39,6 +39,8 @@ typedef struct RLObservationV1 {
     u16 self_routine[3];
     u16 opp_routine[3];
     u8 round_num;
+    u8 self_match_round_wins;
+    u8 opp_match_round_wins;
     u8 self_round_wins;
     u8 opp_round_wins;
     u8 last_executed_move_intent;

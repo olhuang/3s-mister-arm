@@ -1191,6 +1191,46 @@ Result:
 
 - RL Debug labels and docs now line up with the current raw-state interpretation used during MiSTer bring-up
 
+### 2026-04-22: Add Current-Match Round Score And MVP Observation Set
+
+Milestones:
+
+- Milestone 1: Compact observation builder follow-up
+
+Purpose:
+
+- expose both current-match round score and cumulative VS match wins in `RL Debug`
+- document the minimum observation subset intended for the first usable RL training loop
+
+Changes:
+
+- updated `src/rl/rl_observation.h` / `src/rl/rl_observation.c`
+  - added `self_match_round_wins` and `opp_match_round_wins` from `PL_Wins[*]`
+  - changed the first overlay line to show `R`, `RW`, and `M` separately:
+    - `R`: current round
+    - `RW`: current match's round score from the RL perspective
+    - `M`: cumulative versus match wins from `VS_Win_Record[*]`
+- updated docs:
+  - `docs/plan-remote-rl-agent.md`
+    - added `PL_Wins[*]` fields to the canonical schema
+    - added an MVP training observation subset
+    - updated `RL Debug` line-1 semantics and validation matrix
+  - `docs/config.md`
+    - updated `show-fps = rl-debug` notes for `RW`
+
+Validation plan:
+
+```sh
+tools/mister/build-game.sh --flavor telemetry
+git diff --check
+```
+
+MiSTer follow-up:
+
+- verify `RW` increments after each round win inside a match
+- verify `RW` resets when a new match starts
+- verify `M` still tracks cumulative VS match wins
+
 ### Milestone 2: Session Handshake, Network Probe, And Delay Budget
 
 Objective:

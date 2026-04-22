@@ -115,7 +115,7 @@ Notes:
 - The overlay is opt-in and uses a lightweight cached label update path instead of perf capture telemetry.
 - On MiSTer, valid values are `off`, `fps`, `debug`, and `rl-debug`.
 - `rl-debug` is a lightweight RL-specific overlay mode intended for remote-agent bring-up. It now shows:
-  - raw HP plus round / cumulative-versus-win state
+  - raw HP plus `R` current round, `RW` current-match round wins, and `M` cumulative-versus-win state
   - `SA` full-stock count plus `SG` current gauge fill, then raw stun
   - `DX`, `DY`, and facing
   - self / opponent corner distances

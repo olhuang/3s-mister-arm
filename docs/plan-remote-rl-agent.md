@@ -547,6 +547,8 @@ Recommended fixed logical schema:
 | `opp_routine_1` | `u16` | raw categorical id | `plw[opp].wu.routine_no[1]` | No |
 | `opp_routine_2` | `u16` | raw categorical id | `plw[opp].wu.routine_no[2]` | No |
 | `round_num` | `u8` | raw categorical round index | `Round_num` | No |
+| `self_match_round_wins` | `u8` | raw round wins inside the current match | `PL_Wins[self]` | No |
+| `opp_match_round_wins` | `u8` | raw round wins inside the current match | `PL_Wins[opp]` | No |
 | `self_round_wins` | `u8` | raw VS cumulative match-win count; field name is retained for v1 compatibility even though source is not per-round | `VS_Win_Record[self]` | No |
 | `opp_round_wins` | `u8` | raw VS cumulative match-win count; field name is retained for v1 compatibility even though source is not per-round | `VS_Win_Record[opp]` | No |
 | `last_executed_move_intent` | `u8` | relative-direction wire enum from the last action that actually executed | RL session state | Yes |
@@ -560,9 +562,71 @@ Notes:
 - `self` / `opp` are always from the controlled agent's perspective, not player-1/player-2 fixed slots
 - if `frames_until_next_action == 255`, set `next_scheduled_move_intent = RL_MOVE_NEUTRAL` and `next_scheduled_attack_bits = 0`
 - `opp_dy_ratio` intentionally uses the same stage-width denominator as `opp_dx_ratio` in v1 as a pragmatic scale; a later version can switch to a fixed vertical scale or jump-range-based scale with a protocol version bump
+- `self_match_round_wins` / `opp_match_round_wins` come from `PL_Wins[*]` and represent the current match's round score
 - `self_round_wins` / `opp_round_wins` are legacy field names from the original plan; the current runtime source is `VS_Win_Record[*]`, which counts cumulative versus match wins rather than intra-match rounds
 - if a source field is later found to be unavailable or unstable in one build target, the replacement must preserve the same logical meaning and require a version bump if that meaning changes
 - if the wire payload later switches to quantized integers instead of `f32`, the logical schema above still remains the canonical contract
+
+#### MVP Training Observation Set
+
+This is the smallest observation subset considered useful for the first remote inference / training loop. The full schema above remains available for debug and future policies, but v1 training should start here to keep the learner input stable and understandable.
+
+Core MVP fields:
+
+- resources:
+  - `self_hp_ratio`
+  - `opp_hp_ratio`
+  - `self_super_stock`
+  - `self_super_stock_max`
+  - `opp_super_stock`
+  - `opp_super_stock_max`
+  - `self_super_gauge_ratio`
+  - `opp_super_gauge_ratio`
+  - `self_stun_ratio`
+  - `opp_stun_ratio`
+- spacing and stage geometry:
+  - `opp_dx_ratio`
+  - `opp_dy_ratio`
+  - `self_left_corner_ratio`
+  - `self_right_corner_ratio`
+  - `opp_left_corner_ratio`
+  - `opp_right_corner_ratio`
+  - `self_facing_sign`
+  - `opp_in_front`
+- combat state:
+  - `self_current_attack`
+  - `opp_current_attack`
+  - `self_guard_flag`
+  - `opp_guard_flag`
+  - `self_hit_stop`
+  - `opp_hit_stop`
+  - `self_routine_0..2`
+  - `opp_routine_0..2`
+- round / match context:
+  - `round_num`
+  - `self_match_round_wins`
+  - `opp_match_round_wins`
+  - `self_round_wins`
+  - `opp_round_wins`
+- delayed-action context:
+  - `last_executed_move_intent`
+  - `last_executed_attack_bits`
+  - `next_scheduled_move_intent`
+  - `next_scheduled_attack_bits`
+  - `frames_until_next_action`
+
+Non-MVP fields to keep for debug / later promotion:
+
+- `self_do_not_move`, `opp_do_not_move`
+  - currently low-signal in the normal versus path
+- `self_high_jump_flag`, `opp_high_jump_flag`
+  - high-jump-specific and not a generic airborne flag
+
+Recommended first training stance:
+
+- train with the MVP fields above, encoded from the controlled agent's perspective
+- keep `do_not_move` and `high_jump_flag` available in debug logs, but do not rely on them for the first reward/policy iteration
+- if jump-state ambiguity becomes a training blocker, add an explicit `self_airborne` / `opp_airborne` feature in the next schema revision rather than overloading `high_jump_flag`
 
 ### 4B. `RLObservationV1` 中文欄位導讀
 
@@ -696,8 +760,9 @@ Notes:
 
 #### 回合資訊
 
-- `round_num`, `self_round_wins`, `opp_round_wins`
+- `round_num`, `self_match_round_wins`, `opp_match_round_wins`, `self_round_wins`, `opp_round_wins`
   - `round_num` 是目前回合。
+  - `self_match_round_wins` / `opp_match_round_wins` 是目前這場 match 內的 round 比數。
   - `self_round_wins` / `opp_round_wins` 這兩個欄位名雖然沿用原計畫，但目前 runtime source 其實是 VS mode 累積 match 勝負數。
   - 這對多回合策略很重要，例如:
     - 領先時保守
@@ -707,9 +772,10 @@ Notes:
 
 以下內容以 2026-04-22 的 MiSTer 實測與 code audit 為準，優先描述 overlay 上每個縮寫實際代表的意思。
 
-- line 1: `%s HP%d/%d OP%d/%d R%d M%d-%d`
+- line 1: `%s HP%d/%d OP%d/%d R%d RW%d-%d M%d-%d`
   - `HP/OP`: raw HP / round-start HP
   - `R`: current round number
+  - `RW`: current match's round score from RL perspective
   - `M`: VS mode 累積 match 勝負數，不是回合內小局比分
 - line 2: `SA%d/%d SG%d/%d ST%d/%d`
   - `SA`: full-stock count
@@ -1540,7 +1606,7 @@ MiSTer validation matrix:
    - turning `FPS Counter = Off` hides the overlay
 3. Summary / resource check:
    - line 1: `HP` / `OP` raw values track visible health bars
-   - line 1: `R` tracks the current round and `M` tracks cumulative VS match wins
+   - line 1: `R` tracks the current round, `RW` tracks current-match round wins, and `M` tracks cumulative VS match wins
    - line 2: `SA` / `SG` / `ST` track stock count, gauge fill, and stun gain/reset
 4. Space / facing / corner check:
    - line 2: `DX` changes with horizontal spacing

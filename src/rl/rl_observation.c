@@ -213,6 +213,8 @@ void RLObservation_OnFrameEnd() {
     obs.opp_routine[1] = (u16)plw[opp].wu.routine_no[1];
     obs.opp_routine[2] = (u16)plw[opp].wu.routine_no[2];
     obs.round_num = Round_num;
+    obs.self_match_round_wins = PL_Wins[self];
+    obs.opp_match_round_wins = PL_Wins[opp];
     obs.self_round_wins = (u8)VS_Win_Record[self];
     obs.opp_round_wins = (u8)VS_Win_Record[opp];
     obs.last_executed_move_intent = action_context->last_executed_move_intent;
@@ -273,7 +275,7 @@ void RLObservation_FormatDebugOverlay(char* out, size_t out_size, const char* se
 
     snprintf(out,
              out_size,
-             "%s HP%d/%d OP%d/%d R%d M%d-%d\n"
+             "%s HP%d/%d OP%d/%d R%d RW%d-%d M%d-%d\n"
              "SA%d/%d SG%d/%d ST%d/%d\n"
              "DX%c%d DY%d F%d\n"
              "CL%d CR%d OL%d OR%d\n"
@@ -287,6 +289,8 @@ void RLObservation_FormatDebugOverlay(char* out, size_t out_size, const char* se
              latest_debug.opp_hp,
              latest_debug.opp_hp_start,
              latest_obs.round_num,
+             latest_obs.self_match_round_wins,
+             latest_obs.opp_match_round_wins,
              latest_obs.self_round_wins,
              latest_obs.opp_round_wins,
              latest_debug.self_super_stock,

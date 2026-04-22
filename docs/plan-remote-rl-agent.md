@@ -490,7 +490,10 @@ Canonical v1 choices:
   - do not assume `Max_vitality` is always the right per-player denominator after mode, difficulty, or handicap modifiers
   - do not use `vitality` as the primary source
   - do not use `original_vitality` as the live HP max
-- super uses `plw[i].sa->store / plw[i].sa->store_max`
+- super should expose both stock count and in-progress gauge
+  - stock count uses `plw[i].sa->store / plw[i].sa->store_max`
+  - in-progress gauge uses `plw[i].sa->gauge.s.h / plw[i].sa->gauge_len`
+  - `store` is the number of full super stocks currently available, not the partial fill progress
   - `spg_dat` is a useful debug cross-check, but not the canonical gameplay source
 - stun uses `sdat[i].cstn / plw[i].py->genkai`
   - `sdat[i].slen` is UI gauge length and should not be used as the normalization base
@@ -511,8 +514,12 @@ Recommended fixed logical schema:
 | --- | --- | --- | --- | --- |
 | `self_hp_ratio` | `f32` | `plw[self].wu.vital_new / round_start_hp[self]` clamped to `[0, 1]` | `plw[self].wu.vital_new`, episode-start `round_start_hp[self]` | No |
 | `opp_hp_ratio` | `f32` | `plw[opp].wu.vital_new / round_start_hp[opp]` clamped to `[0, 1]` | `plw[opp].wu.vital_new`, episode-start `round_start_hp[opp]` | No |
-| `self_super_ratio` | `f32` | `plw[self].sa->store / plw[self].sa->store_max` clamped to `[0, 1]` | `plw[self].sa->store`, `plw[self].sa->store_max` | No |
-| `opp_super_ratio` | `f32` | `plw[opp].sa->store / plw[opp].sa->store_max` clamped to `[0, 1]` | `plw[opp].sa->store`, `plw[opp].sa->store_max` | No |
+| `self_super_stock` | `u8` | raw full-stock count | `plw[self].sa->store` | No |
+| `self_super_stock_max` | `u8` | raw max stock count | `plw[self].sa->store_max` | No |
+| `opp_super_stock` | `u8` | raw full-stock count | `plw[opp].sa->store` | No |
+| `opp_super_stock_max` | `u8` | raw max stock count | `plw[opp].sa->store_max` | No |
+| `self_super_gauge_ratio` | `f32` | `plw[self].sa->gauge.s.h / plw[self].sa->gauge_len` clamped to `[0, 1]` | `plw[self].sa->gauge.s.h`, `plw[self].sa->gauge_len` | No |
+| `opp_super_gauge_ratio` | `f32` | `plw[opp].sa->gauge.s.h / plw[opp].sa->gauge_len` clamped to `[0, 1]` | `plw[opp].sa->gauge.s.h`, `plw[opp].sa->gauge_len` | No |
 | `self_stun_ratio` | `f32` | `sdat[self].cstn / plw[self].py->genkai` clamped to `[0, 1]` | `sdat[self].cstn`, `plw[self].py->genkai` | No |
 | `opp_stun_ratio` | `f32` | `sdat[opp].cstn / plw[opp].py->genkai` clamped to `[0, 1]` | `sdat[opp].cstn`, `plw[opp].py->genkai` | No |
 | `opp_dx_ratio` | `f32` | `(plw[opp].wu.position_x - plw[self].wu.position_x) / max(1, scrr - scrl)` | `plw[*].wu.position_x`, `scrl`, `scrr` | Yes |
@@ -540,8 +547,8 @@ Recommended fixed logical schema:
 | `opp_routine_1` | `u16` | raw categorical id | `plw[opp].wu.routine_no[1]` | No |
 | `opp_routine_2` | `u16` | raw categorical id | `plw[opp].wu.routine_no[2]` | No |
 | `round_num` | `u8` | raw categorical round index | `Round_num` | No |
-| `self_round_wins` | `u8` | raw count | `Win_Record[self]` | No |
-| `opp_round_wins` | `u8` | raw count | `Win_Record[opp]` | No |
+| `self_round_wins` | `u8` | raw VS round-win count | `VS_Win_Record[self]` | No |
+| `opp_round_wins` | `u8` | raw VS round-win count | `VS_Win_Record[opp]` | No |
 | `last_executed_move_intent` | `u8` | relative-direction wire enum from the last action that actually executed | RL session state | Yes |
 | `last_executed_attack_bits` | `u16` | attack/button bits from the last action that actually executed | RL session state | No |
 | `next_scheduled_move_intent` | `u8` | relative-direction wire enum for the next queued action | pending action queue | Yes |
@@ -572,11 +579,16 @@ Notes:
     - 何時要保守
     - 何時要換血
     - 瀕死時是否要壓進或撤退
-- `self_super_ratio`, `opp_super_ratio`
-  - 表示自己與對手氣條。
+- `self_super_stock`, `opp_super_stock`
+  - 表示自己與對手已經集滿、可直接使用的 SA 次數。
   - RL 可用來學:
-    - 自己能不能開 SA
-    - 對手有氣時是否要減少高風險行動
+    - 自己能不能立刻開 SA
+    - 對手是否已經進入有 SA 威脅的狀態
+- `self_super_gauge_ratio`, `opp_super_gauge_ratio`
+  - 表示自己與對手目前這一格 SA 還在集的進度。
+  - RL 可用來學:
+    - 距離下一格 SA 還差多少
+    - 壓制或拉開距離時是否值得賭對手快滿氣
 - `self_stun_ratio`, `opp_stun_ratio`
   - 表示自己與對手暈值。
   - RL 可用來學:

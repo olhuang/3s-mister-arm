@@ -105,7 +105,7 @@ static FpsOverlayMode fps_overlay_mode = FPS_OVERLAY_OFF;
 static Uint64 fps_overlay_window_start_ns = 0;
 static Uint32 fps_overlay_window_frames = 0;
 static int fps_overlay_value = 0;
-static char fps_overlay_label[256] = "";
+static char fps_overlay_label[512] = "";
 
 /* Rolling-average timing breakdown for the FPS overlay (accumulated over the
    same 250 ms measurement window used for the FPS counter). */

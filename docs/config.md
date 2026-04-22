@@ -116,7 +116,8 @@ Notes:
 - On MiSTer, valid values are `off`, `fps`, `debug`, and `rl-debug`.
 - `rl-debug` is a lightweight RL-specific overlay mode intended for remote-agent bring-up. It now shows:
   - raw HP plus round / win state
-  - raw super / stun plus `DX`, `DY`, and facing
+  - `SA` full-stock count plus `SG` current gauge fill, then raw stun
+  - `DX`, `DY`, and facing
   - self / opponent corner distances
   - guard flags and current attack ids
   - do-not-move / hit-stop / high-jump flags

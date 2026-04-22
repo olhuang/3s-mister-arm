@@ -1102,6 +1102,45 @@ Result:
 - the next stage can focus on Milestone 2 handshake / delay-budget work instead of more local observation bring-up
 - decide whether to finish the remaining schema fields in the current runtime struct or refactor it to mirror the plan table more literally
 
+### 2026-04-22: Align RL Debug Super And Win Semantics With MiSTer Validation
+
+Milestones:
+
+- Milestone 1: Compact observation builder follow-up
+
+Purpose:
+
+- correct two observation/overlay assumptions that MiSTer runtime validation disproved
+- show both super-stock count and current gauge fill
+- move round-win tracking to the versus-specific counter path
+
+Changes:
+
+- updated `src/rl/rl_observation.h` / `src/rl/rl_observation.c`
+  - canonical observation now carries:
+    - `self_super_stock`, `self_super_stock_max`
+    - `opp_super_stock`, `opp_super_stock_max`
+    - `self_super_gauge_ratio`, `opp_super_gauge_ratio`
+  - `RL Debug` now shows:
+    - `SAa/b` for full-stock count
+    - `SGx/y` for current gauge fill progress
+  - round-win display now reads from `VS_Win_Record[*]`
+- increased RL overlay text buffers in:
+  - `src/port/sdl/sdl_app.c`
+  - `src/port/sdl/fbdev_presenter.c`
+- updated docs:
+  - `docs/plan-remote-rl-agent.md`
+  - `docs/config.md`
+
+Validation input from MiSTer:
+
+- `SA` was observed as `0/2`, `1/2`, `2/2`, confirming the old display was stock count instead of gauge progress
+- round wins stayed `0-0`, indicating `Win_Record[*]` was not the right versus overlay source
+
+Result:
+
+- RL overlay semantics now better match actual versus runtime behavior
+
 ### Milestone 2: Session Handshake, Network Probe, And Delay Budget
 
 Objective:

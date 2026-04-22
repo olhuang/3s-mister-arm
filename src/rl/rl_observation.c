@@ -25,10 +25,14 @@ typedef struct RLObservationDebugState {
     s16 opp_hp;
     s16 self_hp_start;
     s16 opp_hp_start;
-    s16 self_super;
-    s16 self_super_max;
-    s16 opp_super;
-    s16 opp_super_max;
+    s16 self_super_stock;
+    s16 self_super_stock_max;
+    s16 opp_super_stock;
+    s16 opp_super_stock_max;
+    s16 self_super_gauge;
+    s16 self_super_gauge_max;
+    s16 opp_super_gauge;
+    s16 opp_super_gauge_max;
     s16 self_stun;
     s16 self_stun_max;
     s16 opp_stun;
@@ -92,6 +96,20 @@ static s16 safe_super_store(s16 player) {
     return plw[player].sa->store;
 }
 
+static s16 safe_super_gauge_value(s16 player) {
+    if (plw[player].sa == NULL) {
+        return 0;
+    }
+    return plw[player].sa->gauge.s.h;
+}
+
+static s16 safe_super_gauge_max(s16 player) {
+    if (plw[player].sa == NULL || plw[player].sa->gauge_len <= 0) {
+        return 1;
+    }
+    return plw[player].sa->gauge_len;
+}
+
 static u16 agent_input_swkey(s16 agent) {
     return (agent == 0) ? p1sw_0 : p2sw_0;
 }
@@ -141,10 +159,14 @@ void RLObservation_OnFrameEnd() {
     debug.opp_hp = clamp_s16_nonnegative(plw[opp].wu.vital_new);
     debug.self_hp_start = round_start_hp[self];
     debug.opp_hp_start = round_start_hp[opp];
-    debug.self_super = safe_super_store(self);
-    debug.self_super_max = safe_super_max(self);
-    debug.opp_super = safe_super_store(opp);
-    debug.opp_super_max = safe_super_max(opp);
+    debug.self_super_stock = safe_super_store(self);
+    debug.self_super_stock_max = safe_super_max(self);
+    debug.opp_super_stock = safe_super_store(opp);
+    debug.opp_super_stock_max = safe_super_max(opp);
+    debug.self_super_gauge = safe_super_gauge_value(self);
+    debug.self_super_gauge_max = safe_super_gauge_max(self);
+    debug.opp_super_gauge = safe_super_gauge_value(opp);
+    debug.opp_super_gauge_max = safe_super_gauge_max(opp);
     debug.self_stun = sdat[self].cstn;
     debug.self_stun_max = safe_stun_max(self);
     debug.opp_stun = sdat[opp].cstn;
@@ -157,8 +179,12 @@ void RLObservation_OnFrameEnd() {
     debug.opp_right_corner = clamp_s16_nonnegative(scrr - plw[opp].wu.position_x);
     obs.self_hp_ratio = clamp_ratio(debug.self_hp, debug.self_hp_start);
     obs.opp_hp_ratio = clamp_ratio(debug.opp_hp, debug.opp_hp_start);
-    obs.self_super_ratio = clamp_ratio(debug.self_super, debug.self_super_max);
-    obs.opp_super_ratio = clamp_ratio(debug.opp_super, debug.opp_super_max);
+    obs.self_super_stock = (u8)debug.self_super_stock;
+    obs.self_super_stock_max = (u8)debug.self_super_stock_max;
+    obs.opp_super_stock = (u8)debug.opp_super_stock;
+    obs.opp_super_stock_max = (u8)debug.opp_super_stock_max;
+    obs.self_super_gauge_ratio = clamp_ratio(debug.self_super_gauge, debug.self_super_gauge_max);
+    obs.opp_super_gauge_ratio = clamp_ratio(debug.opp_super_gauge, debug.opp_super_gauge_max);
     obs.self_stun_ratio = clamp_ratio(debug.self_stun, debug.self_stun_max);
     obs.opp_stun_ratio = clamp_ratio(debug.opp_stun, debug.opp_stun_max);
     obs.opp_dx_ratio = (f32)debug.opp_dx / (f32)stage_width;
@@ -187,8 +213,8 @@ void RLObservation_OnFrameEnd() {
     obs.opp_routine[1] = (u16)plw[opp].wu.routine_no[1];
     obs.opp_routine[2] = (u16)plw[opp].wu.routine_no[2];
     obs.round_num = Round_num;
-    obs.self_round_wins = (u8)Win_Record[self];
-    obs.opp_round_wins = (u8)Win_Record[opp];
+    obs.self_round_wins = (u8)VS_Win_Record[self];
+    obs.opp_round_wins = (u8)VS_Win_Record[opp];
     obs.last_executed_move_intent = action_context->last_executed_move_intent;
     obs.last_executed_attack_bits = action_context->last_executed_attack_bits;
     obs.next_scheduled_move_intent = action_context->next_scheduled_move_intent;
@@ -248,7 +274,8 @@ void RLObservation_FormatDebugOverlay(char* out, size_t out_size, const char* se
     snprintf(out,
              out_size,
              "%s HP%d/%d OP%d/%d R%d %d-%d\n"
-             "SA%d/%d ST%d/%d DX%c%d DY%d F%d\n"
+             "SA%d/%d SG%d/%d ST%d/%d\n"
+             "DX%c%d DY%d F%d\n"
              "CL%d CR%d OL%d OR%d\n"
              "G%d/%d A%03X/%03X\n"
              "D%d/%d H%d/%d J%d/%d\n"
@@ -262,8 +289,10 @@ void RLObservation_FormatDebugOverlay(char* out, size_t out_size, const char* se
              latest_obs.round_num,
              latest_obs.self_round_wins,
              latest_obs.opp_round_wins,
-             latest_debug.self_super,
-             latest_debug.self_super_max,
+             latest_debug.self_super_stock,
+             latest_debug.self_super_stock_max,
+             latest_debug.self_super_gauge,
+             latest_debug.self_super_gauge_max,
              latest_debug.self_stun,
              latest_debug.self_stun_max,
              dx_side,

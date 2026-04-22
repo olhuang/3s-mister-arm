@@ -10,8 +10,12 @@ typedef struct RLObservationV1 {
     bool valid;
     f32 self_hp_ratio;
     f32 opp_hp_ratio;
-    f32 self_super_ratio;
-    f32 opp_super_ratio;
+    u8 self_super_stock;
+    u8 self_super_stock_max;
+    u8 opp_super_stock;
+    u8 opp_super_stock_max;
+    f32 self_super_gauge_ratio;
+    f32 opp_super_gauge_ratio;
     f32 self_stun_ratio;
     f32 opp_stun_ratio;
     f32 opp_dx_ratio;

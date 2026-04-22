@@ -2,6 +2,51 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-22: Milestone 2 UDP Probe Path
+
+Milestone:
+- Milestone 2: Session handshake, network probe, and delay budget
+
+Files changed:
+- `src/rl/rl_net.h`
+- `src/rl/rl_net.c`
+- `src/rl/rl_observation.c`
+- `src/configuration.h`
+- `src/args.c`
+- `src/main.c`
+- `src/port/config/config.h`
+- `src/port/config/config.c`
+- `tools/rl_probe_server.py`
+- `docs/config.md`
+- `docs/plan-remote-rl-agent.md`
+
+Purpose:
+- add the first live remote RL transport probe without changing gameplay input behavior
+- make target-network RTT/jitter visible in `RL Debug`
+
+Implementation notes:
+- RL UDP probe is default-off.
+- It opens a socket only when RL agent mode is enabled and `rl-agent-remote-ip` / `--rl-remote-ip` is set.
+- MiSTer sends `HELLO`, accepts matching `ACK`, then sends periodic `PING` packets and records matching `PONG` RTT samples.
+- `RL Debug` now shows `NETOFF`, `NETHELLO`, `NETOK`, or `NETERR`, plus sample count, p50/p95/p99/max RTT, and error count.
+- `tools/rl_probe_server.py` is the matching minimal remote-side UDP ACK/PONG responder.
+- `rl-agent-obs-port`, `rl-agent-action-port`, `rl-agent-delay-frames`, `rl-agent-decision-interval`, and `rl-agent-action-hold` are now config/CLI backed. The action port is reserved for the later action packet path.
+
+Validation:
+- `tools/mister/build-game.sh --flavor telemetry` passed.
+- `git diff --check` passed.
+- `python3 -c "import ast, pathlib; ast.parse(pathlib.Path('tools/rl_probe_server.py').read_text())"` passed.
+- Local UDP smoke test passed with `tools/rl_probe_server.py` bound to `127.0.0.1:37330` and a small Python client confirming:
+  - `HELLO` receives `ACK`
+  - `PING` receives `PONG`
+  - `PONG` preserves the original ping timestamp for RTT measurement
+
+Follow-up:
+- run the probe on the actual MiSTer + remote PC network
+- record p50/p95/p99/max RTT after at least 128 samples
+- choose `candidate_k_delay_frames`, `decision_interval_frames`, and `action_hold_frames` from the recorded target-network data
+- then connect the action queue / stale nonce rejection path
+
 Primary plan:
 
 - `docs/plan-remote-rl-agent.md`

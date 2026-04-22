@@ -72,6 +72,24 @@ static bool is_supported_perf_wait_runtime_state(const char* state_name) {
 }
 #endif
 
+static void load_remote_rl_agent_config(Configuration* configuration) {
+    RemoteRLAgentConfiguration* rl = &configuration->remote_rl_agent;
+
+    if (Config_HasExplicitKey(CFG_KEY_RL_AGENT_REMOTE_IP)) {
+        rl->remote_ip = Config_GetString(CFG_KEY_RL_AGENT_REMOTE_IP);
+    }
+
+    rl->obs_port = Config_GetInt(CFG_KEY_RL_AGENT_OBS_PORT);
+    rl->action_port = Config_GetInt(CFG_KEY_RL_AGENT_ACTION_PORT);
+    rl->delay_frames = Config_GetInt(CFG_KEY_RL_AGENT_DELAY_FRAMES);
+    rl->decision_interval_frames = Config_GetInt(CFG_KEY_RL_AGENT_DECISION_INTERVAL);
+    rl->action_hold_frames = Config_GetInt(CFG_KEY_RL_AGENT_ACTION_HOLD);
+}
+
+static bool is_valid_port(int port) {
+    return port >= 0 && port <= 65535;
+}
+
 static void verify_configuration(Configuration* configuration) {
     const TestRunnerConfiguration* test = &configuration->test;
 
@@ -160,6 +178,23 @@ static void verify_configuration(Configuration* configuration) {
     if (configuration->remote_rl_agent.test_movement < 0 || configuration->remote_rl_agent.test_movement > 3) {
         error_out_with_code("--rl-movement must be between 0 and 3.", EXIT_CODE_RUNTIME_ERROR);
     }
+    if (!is_valid_port(configuration->remote_rl_agent.obs_port)) {
+        error_out_with_code("--rl-obs-port must be between 0 and 65535.", EXIT_CODE_RUNTIME_ERROR);
+    }
+    if (!is_valid_port(configuration->remote_rl_agent.action_port)) {
+        error_out_with_code("--rl-action-port must be between 0 and 65535.", EXIT_CODE_RUNTIME_ERROR);
+    }
+    if (configuration->remote_rl_agent.delay_frames < 0 || configuration->remote_rl_agent.delay_frames > 30) {
+        error_out_with_code("--rl-delay must be between 0 and 30.", EXIT_CODE_RUNTIME_ERROR);
+    }
+    if (configuration->remote_rl_agent.decision_interval_frames <= 0 ||
+        configuration->remote_rl_agent.decision_interval_frames > 30) {
+        error_out_with_code("--rl-decision-interval must be between 1 and 30.", EXIT_CODE_RUNTIME_ERROR);
+    }
+    if (configuration->remote_rl_agent.action_hold_frames <= 0 ||
+        configuration->remote_rl_agent.action_hold_frames > 30) {
+        error_out_with_code("--rl-action-hold must be between 1 and 30.", EXIT_CODE_RUNTIME_ERROR);
+    }
 
 #if ENABLE_NETPLAY
     {
@@ -198,6 +233,7 @@ void read_args(int argc, const char* argv[], Configuration* configuration) {
 #if ENABLE_NETPLAY
     load_netplay_config(configuration);
 #endif
+    load_remote_rl_agent_config(configuration);
 
     struct argparse_option options[] = {
         OPT_HELP(),
@@ -252,6 +288,48 @@ void read_args(int argc, const char* argv[], Configuration* configuration) {
                     "rl-movement",
                     &configuration->remote_rl_agent.test_movement,
                     "Fixed RL validation movement: 0=forward, 1=back, 2=jump-forward, 3=down-back.",
+                    NULL,
+                    0,
+                    0),
+        OPT_STRING(0,
+                   "rl-remote-ip",
+                   &configuration->remote_rl_agent.remote_ip,
+                   "Remote RL learner/probe IPv4 or hostname. Enables UDP probe when used with --rl-agent.",
+                   NULL,
+                   0,
+                   0),
+        OPT_INTEGER(0,
+                    "rl-obs-port",
+                    &configuration->remote_rl_agent.obs_port,
+                    "Remote RL observation/probe UDP port.",
+                    NULL,
+                    0,
+                    0),
+        OPT_INTEGER(0,
+                    "rl-action-port",
+                    &configuration->remote_rl_agent.action_port,
+                    "Remote RL action UDP port reserved for the action path.",
+                    NULL,
+                    0,
+                    0),
+        OPT_INTEGER(0,
+                    "rl-delay",
+                    &configuration->remote_rl_agent.delay_frames,
+                    "Candidate delayed-action frame offset k.",
+                    NULL,
+                    0,
+                    0),
+        OPT_INTEGER(0,
+                    "rl-decision-interval",
+                    &configuration->remote_rl_agent.decision_interval_frames,
+                    "Frames between critical-path RL decisions.",
+                    NULL,
+                    0,
+                    0),
+        OPT_INTEGER(0,
+                    "rl-action-hold",
+                    &configuration->remote_rl_agent.action_hold_frames,
+                    "Frames to hold each executed RL wire action.",
                     NULL,
                     0,
                     0),

@@ -124,6 +124,7 @@ Notes:
   - `SR` / `OR` self / opponent routine triplets
   - action-context (`last_executed_*`, `next_scheduled_*`, `frames_until_next_action`)
   - observation build cost as `avg/max` microseconds
+  - RL network probe state as `NET`, sample count, p50/p95/p99/max RTT in microseconds, and socket error count
   - a fixed RL input row using `U D L R LP MP HP LK MK HK`, white when idle and red when active
 - `P0` means RL agent is disabled.
 - `P1C` / `P2C` mean RL routing is active for player 1 / player 2 and the opponent side is still CPU-controlled.
@@ -174,6 +175,49 @@ Notes:
 - The movement is relative to the RL-controlled character's current facing and is remapped to raw `SWKey` direction bits immediately before input latch.
 - The movement override is only active when RL agent mode is enabled and the RL opponent is set to `human`.
 - This is a Milestone 0B validation helper, not the final remote-policy action path.
+
+### `rl-agent-remote-ip`
+
+Remote learner/probe host used by the Milestone 2 UDP RL probe.
+
+Notes:
+- The UDP probe is enabled only when RL agent mode is active and this key or `--rl-remote-ip` is set.
+- The first Milestone 2 probe talks to the observation/probe port only; the action port is reserved for the later action path.
+
+### `rl-agent-obs-port`
+
+Remote UDP observation/probe port.
+
+Default:
+- `37330`
+
+### `rl-agent-action-port`
+
+Remote UDP action port reserved for the later action path.
+
+Default:
+- `37331`
+
+### `rl-agent-delay-frames`
+
+Candidate delayed-action frame offset `k` used in the negotiated RL session config.
+
+Default:
+- `3`
+
+### `rl-agent-decision-interval`
+
+Frames between critical-path RL decision/probe cadence points.
+
+Default:
+- `4`
+
+### `rl-agent-action-hold`
+
+Frames to hold each executed RL wire action.
+
+Default:
+- `4`
 
 ### `video-driver-order`
 

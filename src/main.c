@@ -4,8 +4,10 @@
 #include "common.h"
 #include "configuration.h"
 #include "netplay/netplay.h"
+#include "port/config/config.h"
 #include "port/sdl/sdl_app.h"
 #include "port/sdl/sdl_game_renderer.h"
+#include "rl/rl_net.h"
 #include "rl/rl_session.h"
 #include "sf33rd/AcrSDK/common/mlPAD.h"
 #include "sf33rd/AcrSDK/ps2/flps2debug.h"
@@ -89,6 +91,12 @@ Configuration configuration = {
             .player = 1,
             .human_opponent = false,
             .test_movement = 0,
+            .remote_ip = NULL,
+            .obs_port = 37330,
+            .action_port = 37331,
+            .delay_frames = 3,
+            .decision_interval_frames = 4,
+            .action_hold_frames = 4,
         },
 };
 
@@ -198,6 +206,29 @@ static void set_netplay_params() {
 #endif
 }
 
+static void apply_remote_rl_config_file_values() {
+    RemoteRLAgentConfiguration* rl = &configuration.remote_rl_agent;
+
+    if (rl->remote_ip == NULL && Config_HasExplicitKey(CFG_KEY_RL_AGENT_REMOTE_IP)) {
+        rl->remote_ip = Config_GetString(CFG_KEY_RL_AGENT_REMOTE_IP);
+    }
+    if (Config_HasExplicitKey(CFG_KEY_RL_AGENT_OBS_PORT)) {
+        rl->obs_port = Config_GetInt(CFG_KEY_RL_AGENT_OBS_PORT);
+    }
+    if (Config_HasExplicitKey(CFG_KEY_RL_AGENT_ACTION_PORT)) {
+        rl->action_port = Config_GetInt(CFG_KEY_RL_AGENT_ACTION_PORT);
+    }
+    if (Config_HasExplicitKey(CFG_KEY_RL_AGENT_DELAY_FRAMES)) {
+        rl->delay_frames = Config_GetInt(CFG_KEY_RL_AGENT_DELAY_FRAMES);
+    }
+    if (Config_HasExplicitKey(CFG_KEY_RL_AGENT_DECISION_INTERVAL)) {
+        rl->decision_interval_frames = Config_GetInt(CFG_KEY_RL_AGENT_DECISION_INTERVAL);
+    }
+    if (Config_HasExplicitKey(CFG_KEY_RL_AGENT_ACTION_HOLD)) {
+        rl->action_hold_frames = Config_GetInt(CFG_KEY_RL_AGENT_ACTION_HOLD);
+    }
+}
+
 void cpInitTask() {
     memset(&task, 0, sizeof(task));
 }
@@ -283,13 +314,16 @@ static void initialize_game() {
     init_windows_console();
 #endif
 
+    apply_remote_rl_config_file_values();
     set_netplay_params();
+    RLNet_Init(&configuration.remote_rl_agent);
     ArcadeBalance_Init();
     AFS_Init(Resources_GetAFSPath());
     sf3_init();
 }
 
 static void cleanup() {
+    RLNet_Shutdown();
     AFS_Finish();
     SDLApp_Quit();
 }
@@ -644,6 +678,7 @@ static int loop() {
 
         case MAIN_PHASE_INITIALIZED:
             handle_signal_requests();
+            RLNet_Tick();
 
             is_running = SDLApp_PollEvents();
 

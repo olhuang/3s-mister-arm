@@ -83,6 +83,11 @@ typedef struct ConfigEntry {
 #define DEFAULT_AI_ADAPT_BAIT_TRIGGER_JUMP "6"
 #define DEFAULT_AI_ADAPT_BAIT_TRIGGER_LOW "6"
 #define DEFAULT_AI_ADAPT_BAIT_TRIGGER_REPEAT "6"
+#define DEFAULT_RL_AGENT_OBS_PORT 37330
+#define DEFAULT_RL_AGENT_ACTION_PORT 37331
+#define DEFAULT_RL_AGENT_DELAY_FRAMES 3
+#define DEFAULT_RL_AGENT_DECISION_INTERVAL 4
+#define DEFAULT_RL_AGENT_ACTION_HOLD 4
 
 static const ConfigEntry default_entries[] = {
     { .key = CFG_KEY_FULLSCREEN, .type = CFG_BOOL, .value.b = true },
@@ -129,6 +134,11 @@ static const ConfigEntry default_entries[] = {
     { .key = CFG_KEY_AI_ADAPT_BAIT_TRIGGER_JUMP, .type = CFG_STRING, .value.s = DEFAULT_AI_ADAPT_BAIT_TRIGGER_JUMP },
     { .key = CFG_KEY_AI_ADAPT_BAIT_TRIGGER_LOW, .type = CFG_STRING, .value.s = DEFAULT_AI_ADAPT_BAIT_TRIGGER_LOW },
     { .key = CFG_KEY_AI_ADAPT_BAIT_TRIGGER_REPEAT, .type = CFG_STRING, .value.s = DEFAULT_AI_ADAPT_BAIT_TRIGGER_REPEAT },
+    { .key = CFG_KEY_RL_AGENT_OBS_PORT, .type = CFG_INT, .value.i = DEFAULT_RL_AGENT_OBS_PORT },
+    { .key = CFG_KEY_RL_AGENT_ACTION_PORT, .type = CFG_INT, .value.i = DEFAULT_RL_AGENT_ACTION_PORT },
+    { .key = CFG_KEY_RL_AGENT_DELAY_FRAMES, .type = CFG_INT, .value.i = DEFAULT_RL_AGENT_DELAY_FRAMES },
+    { .key = CFG_KEY_RL_AGENT_DECISION_INTERVAL, .type = CFG_INT, .value.i = DEFAULT_RL_AGENT_DECISION_INTERVAL },
+    { .key = CFG_KEY_RL_AGENT_ACTION_HOLD, .type = CFG_INT, .value.i = DEFAULT_RL_AGENT_ACTION_HOLD },
     { .key = CFG_KEY_SHOW_FPS, .type = CFG_STRING, .value.s = "off" },
     { .key = CFG_KEY_VIDEO_DRIVER_ORDER, .type = CFG_STRING, .value.s = DEFAULT_VIDEO_DRIVER_ORDER },
     { .key = CFG_KEY_RENDER_DRIVER_ORDER, .type = CFG_STRING, .value.s = DEFAULT_RENDER_DRIVER_ORDER },

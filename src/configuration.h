@@ -29,6 +29,12 @@ typedef struct RemoteRLAgentConfiguration {
     int player;
     bool human_opponent;
     int test_movement;
+    const char* remote_ip;
+    int obs_port;
+    int action_port;
+    int delay_frames;
+    int decision_interval_frames;
+    int action_hold_frames;
 } RemoteRLAgentConfiguration;
 
 #if ENABLE_PERF_TELEMETRY

@@ -1,5 +1,6 @@
 #include "rl/rl_observation.h"
 
+#include "rl/rl_net.h"
 #include "rl/rl_session.h"
 #include "sf33rd/AcrSDK/common/pad.h"
 #include "sf33rd/Source/Game/engine/plcnt.h"
@@ -272,6 +273,11 @@ void RLObservation_FormatDebugOverlay(char* out, size_t out_size, const char* se
 
     const char dx_side = latest_debug.opp_dx < 0 ? 'L' : 'R';
     const int dx_abs = latest_debug.opp_dx < 0 ? -latest_debug.opp_dx : latest_debug.opp_dx;
+    const RLNetState* net = RLNet_GetState();
+    const char* net_state = "OFF";
+    if (net->enabled) {
+        net_state = net->handshake_accepted ? "OK" : (net->socket_open ? "HELLO" : "ERR");
+    }
 
     snprintf(out,
              out_size,
@@ -282,7 +288,8 @@ void RLObservation_FormatDebugOverlay(char* out, size_t out_size, const char* se
              "CF%d/%d AK%03X/%03X\n"
              "NM%d/%d HS%d/%d HJ%d/%d\n"
              "SR%d,%d,%d OR%d,%d,%d\n"
-             "X%d/%03X N%d/%03X T%d O%lu/%luus",
+             "X%d/%03X N%d/%03X T%d O%lu/%luus\n"
+             "NET%s S%u P%u/%u/%u MAX%uus E%u",
              session_label != NULL ? session_label : "P0",
              latest_debug.self_hp,
              latest_debug.self_hp_start,
@@ -329,5 +336,12 @@ void RLObservation_FormatDebugOverlay(char* out, size_t out_size, const char* se
              latest_obs.next_scheduled_attack_bits,
              latest_obs.frames_until_next_action,
              (unsigned long)latest_debug.obs_build_avg_us,
-             (unsigned long)latest_debug.obs_build_max_us);
+             (unsigned long)latest_debug.obs_build_max_us,
+             net_state,
+             (unsigned int)net->probe_stats.sample_count,
+             (unsigned int)net->probe_stats.p50_us,
+             (unsigned int)net->probe_stats.p95_us,
+             (unsigned int)net->probe_stats.p99_us,
+             (unsigned int)net->probe_stats.max_us,
+             (unsigned int)net->last_error_count);
 }

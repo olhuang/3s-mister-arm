@@ -1755,9 +1755,9 @@ Tasks:
 - [x] Reject unsupported action encoding modes
 - [x] Reject unsupported timing configs
 - [x] Reject unsupported feature flags
-- [ ] Add a minimal ping/pong packet path between MiSTer and the remote PC
-- [ ] Measure RTT
-- [ ] Measure jitter
+- [x] Add a minimal ping/pong packet path between MiSTer and the remote PC
+- [x] Measure RTT
+- [x] Measure jitter
 - [x] Add local p50 latency calculation helper
 - [x] Add local p95 latency calculation helper
 - [x] Add local p99 latency calculation helper
@@ -1778,11 +1778,35 @@ Current implementation notes:
   - ack/config validation helpers
   - sorted-sample p50/p95/p99 probe-stat helper
 - `src/rl/rl_net.*` currently provides a no-op disabled network state:
-  - no socket is opened
-  - no packets are sent or received
-  - gameplay input behavior is unchanged
+  - no socket is opened unless RL agent mode is active and `rl-agent-remote-ip` / `--rl-remote-ip` is set
+  - the first live path sends `HELLO`, waits for `ACK`, then sends periodic `PING` packets and accepts `PONG`
+  - gameplay input behavior is unchanged; the probe only updates network state and RTT statistics
   - default timing placeholders are `decision_interval_frames = 4`, `action_hold_frames = 4`, `candidate_k_delay_frames = 3`
-- actual UDP ping/pong and target-network measurements remain open.
+- `tools/rl_probe_server.py` is the first remote-side validation server for this path.
+- `RL Debug` overlay appends a compact network line:
+  - `NETOFF`: no remote probe configured
+  - `NETHELLO`: UDP socket is open and MiSTer is sending hello packets
+  - `NETOK`: hello/ack succeeded and ping/pong samples are accumulating
+  - `NETERR`: probe was configured but socket setup failed
+  - `S`: sample count
+  - `P`: p50/p95/p99 RTT in microseconds
+  - `MAX`: max RTT in microseconds
+  - `E`: socket/send/recv error count
+- target-network measurements remain open until this is run on the actual MiSTer + remote PC network.
+
+Local / MiSTer validation steps:
+
+1. On the remote PC, run:
+   - `python3 tools/rl_probe_server.py --host 0.0.0.0 --port 37330 --verbose`
+2. Launch MiSTer with RL enabled and remote probe settings:
+   - `--rl-agent --rl-player 1 --rl-remote-ip <remote_pc_ip> --rl-obs-port 37330 --rl-action-port 37331`
+3. In OSD, set `FPS Counter = RL Debug`.
+4. Expected overlay progression:
+   - without remote IP: `NETOFF`
+   - with remote IP before ack: `NETHELLO`
+   - after ack/pong: `NETOK S... Pp50/p95/p99 MAX...us E0`
+5. Record p50/p95/p99/max RTT from the overlay after at least 128 samples.
+6. Choose `k`, `decision_interval_frames`, and `action_hold_frames` only after target-network values are recorded.
 
 Done when:
 

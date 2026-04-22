@@ -1747,23 +1747,42 @@ Goal:
 
 Tasks:
 
-- [ ] Add `RLSessionHello`
-- [ ] Add `RLSessionAck`
-- [ ] Add `config_hash` generation and validation
-- [ ] Reject mismatched protocol versions
-- [ ] Reject mismatched observation schema versions
-- [ ] Reject unsupported action encoding modes
-- [ ] Reject unsupported timing configs
-- [ ] Reject unsupported feature flags
+- [x] Add `RLSessionHello`
+- [x] Add `RLSessionAck`
+- [x] Add `config_hash` generation and validation
+- [x] Reject mismatched protocol versions
+- [x] Reject mismatched observation schema versions
+- [x] Reject unsupported action encoding modes
+- [x] Reject unsupported timing configs
+- [x] Reject unsupported feature flags
 - [ ] Add a minimal ping/pong packet path between MiSTer and the remote PC
 - [ ] Measure RTT
 - [ ] Measure jitter
-- [ ] Measure p50 latency
-- [ ] Measure p95 latency
-- [ ] Measure p99 latency
+- [x] Add local p50 latency calculation helper
+- [x] Add local p95 latency calculation helper
+- [x] Add local p99 latency calculation helper
+- [ ] Measure p50 latency on target network
+- [ ] Measure p95 latency on target network
+- [ ] Measure p99 latency on target network
 - [ ] Choose `k` from measured data
 - [ ] Choose `decision_interval_frames` from measured data
 - [ ] Choose `action_hold_frames` from measured data
+
+Current implementation notes:
+
+- `src/rl/rl_protocol.*` defines the Milestone 2 protocol data layer:
+  - `RLSessionHello`
+  - `RLSessionAck`
+  - `RLSessionConfig`
+  - deterministic FNV-1a `config_hash`
+  - ack/config validation helpers
+  - sorted-sample p50/p95/p99 probe-stat helper
+- `src/rl/rl_net.*` currently provides a no-op disabled network state:
+  - no socket is opened
+  - no packets are sent or received
+  - gameplay input behavior is unchanged
+  - default timing placeholders are `decision_interval_frames = 4`, `action_hold_frames = 4`, `candidate_k_delay_frames = 3`
+- actual UDP ping/pong and target-network measurements remain open.
 
 Done when:
 

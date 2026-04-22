@@ -1288,6 +1288,54 @@ Validation:
 git diff --check
 ```
 
+### 2026-04-22: Start Milestone 2 Protocol Skeleton
+
+Milestones:
+
+- Milestone 2: Session handshake, network probe, and delay budget
+
+Purpose:
+
+- start the remote RL session handshake/probe milestone with a safe data-layer-only implementation
+- define the hello/ack/config/hash/probe-stat helpers before adding live socket I/O
+
+Changes:
+
+- added `src/rl/rl_protocol.h`
+  - protocol/schema/action version constants
+  - `RLSessionConfig`
+  - `RLSessionHello`
+  - `RLSessionAck`
+  - ack status enum
+  - `RLProbeStats`
+- added `src/rl/rl_protocol.c`
+  - default config
+  - deterministic FNV-1a config hash
+  - timing/config validation helpers
+  - ack validation helper
+  - sorted-sample p50/p95/p99 probe-stat helper
+- added `src/rl/rl_net.h` / `src/rl/rl_net.c`
+  - no-op disabled network state
+  - no socket open/send/receive path yet
+  - default config state only, so existing fake-agent and overlay behavior stay unchanged
+- updated `docs/plan-remote-rl-agent.md`
+  - checked off protocol data-layer tasks
+  - split percentile helper work from target-network latency measurement work
+  - documented current no-op disabled path and placeholder timing values
+
+Validation plan:
+
+```sh
+tools/mister/build-game.sh --flavor telemetry
+git diff --check
+```
+
+Follow-up:
+
+- add the actual UDP ping/pong packet path
+- expose remote host/port configuration
+- collect target-network RTT / jitter / p50 / p95 / p99 before choosing final `k`, `decision_interval_frames`, and `action_hold_frames`
+
 ### Milestone 2: Session Handshake, Network Probe, And Delay Budget
 
 Objective:

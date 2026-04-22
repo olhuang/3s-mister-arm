@@ -57,6 +57,17 @@ Update after hardware retest:
   - attack bits now pulse for one frame only
 - hardware retest confirmed `--policy hp` now produces visible punches as expected
 
+Further Milestone 3 closeout work:
+- duplicate-rule handling now persists a small seen-decision table in `src/rl/rl_session.c`
+- first accepted `(episode_id, decision_id, target_frame)` is remembered even after execution/fallback
+- later packets with the same tuple are now counted as `DU`
+- later packets with the same `(episode_id, decision_id)` but a different `target_frame` are now counted as `TM`
+- `tools/rl_probe_server.py` gained:
+  - `--obs-reply-mode normal`
+  - `--obs-reply-mode duplicate`
+  - `--obs-reply-mode wrong-target`
+  so MiSTer-side `DU/TM` counters can be validated deterministically on hardware
+
 ## 2026-04-22: Milestone 2 Action Session Gate
 
 Milestone:

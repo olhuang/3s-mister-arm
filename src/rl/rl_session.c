@@ -40,6 +40,13 @@ typedef struct RLExpectedRemoteDecision {
     u32 target_frame;
 } RLExpectedRemoteDecision;
 
+typedef struct RLSeenRemoteDecision {
+    bool valid;
+    u32 episode_id;
+    u32 decision_id;
+    u32 target_frame;
+} RLSeenRemoteDecision;
+
 typedef struct RLRemoteActiveAction {
     bool valid;
     u8 move_intent;
@@ -60,6 +67,7 @@ static const RLLocalFakeAction kLocalFakeAgentSequence[] = {
 
 #define RL_REMOTE_QUEUE_CAP 16u
 #define RL_REMOTE_EXPECTED_CAP 16u
+#define RL_REMOTE_SEEN_CAP 32u
 
 static u16 local_fake_action_index;
 static u16 local_fake_action_frame;
@@ -68,6 +76,7 @@ static bool remote_runtime_initialized;
 static RLRemoteDebugState remote_debug;
 static RLQueuedRemoteAction remote_queue[RL_REMOTE_QUEUE_CAP];
 static RLExpectedRemoteDecision expected_decisions[RL_REMOTE_EXPECTED_CAP];
+static RLSeenRemoteDecision seen_decisions[RL_REMOTE_SEEN_CAP];
 static RLRemoteActiveAction active_remote_action;
 static RLActionContext action_context = {
     .last_executed_move_intent = RL_MOVE_NEUTRAL,
@@ -118,6 +127,7 @@ static bool RLSession_RemoteControlEnabled() {
 static void RLSession_ClearRemoteQueue() {
     memset(remote_queue, 0, sizeof(remote_queue));
     memset(expected_decisions, 0, sizeof(expected_decisions));
+    memset(seen_decisions, 0, sizeof(seen_decisions));
     memset(&active_remote_action, 0, sizeof(active_remote_action));
     remote_debug.queue_depth = 0;
 }
@@ -278,6 +288,25 @@ static RLQueuedRemoteAction* RLSession_AllocQueuedAction() {
         }
     }
     return NULL;
+}
+
+static RLSeenRemoteDecision* RLSession_FindSeenDecision(u32 episode_id, u32 decision_id) {
+    for (u32 i = 0; i < RL_REMOTE_SEEN_CAP; i++) {
+        if (seen_decisions[i].valid && seen_decisions[i].episode_id == episode_id &&
+            seen_decisions[i].decision_id == decision_id) {
+            return &seen_decisions[i];
+        }
+    }
+    return NULL;
+}
+
+static RLSeenRemoteDecision* RLSession_AllocSeenDecision() {
+    for (u32 i = 0; i < RL_REMOTE_SEEN_CAP; i++) {
+        if (!seen_decisions[i].valid) {
+            return &seen_decisions[i];
+        }
+    }
+    return &seen_decisions[0];
 }
 
 static void RLSession_RemoveExpectedDecision(RLExpectedRemoteDecision* entry) {
@@ -519,6 +548,7 @@ static void RLSession_ApplyRemoteActionToBuffers() {
 RLRemoteActionSubmitResult RLSession_SubmitRemoteAction(const RLActionPacket* packet) {
     RLExpectedRemoteDecision* expected = NULL;
     RLQueuedRemoteAction* queued = NULL;
+    RLSeenRemoteDecision* seen = NULL;
 
     if (packet == NULL || !RLSession_RemoteControlEnabled()) {
         return RL_REMOTE_ACTION_SUBMIT_TARGET_MISMATCH;
@@ -529,6 +559,16 @@ RLRemoteActionSubmitResult RLSession_SubmitRemoteAction(const RLActionPacket* pa
     if (packet->target_frame < remote_debug.frame_id) {
         remote_debug.late_drop_count++;
         return RL_REMOTE_ACTION_SUBMIT_LATE;
+    }
+
+    seen = RLSession_FindSeenDecision(packet->episode_id, packet->decision_id);
+    if (seen != NULL) {
+        if (seen->target_frame != packet->target_frame) {
+            remote_debug.target_mismatch_count++;
+            return RL_REMOTE_ACTION_SUBMIT_TARGET_MISMATCH;
+        }
+        remote_debug.duplicate_drop_count++;
+        return RL_REMOTE_ACTION_SUBMIT_DUPLICATE;
     }
 
     expected = RLSession_FindExpectedDecision(packet->episode_id, packet->decision_id);
@@ -553,6 +593,11 @@ RLRemoteActionSubmitResult RLSession_SubmitRemoteAction(const RLActionPacket* pa
     queued->decision_id = packet->decision_id;
     queued->target_frame = packet->target_frame;
     queued->action_wire = packet->action_wire;
+    seen = RLSession_AllocSeenDecision();
+    seen->valid = true;
+    seen->episode_id = packet->episode_id;
+    seen->decision_id = packet->decision_id;
+    seen->target_frame = packet->target_frame;
     expected->fulfilled = true;
     remote_debug.queued_count++;
     remote_debug.queue_depth++;

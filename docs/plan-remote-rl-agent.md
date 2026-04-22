@@ -1865,7 +1865,7 @@ Tasks:
 - [x] Add minimal `ObsPacket` header send path on decision frames
 - [x] Add `ActionPacket` receive path
 - [x] Add pending action queue keyed by `target_frame`
-- [ ] Validate `(episode_id, decision_id, target_frame)` duplicate rules
+- [x] Validate `(episode_id, decision_id, target_frame)` duplicate rules
 - [x] Reject `ActionPacket.target_frame` mismatches against the minimal in-flight expectation table
 - [x] Add default fallback mode using `action_hold_frames`
 - [x] Add telemetry counters for packet miss, late packet, duplicate packet, target mismatch, and fallback usage
@@ -1892,6 +1892,11 @@ Implementation notes:
   - `TM`: target-mismatch rejects against the minimal expectation table
   - `FB`: fallback executions when a due target frame had no valid queued action
 - `tools/rl_probe_server.py` now also accepts Milestone 3 observation headers and sends a fixed action that echoes the incoming `episode_id`, `decision_id`, and `target_frame`.
+- duplicate handling now follows the v1 rule more closely:
+  - first accepted `(episode_id, decision_id, target_frame)` is kept
+  - later arrivals with the same tuple increment `DU`
+  - later arrivals with the same `(episode_id, decision_id)` but a different `target_frame` increment `TM`
+- `tools/rl_probe_server.py --obs-reply-mode duplicate|wrong-target` can now force those two protocol cases on hardware.
 - Hardware validation on 2026-04-22:
   - fixed `forward` policy reached steady-state packet flow with `OBS891 Q1/890 EX886 LT1 DU0 TM0 FB1`
   - fixed `hp` policy originally lit the overlay without producing a punch because the MVP path held attack buttons for the full action-hold window

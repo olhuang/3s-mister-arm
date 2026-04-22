@@ -89,6 +89,7 @@ def serve(
     action_port: int | None,
     action_mode: str,
     policy: str,
+    obs_reply_mode: str,
 ) -> None:
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind((host, port))
@@ -116,19 +117,32 @@ def serve(
                     print(f"{addr} bad_obs_header magic=0x{magic:08x} version={version} type={packet_type}")
                 continue
             if action_port is not None:
+                target_wire = fixed_action_wire(policy)
                 payload = make_action_packet(
                     nonce,
                     episode_id,
                     decision_id,
                     target_frame,
-                    fixed_action_wire(policy),
+                    target_wire,
                 )
                 target = (addr[0], action_port)
                 sock.sendto(payload, target)
+                if obs_reply_mode == "duplicate":
+                    sock.sendto(payload, target)
+                elif obs_reply_mode == "wrong-target":
+                    wrong_payload = make_action_packet(
+                        nonce,
+                        episode_id,
+                        decision_id,
+                        target_frame + 1,
+                        target_wire,
+                    )
+                    sock.sendto(wrong_payload, target)
                 if verbose:
                     print(
-                        f"{target} OBS-ACTION policy={policy} ep={episode_id} dec={decision_id} "
-                        f"obs={obs_frame} target={target_frame} hold={action_hold_frames}"
+                        f"{target} OBS-ACTION policy={policy} reply={obs_reply_mode} "
+                        f"ep={episode_id} dec={decision_id} obs={obs_frame} "
+                        f"target={target_frame} hold={action_hold_frames}"
                     )
             continue
         if len(data) != PACKET.size:
@@ -186,9 +200,15 @@ def main() -> None:
         default="forward",
         help="Fixed action used when MiSTer sends Milestone 3 observation headers",
     )
+    parser.add_argument(
+        "--obs-reply-mode",
+        choices=["normal", "duplicate", "wrong-target"],
+        default="normal",
+        help="How to reply to Milestone 3 observation headers",
+    )
     parser.add_argument("--verbose", action="store_true", help="Log every valid packet")
     args = parser.parse_args()
-    serve(args.host, args.port, args.verbose, args.action_port, args.action_mode, args.policy)
+    serve(args.host, args.port, args.verbose, args.action_port, args.action_mode, args.policy, args.obs_reply_mode)
 
 
 if __name__ == "__main__":

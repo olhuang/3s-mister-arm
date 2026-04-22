@@ -28,12 +28,12 @@ Project rules:
 
 ## Current Status
 
-Last updated: 2026-04-21
+Last updated: 2026-04-22
 
 - [x] Milestone 0A: Baseline match-flow confirmation spike
 - [x] Milestone 0B: Facing and remap validation micro-spike
 - [x] Milestone 0C: Local fake agent spike
-- [ ] Milestone 1: Compact observation builder
+- [x] Milestone 1: Compact observation builder
 - [ ] Milestone 2: Session handshake, network probe, and delay budget
 - [ ] Milestone 3: Remote inference only
 - [ ] Milestone 4: Decision ledger and transition logging
@@ -1040,6 +1040,66 @@ Open questions:
 
 - validate whether the current first active-frame `round_start_hp[i]` capture matches round bootstrap on hardware
 - validate positions, HP, super, stun, attack state, guard state, and round state against visible gameplay
+
+### 2026-04-22: Close Milestone 1 Observation Builder
+
+Milestones:
+
+- Milestone 1: Compact observation builder
+
+Purpose:
+
+- finish the runtime observation schema so it matches the canonical `RLObservationV1` table
+- expose action-context and corner-distance directly on MiSTer
+- make the `RL Debug` overlay sufficient for validation and cost measurement without extra tooling
+
+Changes:
+
+- updated `src/rl/rl_observation.h` so `RLObservationV1` now uses the canonical schema fields:
+  - normalized HP / super / stun ratios
+  - normalized `opp_dx_ratio` / `opp_dy_ratio`
+  - normalized self / opponent corner ratios
+  - all fixed state / round / action-context fields from plan section `4A`
+- updated `src/rl/rl_observation.c`:
+  - compute ratios from `round_start_hp`, `sa->store_max`, `py->genkai`, and `scrl/scrr`
+  - keep raw debug values for overlay readability
+  - measure observation build cost per frame and expose running `avg/max` microseconds
+  - expand `RL Debug` into a compact multiline validation view covering:
+    - HP / super / stun / round / wins
+    - `DX`, `DY`, facing, and corner distances
+    - guard flags and attack ids
+    - do-not-move / hit-stop / high-jump flags
+    - self / opponent routine triplets
+    - action-context and observation cost
+- updated `src/rl/rl_session.h` / `src/rl/rl_session.c`:
+  - added explicit `RL_MOVE_*` intent enum matching the plan
+  - added `RLActionContext`
+  - fake-agent and human-opponent validation paths now publish:
+    - `last_executed_move_intent`
+    - `last_executed_attack_bits`
+    - `next_scheduled_move_intent`
+    - `next_scheduled_attack_bits`
+    - `frames_until_next_action`
+- updated docs:
+  - `docs/plan-remote-rl-agent.md`
+  - `docs/config.md`
+
+Validation:
+
+- local build passed:
+  - `tools/mister/build-game.sh --flavor telemetry`
+- lint-style patch check passed:
+  - `git diff --check`
+- MiSTer validation path is now documented as a concrete matrix using existing OSD controls:
+  - `RL Settings -> RL Agent`
+  - `RL Settings -> RL Opponent`
+  - `RL Settings -> RL Movement`
+  - `FPS Counter = RL Debug`
+
+Result:
+
+- Milestone 1 is now ready to close
+- the next stage can focus on Milestone 2 handshake / delay-budget work instead of more local observation bring-up
 - decide whether to finish the remaining schema fields in the current runtime struct or refactor it to mirror the plan table more literally
 
 ### Milestone 2: Session Handshake, Network Probe, And Delay Budget

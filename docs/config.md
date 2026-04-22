@@ -114,12 +114,20 @@ Notes:
 - On MiSTer fbdev output, the overlay is drawn at the bottom-center of the active picture area so it stays away from overscan-prone corners.
 - The overlay is opt-in and uses a lightweight cached label update path instead of perf capture telemetry.
 - On MiSTer, valid values are `off`, `fps`, `debug`, and `rl-debug`.
-- `rl-debug` is a lightweight RL-specific overlay mode intended for remote-agent bring-up. In v1 it shows concise RL routing state, compact observation values, and the RL-side raw input buttons.
+- `rl-debug` is a lightweight RL-specific overlay mode intended for remote-agent bring-up. It now shows:
+  - raw HP plus round / win state
+  - raw super / stun plus `DX`, `DY`, and facing
+  - self / opponent corner distances
+  - guard flags and current attack ids
+  - do-not-move / hit-stop / high-jump flags
+  - self / opponent routine triplets
+  - action-context (`last_executed_*`, `next_scheduled_*`, `frames_until_next_action`)
+  - observation build cost as `avg/max` microseconds
+  - a fixed RL input row using `U D L R LP MP HP LK MK HK`, white when idle and red when active
 - `P0` means RL agent is disabled.
 - `P1C` / `P2C` mean RL routing is active for player 1 / player 2 and the opponent side is still CPU-controlled.
 - `P1H` / `P2H` mean RL routing is active for player 1 / player 2 and the opponent side is routed through human input for facing/remap validation.
 - When human-opponent validation is active, the current scripted movement is appended as `F`, `B`, `JF`, or `DB`.
-- The input line uses `U`, `D`, `L`, `R`, `LP`, `MP`, `HP`, `LK`, `MK`, and `HK` labels.
 
 ### `rl-agent-player`
 

@@ -8,12 +8,42 @@
 #include "sf33rd/Source/Game/engine/workuser.h"
 #include "sf33rd/Source/Game/system/work_sys.h"
 
+#include <SDL3/SDL.h>
 #include <stdio.h>
 
 static RLObservationV1 latest_obs;
 static s16 round_start_hp[2];
 static u8 captured_round_num;
 static bool round_start_hp_valid;
+static u16 debug_input_swkey;
+static Uint64 obs_build_total_ns;
+static Uint64 obs_build_max_ns;
+static u32 obs_build_count;
+
+typedef struct RLObservationDebugState {
+    s16 self_hp;
+    s16 opp_hp;
+    s16 self_hp_start;
+    s16 opp_hp_start;
+    s16 self_super;
+    s16 self_super_max;
+    s16 opp_super;
+    s16 opp_super_max;
+    s16 self_stun;
+    s16 self_stun_max;
+    s16 opp_stun;
+    s16 opp_stun_max;
+    s16 self_left_corner;
+    s16 self_right_corner;
+    s16 opp_left_corner;
+    s16 opp_right_corner;
+    s16 opp_dx;
+    s16 opp_dy;
+    Uint32 obs_build_avg_us;
+    Uint32 obs_build_max_us;
+} RLObservationDebugState;
+
+static RLObservationDebugState latest_debug;
 
 enum {
     RL_DEBUG_BTN_LP = 0x0010,
@@ -26,6 +56,19 @@ enum {
 
 static s16 clamp_s16_nonnegative(s16 value) {
     return (value < 0) ? 0 : value;
+}
+
+static f32 clamp_ratio(s32 numerator, s32 denominator) {
+    if (denominator <= 0) {
+        return 0.0f;
+    }
+    if (numerator <= 0) {
+        return 0.0f;
+    }
+    if (numerator >= denominator) {
+        return 1.0f;
+    }
+    return (f32)numerator / (f32)denominator;
 }
 
 static s16 safe_stun_max(s16 player) {
@@ -53,6 +96,11 @@ static u16 agent_input_swkey(s16 agent) {
     return (agent == 0) ? p1sw_0 : p2sw_0;
 }
 
+static s16 safe_stage_width(void) {
+    const s16 width = scrr - scrl;
+    return (width > 0) ? width : 1;
+}
+
 static void maybe_capture_round_start_hp() {
     if (!round_start_hp_valid || captured_round_num != Round_num ||
         plw[0].wu.vital_new > round_start_hp[0] || plw[1].wu.vital_new > round_start_hp[1]) {
@@ -70,9 +118,12 @@ static void maybe_capture_round_start_hp() {
 }
 
 void RLObservation_OnFrameEnd() {
+    const Uint64 build_start_ns = SDL_GetTicksNS();
+
     if (!RLSession_IsActive()) {
         latest_obs.valid = false;
         round_start_hp_valid = false;
+        debug_input_swkey = 0;
         return;
     }
 
@@ -80,48 +131,84 @@ void RLObservation_OnFrameEnd() {
 
     const s16 self = RLSession_AgentPlayerIndex();
     const s16 opp = RLSession_OpponentPlayerIndex();
+    const s16 stage_width = safe_stage_width();
+    const RLActionContext* action_context = RLSession_GetActionContext();
     RLObservationV1 obs = { 0 };
+    RLObservationDebugState debug = { 0 };
 
     obs.valid = true;
-    obs.self_hp = clamp_s16_nonnegative(plw[self].wu.vital_new);
-    obs.opp_hp = clamp_s16_nonnegative(plw[opp].wu.vital_new);
-    obs.self_hp_start = round_start_hp[self];
-    obs.opp_hp_start = round_start_hp[opp];
-    obs.self_super = safe_super_store(self);
-    obs.self_super_max = safe_super_max(self);
-    obs.opp_super = safe_super_store(opp);
-    obs.opp_super_max = safe_super_max(opp);
-    obs.self_stun = sdat[self].cstn;
-    obs.self_stun_max = safe_stun_max(self);
-    obs.opp_stun = sdat[opp].cstn;
-    obs.opp_stun_max = safe_stun_max(opp);
-    obs.opp_dx = plw[opp].wu.position_x - plw[self].wu.position_x;
-    obs.opp_dy = plw[opp].wu.position_y - plw[self].wu.position_y;
+    debug.self_hp = clamp_s16_nonnegative(plw[self].wu.vital_new);
+    debug.opp_hp = clamp_s16_nonnegative(plw[opp].wu.vital_new);
+    debug.self_hp_start = round_start_hp[self];
+    debug.opp_hp_start = round_start_hp[opp];
+    debug.self_super = safe_super_store(self);
+    debug.self_super_max = safe_super_max(self);
+    debug.opp_super = safe_super_store(opp);
+    debug.opp_super_max = safe_super_max(opp);
+    debug.self_stun = sdat[self].cstn;
+    debug.self_stun_max = safe_stun_max(self);
+    debug.opp_stun = sdat[opp].cstn;
+    debug.opp_stun_max = safe_stun_max(opp);
+    debug.opp_dx = plw[opp].wu.position_x - plw[self].wu.position_x;
+    debug.opp_dy = plw[opp].wu.position_y - plw[self].wu.position_y;
+    debug.self_left_corner = clamp_s16_nonnegative(plw[self].wu.position_x - scrl);
+    debug.self_right_corner = clamp_s16_nonnegative(scrr - plw[self].wu.position_x);
+    debug.opp_left_corner = clamp_s16_nonnegative(plw[opp].wu.position_x - scrl);
+    debug.opp_right_corner = clamp_s16_nonnegative(scrr - plw[opp].wu.position_x);
+    obs.self_hp_ratio = clamp_ratio(debug.self_hp, debug.self_hp_start);
+    obs.opp_hp_ratio = clamp_ratio(debug.opp_hp, debug.opp_hp_start);
+    obs.self_super_ratio = clamp_ratio(debug.self_super, debug.self_super_max);
+    obs.opp_super_ratio = clamp_ratio(debug.opp_super, debug.opp_super_max);
+    obs.self_stun_ratio = clamp_ratio(debug.self_stun, debug.self_stun_max);
+    obs.opp_stun_ratio = clamp_ratio(debug.opp_stun, debug.opp_stun_max);
+    obs.opp_dx_ratio = (f32)debug.opp_dx / (f32)stage_width;
+    obs.opp_dy_ratio = (f32)debug.opp_dy / (f32)stage_width;
+    obs.self_left_corner_ratio = clamp_ratio(debug.self_left_corner, stage_width);
+    obs.self_right_corner_ratio = clamp_ratio(debug.self_right_corner, stage_width);
+    obs.opp_left_corner_ratio = clamp_ratio(debug.opp_left_corner, stage_width);
+    obs.opp_right_corner_ratio = clamp_ratio(debug.opp_right_corner, stage_width);
     obs.self_facing_sign = (plw[self].wu.rl_flag == 0) ? -1 : 1;
-    obs.opp_in_front = (obs.self_facing_sign < 0) ? (plw[opp].wu.position_x < plw[self].wu.position_x)
-                                                  : (plw[opp].wu.position_x > plw[self].wu.position_x);
+    obs.opp_in_front = (u8)((obs.self_facing_sign < 0) ? (plw[opp].wu.position_x < plw[self].wu.position_x)
+                                                       : (plw[opp].wu.position_x > plw[self].wu.position_x));
     obs.self_guard_flag = plw[self].guard_flag;
     obs.opp_guard_flag = plw[opp].guard_flag;
-    obs.self_current_attack = plw[self].current_attack;
-    obs.opp_current_attack = plw[opp].current_attack;
+    obs.self_current_attack = (u16)plw[self].current_attack;
+    obs.opp_current_attack = (u16)plw[opp].current_attack;
     obs.self_do_not_move = plw[self].do_not_move;
     obs.opp_do_not_move = plw[opp].do_not_move;
     obs.self_hit_stop = plw[self].wu.hit_stop != 0;
     obs.opp_hit_stop = plw[opp].wu.hit_stop != 0;
     obs.self_high_jump_flag = plw[self].high_jump_flag;
     obs.opp_high_jump_flag = plw[opp].high_jump_flag;
-    obs.self_routine[0] = plw[self].wu.routine_no[0];
-    obs.self_routine[1] = plw[self].wu.routine_no[1];
-    obs.self_routine[2] = plw[self].wu.routine_no[2];
-    obs.opp_routine[0] = plw[opp].wu.routine_no[0];
-    obs.opp_routine[1] = plw[opp].wu.routine_no[1];
-    obs.opp_routine[2] = plw[opp].wu.routine_no[2];
+    obs.self_routine[0] = (u16)plw[self].wu.routine_no[0];
+    obs.self_routine[1] = (u16)plw[self].wu.routine_no[1];
+    obs.self_routine[2] = (u16)plw[self].wu.routine_no[2];
+    obs.opp_routine[0] = (u16)plw[opp].wu.routine_no[0];
+    obs.opp_routine[1] = (u16)plw[opp].wu.routine_no[1];
+    obs.opp_routine[2] = (u16)plw[opp].wu.routine_no[2];
     obs.round_num = Round_num;
     obs.self_round_wins = (u8)Win_Record[self];
     obs.opp_round_wins = (u8)Win_Record[opp];
-    obs.input_swkey = agent_input_swkey(self);
+    obs.last_executed_move_intent = action_context->last_executed_move_intent;
+    obs.last_executed_attack_bits = action_context->last_executed_attack_bits;
+    obs.next_scheduled_move_intent = action_context->next_scheduled_move_intent;
+    obs.next_scheduled_attack_bits = action_context->next_scheduled_attack_bits;
+    obs.frames_until_next_action = action_context->frames_until_next_action;
 
     latest_obs = obs;
+    latest_debug = debug;
+    debug_input_swkey = agent_input_swkey(self);
+
+    {
+        const Uint64 build_ns = SDL_GetTicksNS() - build_start_ns;
+        obs_build_total_ns += build_ns;
+        obs_build_count++;
+        if (build_ns > obs_build_max_ns) {
+            obs_build_max_ns = build_ns;
+        }
+        latest_debug.obs_build_avg_us = (Uint32)((obs_build_total_ns / SDL_max(1u, obs_build_count)) / 1000u);
+        latest_debug.obs_build_max_us = (Uint32)(obs_build_max_ns / 1000u);
+    }
 }
 
 const RLObservationV1* RLObservation_GetLatest() {
@@ -129,7 +216,7 @@ const RLObservationV1* RLObservation_GetLatest() {
 }
 
 u16 RLObservation_GetDebugInputSwKey() {
-    return latest_obs.valid ? latest_obs.input_swkey : 0;
+    return latest_obs.valid ? debug_input_swkey : 0;
 }
 
 u16 RLObservation_GetDebugDisplayMask() {
@@ -141,7 +228,7 @@ u16 RLObservation_GetDebugDisplayMask() {
     const u16 logical = Convert_User_Setting(agent) &
                         (RL_DEBUG_BTN_LP | RL_DEBUG_BTN_MP | RL_DEBUG_BTN_HP |
                          RL_DEBUG_BTN_LK | RL_DEBUG_BTN_MK | RL_DEBUG_BTN_HK);
-    const u16 directions = latest_obs.input_swkey & (SWK_UP | SWK_DOWN | SWK_LEFT | SWK_RIGHT);
+    const u16 directions = debug_input_swkey & (SWK_UP | SWK_DOWN | SWK_LEFT | SWK_RIGHT);
     return (u16)(directions | logical);
 }
 
@@ -155,23 +242,59 @@ void RLObservation_FormatDebugOverlay(char* out, size_t out_size, const char* se
         return;
     }
 
-    const char dx_side = latest_obs.opp_dx < 0 ? 'L' : 'R';
-    const int dx_abs = latest_obs.opp_dx < 0 ? -latest_obs.opp_dx : latest_obs.opp_dx;
+    const char dx_side = latest_debug.opp_dx < 0 ? 'L' : 'R';
+    const int dx_abs = latest_debug.opp_dx < 0 ? -latest_debug.opp_dx : latest_debug.opp_dx;
 
     snprintf(out,
              out_size,
-             "%s HP%d/%d OP%d/%d\nSA%d/%d ST%d/%d DX%c%d F%d R%d",
+             "%s HP%d/%d OP%d/%d R%d %d-%d\n"
+             "SA%d/%d ST%d/%d DX%c%d DY%d F%d\n"
+             "CL%d CR%d OL%d OR%d\n"
+             "G%d/%d A%03X/%03X\n"
+             "D%d/%d H%d/%d J%d/%d\n"
+             "R%d,%d,%d O%d,%d,%d\n"
+             "X%d/%03X N%d/%03X T%d O%lu/%luus",
              session_label != NULL ? session_label : "P0",
-             latest_obs.self_hp,
-             latest_obs.self_hp_start,
-             latest_obs.opp_hp,
-             latest_obs.opp_hp_start,
-             latest_obs.self_super,
-             latest_obs.self_super_max,
-             latest_obs.self_stun,
-             latest_obs.self_stun_max,
+             latest_debug.self_hp,
+             latest_debug.self_hp_start,
+             latest_debug.opp_hp,
+             latest_debug.opp_hp_start,
+             latest_obs.round_num,
+             latest_obs.self_round_wins,
+             latest_obs.opp_round_wins,
+             latest_debug.self_super,
+             latest_debug.self_super_max,
+             latest_debug.self_stun,
+             latest_debug.self_stun_max,
              dx_side,
              dx_abs,
+             latest_debug.opp_dy,
              latest_obs.self_facing_sign,
-             latest_obs.round_num);
+             latest_debug.self_left_corner,
+             latest_debug.self_right_corner,
+             latest_debug.opp_left_corner,
+             latest_debug.opp_right_corner,
+             latest_obs.self_guard_flag,
+             latest_obs.opp_guard_flag,
+             latest_obs.self_current_attack,
+             latest_obs.opp_current_attack,
+             latest_obs.self_do_not_move,
+             latest_obs.opp_do_not_move,
+             latest_obs.self_hit_stop,
+             latest_obs.opp_hit_stop,
+             latest_obs.self_high_jump_flag,
+             latest_obs.opp_high_jump_flag,
+             latest_obs.self_routine[0],
+             latest_obs.self_routine[1],
+             latest_obs.self_routine[2],
+             latest_obs.opp_routine[0],
+             latest_obs.opp_routine[1],
+             latest_obs.opp_routine[2],
+             latest_obs.last_executed_move_intent,
+             latest_obs.last_executed_attack_bits,
+             latest_obs.next_scheduled_move_intent,
+             latest_obs.next_scheduled_attack_bits,
+             latest_obs.frames_until_next_action,
+             (unsigned long)latest_debug.obs_build_avg_us,
+             (unsigned long)latest_debug.obs_build_max_us);
 }

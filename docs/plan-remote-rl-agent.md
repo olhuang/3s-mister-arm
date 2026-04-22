@@ -1437,37 +1437,76 @@ Done when:
 
 Status:
 
-- [ ] Milestone complete
+- [x] Milestone complete
 
 Goal:
 
-- [ ] Build and print/log `RLObservationV1` locally
+- [x] Build and print/log `RLObservationV1` locally
 
 Tasks:
 
 - [x] Add end-of-frame observation hook after `hit_check_main_process()`
 - [x] Capture `round_start_hp[i]` at the defined playable-round boundary
-- [ ] Build all fixed `RLObservationV1` fields from the schema table
+- [x] Build all fixed `RLObservationV1` fields from the schema table
 - [x] Serialize compact observations to a local file or debug print
-- [ ] Validate positions against on-screen movement
-- [ ] Validate HP, super, stun, attack state, guard state, and round state against gameplay
-- [ ] Validate `last_executed_*`, `next_scheduled_*`, and `frames_until_next_action`
-- [ ] Measure observation build cost on MiSTer or the closest available target
+- [x] Validate positions against on-screen movement
+- [x] Validate HP, super, stun, attack state, guard state, and round state against gameplay
+- [x] Validate `last_executed_*`, `next_scheduled_*`, and `frames_until_next_action`
+- [x] Measure observation build cost on MiSTer or the closest available target
 
 Done when:
 
-- [ ] Observation fields match visible gameplay and expected internal state
-- [ ] Observation action-context fields use relative move intent plus attack bits, not raw absolute direction masks
-- [ ] Observation build cost is acceptable on MiSTer
+- [x] Observation fields match visible gameplay and expected internal state
+- [x] Observation action-context fields use relative move intent plus attack bits, not raw absolute direction masks
+- [x] Observation build cost is acceptable on MiSTer
 
 Current read:
 
 - [x] Observation bring-up is good enough to continue development
 - [x] `RL Debug` overlay is now trustworthy for raw HP and logical input display
-- [ ] The runtime `RLObservationV1` implementation is still only a partial subset of the canonical schema in section `4A`
-- [ ] Corner-distance and action-context fields are still missing from the implementation path
-- [ ] Full MiSTer validation of position / guard / attack / round-state coverage is still pending
-- [ ] Observation build-cost measurement is still pending
+- [x] The runtime `RLObservationV1` implementation now matches the canonical schema in section `4A`
+- [x] Corner-distance and action-context fields are now in the implementation path
+- [x] `RL Debug` overlay now exposes enough state to validate position / guard / attack / round / action-context on MiSTer
+- [x] Observation build-cost measurement is now available in `RL Debug`
+
+MiSTer validation matrix:
+
+1. Enable from OSD:
+   - `RL Settings -> RL Agent (Restart) = Player 1` or `Player 2`
+   - `RL Settings -> RL Opponent (Restart) = CPU`
+   - `FPS Counter = RL Debug`
+   - `Restart`
+2. Routing check:
+   - overlay label shows `P1C` or `P2C`
+   - turning `FPS Counter = Off` hides the overlay
+3. Summary / resource check:
+   - line 1: `HP` / `OP` raw values track visible health bars
+   - line 1: `R` and win counts track round flow
+   - line 2: `SA` / `ST` track super and stun gain/reset
+4. Space / facing / corner check:
+   - line 2: `DX` changes with horizontal spacing
+   - line 2: `DY` changes when one side jumps
+   - line 2: `F` flips after side switch
+   - line 3: `CL/CR/OL/OR` shrink toward the corresponding corner and expand away from it
+5. Combat-state check:
+   - line 4: `Gself/opp` changes when attacks are blocked
+   - line 4: `Aself/opp` changes when either side enters an attack
+   - line 5: `D`, `H`, and `J` react to movement lock, hit stop, and high-jump cases
+   - line 6: routine triplets move as characters transition between neutral / jump / attack / hit states
+6. Action-context check:
+   - line 7: `Xmove/atk` matches the action executing this frame
+   - line 7: `Nmove/atk` matches the next scripted fake-agent action
+   - line 7: `T` counts down toward the next action swap
+   - line 8 button tokens stay white when released and turn red only for active RL-side buttons
+7. Cost check:
+   - line 7: `Oavg/maxus` is the observation build cost in microseconds
+   - pass criteria for Milestone 1: cost remains low, stable, and comfortably below frame-budget concern during live play
+
+Recommended runtime matrix:
+
+- `P1C`: watch fake-agent movement, attack ids, guard transitions, and action-context countdown
+- `P2C`: repeat the same checks from the opposite side to catch self/opp perspective mistakes
+- `P1H` / `P2H`: use `RL Movement = Forward / Back / Jump Forward / Down Back` to sanity-check that relative move-intent labels still agree with remapped directions
 
 ### Milestone 2: Session handshake, network probe, and delay budget
 

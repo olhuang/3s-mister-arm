@@ -289,7 +289,8 @@ void RLObservation_FormatDebugOverlay(char* out, size_t out_size, const char* se
              "NM%d/%d HS%d/%d HJ%d/%d\n"
              "SR%d,%d,%d OR%d,%d,%d\n"
              "X%d/%03X N%d/%03X T%d O%lu/%luus\n"
-             "NET%s S%u P%u/%u/%u MAX%uus E%u",
+             "NET%s S%u P%u/%u/%u MAX%uus E%u\n"
+             "ACT%u OK%u UA%u SN%u BV%u BM%u",
              session_label != NULL ? session_label : "P0",
              latest_debug.self_hp,
              latest_debug.self_hp_start,
@@ -343,5 +344,11 @@ void RLObservation_FormatDebugOverlay(char* out, size_t out_size, const char* se
              (unsigned int)net->probe_stats.p95_us,
              (unsigned int)net->probe_stats.p99_us,
              (unsigned int)net->probe_stats.max_us,
-             (unsigned int)net->last_error_count);
+             (unsigned int)net->last_error_count,
+             (unsigned int)net->action_received_count,
+             (unsigned int)net->action_accepted_count,
+             (unsigned int)net->action_rejected_unacked_count,
+             (unsigned int)net->action_rejected_nonce_count,
+             (unsigned int)net->action_rejected_version_count,
+             (unsigned int)net->action_rejected_malformed_count);
 }

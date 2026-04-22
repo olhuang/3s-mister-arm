@@ -94,7 +94,7 @@ static void load_remote_rl_agent_config(Configuration* configuration) {
 }
 
 static bool is_valid_port(int port) {
-    return port >= 0 && port <= 65535;
+    return port > 0 && port <= 65535;
 }
 
 static void verify_configuration(Configuration* configuration) {

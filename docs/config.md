@@ -125,6 +125,13 @@ Notes:
   - action-context (`last_executed_*`, `next_scheduled_*`, `frames_until_next_action`)
   - observation build cost as `avg/max` microseconds
   - RL network probe state as `NET`, sample count, p50/p95/p99/max RTT in microseconds, and socket error count
+  - action gate counters as `ACT/OK/UA/SN/BV/BM`
+    - `ACT`: all action packets seen on the action socket
+    - `OK`: action packets that passed the Milestone 2 session gate
+    - `UA`: rejected because hello/ack was not yet accepted
+    - `SN`: rejected because `session_nonce` was stale or mismatched
+    - `BV`: rejected because packet version/header was invalid
+    - `BM`: rejected because the packet size was malformed
   - a fixed RL input row using `U D L R LP MP HP LK MK HK`, white when idle and red when active
 - `P0` means RL agent is disabled.
 - `P1C` / `P2C` mean RL routing is active for player 1 / player 2 and the opponent side is still CPU-controlled.

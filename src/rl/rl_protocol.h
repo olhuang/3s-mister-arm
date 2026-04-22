@@ -66,6 +66,19 @@ typedef struct RLProbeStats {
     u32 jitter_us;
 } RLProbeStats;
 
+typedef struct RLActionPacket {
+    u32 magic;
+    u16 version;
+    u16 flags;
+    u64 session_nonce;
+    u32 episode_id;
+    u32 decision_id;
+    u32 target_frame;
+    u16 action_wire;
+    u16 reserved0;
+    u32 model_version;
+} RLActionPacket;
+
 RLSessionConfig RLProtocol_DefaultConfig(void);
 u32 RLProtocol_ComputeConfigHash(const RLSessionConfig* config);
 bool RLProtocol_ConfigTimingSupported(const RLSessionConfig* config);

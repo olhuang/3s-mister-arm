@@ -13,6 +13,7 @@
 #if !defined(_WIN32)
 #include <fcntl.h>
 #include <netdb.h>
+#include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
 #endif
@@ -54,6 +55,7 @@ static u32 tick_counter;
 
 #if !defined(_WIN32)
 static int probe_socket = -1;
+static int action_socket = -1;
 #endif
 
 static u64 now_us(void) {
@@ -92,7 +94,7 @@ static bool set_socket_nonblocking(int fd) {
     return fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0;
 }
 
-static bool open_probe_socket(const char* remote_ip, int remote_port) {
+static bool open_connected_udp_socket(const char* remote_ip, int remote_port, int* out_socket) {
     char port_buf[16];
     struct addrinfo hints;
     struct addrinfo* result = NULL;
@@ -114,7 +116,7 @@ static bool open_probe_socket(const char* remote_ip, int remote_port) {
             continue;
         }
         if (connect(fd, cursor->ai_addr, cursor->ai_addrlen) == 0 && set_socket_nonblocking(fd)) {
-            probe_socket = fd;
+            *out_socket = fd;
             freeaddrinfo(result);
             return true;
         }
@@ -124,6 +126,28 @@ static bool open_probe_socket(const char* remote_ip, int remote_port) {
 
     freeaddrinfo(result);
     return false;
+}
+
+static bool open_bound_udp_socket(int local_port, int* out_socket) {
+    struct sockaddr_in addr;
+    int fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd < 0) {
+        return false;
+    }
+    if (!set_socket_nonblocking(fd)) {
+        close(fd);
+        return false;
+    }
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons((uint16_t)local_port);
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    if (bind(fd, (const struct sockaddr*)&addr, sizeof(addr)) != 0) {
+        close(fd);
+        return false;
+    }
+    *out_socket = fd;
+    return true;
 }
 #endif
 
@@ -151,7 +175,7 @@ void RLNet_Init(const RemoteRLAgentConfiguration* config) {
     rl_net_state.config.config_hash = RLProtocol_ComputeConfigHash(&rl_net_state.config);
 
 #if !defined(_WIN32)
-    if (open_probe_socket(config->remote_ip, config->obs_port)) {
+    if (open_connected_udp_socket(config->remote_ip, config->obs_port, &probe_socket)) {
         rl_net_state.socket_open = true;
         rl_net_state.probe_ready = true;
         SDL_Log("RL net probe enabled: remote=%s obs_port=%d action_port=%d nonce=%" PRIu64,
@@ -159,6 +183,12 @@ void RLNet_Init(const RemoteRLAgentConfiguration* config) {
                 config->obs_port,
                 config->action_port,
                 rl_net_state.session_nonce);
+        if (open_bound_udp_socket(config->action_port, &action_socket)) {
+            rl_net_state.action_socket_open = true;
+        } else {
+            rl_net_state.last_error_count++;
+            SDL_Log("RL action socket failed to bind: action_port=%d errno=%d", config->action_port, errno);
+        }
     } else {
         rl_net_state.last_error_count++;
         SDL_Log("RL net probe failed to open UDP socket: remote=%s obs_port=%d errno=%d",
@@ -245,6 +275,27 @@ static void handle_packet(const RLNetProbePacket* packet) {
     }
 }
 
+static void handle_action_packet(const RLActionPacket* packet) {
+    rl_net_state.action_received_count++;
+
+    if (packet->magic != RL_PROTOCOL_MAGIC || packet->version != RL_PROTOCOL_VERSION) {
+        rl_net_state.action_rejected_version_count++;
+        return;
+    }
+    if (!rl_net_state.handshake_accepted) {
+        rl_net_state.action_rejected_unacked_count++;
+        return;
+    }
+    if (packet->session_nonce != rl_net_state.session_nonce) {
+        rl_net_state.action_rejected_nonce_count++;
+        return;
+    }
+
+    /* Milestone 2 gate only: packet is accepted by session/nonce rules but
+       not yet inserted into an execution queue. */
+    rl_net_state.action_accepted_count++;
+}
+
 static void receive_packets(void) {
 #if !defined(_WIN32)
     while (rl_net_state.socket_open) {
@@ -253,6 +304,23 @@ static void receive_packets(void) {
         if (received == (ssize_t)sizeof(packet)) {
             rl_net_state.received_count++;
             handle_packet(&packet);
+            continue;
+        }
+        if (received < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+            rl_net_state.last_error_count++;
+        }
+        break;
+    }
+
+    while (rl_net_state.action_socket_open) {
+        RLActionPacket packet;
+        const ssize_t received = recv(action_socket, &packet, sizeof(packet), 0);
+        if (received == (ssize_t)sizeof(packet)) {
+            handle_action_packet(&packet);
+            continue;
+        }
+        if (received > 0) {
+            rl_net_state.action_rejected_malformed_count++;
             continue;
         }
         if (received < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
@@ -288,8 +356,13 @@ void RLNet_Shutdown(void) {
         close(probe_socket);
         probe_socket = -1;
     }
+    if (action_socket >= 0) {
+        close(action_socket);
+        action_socket = -1;
+    }
 #endif
     rl_net_state.socket_open = false;
+    rl_net_state.action_socket_open = false;
     rl_net_state.probe_ready = false;
 }
 

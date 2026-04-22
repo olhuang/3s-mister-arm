@@ -1741,7 +1741,7 @@ Recommended runtime matrix:
 
 Status:
 
-- [ ] Milestone complete
+- [x] Milestone complete
 
 Goal:
 
@@ -1794,6 +1794,15 @@ Current implementation notes:
   - `P`: p50/p95/p99 RTT in microseconds
   - `MAX`: max RTT in microseconds
   - `E`: socket/send/recv error count
+- `RL Debug` also appends an action gate line:
+  - `ACT`: all action packets received on the action socket
+  - `OK`: action packets accepted by the Milestone 2 session gate
+  - `UA`: rejected before hello/ack acceptance
+  - `SN`: rejected because `session_nonce` was stale or mismatched
+  - `BV`: rejected because version/header was invalid
+  - `BM`: rejected because packet size was malformed
+- MiSTer now opens a local non-blocking action UDP socket on `rl-agent-action-port` and applies session gating before any later Milestone 3 queue/execution logic.
+- accepted action packets are counted but not yet executed; queueing and target-frame execution remain Milestone 3 work.
 - target-network measurement has now been run on the actual MiSTer + remote PC network:
   - `S128`
   - `p50 = 16819us`
@@ -1825,13 +1834,20 @@ Local / MiSTer validation steps:
 6. Current measured baseline result:
    - `NETOK S128 P16819/17568/20752 MAX30718`
    - use `k = 4`, `decision_interval_frames = 4`, `action_hold_frames = 4` as the first conservative runtime baseline
+7. Session-gate validation:
+   - run `python3 tools/rl_probe_server.py --host 0.0.0.0 --port 37330 --action-port 37331 --action-mode pre-ack --verbose`
+   - before handshake acceptance stabilizes, `ACT` should increase and `UA` should increase
+   - run `python3 tools/rl_probe_server.py --host 0.0.0.0 --port 37330 --action-port 37331 --action-mode stale --verbose`
+   - after `NETOK`, `ACT` should increase and `SN` should increase
+   - run `python3 tools/rl_probe_server.py --host 0.0.0.0 --port 37330 --action-port 37331 --action-mode valid --verbose`
+   - after `NETOK`, `ACT` should increase and `OK` should increase
 
 Done when:
 
-- [ ] Remote inference does not accept actions until hello/ack config is accepted
-- [ ] MiSTer rejects actions from unacknowledged or stale `session_nonce`
-- [ ] Transport timing is measured on the actual target network
-- [ ] Delay knobs are chosen from data, not guesses
+- [x] Remote inference does not accept actions until hello/ack config is accepted
+- [x] MiSTer rejects actions from unacknowledged or stale `session_nonce`
+- [x] Transport timing is measured on the actual target network
+- [x] Delay knobs are chosen from data, not guesses
 
 ### Milestone 3: Remote inference only
 

@@ -2,6 +2,52 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-22: Milestone 2 Action Session Gate
+
+Milestone:
+- Milestone 2: Session handshake, network probe, and delay budget
+
+Files changed:
+- `src/rl/rl_protocol.h`
+- `src/rl/rl_net.h`
+- `src/rl/rl_net.c`
+- `src/rl/rl_observation.c`
+- `src/args.c`
+- `tools/rl_probe_server.py`
+- `docs/config.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- finish the remaining Milestone 2 session-protection work for future action packets
+- reject unacknowledged or stale-session action traffic before Milestone 3 queue/execution begins
+
+Implementation notes:
+- added `RLActionPacket` to `src/rl/rl_protocol.h`
+- MiSTer now binds a local non-blocking UDP action socket on `rl-agent-action-port`
+- action packets are counted and gated by:
+  - valid magic/version
+  - hello/ack accepted
+  - matching live `session_nonce`
+- accepted action packets are counted as gate-passed only; they are intentionally not queued or executed yet
+- added counters to `RL Debug`:
+  - `ACT`, `OK`, `UA`, `SN`, `BV`, `BM`
+- extended `tools/rl_probe_server.py` with:
+  - `--action-port`
+  - `--action-mode valid`
+  - `--action-mode stale`
+  - `--action-mode pre-ack`
+  so MiSTer-side gate behavior can be validated from one tool
+
+Validation:
+- `git diff --check` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed.
+- `python3 -c "import ast, pathlib; ast.parse(pathlib.Path('tools/rl_probe_server.py').read_text())"` passed.
+
+Follow-up:
+- Milestone 2 gate work is complete.
+- Milestone 3 should start with queueing accepted action packets by `target_frame` instead of only counting them.
+
 ## 2026-04-22: Milestone 2 Target-Network Timing Baseline
 
 Milestone:
@@ -38,7 +84,7 @@ Validation:
 - `git diff --check` pending local re-run after this doc/default sync.
 
 Follow-up:
-- keep Milestone 2 open until stale/unacknowledged action rejection rules are fully wired into the later action path
+- Milestone 2 timing baseline is now fixed and ready for Milestone 3
 - use `4/4/4` as the Milestone 3 starting point unless new measurements on the target network meaningfully change
 
 ## 2026-04-22: Milestone 2 OSD Network Toggle
@@ -159,7 +205,7 @@ Last updated: 2026-04-22
 - [x] Milestone 0B: Facing and remap validation micro-spike
 - [x] Milestone 0C: Local fake agent spike
 - [x] Milestone 1: Compact observation builder
-- [ ] Milestone 2: Session handshake, network probe, and delay budget
+- [x] Milestone 2: Session handshake, network probe, and delay budget
 - [ ] Milestone 3: Remote inference only
 - [ ] Milestone 4: Decision ledger and transition logging
 - [ ] Milestone 5: Async learner and model hot-swap

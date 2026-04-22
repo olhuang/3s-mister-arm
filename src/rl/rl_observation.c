@@ -215,6 +215,7 @@ void RLObservation_OnFrameEnd() {
     obs.opp_left_corner_ratio = clamp_ratio(debug.opp_left_corner, stage_width);
     obs.opp_right_corner_ratio = clamp_ratio(debug.opp_right_corner, stage_width);
     obs.self_facing_sign = (plw[self].wu.rl_flag == 0) ? -1 : 1;
+    obs.opp_facing_sign = (plw[opp].wu.rl_flag == 0) ? -1 : 1;
     obs.opp_in_front = (u8)((obs.self_facing_sign < 0) ? (plw[opp].wu.position_x < plw[self].wu.position_x)
                                                        : (plw[opp].wu.position_x > plw[self].wu.position_x));
     obs.self_guard_flag = plw[self].guard_flag;
@@ -354,6 +355,7 @@ void RLObservation_FormatDebugOverlay(char* out, size_t out_size, const char* se
              "NM%d/%d HS%d/%d HJ%d/%d\n"
              "DH%d/%d DS%d/%d AB%d/%d\n"
              "EH%d/%d EC%d/%d ED%d/%d\n"
+             "RF%d/%d MS%d AS%d/%d/%d\n"
              "SR%d,%d,%d OR%d,%d,%d\n"
              "X%d/%03X N%d/%03X T%d O%lu/%luus\n"
              "NET%s S%u P%u/%u/%u MAX%uus E%u\n"
@@ -405,6 +407,12 @@ void RLObservation_FormatDebugOverlay(char* out, size_t out_size, const char* se
              latest_obs.opp_entered_contact_state,
              latest_obs.self_entered_damage_state,
              latest_obs.opp_entered_damage_state,
+             remote->last_delta_self_forward,
+             remote->last_delta_opp_forward,
+             remote->last_requested_movement_succeeded,
+             remote->last_requested_attack_entered_state,
+             remote->last_requested_attack_made_contact,
+             remote->last_requested_attack_likely_whiffed,
              latest_obs.self_routine[0],
              latest_obs.self_routine[1],
              latest_obs.self_routine[2],

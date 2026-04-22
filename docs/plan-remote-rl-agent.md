@@ -1973,6 +1973,7 @@ Implementation notes:
 - [ ] Transition schema has an explicit decision on whether to include first-pass action outcome / delta fields
 - [x] Transition schema has a first-pass action outcome / delta field set
 - [ ] Learner-side replay buffer can distinguish remote action, repeated-last-action, down-back fallback, and neutral fallback
+- [x] Transition schema is documented as an evolving debug/training schema, not a frozen learner contract
 
 Current first-pass action outcome / delta fields:
 
@@ -1990,15 +1991,69 @@ Current first-pass action outcome / delta fields:
   - `delta_self_stun`, `delta_opp_stun`
   - `delta_self_x`, `delta_self_y`
   - `delta_opp_x`, `delta_opp_y`
+  - `delta_self_forward`, `delta_opp_forward`
   - `self_airborne_seen`, `opp_airborne_seen`
   - `self_entered_hit_stop`, `opp_entered_hit_stop`
   - `self_entered_contact_state`, `opp_entered_contact_state`
   - `self_entered_damage_state`, `opp_entered_damage_state`
+  - `requested_movement_succeeded`
+  - `requested_attack_entered_state`
+  - `requested_attack_made_contact`
+  - `requested_attack_likely_whiffed`
 - the decision-span delta/event aggregation is now driven from `RLObservation_OnFrameEnd()` so it tracks post-logic frame results instead of pre-logic input staging
+- `delta_self_x/y` and `delta_opp_x/y` are world-coordinate deltas.
+- `delta_self_forward` and `delta_opp_forward` are facing-relative deltas:
+  - positive means moving forward relative to that character's facing
+  - negative means moving backward
+- `delta_self_stun` and `delta_opp_stun` are signed:
+  - positive means stun increased
+  - negative means stun recovered
+- `entered_contact_state` is currently a conservative derived signal based on `guard_flag != 0 || hit_stop`; it is not a precise hit/block result.
+- `was_executed=false` terminal entries should stay in debug logs, but the first learner replay buffer should filter them unless it explicitly wants canceled decisions.
+- `logs/rl-transitions.ndjson` is still an evolving debug/training schema. Do not treat it as a frozen learner contract until the replay-buffer import path is implemented.
 - deferred for a later schema revision because the current runtime source is not yet trustworthy enough:
   - `self_crouching`, `opp_crouching`
   - richer movement phase labels
   - explicit `hit / blocked / whiff / throw` outcome enums
+
+Useful jq validation recipes:
+
+```bash
+# Count nonzero movement outcomes in the last 1000 transitions.
+tail -n 1000 logs/rl-transitions.ndjson | jq -s '{
+  rows: length,
+  self_forward_nonzero: map(select(.delta_self_forward != 0)) | length,
+  movement_succeeded: map(select(.requested_movement_succeeded == 1)) | length,
+  attack_entered: map(select(.requested_attack_entered_state == 1)) | length,
+  attack_contact: map(select(.requested_attack_made_contact == 1)) | length,
+  attack_whiff: map(select(.requested_attack_likely_whiffed == 1)) | length,
+  unexecuted: map(select(.was_executed == false)) | length
+}'
+
+# Inspect recent movement outcomes.
+tail -n 40 logs/rl-transitions.ndjson | jq '{
+  decision_id,
+  requested_move_intent,
+  executed_move_intent,
+  delta_self_x,
+  delta_self_forward,
+  requested_movement_succeeded,
+  execution_source,
+  was_executed
+}'
+
+# Inspect recent attack outcomes.
+tail -n 80 logs/rl-transitions.ndjson | jq 'select(.requested_attack_bits != 0) | {
+  decision_id,
+  requested_attack_bits,
+  executed_attack_bits,
+  requested_attack_entered_state,
+  requested_attack_made_contact,
+  requested_attack_likely_whiffed,
+  delta_opp_hp,
+  delta_opp_stun
+}'
+```
 
 ### Milestone 5: Async learner and model hot-swap
 

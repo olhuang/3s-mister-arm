@@ -78,10 +78,13 @@ typedef struct RLDecisionLedgerEntry {
     s16 delta_self_y;
     s16 delta_opp_x;
     s16 delta_opp_y;
+    s16 delta_self_forward;
+    s16 delta_opp_forward;
     u8 executed_move_intent;
     u16 executed_attack_bits;
     u8 execution_source;
     u8 terminal_reason;
+    u8 self_attack_state_seen;
     u8 self_airborne_seen;
     u8 opp_airborne_seen;
     u8 self_entered_hit_stop;
@@ -90,6 +93,10 @@ typedef struct RLDecisionLedgerEntry {
     u8 opp_entered_contact_state;
     u8 self_entered_damage_state;
     u8 opp_entered_damage_state;
+    u8 requested_movement_succeeded;
+    u8 requested_attack_entered_state;
+    u8 requested_attack_made_contact;
+    u8 requested_attack_likely_whiffed;
     float reward_accum;
 } RLDecisionLedgerEntry;
 
@@ -328,6 +335,61 @@ static const char* RLSession_TerminalReasonLabel(u8 terminal_reason) {
     }
 }
 
+static bool RLSession_MoveIntentRequestsMovement(u8 move_intent) {
+    return move_intent != RL_MOVE_NEUTRAL;
+}
+
+static void RLSession_UpdateDerivedOutcomeFields(RLDecisionLedgerEntry* entry) {
+    const u8 requested_move = RLSession_DecodeMoveIntent(entry->requested_action_wire);
+    const u16 requested_attacks = RLSession_DecodeAttackBits(entry->requested_action_wire);
+
+    entry->requested_movement_succeeded = 0;
+    entry->requested_attack_entered_state = 0;
+    entry->requested_attack_made_contact = 0;
+    entry->requested_attack_likely_whiffed = 0;
+
+    if (entry->was_executed && RLSession_MoveIntentRequestsMovement(requested_move)) {
+        switch (requested_move) {
+        case RL_MOVE_FORWARD:
+            entry->requested_movement_succeeded = (u8)(entry->delta_self_forward > 0);
+            break;
+        case RL_MOVE_BACK:
+            entry->requested_movement_succeeded = (u8)(entry->delta_self_forward < 0);
+            break;
+        case RL_MOVE_UP:
+            entry->requested_movement_succeeded = (u8)(entry->self_airborne_seen || entry->delta_self_y != 0);
+            break;
+        case RL_MOVE_UP_FORWARD:
+            entry->requested_movement_succeeded =
+                (u8)((entry->self_airborne_seen || entry->delta_self_y != 0) && entry->delta_self_forward > 0);
+            break;
+        case RL_MOVE_UP_BACK:
+            entry->requested_movement_succeeded =
+                (u8)((entry->self_airborne_seen || entry->delta_self_y != 0) && entry->delta_self_forward < 0);
+            break;
+        case RL_MOVE_DOWN:
+        case RL_MOVE_DOWN_FORWARD:
+        case RL_MOVE_DOWN_BACK:
+            entry->requested_movement_succeeded = 0;
+            break;
+        case RL_MOVE_NEUTRAL:
+        default:
+            entry->requested_movement_succeeded = 0;
+            break;
+        }
+    }
+
+    if (entry->was_executed && requested_attacks != 0) {
+        entry->requested_attack_entered_state = entry->self_attack_state_seen;
+        entry->requested_attack_made_contact =
+            (u8)(entry->self_entered_hit_stop || entry->opp_entered_hit_stop ||
+                 entry->opp_entered_contact_state || entry->opp_entered_damage_state ||
+                 entry->delta_opp_hp > 0 || entry->delta_opp_stun > 0);
+        entry->requested_attack_likely_whiffed =
+            (u8)(entry->requested_attack_entered_state && !entry->requested_attack_made_contact);
+    }
+}
+
 static s16 RLSession_ClampDeltaS16(s32 value) {
     if (value > 32767) {
         return 32767;
@@ -373,7 +435,7 @@ static RLDecisionLedgerEntry* RLSession_AllocLedgerEntry() {
 static void RLSession_AppendTransitionLog(const RLDecisionLedgerEntry* entry) {
     char* logs_dir = NULL;
     char* log_path = NULL;
-    char line[1024];
+    char line[1536];
     SDL_IOStream* io = NULL;
     const char* pref_path = NULL;
     const int written =
@@ -384,10 +446,15 @@ static void RLSession_AppendTransitionLog(const RLDecisionLedgerEntry* entry) {
                      "\"executed_action_wire\":%u,\"executed_move_intent\":%u,\"executed_attack_bits\":%u,"
                      "\"delta_self_hp\":%d,\"delta_opp_hp\":%d,\"delta_self_stun\":%d,\"delta_opp_stun\":%d,"
                      "\"delta_self_x\":%d,\"delta_self_y\":%d,\"delta_opp_x\":%d,\"delta_opp_y\":%d,"
+                     "\"delta_self_forward\":%d,\"delta_opp_forward\":%d,"
                      "\"self_airborne_seen\":%u,\"opp_airborne_seen\":%u,"
                      "\"self_entered_hit_stop\":%u,\"opp_entered_hit_stop\":%u,"
                      "\"self_entered_contact_state\":%u,\"opp_entered_contact_state\":%u,"
                      "\"self_entered_damage_state\":%u,\"opp_entered_damage_state\":%u,"
+                     "\"requested_movement_succeeded\":%u,"
+                     "\"requested_attack_entered_state\":%u,"
+                     "\"requested_attack_made_contact\":%u,"
+                     "\"requested_attack_likely_whiffed\":%u,"
                      "\"was_executed\":%s,\"execution_frame_actual\":%u,"
                      "\"execution_source\":\"%s\",\"reward_accum\":%.3f,\"done\":%s,"
                      "\"terminal_reason\":\"%s\"}\n",
@@ -409,6 +476,8 @@ static void RLSession_AppendTransitionLog(const RLDecisionLedgerEntry* entry) {
                      entry->delta_self_y,
                      entry->delta_opp_x,
                      entry->delta_opp_y,
+                     entry->delta_self_forward,
+                     entry->delta_opp_forward,
                      entry->self_airborne_seen,
                      entry->opp_airborne_seen,
                      entry->self_entered_hit_stop,
@@ -417,6 +486,10 @@ static void RLSession_AppendTransitionLog(const RLDecisionLedgerEntry* entry) {
                      entry->opp_entered_contact_state,
                      entry->self_entered_damage_state,
                      entry->opp_entered_damage_state,
+                     entry->requested_movement_succeeded,
+                     entry->requested_attack_entered_state,
+                     entry->requested_attack_made_contact,
+                     entry->requested_attack_likely_whiffed,
                      entry->was_executed ? "true" : "false",
                      entry->execution_frame_actual,
                      RLSession_ExecutionSourceLabel((RLExecutionSource)entry->execution_source),
@@ -451,9 +524,16 @@ static void RLSession_FinalizeLedgerEntry(RLDecisionLedgerEntry* entry, bool don
     entry->active = false;
     entry->done = done;
     entry->terminal_reason = terminal_reason;
+    RLSession_UpdateDerivedOutcomeFields(entry);
     RLSession_AppendTransitionLog(entry);
     entry->exported = true;
     remote_debug.transition_export_count++;
+    remote_debug.last_delta_self_forward = entry->delta_self_forward;
+    remote_debug.last_delta_opp_forward = entry->delta_opp_forward;
+    remote_debug.last_requested_movement_succeeded = entry->requested_movement_succeeded;
+    remote_debug.last_requested_attack_entered_state = entry->requested_attack_entered_state;
+    remote_debug.last_requested_attack_made_contact = entry->requested_attack_made_contact;
+    remote_debug.last_requested_attack_likely_whiffed = entry->requested_attack_likely_whiffed;
 }
 
 static void RLSession_SetActiveLedgerEntry(RLDecisionLedgerEntry* entry) {
@@ -504,6 +584,11 @@ void RLSession_OnObservationFrameEnd(const RLObservationV1* obs) {
     RLSession_AccumulateDeltaS16(&active_ledger_entry->delta_opp_x, obs->delta_opp_x);
     RLSession_AccumulateDeltaS16(&active_ledger_entry->delta_self_y, obs->delta_self_y);
     RLSession_AccumulateDeltaS16(&active_ledger_entry->delta_opp_y, obs->delta_opp_y);
+    RLSession_AccumulateDeltaS16(&active_ledger_entry->delta_self_forward,
+                                 (s32)obs->delta_self_x * (s32)obs->self_facing_sign);
+    RLSession_AccumulateDeltaS16(&active_ledger_entry->delta_opp_forward,
+                                 (s32)obs->delta_opp_x * (s32)obs->opp_facing_sign);
+    active_ledger_entry->self_attack_state_seen |= (u8)(obs->self_current_attack != 0);
     active_ledger_entry->self_airborne_seen |= obs->self_airborne;
     active_ledger_entry->opp_airborne_seen |= obs->opp_airborne;
     active_ledger_entry->self_entered_hit_stop |= obs->self_entered_hit_stop;

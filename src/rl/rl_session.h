@@ -56,6 +56,12 @@ typedef struct RLRemoteDebugState {
     u32 target_mismatch_count;
     u32 fallback_count;
     u32 transition_export_count;
+    s16 last_delta_self_forward;
+    s16 last_delta_opp_forward;
+    u8 last_requested_movement_succeeded;
+    u8 last_requested_attack_entered_state;
+    u8 last_requested_attack_made_contact;
+    u8 last_requested_attack_likely_whiffed;
 } RLRemoteDebugState;
 
 bool RLSession_IsActive();

@@ -33,6 +33,7 @@ typedef struct RLObservationV1 {
     f32 opp_left_corner_ratio;
     f32 opp_right_corner_ratio;
     s8 self_facing_sign;
+    s8 opp_facing_sign;
     u8 opp_in_front;
     u8 self_guard_flag;
     u8 opp_guard_flag;

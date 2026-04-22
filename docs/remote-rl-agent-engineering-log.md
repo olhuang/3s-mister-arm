@@ -162,6 +162,52 @@ Follow-up:
 - inspect `rl-transitions.ndjson` for the new delta / event fields during hit, block, jump, and whiff cases
 - revisit explicit `hit / blocked / whiff / throw` outcome enums in a later Milestone 4 refinement
 
+## 2026-04-23: Milestone 4 Relative Movement And Request Outcome Fields
+
+Milestone:
+- Milestone 4: Decision ledger and transition logging
+
+Files changed:
+- `src/rl/rl_observation.h`
+- `src/rl/rl_observation.c`
+- `src/rl/rl_session.h`
+- `src/rl/rl_session.c`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- make transition records easier for the learner to consume by adding facing-relative movement and first-pass requested-action outcome fields
+
+Implementation notes:
+- added opponent facing to `RLObservationV1` so opponent movement can also be converted into facing-relative motion
+- transition logs now include:
+  - `delta_self_forward`
+  - `delta_opp_forward`
+  - `requested_movement_succeeded`
+  - `requested_attack_entered_state`
+  - `requested_attack_made_contact`
+  - `requested_attack_likely_whiffed`
+- RL debug overlay now includes a compact outcome line:
+  - `RFself/opp`
+  - `MS`
+  - `ASentered/contact/whiff`
+- documented that:
+  - world X/Y deltas remain signed world-coordinate deltas
+  - forward deltas are facing-relative
+  - stun deltas are signed and can be negative when stun recovers
+  - contact state is conservative and not a precise hit/block enum
+  - unexecuted terminal entries should usually be filtered by the first replay buffer
+  - `rl-transitions.ndjson` is still an evolving debug/training schema
+
+Validation:
+- `git diff --check` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed.
+
+Follow-up:
+- verify `forward` produces nonzero `delta_self_forward` and `requested_movement_succeeded=1`
+- verify `hp` produces attack entered/contact/whiff outcomes in plausible cases
+- defer precise `hit / blocked / whiff / throw` enums until the hitcheck and throw paths are decoded more confidently
+
 ## 2026-04-22: Milestone 2 Action Session Gate
 
 Milestone:

@@ -556,6 +556,171 @@ Notes:
 - if a source field is later found to be unavailable or unstable in one build target, the replacement must preserve the same logical meaning and require a version bump if that meaning changes
 - if the wire payload later switches to quantized integers instead of `f32`, the logical schema above still remains the canonical contract
 
+### 4B. `RLObservationV1` 中文欄位導讀
+
+這一節不是新的 schema。它是上面 canonical table 的中文解讀，重點放在:
+
+- 欄位代表什麼
+- RL 可以用它學到什麼
+- 哪些欄位能回答「對手有沒有出招 / 在不在跳 / 有沒有被打中或被擋」
+
+#### 資源與勝負狀態
+
+- `self_hp_ratio`, `opp_hp_ratio`
+  - 表示自己與對手血量。
+  - RL 可用來學:
+    - 何時要保守
+    - 何時要換血
+    - 瀕死時是否要壓進或撤退
+- `self_super_ratio`, `opp_super_ratio`
+  - 表示自己與對手氣條。
+  - RL 可用來學:
+    - 自己能不能開 SA
+    - 對手有氣時是否要減少高風險行動
+- `self_stun_ratio`, `opp_stun_ratio`
+  - 表示自己與對手暈值。
+  - RL 可用來學:
+    - 對手快暈時是否繼續壓
+    - 自己快暈時是否降低互動頻率
+
+#### 空間與位置
+
+- `opp_dx_ratio`, `opp_dy_ratio`
+  - 表示對手相對於自己的水平與垂直距離。
+  - RL 可用來學:
+    - 近距 / 中距 / 遠距決策
+    - 對空與空對地判斷
+    - 前跳是否能打到
+- `self_left_corner_ratio`, `self_right_corner_ratio`
+- `opp_left_corner_ratio`, `opp_right_corner_ratio`
+  - 表示雙方距離版邊多近。
+  - RL 可用來學:
+    - corner pressure
+    - 逃 corner
+    - 把對手往角落逼
+
+#### 朝向與相對前後
+
+- `self_facing_sign`
+  - 表示自己目前面向 world-left 或 world-right。
+  - RL 不需要直接學世界左右，主要用它配合其他欄位維持方向一致性。
+- `opp_in_front`
+  - 表示對手是否在自己的前方。
+  - 這個比 raw left/right 更接近實戰語意，因為 RL 真正需要的是「前 / 後」。
+
+#### 戰鬥狀態與出招線索
+
+- `self_current_attack`, `opp_current_attack`
+  - 這是判斷「自己 / 對手有沒有出招」的核心欄位。
+  - 它是 raw attack id，不是單純的拳 / 腳布林值。
+  - RL 可用來學:
+    - 對手是否正在出招
+    - 對手目前是哪一類攻擊 / 哪一個招式
+    - 自己目前正在做什麼招
+- `self_guard_flag`, `opp_guard_flag`
+  - 表示 guard 狀態。
+  - 可用來推測:
+    - 自己的攻擊是否被擋
+    - 對手是不是正在防禦
+- `self_hit_stop`, `opp_hit_stop`
+  - 表示 hit stop。
+  - 配合 guard / HP 變化時，能幫助 RL 區分:
+    - 打中
+    - 被擋
+    - 純空揮
+- `self_do_not_move`, `opp_do_not_move`
+  - 表示角色是否不能自由移動。
+  - 可用來推測:
+    - 硬直
+    - 某些被定住或招式中狀態
+- `self_high_jump_flag`, `opp_high_jump_flag`
+  - 表示是否 high jump。
+  - 對辨識跳躍狀態有幫助，但不是完整 airborne 判定。
+- `self_routine_0..2`, `opp_routine_0..2`
+  - 表示角色內部 state machine / routine 狀態。
+  - 這些欄位很原始，但對 RL 很有價值，因為它們常常比高階文字標籤更穩定地反映:
+    - 站立 / 蹲下 / 跳躍
+    - 攻擊進行中
+    - 受擊 / 硬直 / 倒地
+
+#### 回答常見問題
+
+- RL 怎麼知道對手有沒有出招?
+  - 主要看 `opp_current_attack`
+  - 再配 `opp_routine_*`
+- RL 怎麼知道對手站著還是在跳?
+  - 主要看 `opp_dy_ratio`
+  - 再配 `opp_high_jump_flag`
+  - 再配 `opp_routine_*`
+  - 如果後續驗證覺得這樣不夠直觀，可以再加明確 `opp_airborne`
+- RL 怎麼知道對手是出拳還是出腳?
+  - v1 不直接給 punch / kick 布林值
+  - 主要靠 `opp_current_attack`
+  - remote side 可以:
+    - 直接把 attack id 當 categorical feature
+    - 或建立 attack-id -> semantic tag 對照
+- RL 怎麼知道對手出了什麼絕招?
+  - 也是主要靠 `opp_current_attack`
+  - 它比單純拳 / 腳分類更細，能保留具體招式資訊
+- RL 怎麼知道自己的招有沒有打中 / 被擋 / 空揮?
+  - v1 不打算只靠單一 observation 欄位回答這件事
+  - 一般會綜合:
+    - `opp_hp_ratio` 變化
+    - `opp_guard_flag`
+    - `self_hit_stop` / `opp_hit_stop`
+    - 後續 transition / reward / decision ledger
+  - 也就是說:
+    - 打中: 通常伴隨對手掉血，且可能有 hit stop
+    - 被擋: 通常 guard flag 變化明顯，且可能有 hit stop，但傷害模式不同
+    - 空揮: 有出招，但沒有造成血量或 guard 的對應變化
+
+#### 回合資訊
+
+- `round_num`, `self_round_wins`, `opp_round_wins`
+  - 讓 RL 知道目前是第幾回合、比分如何。
+  - 這對多回合策略很重要，例如:
+    - 領先時保守
+    - 落後時提高風險
+
+#### 動作排程上下文
+
+- `last_executed_move_intent`
+- `last_executed_attack_bits`
+- `next_scheduled_move_intent`
+- `next_scheduled_attack_bits`
+- `frames_until_next_action`
+  - 這些欄位是為 delayed control 設計的。
+  - 因為 remote policy 不是 same-frame 立即生效，所以 RL 需要知道:
+    - 上一個真正執行的是什麼
+    - 下一個排隊中的動作是什麼
+    - 還要幾幀才輪到下一個動作
+
+#### Combo / 指令輸出的理解方式
+
+未來 RL 不會把 `L.D.R.LP` 這種整串指令當成一個字串一次送給 MiSTer。
+
+v1 的基本模型是:
+
+- 每個 decision step 輸出一個 action
+- action 由:
+  - 一個 relative movement intent
+  - 一組 attack bits
+  組成
+- action 可以因為 `action_hold_frames` 持續多幀
+
+所以像 `L.D.R.LP` 這種輸入，比較像是時間序列:
+
+1. 一步輸出左
+2. 下一步輸出下
+3. 下一步輸出右
+4. 下一步輸出 LP
+
+也就是說:
+
+- 不一定每幀都換一鍵
+- 但本質上是多個時間步的 action sequence
+- combo 是 policy 在多個 step 上學出來的時序模式，不是單包字串命令
+
 ### 5. Separate Wire Action Format From Policy Action Format
 
 Recommended v1 wire action mode:

@@ -23,6 +23,7 @@ static s16 prev_frame_stun[2];
 static s16 prev_frame_pos_x[2];
 static s16 prev_frame_pos_y[2];
 static u16 prev_frame_current_attack[2];
+static u16 prev_frame_routine1[2];
 static u8 prev_frame_airborne[2];
 static u8 prev_frame_hit_stop[2];
 static u8 prev_frame_contact_state[2];
@@ -231,6 +232,12 @@ void RLObservation_OnFrameEnd() {
     obs.opp_hit_stop = plw[opp].wu.hit_stop != 0;
     obs.self_high_jump_flag = plw[self].high_jump_flag;
     obs.opp_high_jump_flag = plw[opp].high_jump_flag;
+    obs.self_routine[0] = (u16)plw[self].wu.routine_no[0];
+    obs.self_routine[1] = (u16)plw[self].wu.routine_no[1];
+    obs.self_routine[2] = (u16)plw[self].wu.routine_no[2];
+    obs.opp_routine[0] = (u16)plw[opp].wu.routine_no[0];
+    obs.opp_routine[1] = (u16)plw[opp].wu.routine_no[1];
+    obs.opp_routine[2] = (u16)plw[opp].wu.routine_no[2];
     if (prev_frame_valid) {
         const s16 self_hp_delta = clamp_s16_delta((s32)prev_frame_hp[self] - (s32)debug.self_hp);
         const s16 opp_hp_delta = clamp_s16_delta((s32)prev_frame_hp[opp] - (s32)debug.opp_hp);
@@ -261,6 +268,8 @@ void RLObservation_OnFrameEnd() {
             (u8)(prev_frame_current_attack[self] != obs.self_current_attack && obs.self_current_attack != 0);
         obs.opp_attack_code_changed =
             (u8)(prev_frame_current_attack[opp] != obs.opp_current_attack && obs.opp_current_attack != 0);
+        obs.self_attack_routine_started = (u8)(prev_frame_routine1[self] != 4 && obs.self_routine[1] == 4);
+        obs.opp_attack_routine_started = (u8)(prev_frame_routine1[opp] != 4 && obs.opp_routine[1] == 4);
         obs.self_entered_contact_state = (u8)(!prev_frame_contact_state[self] && self_contact_state);
         obs.opp_entered_contact_state = (u8)(!prev_frame_contact_state[opp] && opp_contact_state);
         obs.self_entered_damage_state = (u8)(self_hp_delta > 0 || self_stun_delta > 0);
@@ -271,12 +280,6 @@ void RLObservation_OnFrameEnd() {
         prev_frame_contact_state[self] = (u8)((obs.self_guard_flag != 0) || obs.self_hit_stop);
         prev_frame_contact_state[opp] = (u8)((obs.opp_guard_flag != 0) || obs.opp_hit_stop);
     }
-    obs.self_routine[0] = (u16)plw[self].wu.routine_no[0];
-    obs.self_routine[1] = (u16)plw[self].wu.routine_no[1];
-    obs.self_routine[2] = (u16)plw[self].wu.routine_no[2];
-    obs.opp_routine[0] = (u16)plw[opp].wu.routine_no[0];
-    obs.opp_routine[1] = (u16)plw[opp].wu.routine_no[1];
-    obs.opp_routine[2] = (u16)plw[opp].wu.routine_no[2];
     obs.round_num = Round_num;
     obs.self_match_round_wins = PL_Wins[self];
     obs.opp_match_round_wins = PL_Wins[opp];
@@ -299,6 +302,8 @@ void RLObservation_OnFrameEnd() {
     prev_frame_pos_y[opp] = plw[opp].wu.position_y;
     prev_frame_current_attack[self] = obs.self_current_attack;
     prev_frame_current_attack[opp] = obs.opp_current_attack;
+    prev_frame_routine1[self] = obs.self_routine[1];
+    prev_frame_routine1[opp] = obs.opp_routine[1];
     prev_frame_airborne[self] = obs.self_airborne;
     prev_frame_airborne[opp] = obs.opp_airborne;
     prev_frame_stun[self] = debug.self_stun;
@@ -493,13 +498,15 @@ void RLObservation_FormatDebugOverlay(char* out, size_t out_size, const char* se
         append_overlay_line(out,
                             out_size,
                             &used,
-                            "RF%d/%d MS%d AI%d OS%d/%d AC%d AW%d J%d",
+                            "RF%d/%d MS%d AI%d AR%d OS%d/%d/%d AC%d AW%d J%d",
                             remote->last_delta_self_forward,
                             remote->last_delta_opp_forward,
                             remote->last_requested_movement_succeeded,
                             remote->last_requested_attack_input_started,
+                            remote->last_requested_attack_became_active,
                             remote->last_observed_attack_state_started,
                             remote->last_observed_attack_code_changed,
+                            remote->last_observed_attack_routine_started,
                             remote->last_requested_attack_made_contact,
                             remote->last_requested_attack_likely_whiffed,
                             remote->last_requested_jump_started);

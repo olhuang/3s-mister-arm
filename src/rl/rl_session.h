@@ -63,8 +63,10 @@ typedef struct RLRemoteDebugState {
     u8 last_requested_attack_made_contact;
     u8 last_requested_attack_likely_whiffed;
     u8 last_requested_attack_input_started;
+    u8 last_requested_attack_became_active;
     u8 last_observed_attack_state_started;
     u8 last_observed_attack_code_changed;
+    u8 last_observed_attack_routine_started;
     u8 last_requested_jump_started;
 } RLRemoteDebugState;
 

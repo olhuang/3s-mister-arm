@@ -2,6 +2,44 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-23: Milestone 4 Attack Activation Refinement
+
+Milestone:
+- Milestone 4: Decision ledger and transition logging
+
+Files changed:
+- `src/rl/rl_observation.h`
+- `src/rl/rl_observation.c`
+- `src/rl/rl_session.h`
+- `src/rl/rl_session.c`
+- `docs/config.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- separate raw attack-button pulses from the smaller set of decisions that actually become a new in-game attack, so whiff/contact counts line up better with observed gameplay
+
+Implementation notes:
+- added runtime edge fields for `routine_no[1] != 4 -> 4`:
+  - `self_attack_routine_started`
+  - `opp_attack_routine_started`
+- transition logs now also export:
+  - `requested_attack_became_active`
+  - `observed_attack_routine_started`
+- `requested_attack_became_active` is now the preferred first-pass count for "real punches/kicks actually started"
+- `requested_attack_likely_whiffed` now keys off `requested_attack_became_active && !requested_attack_made_contact` instead of the broader `current_attack != 0` state-seen flag
+- RL outcome overlay now shows `AR` so runtime bring-up can distinguish:
+  - `AI`: input pulse sent
+  - `AR`: attack routine actually started
+  - `OS`: older `current_attack`-derived debug signals plus routine-start edge
+
+Validation:
+- `git diff --check` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed.
+
+Follow-up:
+- retest `--policy hp` and compare `requested_attack_became_active` against visible punch count
+
 ## 2026-04-23: Human-Opponent Remote Policy Routing
 
 Milestone:

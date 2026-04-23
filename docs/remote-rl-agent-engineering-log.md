@@ -57,7 +57,20 @@ Implementation notes:
 - added `--policy throw`, which loops:
   - `FORWARD + LP + LK`
   - neutral recovery frames
-- both policies use the existing relative-movement action wire, so MiSTer still maps forward/down-forward at execution time based on current facing
+- added `--policy tatsu`, which loops:
+  - `DOWN`
+  - `DOWN_BACK`
+  - `BACK`
+  - `BACK + LK`
+  - neutral recovery frames
+- added `--policy shoryuken`, which loops:
+  - `FORWARD`
+  - `DOWN`
+  - `DOWN_FORWARD`
+  - `DOWN_FORWARD + HP`
+  - neutral recovery frames
+- added `--policy-repeat-delay-ms N`, which holds neutral after each scripted policy loop before repeating
+- scripted policies use the existing relative-movement action wire, so MiSTer still maps forward/back/down-forward/down-back at execution time based on current facing
 
 Validation:
 - `python3 -m py_compile tools/rl_probe_server.py` passed.

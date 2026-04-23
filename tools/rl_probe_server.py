@@ -22,7 +22,9 @@ OBS_HEADER = struct.Struct("<IHHQIIIIHHI")
 
 RL_MOVE_NEUTRAL = 0x0000
 RL_MOVE_DOWN = 0x0002
+RL_MOVE_BACK = 0x0003
 RL_MOVE_FORWARD = 0x0004
+RL_MOVE_DOWN_BACK = 0x0007
 RL_MOVE_DOWN_FORWARD = 0x0008
 
 BTN_LP = 0x0010
@@ -90,37 +92,84 @@ def maybe_send_action(
         print(f"{target} ACTION mode={action_mode} nonce={send_nonce} decision={sequence} model={model_version}")
 
 
-def scripted_action_wire(policy: str, decision_id: int) -> int:
-    fixed = {
-        "forward": 0x0004,
-        "back": 0x0003,
-        "hp": 0x0040,
-        "forward-hp": 0x0044,
-    }
-    if policy in fixed:
-        return fixed[policy]
+def fixed_action_wire(policy: str) -> int | None:
+    return {
+        "forward": RL_MOVE_FORWARD,
+        "back": RL_MOVE_BACK,
+        "hp": BTN_HP,
+        "forward-hp": RL_MOVE_FORWARD | BTN_HP,
+    }.get(policy)
 
-    if policy == "ryu-fireball":
-        sequence = (
+
+def scripted_sequence(policy: str) -> tuple[int, ...] | None:
+    scripts = {
+        "ryu-fireball": (
             RL_MOVE_DOWN,
             RL_MOVE_DOWN_FORWARD,
             RL_MOVE_FORWARD,
             RL_MOVE_FORWARD | BTN_LP,
             RL_MOVE_NEUTRAL,
             RL_MOVE_NEUTRAL,
-        )
-        return sequence[decision_id % len(sequence)]
-
-    if policy == "throw":
-        sequence = (
+        ),
+        "throw": (
             RL_MOVE_FORWARD | BTN_LP | BTN_LK,
             RL_MOVE_NEUTRAL,
             RL_MOVE_NEUTRAL,
             RL_MOVE_NEUTRAL,
-        )
-        return sequence[decision_id % len(sequence)]
+        ),
+        "tatsu": (
+            RL_MOVE_DOWN,
+            RL_MOVE_DOWN_BACK,
+            RL_MOVE_BACK,
+            RL_MOVE_BACK | BTN_LK,
+            RL_MOVE_NEUTRAL,
+            RL_MOVE_NEUTRAL,
+        ),
+        "shoryuken": (
+            RL_MOVE_FORWARD,
+            RL_MOVE_DOWN,
+            RL_MOVE_DOWN_FORWARD,
+            RL_MOVE_DOWN_FORWARD | BTN_HP,
+            RL_MOVE_NEUTRAL,
+            RL_MOVE_NEUTRAL,
+        ),
+    }
+    return scripts.get(policy)
 
-    return fixed["forward"]
+
+def scripted_action_wire(
+    policy: str,
+    policy_states: dict[tuple[int, int, str], dict[str, int]],
+    nonce: int,
+    episode_id: int,
+    repeat_delay_ms: int,
+) -> int:
+    fixed = fixed_action_wire(policy)
+    if fixed is not None:
+        return fixed
+
+    sequence = scripted_sequence(policy)
+    if sequence is None:
+        return RL_MOVE_FORWARD
+
+    key = (nonce, episode_id, policy)
+    state = policy_states.setdefault(key, {"index": 0, "delay_until_ns": 0})
+    now_ns = time.monotonic_ns()
+    if state["delay_until_ns"] > now_ns:
+        return RL_MOVE_NEUTRAL
+    if state["delay_until_ns"] != 0:
+        state["delay_until_ns"] = 0
+        state["index"] = 0
+
+    index = state["index"]
+    action_wire = sequence[index]
+    index += 1
+    if index >= len(sequence):
+        index = 0
+        if repeat_delay_ms > 0:
+            state["delay_until_ns"] = now_ns + (repeat_delay_ms * 1_000_000)
+    state["index"] = index
+    return action_wire
 
 
 def serve(
@@ -132,11 +181,13 @@ def serve(
     policy: str,
     obs_reply_mode: str,
     model_version: int,
+    policy_repeat_delay_ms: int,
 ) -> None:
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind((host, port))
     print(f"RL probe server listening on {host}:{port}")
     hello_count: dict[int, int] = {}
+    policy_states: dict[tuple[int, int, str], dict[str, int]] = {}
 
     while True:
         data, addr = sock.recvfrom(2048)
@@ -159,7 +210,7 @@ def serve(
                     print(f"{addr} bad_obs_header magic=0x{magic:08x} version={version} type={packet_type}")
                 continue
             if action_port is not None:
-                target_wire = scripted_action_wire(policy, decision_id)
+                target_wire = scripted_action_wire(policy, policy_states, nonce, episode_id, policy_repeat_delay_ms)
                 payload = make_action_packet(
                     nonce,
                     episode_id,
@@ -188,6 +239,7 @@ def serve(
                         f"ep={episode_id} dec={decision_id} obs={obs_frame} "
                         f"target={target_frame} hold={action_hold_frames}"
                         f" model_expected={model_version_expected} model={model_version}"
+                        f" wire=0x{target_wire:04x}"
                     )
             continue
         if len(data) != PACKET.size:
@@ -241,7 +293,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--policy",
-        choices=["forward", "back", "hp", "forward-hp", "ryu-fireball", "throw"],
+        choices=["forward", "back", "hp", "forward-hp", "ryu-fireball", "throw", "tatsu", "shoryuken"],
         default="forward",
         help="Fixed or scripted action used when MiSTer sends observation headers",
     )
@@ -252,6 +304,12 @@ def main() -> None:
         help="How to reply to Milestone 3 observation headers",
     )
     parser.add_argument("--model-version", type=int, default=0, help="Model version stamped into action packets")
+    parser.add_argument(
+        "--policy-repeat-delay-ms",
+        type=int,
+        default=0,
+        help="Neutral stand delay after each scripted policy loop before repeating",
+    )
     parser.add_argument("--verbose", action="store_true", help="Log every valid packet")
     args = parser.parse_args()
     serve(
@@ -263,6 +321,7 @@ def main() -> None:
         args.policy,
         args.obs_reply_mode,
         args.model_version,
+        args.policy_repeat_delay_ms,
     )
 
 

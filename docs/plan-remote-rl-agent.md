@@ -2190,6 +2190,19 @@ Implementation notes:
 - `tools/rl_probe_server.py --policy throw` loops:
   - `FORWARD + LP + LK`
   - neutral recovery frames
+- `tools/rl_probe_server.py --policy tatsu` loops a relative Ryu/Ken hurricane-kick script:
+  - `DOWN`
+  - `DOWN_BACK`
+  - `BACK`
+  - `BACK + LK`
+  - neutral recovery frames
+- `tools/rl_probe_server.py --policy shoryuken` loops a relative dragon-punch script:
+  - `FORWARD`
+  - `DOWN`
+  - `DOWN_FORWARD`
+  - `DOWN_FORWARD + HP`
+  - neutral recovery frames
+- `tools/rl_probe_server.py --policy-repeat-delay-ms N` holds neutral after each scripted policy loop before repeating.
 
 ### Milestone 6: Higher-control-rate policy and curriculum
 

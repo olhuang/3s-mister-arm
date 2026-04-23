@@ -205,6 +205,9 @@ static void RLSession_ResetRemoteRuntime(bool reset_counters) {
     RLSession_ClearActionContext();
     active_round_num = Round_num;
     remote_runtime_initialized = false;
+    remote_debug.episode_attack_active_count = 0;
+    remote_debug.episode_attack_contact_count = 0;
+    remote_debug.episode_attack_whiff_count = 0;
     if (reset_counters) {
         memset(&remote_debug, 0, sizeof(remote_debug));
     }
@@ -597,6 +600,14 @@ static void RLSession_FinalizeLedgerEntry(RLDecisionLedgerEntry* entry, bool don
     remote_debug.last_observed_attack_code_changed = entry->observed_attack_code_changed;
     remote_debug.last_observed_attack_counter_started = entry->observed_attack_counter_started;
     remote_debug.last_requested_jump_started = entry->requested_jump_started;
+    if (entry->requested_attack_became_active) {
+        remote_debug.episode_attack_active_count++;
+        if (entry->requested_attack_made_contact) {
+            remote_debug.episode_attack_contact_count++;
+        } else if (entry->requested_attack_likely_whiffed) {
+            remote_debug.episode_attack_whiff_count++;
+        }
+    }
 }
 
 static void RLSession_SetActiveLedgerEntry(RLDecisionLedgerEntry* entry) {
@@ -765,12 +776,18 @@ static void RLSession_MaybeInitRemoteRuntime() {
     if (!remote_runtime_initialized) {
         active_round_num = Round_num;
         remote_debug.episode_id = Round_num;
+        remote_debug.episode_attack_active_count = 0;
+        remote_debug.episode_attack_contact_count = 0;
+        remote_debug.episode_attack_whiff_count = 0;
         remote_runtime_initialized = true;
     }
     if (active_round_num != Round_num) {
         RLSession_FinalizeEpisodeLedger(remote_debug.episode_id);
         active_round_num = Round_num;
         remote_debug.episode_id = Round_num;
+        remote_debug.episode_attack_active_count = 0;
+        remote_debug.episode_attack_contact_count = 0;
+        remote_debug.episode_attack_whiff_count = 0;
         RLSession_ClearRemoteQueue();
     }
 }

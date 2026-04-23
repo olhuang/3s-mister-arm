@@ -515,6 +515,13 @@ void RLObservation_FormatDebugOverlay(char* out, size_t out_size, const char* se
                             remote->last_requested_attack_made_contact,
                             remote->last_requested_attack_likely_whiffed,
                             remote->last_requested_jump_started);
+        append_overlay_line(out,
+                            out_size,
+                            &used,
+                            "AH%lu ACC%lu AWC%lu",
+                            (unsigned long)remote->episode_attack_active_count,
+                            (unsigned long)remote->episode_attack_contact_count,
+                            (unsigned long)remote->episode_attack_whiff_count);
     }
 
     if (show_all || view == RL_DEBUG_OVERLAY_VIEW_INPUT) {

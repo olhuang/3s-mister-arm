@@ -189,6 +189,9 @@ Notes:
   - `OS`: observed attack state start / observed attack code changed / attack-counter start
   - `AC`: requested attack made contact heuristic
   - `AW`: requested attack likely whiffed heuristic
+  - `AH`: current round's accumulated real attack starts
+  - `ACC`: current round's accumulated attack contacts
+  - `AWC`: current round's accumulated likely whiffs
   - `J`: requested jump started
 
 ### `rl-agent-player`

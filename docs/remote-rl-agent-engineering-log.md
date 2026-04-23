@@ -2,6 +2,35 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-23: Outcome Overlay Attack Counters
+
+Milestone:
+- Milestone 4: Decision ledger and transition logging
+
+Files changed:
+- `src/rl/rl_observation.c`
+- `src/rl/rl_session.h`
+- `src/rl/rl_session.c`
+- `docs/config.md`
+
+Purpose:
+- make on-screen RL debug easier to compare against visible gameplay by adding per-round accumulated attack-start / contact / whiff counters
+
+Implementation notes:
+- added round-episode counters to `RLRemoteDebugState`:
+  - `episode_attack_active_count`
+  - `episode_attack_contact_count`
+  - `episode_attack_whiff_count`
+- these counters update when each transition is exported, using the already-derived `requested_attack_became_active`, `requested_attack_made_contact`, and `requested_attack_likely_whiffed`
+- counters reset on remote runtime reset and on round/episode rollover
+- outcome overlay now adds:
+  - `AH`: accumulated real attack starts this round
+  - `ACC`: accumulated contacts this round
+  - `AWC`: accumulated likely whiffs this round
+
+Validation:
+- pending local telemetry build and diff check
+
 ## 2026-04-23: Milestone 4 Attack Activation Refinement
 
 Milestone:

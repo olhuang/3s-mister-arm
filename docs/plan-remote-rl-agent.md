@@ -1735,7 +1735,8 @@ Recommended runtime matrix:
 
 - `P1C`: watch fake-agent movement, attack button-category codes, combat/contact transitions, and action-context countdown
 - `P2C`: repeat the same checks from the opposite side to catch self/opp perspective mistakes
-- `P1H` / `P2H`: use `RL Movement = Forward / Back / Jump Forward / Down Back` to sanity-check that relative move-intent labels still agree with remapped directions
+- `P1H` / `P2H` with `rl-network = on`: same remote-policy path as `P1C` / `P2C`, but against human input on the other side
+- `P1H` / `P2H` with `rl-network = off`: use `RL Movement = Forward / Back / Jump Forward / Down Back` to sanity-check that relative move-intent labels still agree with remapped directions
 
 ### Milestone 2: Session handshake, network probe, and delay budget
 

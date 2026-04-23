@@ -2,6 +2,35 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-23: Human-Opponent Remote Policy Routing
+
+Milestone:
+- Milestone 3: Remote inference only
+
+Files changed:
+- `src/rl/rl_session.c`
+- `docs/config.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- let `P1H` / `P2H` use the same remote-policy inference path as CPU-opponent sessions so human-opponent testing and debug runs stay on the real network/action pipeline
+
+Implementation notes:
+- `RLSession_RemoteControlEnabled()` no longer disables the remote path just because `human_opponent` is enabled
+- when `rl-opponent-mode = human`:
+  - `rl-network = on` now uses remote action queue/execution
+  - `rl-network = off` still uses the old scripted movement helper for Milestone 0B validation
+- guarded the older scripted/local-fake helpers so they do not run when the remote path is active
+- this keeps `P1H` / `P2H` labels accurate while making them more useful for controlled remote debugging
+
+Validation:
+- `git diff --check` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed.
+
+Follow-up:
+- hardware-test `P1H` / `P2H` with `rl-network = on` and confirm `OBS/Q/EX` advance normally while the opponent side remains human-controlled
+
 ## 2026-04-23: Milestone 4 Attack Outcome Semantics Refinement
 
 Milestone:

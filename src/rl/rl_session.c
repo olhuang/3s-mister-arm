@@ -180,7 +180,7 @@ static bool RLSession_CanOverrideGameplayInput() {
 
 static bool RLSession_RemoteControlEnabled() {
     const RLNetState* net = RLNet_GetState();
-    return RLSession_IsActive() && !RLSession_OpponentUsesHumanInput() && net->enabled;
+    return RLSession_IsActive() && net->enabled;
 }
 
 static void RLSession_ClearRemoteQueue() {
@@ -771,7 +771,7 @@ void RLSession_ApplyVersusOperatorSetup() {
 }
 
 void RLSession_ApplyScriptedMovementToBuffers() {
-    if (!RLSession_OpponentUsesHumanInput()) {
+    if (!RLSession_OpponentUsesHumanInput() || RLSession_RemoteControlEnabled()) {
         return;
     }
 
@@ -812,7 +812,7 @@ void RLSession_ApplyScriptedMovementToBuffers() {
 }
 
 static void RLSession_ApplyLocalFakeAgentToBuffers() {
-    if (RLSession_OpponentUsesHumanInput() || !RLSession_CanOverrideGameplayInput()) {
+    if (RLSession_OpponentUsesHumanInput() || RLSession_RemoteControlEnabled() || !RLSession_CanOverrideGameplayInput()) {
         RLSession_ResetLocalFakeAgent();
         return;
     }

@@ -103,7 +103,6 @@ typedef struct RLDecisionLedgerEntry {
     u8 requested_attack_entered_state;
     u8 requested_attack_made_contact;
     u8 requested_attack_likely_whiffed;
-    u8 requested_attack_started;
     u8 requested_attack_input_started;
     u8 observed_attack_state_started;
     u8 observed_attack_code_changed;
@@ -358,7 +357,6 @@ static void RLSession_UpdateDerivedOutcomeFields(RLDecisionLedgerEntry* entry) {
     entry->requested_attack_entered_state = 0;
     entry->requested_attack_made_contact = 0;
     entry->requested_attack_likely_whiffed = 0;
-    entry->requested_attack_started = 0;
     entry->requested_attack_input_started = 0;
     entry->observed_attack_state_started = 0;
     entry->observed_attack_code_changed = 0;
@@ -400,7 +398,6 @@ static void RLSession_UpdateDerivedOutcomeFields(RLDecisionLedgerEntry* entry) {
 
     if (entry->was_executed && requested_attacks != 0) {
         entry->requested_attack_input_started = (u8)(entry->executed_attack_bits != 0);
-        entry->requested_attack_started = entry->requested_attack_input_started;
         entry->observed_attack_state_started = entry->self_attack_started;
         entry->observed_attack_code_changed = entry->self_attack_code_changed;
         entry->requested_attack_entered_state = entry->self_attack_state_seen;
@@ -478,7 +475,6 @@ static void RLSession_AppendTransitionLog(const RLDecisionLedgerEntry* entry) {
                      "\"requested_attack_entered_state\":%u,"
                      "\"requested_attack_made_contact\":%u,"
                      "\"requested_attack_likely_whiffed\":%u,"
-                     "\"requested_attack_started\":%u,"
                      "\"requested_attack_input_started\":%u,"
                      "\"observed_attack_state_started\":%u,"
                      "\"observed_attack_code_changed\":%u,"
@@ -521,7 +517,6 @@ static void RLSession_AppendTransitionLog(const RLDecisionLedgerEntry* entry) {
                      entry->requested_attack_entered_state,
                      entry->requested_attack_made_contact,
                      entry->requested_attack_likely_whiffed,
-                     entry->requested_attack_started,
                      entry->requested_attack_input_started,
                      entry->observed_attack_state_started,
                      entry->observed_attack_code_changed,

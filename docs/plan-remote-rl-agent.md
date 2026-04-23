@@ -2000,7 +2000,6 @@ Current first-pass action outcome / delta fields:
   - `requested_attack_entered_state`
   - `requested_attack_made_contact`
   - `requested_attack_likely_whiffed`
-  - `requested_attack_started`
   - `requested_attack_input_started`
   - `observed_attack_state_started`
   - `observed_attack_code_changed`
@@ -2018,9 +2017,9 @@ Current first-pass action outcome / delta fields:
 - `entered_contact_state` is currently a conservative derived signal based on `guard_flag != 0 || hit_stop`; it is not a precise hit/block result.
 - `was_executed=false` terminal entries should stay in debug logs, but the first learner replay buffer should filter them unless it explicitly wants canceled decisions.
 - `logs/rl-transitions.ndjson` is still an evolving debug/training schema. Do not treat it as a frozen learner contract until the replay-buffer import path is implemented.
-- `requested_attack_input_started` means this decision actually executed an attack-button pulse. `requested_attack_started` is currently kept as a compatibility alias for that field.
+- `requested_attack_input_started` means this decision actually executed an attack-button pulse.
 - `observed_attack_state_started` is the stricter runtime `current_attack: 0 -> nonzero` edge. It can undercount repeated punches if the engine keeps `current_attack` nonzero across many decision windows.
-- `observed_attack_code_changed` means runtime `current_attack` changed into a nonzero code during the decision window. Use it to debug engine-side action-code transitions, not to count RL input attempts.
+- `observed_attack_code_changed` means runtime `current_attack` changed into a nonzero code during the decision window. Treat both observed attack fields as debug / reverse-engineering signals unless a later milestone proves they help the learner.
 - `requested_attack_entered_state`, `requested_attack_made_contact`, and `requested_attack_likely_whiffed` are window-level heuristics.
 - `self_airborne_seen` / `opp_airborne_seen` are span-level state-seen flags. Use `self_airborne_started` / `opp_airborne_started` when counting jump/airborne entry edges.
 - `RL Debug` is now split by `rl-debug-view` / OSD `RL Debug View`:

@@ -21,13 +21,13 @@ Purpose:
 
 Implementation notes:
 - added `requested_attack_input_started` to transition logs; it is true when the executed decision contains nonzero attack bits
-- kept `requested_attack_started` as a compatibility alias for `requested_attack_input_started`
 - added observed runtime fields:
   - `observed_attack_state_started`
   - `observed_attack_code_changed`
   - `self_attack_code_changed` / `opp_attack_code_changed`
 - `observed_attack_state_started` remains the strict `current_attack: 0 -> nonzero` edge, which explains why it can be much lower than the number of HP decisions when `current_attack` stays nonzero
 - `observed_attack_code_changed` captures nonzero runtime attack-code changes and is useful for diagnosing engine semantics, but it is not the source of truth for input attempts
+- removed the temporary `requested_attack_started` alias so the schema now has one canonical input-attempt field
 - RL outcome overlay now shows `AI`, `OS`, `AC`, and `AW` instead of the older compact `ASstarted/state/contact/whiff` grouping
 
 Validation:
@@ -228,14 +228,20 @@ Implementation notes:
   - `requested_attack_entered_state`
   - `requested_attack_made_contact`
   - `requested_attack_likely_whiffed`
-  - `requested_attack_started`
+  - `requested_attack_input_started`
+  - `observed_attack_state_started`
+  - `observed_attack_code_changed`
   - `requested_jump_started`
   - `self_attack_started` / `opp_attack_started`
+  - `self_attack_code_changed` / `opp_attack_code_changed`
   - `self_airborne_started` / `opp_airborne_started`
 - RL debug overlay now includes a compact outcome line:
   - `RFself/opp`
   - `MS`
-  - `ASstarted/state/contact/whiff`
+  - `AI`
+  - `OSstate/code`
+  - `AC`
+  - `AW`
   - `J`
 - documented that:
   - world X/Y deltas remain signed world-coordinate deltas

@@ -2,6 +2,34 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-23: Event-Aligned Attack Outcomes in Ledger
+
+Milestone:
+- Milestone 4: Decision ledger and transition logging
+
+Files changed:
+- `src/rl/rl_session.c`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- align transition ledger attack contact / whiff accounting with the verified RL outcome overlay counters
+
+Implementation notes:
+- transition NDJSON now exports event-level overlay outcome fields:
+  - `overlay_attack_event_finalized`
+  - `overlay_attack_contact`
+  - `overlay_attack_whiff`
+  - `overlay_attack_active_count`
+  - `overlay_attack_contact_count`
+  - `overlay_attack_whiff_count`
+- only the first exported transition after an attack event finalizes gets `overlay_attack_event_finalized=1`, so jq counting should filter on that flag to avoid duplicate counts
+- the older `requested_attack_made_contact` / `requested_attack_likely_whiffed` decision-window heuristics remain in the log for comparison, but the event-level overlay fields are the preferred bring-up counters now
+
+Validation:
+- `git diff --check` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed.
+
 ## 2026-04-23: Outcome Overlay Attack Counters
 
 Milestone:

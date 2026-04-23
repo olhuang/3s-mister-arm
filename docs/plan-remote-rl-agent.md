@@ -2016,6 +2016,12 @@ Current first-pass action outcome / delta fields:
   - `observed_attack_state_started`
   - `observed_attack_code_changed`
   - `observed_attack_counter_started`
+  - `overlay_attack_event_finalized`
+  - `overlay_attack_contact`
+  - `overlay_attack_whiff`
+  - `overlay_attack_active_count`
+  - `overlay_attack_contact_count`
+  - `overlay_attack_whiff_count`
   - `self_attack_started`, `opp_attack_started`
   - `self_attack_code_changed`, `opp_attack_code_changed`
   - `self_attack_counter_started`, `opp_attack_counter_started`
@@ -2037,7 +2043,9 @@ Current first-pass action outcome / delta fields:
 - `observed_attack_state_started` is the stricter runtime `current_attack: 0 -> nonzero` edge. It can undercount repeated punches if the engine keeps `current_attack` nonzero across many decision windows.
 - `observed_attack_code_changed` means runtime `current_attack` changed into a nonzero code during the decision window. Treat both observed attack fields as debug / reverse-engineering signals unless a later milestone proves they help the learner.
 - `observed_attack_counter_started` mirrors the defender-side `Attack_Counter` edge and should stay close to `requested_attack_became_active` for attack-request windows.
-- `requested_attack_entered_state`, `requested_attack_made_contact`, and `requested_attack_likely_whiffed` are window-level heuristics. `requested_attack_likely_whiffed` now means "became active but made no contact".
+- `requested_attack_entered_state`, `requested_attack_made_contact`, and `requested_attack_likely_whiffed` are older decision-window heuristics. Keep them for bring-up comparison, but do not use them as the primary attack counter.
+- `overlay_attack_event_finalized`, `overlay_attack_contact`, and `overlay_attack_whiff` mirror the verified RL overlay event logic. Count only rows with `overlay_attack_event_finalized == 1` when validating real attack/contact/whiff totals from the ledger.
+- `overlay_attack_active_count`, `overlay_attack_contact_count`, and `overlay_attack_whiff_count` are the current round's cumulative attack-event counters at export time.
 - `self_airborne_seen` / `opp_airborne_seen` are span-level state-seen flags. Use `self_airborne_started` / `opp_airborne_started` when counting jump/airborne entry edges.
 - `RL Debug` is now split by `rl-debug-view` / OSD `RL Debug View`:
   - `All`: full bring-up view
@@ -2067,6 +2075,9 @@ tail -n 1000 logs/rl-transitions.ndjson | jq -s '{
   observed_attack_state_started: map(select(.observed_attack_state_started == 1)) | length,
   observed_attack_code_changed: map(select(.observed_attack_code_changed == 1)) | length,
   observed_attack_counter_started: map(select(.observed_attack_counter_started == 1)) | length,
+  overlay_attack_events: map(select(.overlay_attack_event_finalized == 1)) | length,
+  overlay_attack_contacts: map(select(.overlay_attack_event_finalized == 1 and .overlay_attack_contact == 1)) | length,
+  overlay_attack_whiffs: map(select(.overlay_attack_event_finalized == 1 and .overlay_attack_whiff == 1)) | length,
   self_airborne_started: map(select(.self_airborne_started == 1)) | length,
   opp_stun_increased: map(select(.delta_opp_stun > 0)) | length,
   opp_stun_recovered: map(select(.delta_opp_stun < 0)) | length,

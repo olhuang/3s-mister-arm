@@ -112,6 +112,12 @@ typedef struct RLDecisionLedgerEntry {
     u8 observed_attack_state_started;
     u8 observed_attack_code_changed;
     u8 observed_attack_counter_started;
+    u8 overlay_attack_event_finalized;
+    u8 overlay_attack_contact;
+    u8 overlay_attack_whiff;
+    u32 overlay_attack_active_count;
+    u32 overlay_attack_contact_count;
+    u32 overlay_attack_whiff_count;
     u8 requested_jump_started;
     float reward_accum;
 } RLDecisionLedgerEntry;
@@ -144,6 +150,8 @@ static RLRemoteActiveAction active_remote_action;
 static RLDecisionLedgerEntry* active_ledger_entry;
 static bool overlay_attack_event_pending;
 static bool overlay_attack_event_contact_seen;
+static u32 overlay_attack_event_seq;
+static u32 overlay_attack_event_logged_seq;
 static u16 last_executed_action_wire;
 static RLActionContext action_context = {
     .last_executed_move_intent = RL_MOVE_NEUTRAL,
@@ -210,6 +218,8 @@ static void RLSession_ResetOverlayAttackCounters() {
     remote_debug.last_overlay_attack_whiff = 0;
     overlay_attack_event_pending = false;
     overlay_attack_event_contact_seen = false;
+    overlay_attack_event_seq = 0;
+    overlay_attack_event_logged_seq = 0;
 }
 
 static void RLSession_FinalizeOverlayAttackEvent() {
@@ -226,6 +236,7 @@ static void RLSession_FinalizeOverlayAttackEvent() {
         remote_debug.last_overlay_attack_contact = 0;
         remote_debug.last_overlay_attack_whiff = 1;
     }
+    overlay_attack_event_seq++;
     overlay_attack_event_pending = false;
     overlay_attack_event_contact_seen = false;
 }
@@ -399,6 +410,12 @@ static void RLSession_UpdateDerivedOutcomeFields(RLDecisionLedgerEntry* entry) {
     entry->observed_attack_state_started = 0;
     entry->observed_attack_code_changed = 0;
     entry->observed_attack_counter_started = 0;
+    entry->overlay_attack_event_finalized = 0;
+    entry->overlay_attack_contact = 0;
+    entry->overlay_attack_whiff = 0;
+    entry->overlay_attack_active_count = remote_debug.episode_attack_active_count;
+    entry->overlay_attack_contact_count = remote_debug.episode_attack_contact_count;
+    entry->overlay_attack_whiff_count = remote_debug.episode_attack_whiff_count;
     entry->requested_jump_started = 0;
 
     if (entry->was_executed && RLSession_MoveIntentRequestsMovement(requested_move)) {
@@ -449,6 +466,13 @@ static void RLSession_UpdateDerivedOutcomeFields(RLDecisionLedgerEntry* entry) {
         entry->requested_attack_likely_whiffed =
             (u8)(entry->requested_attack_became_active && !entry->requested_attack_made_contact);
     }
+
+    if (overlay_attack_event_seq != overlay_attack_event_logged_seq) {
+        entry->overlay_attack_event_finalized = 1;
+        entry->overlay_attack_contact = remote_debug.last_overlay_attack_contact;
+        entry->overlay_attack_whiff = remote_debug.last_overlay_attack_whiff;
+        overlay_attack_event_logged_seq = overlay_attack_event_seq;
+    }
 }
 
 static s16 RLSession_ClampDeltaS16(s32 value) {
@@ -496,7 +520,7 @@ static RLDecisionLedgerEntry* RLSession_AllocLedgerEntry() {
 static void RLSession_AppendTransitionLog(const RLDecisionLedgerEntry* entry) {
     char* logs_dir = NULL;
     char* log_path = NULL;
-    char line[2048];
+    char line[3072];
     SDL_IOStream* io = NULL;
     const char* pref_path = NULL;
     const int written =
@@ -521,6 +545,12 @@ static void RLSession_AppendTransitionLog(const RLDecisionLedgerEntry* entry) {
                      "\"observed_attack_state_started\":%u,"
                      "\"observed_attack_code_changed\":%u,"
                      "\"observed_attack_counter_started\":%u,"
+                     "\"overlay_attack_event_finalized\":%u,"
+                     "\"overlay_attack_contact\":%u,"
+                     "\"overlay_attack_whiff\":%u,"
+                     "\"overlay_attack_active_count\":%u,"
+                     "\"overlay_attack_contact_count\":%u,"
+                     "\"overlay_attack_whiff_count\":%u,"
                      "\"requested_jump_started\":%u,"
                      "\"self_attack_started\":%u,\"opp_attack_started\":%u,"
                      "\"self_attack_code_changed\":%u,\"opp_attack_code_changed\":%u,"
@@ -567,6 +597,12 @@ static void RLSession_AppendTransitionLog(const RLDecisionLedgerEntry* entry) {
                      entry->observed_attack_state_started,
                      entry->observed_attack_code_changed,
                      entry->observed_attack_counter_started,
+                     entry->overlay_attack_event_finalized,
+                     entry->overlay_attack_contact,
+                     entry->overlay_attack_whiff,
+                     entry->overlay_attack_active_count,
+                     entry->overlay_attack_contact_count,
+                     entry->overlay_attack_whiff_count,
                      entry->requested_jump_started,
                      entry->self_attack_started,
                      entry->opp_attack_started,

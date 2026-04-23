@@ -62,6 +62,8 @@ typedef struct RLRemoteDebugState {
     u8 last_requested_attack_entered_state;
     u8 last_requested_attack_made_contact;
     u8 last_requested_attack_likely_whiffed;
+    u8 last_requested_attack_started;
+    u8 last_requested_jump_started;
 } RLRemoteDebugState;
 
 bool RLSession_IsActive();

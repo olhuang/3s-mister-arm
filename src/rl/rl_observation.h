@@ -47,6 +47,10 @@ typedef struct RLObservationV1 {
     u8 opp_high_jump_flag;
     u8 self_airborne;
     u8 opp_airborne;
+    u8 self_airborne_started;
+    u8 opp_airborne_started;
+    u8 self_attack_started;
+    u8 opp_attack_started;
     u8 self_entered_hit_stop;
     u8 opp_entered_hit_stop;
     u8 self_entered_contact_state;
@@ -67,10 +71,19 @@ typedef struct RLObservationV1 {
     u8 frames_until_next_action;
 } RLObservationV1;
 
+typedef enum RLDebugOverlayView {
+    RL_DEBUG_OVERLAY_VIEW_OFF = 0,
+    RL_DEBUG_OVERLAY_VIEW_ALL = 1,
+    RL_DEBUG_OVERLAY_VIEW_NET = 2,
+    RL_DEBUG_OVERLAY_VIEW_INPUT = 3,
+    RL_DEBUG_OVERLAY_VIEW_FIGHT = 4,
+    RL_DEBUG_OVERLAY_VIEW_OUTCOME = 5,
+} RLDebugOverlayView;
+
 void RLObservation_OnFrameEnd();
 const RLObservationV1* RLObservation_GetLatest();
 u16 RLObservation_GetDebugInputSwKey();
 u16 RLObservation_GetDebugDisplayMask();
-void RLObservation_FormatDebugOverlay(char* out, size_t out_size, const char* session_label);
+void RLObservation_FormatDebugOverlay(char* out, size_t out_size, const char* session_label, RLDebugOverlayView view);
 
 #endif

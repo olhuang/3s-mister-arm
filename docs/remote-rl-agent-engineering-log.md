@@ -172,6 +172,12 @@ Files changed:
 - `src/rl/rl_observation.c`
 - `src/rl/rl_session.h`
 - `src/rl/rl_session.c`
+- `src/port/config/config.h`
+- `src/port/config/config.c`
+- `src/port/sdl/sdl_app.c`
+- `vendor/Menu_MiSTer/menu.sv`
+- `vendor/Main_MiSTer/thirdsarm_wrapper.cpp`
+- `docs/config.md`
 - `docs/plan-remote-rl-agent.md`
 - `docs/remote-rl-agent-engineering-log.md`
 
@@ -187,21 +193,37 @@ Implementation notes:
   - `requested_attack_entered_state`
   - `requested_attack_made_contact`
   - `requested_attack_likely_whiffed`
+  - `requested_attack_started`
+  - `requested_jump_started`
+  - `self_attack_started` / `opp_attack_started`
+  - `self_airborne_started` / `opp_airborne_started`
 - RL debug overlay now includes a compact outcome line:
   - `RFself/opp`
   - `MS`
-  - `ASentered/contact/whiff`
+  - `ASstarted/state/contact/whiff`
+  - `J`
 - documented that:
   - world X/Y deltas remain signed world-coordinate deltas
   - forward deltas are facing-relative
   - stun deltas are signed and can be negative when stun recovers
   - contact state is conservative and not a precise hit/block enum
   - unexecuted terminal entries should usually be filtered by the first replay buffer
-  - `rl-transitions.ndjson` is still an evolving debug/training schema
+- `rl-transitions.ndjson` is still an evolving debug/training schema
+- attack and airborne edge fields were added so match-level analysis can count starts instead of counting all decision windows that merely saw an attack/airborne state
+- added `rl-debug-view` and the MiSTer OSD `RL Debug View` selector:
+  - `Off`
+  - `All`
+  - `Net`
+  - `Input`
+  - `Fight`
+  - `Outcome`
+- switching `RL Debug View` persists `rl-debug-view` and signals the runtime to reread overlay settings
+- the colored key row now appears only in `All` and `Input` views
 
 Validation:
 - `git diff --check` passed.
 - `tools/mister/build-game.sh --flavor telemetry` passed.
+- `/home/olhua/src/3s-mister-arm/tools/mister-wrapper/build-hps.sh` passed.
 
 Follow-up:
 - verify `forward` produces nonzero `delta_self_forward` and `requested_movement_succeeded=1`

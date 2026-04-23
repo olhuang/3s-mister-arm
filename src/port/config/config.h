@@ -13,6 +13,7 @@
 #define CFG_KEY_SOFTWARE_FRAME_MODE "software-frame-mode"
 #define CFG_KEY_SUPER_EFFECT_QUALITY "super-effect-quality"
 #define CFG_KEY_SHOW_FPS "show-fps"
+#define CFG_KEY_RL_DEBUG_VIEW "rl-debug-view"
 #define CFG_KEY_VIDEO_DRIVER_ORDER "video-driver-order"
 #define CFG_KEY_RENDER_DRIVER_ORDER "render-driver-order"
 #define CFG_KEY_GHOST_RESOLUTION "ghost-resolution"

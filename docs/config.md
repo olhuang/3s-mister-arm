@@ -114,29 +114,52 @@ Notes:
 - On MiSTer fbdev output, the overlay is drawn at the bottom-center of the active picture area so it stays away from overscan-prone corners.
 - The overlay is opt-in and uses a lightweight cached label update path instead of perf capture telemetry.
 - On MiSTer, valid values are `off`, `fps`, `debug`, and `rl-debug`.
-- `rl-debug` is a lightweight RL-specific overlay mode intended for remote-agent bring-up. It now shows:
-  - raw HP plus `R` current round, `RW` current-match round wins, and `M` cumulative-versus-win state
-  - `SA` full-stock count plus `SG` current gauge fill, then raw stun
-  - `DX`, `DY`, and facing
-  - self / opponent corner distances
-  - `CF` raw combat/contact state from `guard_flag` plus `AK` attack button-category codes from `current_attack`
-  - `NM` raw `do_not_move`, `HS` contact-oriented `hit_stop`, and `HJ` high-jump-only flags
-  - `SR` / `OR` self / opponent routine triplets
-  - action-context (`last_executed_*`, `next_scheduled_*`, `frames_until_next_action`)
-  - observation build cost as `avg/max` microseconds
-  - RL network probe state as `NET`, sample count, p50/p95/p99/max RTT in microseconds, and socket error count
-  - action gate counters as `ACT/OK/UA/SN/BV/BM`
-    - `ACT`: all action packets seen on the action socket
-    - `OK`: action packets that passed the Milestone 2 session gate
-    - `UA`: rejected because hello/ack was not yet accepted
-    - `SN`: rejected because `session_nonce` was stale or mismatched
-    - `BV`: rejected because packet version/header was invalid
-    - `BM`: rejected because the packet size was malformed
-  - a fixed RL input row using `U D L R LP MP HP LK MK HK`, white when idle and red when active
+- `rl-debug` is a lightweight RL-specific overlay mode intended for remote-agent bring-up. The visible category is controlled by `rl-debug-view`.
 - `P0` means RL agent is disabled.
 - `P1C` / `P2C` mean RL routing is active for player 1 / player 2 and the opponent side is still CPU-controlled.
 - `P1H` / `P2H` mean RL routing is active for player 1 / player 2 and the opponent side is routed through human input for facing/remap validation.
 - When human-opponent validation is active, the current scripted movement is appended as `F`, `B`, `JF`, or `DB`.
+
+### `rl-debug-view`
+
+Selects which RL debug category is shown when `show-fps = rl-debug`.
+
+Possible values:
+- `off`
+- `all`
+- `net`
+- `input`
+- `fight`
+- `outcome`
+
+Default:
+- `all`
+
+Notes:
+- This key is primarily written by the MiSTer OSD menu entry `RL Debug View`.
+- `off` keeps `show-fps = rl-debug` selected but hides the RL overlay text.
+- `all` shows the full bring-up view.
+- `net` shows the UDP/session/action queue counters:
+  - `NET`: network state, sample count, p50/p95/p99/max RTT, and socket error count
+  - `ACT/OK/UA/SN/BV/BM`: action gate counters
+  - `OBS/Q/EX/LT/DU/TM/FB`: observation, queue, execution, late, duplicate, target-mismatch, and fallback counters
+- `input` shows action-context and the colored key row:
+  - `X`: last executed move/attack
+  - `N`: next scheduled move/attack
+  - `T`: frames until next action
+  - observation build cost as `avg/max` microseconds
+- `fight` shows compact match/resource/spacing/raw-state information.
+- `outcome` shows post-logic delta and first-pass outcome heuristics:
+  - `DH`: HP delta
+  - `DS`: stun delta; positive means stun increased, negative means stun recovered
+  - `AB`: airborne
+  - `EH`: entered hit-stop
+  - `EC`: entered derived contact state
+  - `ED`: entered derived damage state
+  - `RF`: last exported transition's facing-relative forward delta
+  - `MS`: requested movement succeeded heuristic
+  - `AS`: requested attack start/state/contact/likely-whiff heuristic
+  - `J`: requested jump started
 
 ### `rl-agent-player`
 

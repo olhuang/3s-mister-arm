@@ -2000,6 +2000,9 @@ Current first-pass action outcome / delta fields:
   - `requested_attack_entered_state`
   - `requested_attack_made_contact`
   - `requested_attack_likely_whiffed`
+  - `requested_attack_started`
+  - `self_attack_started`, `opp_attack_started`
+  - `self_airborne_started`, `opp_airborne_started`
 - the decision-span delta/event aggregation is now driven from `RLObservation_OnFrameEnd()` so it tracks post-logic frame results instead of pre-logic input staging
 - `delta_self_x/y` and `delta_opp_x/y` are world-coordinate deltas.
 - `delta_self_forward` and `delta_opp_forward` are facing-relative deltas:
@@ -2011,6 +2014,15 @@ Current first-pass action outcome / delta fields:
 - `entered_contact_state` is currently a conservative derived signal based on `guard_flag != 0 || hit_stop`; it is not a precise hit/block result.
 - `was_executed=false` terminal entries should stay in debug logs, but the first learner replay buffer should filter them unless it explicitly wants canceled decisions.
 - `logs/rl-transitions.ndjson` is still an evolving debug/training schema. Do not treat it as a frozen learner contract until the replay-buffer import path is implemented.
+- `requested_attack_entered_state`, `requested_attack_made_contact`, and `requested_attack_likely_whiffed` are window-level heuristics. Use `requested_attack_started` when counting actual new attack starts.
+- `self_airborne_seen` / `opp_airborne_seen` are span-level state-seen flags. Use `self_airborne_started` / `opp_airborne_started` when counting jump/airborne entry edges.
+- `RL Debug` is now split by `rl-debug-view` / OSD `RL Debug View`:
+  - `All`: full bring-up view
+  - `Net`: network / action-gate / queue counters
+  - `Input`: action context plus colored input row
+  - `Fight`: match, resources, spacing, and raw combat state
+  - `Outcome`: delta and first-pass action outcome heuristics
+  - `Off`: keeps `show-fps = rl-debug` selected but hides the RL text
 - deferred for a later schema revision because the current runtime source is not yet trustworthy enough:
   - `self_crouching`, `opp_crouching`
   - richer movement phase labels
@@ -2027,6 +2039,10 @@ tail -n 1000 logs/rl-transitions.ndjson | jq -s '{
   attack_entered: map(select(.requested_attack_entered_state == 1)) | length,
   attack_contact: map(select(.requested_attack_made_contact == 1)) | length,
   attack_whiff: map(select(.requested_attack_likely_whiffed == 1)) | length,
+  attack_started: map(select(.requested_attack_started == 1)) | length,
+  self_airborne_started: map(select(.self_airborne_started == 1)) | length,
+  opp_stun_increased: map(select(.delta_opp_stun > 0)) | length,
+  opp_stun_recovered: map(select(.delta_opp_stun < 0)) | length,
   unexecuted: map(select(.was_executed == false)) | length
 }'
 
@@ -2048,6 +2064,7 @@ tail -n 80 logs/rl-transitions.ndjson | jq 'select(.requested_attack_bits != 0) 
   requested_attack_bits,
   executed_attack_bits,
   requested_attack_entered_state,
+  requested_attack_started,
   requested_attack_made_contact,
   requested_attack_likely_whiffed,
   delta_opp_hp,

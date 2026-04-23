@@ -153,6 +153,17 @@ enum RuntimeRLNetworkMenu
 	kRLNetworkMenuCount
 };
 
+enum RuntimeRLDebugViewMenu
+{
+	kRLDebugViewOff = 0,
+	kRLDebugViewAll,
+	kRLDebugViewNet,
+	kRLDebugViewInput,
+	kRLDebugViewFight,
+	kRLDebugViewOutcome,
+	kRLDebugViewMenuCount
+};
+
 enum RuntimeAspectRatioMenu
 {
 	kAspectRatio4x3 = 0,
@@ -182,6 +193,7 @@ int g_wrapper_rl_agent_mode = kRLAgentOff;
 int g_wrapper_rl_opponent_mode = kRLOpponentCPU;
 int g_wrapper_rl_movement_mode = kRLMovementForward;
 int g_wrapper_rl_network_mode = kRLNetworkOff;
+int g_wrapper_rl_debug_view_mode = kRLDebugViewAll;
 int g_wrapper_aspect_ratio = kAspectRatio4x3;
 int g_wrapper_h_position = 0;
 int g_wrapper_v_position = 0;
@@ -220,6 +232,7 @@ static const RuntimeConfigDefaultEntry kRuntimeGeneratedDefaults[] = {
 	{ "software-frame-mode", "on" },
 	{ "super-effect-quality", "cached-bg" },
 	{ "show-fps", "false" },
+	{ "rl-debug-view", "all" },
 	{ "rl-network", "off" },
 	{ "rl-opponent-mode", "cpu" },
 	{ "rl-movement", "forward" },
@@ -2376,6 +2389,100 @@ bool write_runtime_rl_network_default(int mode)
 	return true;
 }
 
+int read_runtime_rl_debug_view_default()
+{
+	char value[64] = {};
+	if (!read_runtime_config_value("rl-debug-view", value, sizeof(value))) return kRLDebugViewAll;
+
+	if (!strcasecmp(value, "off")) return kRLDebugViewOff;
+	if (!strcasecmp(value, "net")) return kRLDebugViewNet;
+	if (!strcasecmp(value, "input")) return kRLDebugViewInput;
+	if (!strcasecmp(value, "fight")) return kRLDebugViewFight;
+	if (!strcasecmp(value, "outcome")) return kRLDebugViewOutcome;
+	return kRLDebugViewAll;
+}
+
+static const char *runtime_rl_debug_view_config_value(int mode)
+{
+	switch (mode)
+	{
+	case kRLDebugViewOff: return "off";
+	case kRLDebugViewNet: return "net";
+	case kRLDebugViewInput: return "input";
+	case kRLDebugViewFight: return "fight";
+	case kRLDebugViewOutcome: return "outcome";
+	case kRLDebugViewAll:
+	default:
+		return "all";
+	}
+}
+
+bool write_runtime_rl_debug_view_default(int mode)
+{
+	char path[PATH_MAX] = {};
+	char temp_path[PATH_MAX] = {};
+	snprintf(path, sizeof(path), "%s/config", kRuntimeHome);
+	snprintf(temp_path, sizeof(temp_path), "%s/config.tmp", kRuntimeHome);
+
+	FILE *in = fopen(path, "r");
+	FILE *out = fopen(temp_path, "w");
+	if (!out)
+	{
+		if (in) fclose(in);
+		return false;
+	}
+
+	bool wrote_value = false;
+	char line[256] = {};
+	if (in)
+	{
+		while (fgets(line, sizeof(line), in))
+		{
+			char inspect[256] = {};
+			snprintf(inspect, sizeof(inspect), "%s", line);
+
+			char *cursor = inspect;
+			while (*cursor && isspace((unsigned char)*cursor)) cursor++;
+			if (*cursor == '#')
+			{
+				fputs(line, out);
+				continue;
+			}
+
+			char *equals = strchr(cursor, '=');
+			if (equals)
+			{
+				*equals = 0;
+				trim_in_place(cursor);
+				if (!strcasecmp(cursor, "rl-debug-view"))
+				{
+					fprintf(out, "rl-debug-view = %s\n", runtime_rl_debug_view_config_value(mode));
+					wrote_value = true;
+					continue;
+				}
+			}
+
+			fputs(line, out);
+		}
+
+		fclose(in);
+	}
+
+	if (!wrote_value)
+	{
+		fprintf(out, "\nrl-debug-view = %s\n", runtime_rl_debug_view_config_value(mode));
+	}
+
+	if (fclose(out) != 0) return false;
+	if (rename(temp_path, path) != 0)
+	{
+		remove(temp_path);
+		return false;
+	}
+
+	return true;
+}
+
 void append_runtime_launch_args(std::vector<char *> &child_argv, int argc, char *argv[])
 {
 	for (int i = 2; i < argc; ++i)
@@ -2441,6 +2548,7 @@ void poll_status_changes(pid_t child)
 	static uint32_t prev_rl_opponent = 0xFFFFFFFF;
 	static uint32_t prev_rl_movement = 0xFFFFFFFF;
 	static uint32_t prev_rl_network = 0xFFFFFFFF;
+	static uint32_t prev_rl_debug_view = 0xFFFFFFFF;
 	static uint32_t prev_aspect_ratio = 0xFFFFFFFF;
 	static uint32_t prev_h_position = 0xFFFFFFFF;
 	static uint32_t prev_v_position = 0xFFFFFFFF;
@@ -2597,6 +2705,18 @@ void poll_status_changes(pid_t child)
 		}
 	}
 
+	uint32_t rl_debug_view = user_io_status_get("[52:50]");
+	if (rl_debug_view != prev_rl_debug_view) {
+		prev_rl_debug_view = rl_debug_view;
+		int target = (int)rl_debug_view;
+		if (target >= kRLDebugViewMenuCount) target = kRLDebugViewAll;
+		if (target != g_wrapper_rl_debug_view_mode) {
+			write_runtime_rl_debug_view_default(target);
+			g_wrapper_rl_debug_view_mode = target;
+			kill(child, kRuntimeFpsToggleSignal);
+		}
+	}
+
 	uint32_t aspect_ratio = user_io_status_get("[12]");
 	if (aspect_ratio != prev_aspect_ratio) {
 		prev_aspect_ratio = aspect_ratio;
@@ -2695,6 +2815,7 @@ void poll_status_changes(pid_t child)
 		user_io_status_set("[29]", 0);    // RL Opponent = CPU
 		user_io_status_set("[31:30]", 0); // RL Movement = Forward
 		user_io_status_set("[49]", 0);    // RL Network = Off
+		user_io_status_set("[52:50]", kRLDebugViewAll); // RL Debug View = All
 		user_io_status_set("[28:25]", 0); // H Position = 0
 		user_io_status_set("[46:43]", 0); // V Position = 0
 		user_io_status_set("[32]", 0);    // Vertical Crop = Disabled
@@ -2712,6 +2833,7 @@ void poll_status_changes(pid_t child)
 		prev_rl_opponent = 0xFFFFFFFF;
 		prev_rl_movement = 0xFFFFFFFF;
 		prev_rl_network = 0xFFFFFFFF;
+		prev_rl_debug_view = 0xFFFFFFFF;
 		prev_aspect_ratio = 0xFFFFFFFF;
 		prev_h_position = 0xFFFFFFFF;
 		prev_v_position = 0xFFFFFFFF;
@@ -3054,6 +3176,7 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 	g_wrapper_rl_opponent_mode = read_runtime_rl_opponent_default();
 	g_wrapper_rl_movement_mode = read_runtime_rl_movement_default();
 	g_wrapper_rl_network_mode = read_runtime_rl_network_default();
+	g_wrapper_rl_debug_view_mode = read_runtime_rl_debug_view_default();
 	g_wrapper_aspect_ratio = read_runtime_aspect_ratio_default();
 	g_wrapper_h_position = read_runtime_h_position_default();
 	g_wrapper_v_position = read_runtime_v_position_default();
@@ -3122,6 +3245,7 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 		user_io_status_set("[29]", (uint32_t)g_wrapper_rl_opponent_mode);
 		user_io_status_set("[31:30]", (uint32_t)g_wrapper_rl_movement_mode);
 		user_io_status_set("[49]", (uint32_t)g_wrapper_rl_network_mode);
+		user_io_status_set("[52:50]", (uint32_t)g_wrapper_rl_debug_view_mode);
 		user_io_status_set("[28:25]", (uint32_t)g_wrapper_h_position);
 		user_io_status_set("[46:43]", (uint32_t)g_wrapper_v_position);
 		user_io_status_set("[32]", (uint32_t)g_wrapper_vertical_crop);
@@ -3440,6 +3564,7 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 			user_io_status_set("[29]", (uint32_t)g_wrapper_rl_opponent_mode);
 			user_io_status_set("[31:30]", (uint32_t)g_wrapper_rl_movement_mode);
 			user_io_status_set("[49]", (uint32_t)g_wrapper_rl_network_mode);
+			user_io_status_set("[52:50]", (uint32_t)g_wrapper_rl_debug_view_mode);
 			user_io_status_set("[28:25]", (uint32_t)g_wrapper_h_position);
 			user_io_status_set("[46:43]", (uint32_t)g_wrapper_v_position);
 			user_io_status_set("[32]", (uint32_t)g_wrapper_vertical_crop);

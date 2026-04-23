@@ -10,6 +10,7 @@
 #include "sf33rd/Source/Game/system/work_sys.h"
 
 #include <SDL3/SDL.h>
+#include <stdarg.h>
 #include <stdio.h>
 
 static RLObservationV1 latest_obs;
@@ -21,6 +22,8 @@ static s16 prev_frame_hp[2];
 static s16 prev_frame_stun[2];
 static s16 prev_frame_pos_x[2];
 static s16 prev_frame_pos_y[2];
+static u16 prev_frame_current_attack[2];
+static u8 prev_frame_airborne[2];
 static u8 prev_frame_hit_stop[2];
 static u8 prev_frame_contact_state[2];
 static bool prev_frame_valid;
@@ -250,6 +253,10 @@ void RLObservation_OnFrameEnd() {
         obs.delta_opp_stun = opp_stun_delta;
         obs.self_entered_hit_stop = (u8)(!prev_frame_hit_stop[self] && obs.self_hit_stop);
         obs.opp_entered_hit_stop = (u8)(!prev_frame_hit_stop[opp] && obs.opp_hit_stop);
+        obs.self_airborne_started = (u8)(!prev_frame_airborne[self] && obs.self_airborne);
+        obs.opp_airborne_started = (u8)(!prev_frame_airborne[opp] && obs.opp_airborne);
+        obs.self_attack_started = (u8)(prev_frame_current_attack[self] == 0 && obs.self_current_attack != 0);
+        obs.opp_attack_started = (u8)(prev_frame_current_attack[opp] == 0 && obs.opp_current_attack != 0);
         obs.self_entered_contact_state = (u8)(!prev_frame_contact_state[self] && self_contact_state);
         obs.opp_entered_contact_state = (u8)(!prev_frame_contact_state[opp] && opp_contact_state);
         obs.self_entered_damage_state = (u8)(self_hp_delta > 0 || self_stun_delta > 0);
@@ -286,6 +293,10 @@ void RLObservation_OnFrameEnd() {
     prev_frame_pos_x[opp] = plw[opp].wu.position_x;
     prev_frame_pos_y[self] = plw[self].wu.position_y;
     prev_frame_pos_y[opp] = plw[opp].wu.position_y;
+    prev_frame_current_attack[self] = obs.self_current_attack;
+    prev_frame_current_attack[opp] = obs.opp_current_attack;
+    prev_frame_airborne[self] = obs.self_airborne;
+    prev_frame_airborne[opp] = obs.opp_airborne;
     prev_frame_stun[self] = debug.self_stun;
     prev_frame_stun[opp] = debug.opp_stun;
     prev_frame_hit_stop[self] = obs.self_hit_stop;
@@ -326,8 +337,40 @@ u16 RLObservation_GetDebugDisplayMask() {
     return (u16)(directions | logical);
 }
 
-void RLObservation_FormatDebugOverlay(char* out, size_t out_size, const char* session_label) {
+static void append_overlay_line(char* out, size_t out_size, size_t* used, const char* fmt, ...) {
+    if (out_size == 0 || used == NULL || *used >= out_size) {
+        return;
+    }
+    if (*used > 0) {
+        const int newline_written = snprintf(out + *used, out_size - *used, "\n");
+        if (newline_written <= 0) {
+            return;
+        }
+        *used += (size_t)newline_written;
+        if (*used >= out_size) {
+            return;
+        }
+    }
+
+    va_list args;
+    va_start(args, fmt);
+    const int written = vsnprintf(out + *used, out_size - *used, fmt, args);
+    va_end(args);
+    if (written > 0) {
+        *used += (size_t)written;
+        if (*used >= out_size) {
+            *used = out_size - 1;
+        }
+    }
+}
+
+void RLObservation_FormatDebugOverlay(char* out, size_t out_size, const char* session_label, RLDebugOverlayView view) {
     if (out_size == 0) {
+        return;
+    }
+    out[0] = '\0';
+
+    if (view == RL_DEBUG_OVERLAY_VIEW_OFF) {
         return;
     }
 
@@ -345,106 +388,165 @@ void RLObservation_FormatDebugOverlay(char* out, size_t out_size, const char* se
         net_state = net->handshake_accepted ? "OK" : (net->socket_open ? "HELLO" : "ERR");
     }
 
-    snprintf(out,
-             out_size,
-             "%s HP%d/%d OP%d/%d R%d RW%d-%d M%d-%d\n"
-             "SA%d/%d SG%d/%d ST%d/%d\n"
-             "DX%c%d DY%d F%d\n"
-             "CL%d CR%d OL%d OR%d\n"
-             "CF%d/%d AK%03X/%03X\n"
-             "NM%d/%d HS%d/%d HJ%d/%d\n"
-             "DH%d/%d DS%d/%d AB%d/%d\n"
-             "EH%d/%d EC%d/%d ED%d/%d\n"
-             "RF%d/%d MS%d AS%d/%d/%d\n"
-             "SR%d,%d,%d OR%d,%d,%d\n"
-             "X%d/%03X N%d/%03X T%d O%lu/%luus\n"
-             "NET%s S%u P%u/%u/%u MAX%uus E%u\n"
-             "ACT%u OK%u UA%u SN%u BV%u BM%u\n"
-             "OBS%u Q%u/%u EX%u LT%u DU%u TM%u FB%u",
-             session_label != NULL ? session_label : "P0",
-             latest_debug.self_hp,
-             latest_debug.self_hp_start,
-             latest_debug.opp_hp,
-             latest_debug.opp_hp_start,
-             latest_obs.round_num,
-             latest_obs.self_match_round_wins,
-             latest_obs.opp_match_round_wins,
-             latest_obs.self_round_wins,
-             latest_obs.opp_round_wins,
-             latest_debug.self_super_stock,
-             latest_debug.self_super_stock_max,
-             latest_debug.self_super_gauge,
-             latest_debug.self_super_gauge_max,
-             latest_debug.self_stun,
-             latest_debug.self_stun_max,
-             dx_side,
-             dx_abs,
-             latest_debug.opp_dy,
-             latest_obs.self_facing_sign,
-             latest_debug.self_left_corner,
-             latest_debug.self_right_corner,
-             latest_debug.opp_left_corner,
-             latest_debug.opp_right_corner,
-             latest_obs.self_guard_flag,
-             latest_obs.opp_guard_flag,
-             latest_obs.self_current_attack,
-             latest_obs.opp_current_attack,
-             latest_obs.self_do_not_move,
-             latest_obs.opp_do_not_move,
-             latest_obs.self_hit_stop,
-             latest_obs.opp_hit_stop,
-             latest_obs.self_high_jump_flag,
-             latest_obs.opp_high_jump_flag,
-             latest_obs.delta_self_hp,
-             latest_obs.delta_opp_hp,
-             latest_obs.delta_self_stun,
-             latest_obs.delta_opp_stun,
-             latest_obs.self_airborne,
-             latest_obs.opp_airborne,
-             latest_obs.self_entered_hit_stop,
-             latest_obs.opp_entered_hit_stop,
-             latest_obs.self_entered_contact_state,
-             latest_obs.opp_entered_contact_state,
-             latest_obs.self_entered_damage_state,
-             latest_obs.opp_entered_damage_state,
-             remote->last_delta_self_forward,
-             remote->last_delta_opp_forward,
-             remote->last_requested_movement_succeeded,
-             remote->last_requested_attack_entered_state,
-             remote->last_requested_attack_made_contact,
-             remote->last_requested_attack_likely_whiffed,
-             latest_obs.self_routine[0],
-             latest_obs.self_routine[1],
-             latest_obs.self_routine[2],
-             latest_obs.opp_routine[0],
-             latest_obs.opp_routine[1],
-             latest_obs.opp_routine[2],
-             latest_obs.last_executed_move_intent,
-             latest_obs.last_executed_attack_bits,
-             latest_obs.next_scheduled_move_intent,
-             latest_obs.next_scheduled_attack_bits,
-             latest_obs.frames_until_next_action,
-             (unsigned long)latest_debug.obs_build_avg_us,
-             (unsigned long)latest_debug.obs_build_max_us,
-             net_state,
-             (unsigned int)net->probe_stats.sample_count,
-             (unsigned int)net->probe_stats.p50_us,
-             (unsigned int)net->probe_stats.p95_us,
-             (unsigned int)net->probe_stats.p99_us,
-             (unsigned int)net->probe_stats.max_us,
-             (unsigned int)net->last_error_count,
-             (unsigned int)net->action_received_count,
-             (unsigned int)net->action_accepted_count,
-             (unsigned int)net->action_rejected_unacked_count,
-             (unsigned int)net->action_rejected_nonce_count,
-             (unsigned int)net->action_rejected_version_count,
-             (unsigned int)net->action_rejected_malformed_count,
-             (unsigned int)remote->obs_sent_count,
-             (unsigned int)remote->queue_depth,
-             (unsigned int)remote->queued_count,
-             (unsigned int)remote->executed_count,
-             (unsigned int)remote->late_drop_count,
-             (unsigned int)remote->duplicate_drop_count,
-             (unsigned int)remote->target_mismatch_count,
-             (unsigned int)remote->fallback_count);
+    size_t used = 0;
+    const bool show_all = view == RL_DEBUG_OVERLAY_VIEW_ALL;
+
+    append_overlay_line(out,
+                        out_size,
+                        &used,
+                        "%s HP%d/%d OP%d/%d R%d RW%d-%d M%d-%d",
+                        session_label != NULL ? session_label : "P0",
+                        latest_debug.self_hp,
+                        latest_debug.self_hp_start,
+                        latest_debug.opp_hp,
+                        latest_debug.opp_hp_start,
+                        latest_obs.round_num,
+                        latest_obs.self_match_round_wins,
+                        latest_obs.opp_match_round_wins,
+                        latest_obs.self_round_wins,
+                        latest_obs.opp_round_wins);
+
+    if (show_all || view == RL_DEBUG_OVERLAY_VIEW_FIGHT) {
+        append_overlay_line(out,
+                            out_size,
+                            &used,
+                            "SA%d/%d SG%d/%d ST%d/%d",
+                            latest_debug.self_super_stock,
+                            latest_debug.self_super_stock_max,
+                            latest_debug.self_super_gauge,
+                            latest_debug.self_super_gauge_max,
+                            latest_debug.self_stun,
+                            latest_debug.self_stun_max);
+        append_overlay_line(out,
+                            out_size,
+                            &used,
+                            "DX%c%d DY%d F%d",
+                            dx_side,
+                            dx_abs,
+                            latest_debug.opp_dy,
+                            latest_obs.self_facing_sign);
+        append_overlay_line(out,
+                            out_size,
+                            &used,
+                            "CL%d CR%d OL%d OR%d",
+                            latest_debug.self_left_corner,
+                            latest_debug.self_right_corner,
+                            latest_debug.opp_left_corner,
+                            latest_debug.opp_right_corner);
+        append_overlay_line(out,
+                            out_size,
+                            &used,
+                            "CF%d/%d AK%03X/%03X",
+                            latest_obs.self_guard_flag,
+                            latest_obs.opp_guard_flag,
+                            latest_obs.self_current_attack,
+                            latest_obs.opp_current_attack);
+        append_overlay_line(out,
+                            out_size,
+                            &used,
+                            "NM%d/%d HS%d/%d HJ%d/%d",
+                            latest_obs.self_do_not_move,
+                            latest_obs.opp_do_not_move,
+                            latest_obs.self_hit_stop,
+                            latest_obs.opp_hit_stop,
+                            latest_obs.self_high_jump_flag,
+                            latest_obs.opp_high_jump_flag);
+        if (show_all) {
+            append_overlay_line(out,
+                                out_size,
+                                &used,
+                                "SR%d,%d,%d OR%d,%d,%d",
+                                latest_obs.self_routine[0],
+                                latest_obs.self_routine[1],
+                                latest_obs.self_routine[2],
+                                latest_obs.opp_routine[0],
+                                latest_obs.opp_routine[1],
+                                latest_obs.opp_routine[2]);
+        }
+    }
+
+    if (show_all || view == RL_DEBUG_OVERLAY_VIEW_OUTCOME) {
+        append_overlay_line(out,
+                            out_size,
+                            &used,
+                            "DH%d/%d DS%d/%d AB%d/%d",
+                            latest_obs.delta_self_hp,
+                            latest_obs.delta_opp_hp,
+                            latest_obs.delta_self_stun,
+                            latest_obs.delta_opp_stun,
+                            latest_obs.self_airborne,
+                            latest_obs.opp_airborne);
+        append_overlay_line(out,
+                            out_size,
+                            &used,
+                            "EH%d/%d EC%d/%d ED%d/%d",
+                            latest_obs.self_entered_hit_stop,
+                            latest_obs.opp_entered_hit_stop,
+                            latest_obs.self_entered_contact_state,
+                            latest_obs.opp_entered_contact_state,
+                            latest_obs.self_entered_damage_state,
+                            latest_obs.opp_entered_damage_state);
+        append_overlay_line(out,
+                            out_size,
+                            &used,
+                            "RF%d/%d MS%d AS%d/%d/%d/%d J%d",
+                            remote->last_delta_self_forward,
+                            remote->last_delta_opp_forward,
+                            remote->last_requested_movement_succeeded,
+                            remote->last_requested_attack_started,
+                            remote->last_requested_attack_entered_state,
+                            remote->last_requested_attack_made_contact,
+                            remote->last_requested_attack_likely_whiffed,
+                            remote->last_requested_jump_started);
+    }
+
+    if (show_all || view == RL_DEBUG_OVERLAY_VIEW_INPUT) {
+        append_overlay_line(out,
+                            out_size,
+                            &used,
+                            "X%d/%03X N%d/%03X T%d O%lu/%luus",
+                            latest_obs.last_executed_move_intent,
+                            latest_obs.last_executed_attack_bits,
+                            latest_obs.next_scheduled_move_intent,
+                            latest_obs.next_scheduled_attack_bits,
+                            latest_obs.frames_until_next_action,
+                            (unsigned long)latest_debug.obs_build_avg_us,
+                            (unsigned long)latest_debug.obs_build_max_us);
+    }
+
+    if (show_all || view == RL_DEBUG_OVERLAY_VIEW_NET) {
+        append_overlay_line(out,
+                            out_size,
+                            &used,
+                            "NET%s S%u P%u/%u/%u MAX%uus E%u",
+                            net_state,
+                            (unsigned int)net->probe_stats.sample_count,
+                            (unsigned int)net->probe_stats.p50_us,
+                            (unsigned int)net->probe_stats.p95_us,
+                            (unsigned int)net->probe_stats.p99_us,
+                            (unsigned int)net->probe_stats.max_us,
+                            (unsigned int)net->last_error_count);
+        append_overlay_line(out,
+                            out_size,
+                            &used,
+                            "ACT%u OK%u UA%u SN%u BV%u BM%u",
+                            (unsigned int)net->action_received_count,
+                            (unsigned int)net->action_accepted_count,
+                            (unsigned int)net->action_rejected_unacked_count,
+                            (unsigned int)net->action_rejected_nonce_count,
+                            (unsigned int)net->action_rejected_version_count,
+                            (unsigned int)net->action_rejected_malformed_count);
+        append_overlay_line(out,
+                            out_size,
+                            &used,
+                            "OBS%u Q%u/%u EX%u LT%u DU%u TM%u FB%u",
+                            (unsigned int)remote->obs_sent_count,
+                            (unsigned int)remote->queue_depth,
+                            (unsigned int)remote->queued_count,
+                            (unsigned int)remote->executed_count,
+                            (unsigned int)remote->late_drop_count,
+                            (unsigned int)remote->duplicate_drop_count,
+                            (unsigned int)remote->target_mismatch_count,
+                            (unsigned int)remote->fallback_count);
+    }
 }

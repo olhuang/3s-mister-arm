@@ -102,6 +102,7 @@ typedef enum FpsOverlayMode {
     FPS_OVERLAY_RL_DEBUG = 3,
 } FpsOverlayMode;
 static FpsOverlayMode fps_overlay_mode = FPS_OVERLAY_OFF;
+static RLDebugOverlayView rl_debug_overlay_view = RL_DEBUG_OVERLAY_VIEW_ALL;
 static Uint64 fps_overlay_window_start_ns = 0;
 static Uint32 fps_overlay_window_frames = 0;
 static int fps_overlay_value = 0;
@@ -9112,8 +9113,25 @@ static FpsOverlayMode parse_fps_overlay_mode(const char* value) {
     return FPS_OVERLAY_OFF;
 }
 
+static RLDebugOverlayView parse_rl_debug_overlay_view(const char* value) {
+    if (value == NULL) return RL_DEBUG_OVERLAY_VIEW_ALL;
+    if (SDL_strcasecmp(value, "off") == 0) return RL_DEBUG_OVERLAY_VIEW_OFF;
+    if (SDL_strcasecmp(value, "all") == 0) return RL_DEBUG_OVERLAY_VIEW_ALL;
+    if (SDL_strcasecmp(value, "net") == 0) return RL_DEBUG_OVERLAY_VIEW_NET;
+    if (SDL_strcasecmp(value, "input") == 0) return RL_DEBUG_OVERLAY_VIEW_INPUT;
+    if (SDL_strcasecmp(value, "fight") == 0) return RL_DEBUG_OVERLAY_VIEW_FIGHT;
+    if (SDL_strcasecmp(value, "outcome") == 0) return RL_DEBUG_OVERLAY_VIEW_OUTCOME;
+    return RL_DEBUG_OVERLAY_VIEW_ALL;
+}
+
+static bool rl_debug_overlay_view_shows_input(void) {
+    return rl_debug_overlay_view == RL_DEBUG_OVERLAY_VIEW_ALL ||
+           rl_debug_overlay_view == RL_DEBUG_OVERLAY_VIEW_INPUT;
+}
+
 static void init_show_fps_overlay(void) {
     fps_overlay_mode = parse_fps_overlay_mode(Config_GetString(CFG_KEY_SHOW_FPS));
+    rl_debug_overlay_view = parse_rl_debug_overlay_view(Config_GetString(CFG_KEY_RL_DEBUG_VIEW));
     fps_overlay_window_start_ns = 0;
     fps_overlay_window_frames = 0;
     fps_overlay_value = 0;
@@ -9172,7 +9190,7 @@ static void publish_fps_overlay_label(void) {
         } else {
             SDL_snprintf(rl_label, sizeof(rl_label), "%s", rl_agent_label);
         }
-        RLObservation_FormatDebugOverlay(fps_overlay_label, sizeof(fps_overlay_label), rl_label);
+        RLObservation_FormatDebugOverlay(fps_overlay_label, sizeof(fps_overlay_label), rl_label, rl_debug_overlay_view);
         if (fbdev_presenter_enabled) {
             FBDevPresenter_SetFPSOverlayText(fps_overlay_label);
             FBDevPresenter_SetFPSOverlayInputSwKey(RLObservation_GetDebugInputSwKey());
@@ -9435,15 +9453,17 @@ void SDLApp_ToggleFPSOverlay(void) {
                 char* key_end = key + SDL_strlen(key);
                 while (key_end > key && (key_end[-1] == ' ' || key_end[-1] == '\t')) key_end--;
                 *key_end = '\0';
-                if (SDL_strcmp(key, "show-fps") != 0) continue;
                 char* val = eq + 1;
                 while (*val == ' ' || *val == '\t') val++;
                 char* val_end = val + SDL_strlen(val);
                 while (val_end > val && (val_end[-1] == ' ' || val_end[-1] == '\t' ||
                        val_end[-1] == '\n' || val_end[-1] == '\r')) val_end--;
                 *val_end = '\0';
-                fps_overlay_mode = parse_fps_overlay_mode(val);
-                break;
+                if (SDL_strcmp(key, "show-fps") == 0) {
+                    fps_overlay_mode = parse_fps_overlay_mode(val);
+                } else if (SDL_strcmp(key, "rl-debug-view") == 0) {
+                    rl_debug_overlay_view = parse_rl_debug_overlay_view(val);
+                }
             }
             fclose(f);
         }
@@ -10344,7 +10364,7 @@ static void render_renderer_fps_overlay(const SDL_FRect* content_rect) {
     if (current_line_len > max_line_len) {
         max_line_len = current_line_len;
     }
-    if (fps_overlay_mode == FPS_OVERLAY_RL_DEBUG) {
+    if (fps_overlay_mode == FPS_OVERLAY_RL_DEBUG && rl_debug_overlay_view_shows_input()) {
         const int input_line_len = (int)SDL_strlen("U D L R LP MP HP LK MK HK");
         if (input_line_len > max_line_len) {
             max_line_len = input_line_len;
@@ -10386,7 +10406,7 @@ static void render_renderer_fps_overlay(const SDL_FRect* content_rect) {
         }
     }
 
-    if (fps_overlay_mode == FPS_OVERLAY_RL_DEBUG) {
+    if (fps_overlay_mode == FPS_OVERLAY_RL_DEBUG && rl_debug_overlay_view_shows_input()) {
         static const struct {
             const char* label;
             Uint16 mask;

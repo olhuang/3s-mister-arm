@@ -206,6 +206,8 @@ static void RLSession_ResetOverlayAttackCounters() {
     remote_debug.episode_attack_active_count = 0;
     remote_debug.episode_attack_contact_count = 0;
     remote_debug.episode_attack_whiff_count = 0;
+    remote_debug.last_overlay_attack_contact = 0;
+    remote_debug.last_overlay_attack_whiff = 0;
     overlay_attack_event_pending = false;
     overlay_attack_event_contact_seen = false;
 }
@@ -217,8 +219,12 @@ static void RLSession_FinalizeOverlayAttackEvent() {
     remote_debug.episode_attack_active_count++;
     if (overlay_attack_event_contact_seen) {
         remote_debug.episode_attack_contact_count++;
+        remote_debug.last_overlay_attack_contact = 1;
+        remote_debug.last_overlay_attack_whiff = 0;
     } else {
         remote_debug.episode_attack_whiff_count++;
+        remote_debug.last_overlay_attack_contact = 0;
+        remote_debug.last_overlay_attack_whiff = 1;
     }
     overlay_attack_event_pending = false;
     overlay_attack_event_contact_seen = false;

@@ -517,8 +517,8 @@ void RLObservation_FormatDebugOverlay(char* out, size_t out_size, const char* se
                             remote->last_observed_attack_state_started,
                             remote->last_observed_attack_code_changed,
                             remote->last_observed_attack_counter_started,
-                            remote->last_requested_attack_made_contact,
-                            remote->last_requested_attack_likely_whiffed,
+                            remote->last_overlay_attack_contact,
+                            remote->last_overlay_attack_whiff,
                             remote->last_requested_jump_started);
         append_overlay_line(out,
                             out_size,

@@ -187,8 +187,8 @@ Notes:
   - `AI`: requested attack input pulse executed
   - `AR`: requested attack became a real in-game attack start
   - `OS`: observed attack state start / observed attack code changed / attack-counter start
-  - `AC`: requested attack made contact heuristic
-  - `AW`: requested attack likely whiffed heuristic
+  - `AC`: last finalized overlay attack event made contact
+  - `AW`: last finalized overlay attack event likely whiffed
   - `AH`: current round's accumulated real attack starts
   - `ACC`: current round's accumulated attack contacts
   - `AWC`: current round's accumulated likely whiffs

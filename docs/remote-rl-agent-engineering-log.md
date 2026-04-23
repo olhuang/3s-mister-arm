@@ -21,15 +21,16 @@ Implementation notes:
   - `episode_attack_active_count`
   - `episode_attack_contact_count`
   - `episode_attack_whiff_count`
-- these counters update when each transition is exported:
-  - `ACC` uses `requested_attack_made_contact`
-  - `AWC` uses `requested_attack_likely_whiffed`
-  - `AH` prefers `contact + whiff` and only falls back to `requested_attack_became_active` when neither contact nor whiff fired
+- these counters now finalize per overlay attack event instead of per exported transition:
+  - `ACC` increments when the finalized event saw contact
+  - `AWC` increments when the finalized event ended as a likely whiff
+  - `AH` increments once per finalized attack event
 - counters reset on remote runtime reset and on round/episode rollover
 - outcome overlay now adds:
   - `AH`: accumulated real attack starts this round
   - `ACC`: accumulated contacts this round
   - `AWC`: accumulated likely whiffs this round
+  - `AC` / `AW`: last finalized overlay attack event outcome, aligned with the accumulated counters rather than the raw ledger heuristics
 
 Validation:
 - `git diff --check` passed.

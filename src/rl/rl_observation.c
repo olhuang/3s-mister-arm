@@ -257,6 +257,10 @@ void RLObservation_OnFrameEnd() {
         obs.opp_airborne_started = (u8)(!prev_frame_airborne[opp] && obs.opp_airborne);
         obs.self_attack_started = (u8)(prev_frame_current_attack[self] == 0 && obs.self_current_attack != 0);
         obs.opp_attack_started = (u8)(prev_frame_current_attack[opp] == 0 && obs.opp_current_attack != 0);
+        obs.self_attack_code_changed =
+            (u8)(prev_frame_current_attack[self] != obs.self_current_attack && obs.self_current_attack != 0);
+        obs.opp_attack_code_changed =
+            (u8)(prev_frame_current_attack[opp] != obs.opp_current_attack && obs.opp_current_attack != 0);
         obs.self_entered_contact_state = (u8)(!prev_frame_contact_state[self] && self_contact_state);
         obs.opp_entered_contact_state = (u8)(!prev_frame_contact_state[opp] && opp_contact_state);
         obs.self_entered_damage_state = (u8)(self_hp_delta > 0 || self_stun_delta > 0);
@@ -489,12 +493,13 @@ void RLObservation_FormatDebugOverlay(char* out, size_t out_size, const char* se
         append_overlay_line(out,
                             out_size,
                             &used,
-                            "RF%d/%d MS%d AS%d/%d/%d/%d J%d",
+                            "RF%d/%d MS%d AI%d OS%d/%d AC%d AW%d J%d",
                             remote->last_delta_self_forward,
                             remote->last_delta_opp_forward,
                             remote->last_requested_movement_succeeded,
-                            remote->last_requested_attack_started,
-                            remote->last_requested_attack_entered_state,
+                            remote->last_requested_attack_input_started,
+                            remote->last_observed_attack_state_started,
+                            remote->last_observed_attack_code_changed,
                             remote->last_requested_attack_made_contact,
                             remote->last_requested_attack_likely_whiffed,
                             remote->last_requested_jump_started);

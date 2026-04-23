@@ -51,6 +51,8 @@ typedef struct RLObservationV1 {
     u8 opp_airborne_started;
     u8 self_attack_started;
     u8 opp_attack_started;
+    u8 self_attack_code_changed;
+    u8 opp_attack_code_changed;
     u8 self_entered_hit_stop;
     u8 opp_entered_hit_stop;
     u8 self_entered_contact_state;

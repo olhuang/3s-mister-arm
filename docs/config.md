@@ -158,7 +158,10 @@ Notes:
   - `ED`: entered derived damage state
   - `RF`: last exported transition's facing-relative forward delta
   - `MS`: requested movement succeeded heuristic
-  - `AS`: requested attack start/state/contact/likely-whiff heuristic
+  - `AI`: requested attack input pulse executed
+  - `OS`: observed attack state start / observed attack code changed
+  - `AC`: requested attack made contact heuristic
+  - `AW`: requested attack likely whiffed heuristic
   - `J`: requested jump started
 
 ### `rl-agent-player`

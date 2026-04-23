@@ -2,6 +2,41 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-23: Milestone 4 Attack Outcome Semantics Refinement
+
+Milestone:
+- Milestone 4: Decision ledger and transition logging
+
+Files changed:
+- `src/rl/rl_observation.h`
+- `src/rl/rl_observation.c`
+- `src/rl/rl_session.h`
+- `src/rl/rl_session.c`
+- `docs/config.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- separate "RL actually sent an attack input pulse" from "the game runtime observed an attack-state edge" so transition logs can be used for learner/debug analysis without over- or under-counting attacks
+
+Implementation notes:
+- added `requested_attack_input_started` to transition logs; it is true when the executed decision contains nonzero attack bits
+- kept `requested_attack_started` as a compatibility alias for `requested_attack_input_started`
+- added observed runtime fields:
+  - `observed_attack_state_started`
+  - `observed_attack_code_changed`
+  - `self_attack_code_changed` / `opp_attack_code_changed`
+- `observed_attack_state_started` remains the strict `current_attack: 0 -> nonzero` edge, which explains why it can be much lower than the number of HP decisions when `current_attack` stays nonzero
+- `observed_attack_code_changed` captures nonzero runtime attack-code changes and is useful for diagnosing engine semantics, but it is not the source of truth for input attempts
+- RL outcome overlay now shows `AI`, `OS`, `AC`, and `AW` instead of the older compact `ASstarted/state/contact/whiff` grouping
+
+Validation:
+- `git diff --check` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed.
+
+Follow-up:
+- hardware-test `--policy hp` and count `requested_attack_input_started` versus `observed_attack_state_started` / `observed_attack_code_changed`
+
 ## 2026-04-22: Milestone 3 Remote Queue And Execution MVP
 
 Milestone:

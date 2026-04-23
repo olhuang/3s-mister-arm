@@ -2001,7 +2001,11 @@ Current first-pass action outcome / delta fields:
   - `requested_attack_made_contact`
   - `requested_attack_likely_whiffed`
   - `requested_attack_started`
+  - `requested_attack_input_started`
+  - `observed_attack_state_started`
+  - `observed_attack_code_changed`
   - `self_attack_started`, `opp_attack_started`
+  - `self_attack_code_changed`, `opp_attack_code_changed`
   - `self_airborne_started`, `opp_airborne_started`
 - the decision-span delta/event aggregation is now driven from `RLObservation_OnFrameEnd()` so it tracks post-logic frame results instead of pre-logic input staging
 - `delta_self_x/y` and `delta_opp_x/y` are world-coordinate deltas.
@@ -2014,7 +2018,10 @@ Current first-pass action outcome / delta fields:
 - `entered_contact_state` is currently a conservative derived signal based on `guard_flag != 0 || hit_stop`; it is not a precise hit/block result.
 - `was_executed=false` terminal entries should stay in debug logs, but the first learner replay buffer should filter them unless it explicitly wants canceled decisions.
 - `logs/rl-transitions.ndjson` is still an evolving debug/training schema. Do not treat it as a frozen learner contract until the replay-buffer import path is implemented.
-- `requested_attack_entered_state`, `requested_attack_made_contact`, and `requested_attack_likely_whiffed` are window-level heuristics. Use `requested_attack_started` when counting actual new attack starts.
+- `requested_attack_input_started` means this decision actually executed an attack-button pulse. `requested_attack_started` is currently kept as a compatibility alias for that field.
+- `observed_attack_state_started` is the stricter runtime `current_attack: 0 -> nonzero` edge. It can undercount repeated punches if the engine keeps `current_attack` nonzero across many decision windows.
+- `observed_attack_code_changed` means runtime `current_attack` changed into a nonzero code during the decision window. Use it to debug engine-side action-code transitions, not to count RL input attempts.
+- `requested_attack_entered_state`, `requested_attack_made_contact`, and `requested_attack_likely_whiffed` are window-level heuristics.
 - `self_airborne_seen` / `opp_airborne_seen` are span-level state-seen flags. Use `self_airborne_started` / `opp_airborne_started` when counting jump/airborne entry edges.
 - `RL Debug` is now split by `rl-debug-view` / OSD `RL Debug View`:
   - `All`: full bring-up view
@@ -2039,7 +2046,9 @@ tail -n 1000 logs/rl-transitions.ndjson | jq -s '{
   attack_entered: map(select(.requested_attack_entered_state == 1)) | length,
   attack_contact: map(select(.requested_attack_made_contact == 1)) | length,
   attack_whiff: map(select(.requested_attack_likely_whiffed == 1)) | length,
-  attack_started: map(select(.requested_attack_started == 1)) | length,
+  attack_input_started: map(select(.requested_attack_input_started == 1)) | length,
+  observed_attack_state_started: map(select(.observed_attack_state_started == 1)) | length,
+  observed_attack_code_changed: map(select(.observed_attack_code_changed == 1)) | length,
   self_airborne_started: map(select(.self_airborne_started == 1)) | length,
   opp_stun_increased: map(select(.delta_opp_stun > 0)) | length,
   opp_stun_recovered: map(select(.delta_opp_stun < 0)) | length,
@@ -2063,8 +2072,10 @@ tail -n 80 logs/rl-transitions.ndjson | jq 'select(.requested_attack_bits != 0) 
   decision_id,
   requested_attack_bits,
   executed_attack_bits,
+  requested_attack_input_started,
   requested_attack_entered_state,
-  requested_attack_started,
+  observed_attack_state_started,
+  observed_attack_code_changed,
   requested_attack_made_contact,
   requested_attack_likely_whiffed,
   delta_opp_hp,

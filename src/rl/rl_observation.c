@@ -25,6 +25,7 @@ static s16 prev_frame_pos_y[2];
 static u16 prev_frame_current_attack[2];
 static s16 prev_frame_attack_counter[2];
 static u16 prev_frame_routine1[2];
+static u8 prev_frame_caution[2];
 static u8 prev_frame_airborne[2];
 static u8 prev_frame_hit_stop[2];
 static u8 prev_frame_contact_state[2];
@@ -273,6 +274,8 @@ void RLObservation_OnFrameEnd() {
         obs.opp_attack_counter_started = (u8)(Attack_Counter[self] != prev_frame_attack_counter[self]);
         obs.self_attack_routine_started = (u8)(prev_frame_routine1[self] != 4 && obs.self_routine[1] == 4);
         obs.opp_attack_routine_started = (u8)(prev_frame_routine1[opp] != 4 && obs.opp_routine[1] == 4);
+        obs.self_caution_started = (u8)(!prev_frame_caution[self] && plw[self].caution_flag);
+        obs.opp_caution_started = (u8)(!prev_frame_caution[opp] && plw[opp].caution_flag);
         obs.self_entered_contact_state = (u8)(!prev_frame_contact_state[self] && self_contact_state);
         obs.opp_entered_contact_state = (u8)(!prev_frame_contact_state[opp] && opp_contact_state);
         obs.self_entered_damage_state = (u8)(self_hp_delta > 0 || self_stun_delta > 0);
@@ -309,6 +312,8 @@ void RLObservation_OnFrameEnd() {
     prev_frame_attack_counter[opp] = Attack_Counter[opp];
     prev_frame_routine1[self] = obs.self_routine[1];
     prev_frame_routine1[opp] = obs.opp_routine[1];
+    prev_frame_caution[self] = (u8)(plw[self].caution_flag != 0);
+    prev_frame_caution[opp] = (u8)(plw[opp].caution_flag != 0);
     prev_frame_airborne[self] = obs.self_airborne;
     prev_frame_airborne[opp] = obs.opp_airborne;
     prev_frame_stun[self] = debug.self_stun;

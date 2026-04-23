@@ -661,7 +661,7 @@ void RLSession_OnObservationFrameEnd(const RLObservationV1* obs) {
         return;
     }
 
-    if (obs->self_attack_counter_started) {
+    if (obs->self_caution_started) {
         RLSession_FinalizeOverlayAttackEvent();
         overlay_attack_event_pending = true;
         overlay_attack_event_contact_seen = false;

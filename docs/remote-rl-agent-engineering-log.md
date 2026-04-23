@@ -21,7 +21,10 @@ Implementation notes:
   - `episode_attack_active_count`
   - `episode_attack_contact_count`
   - `episode_attack_whiff_count`
-- these counters update when each transition is exported, using the already-derived `requested_attack_became_active`, `requested_attack_made_contact`, and `requested_attack_likely_whiffed`
+- these counters update when each transition is exported:
+  - `ACC` uses `requested_attack_made_contact`
+  - `AWC` uses `requested_attack_likely_whiffed`
+  - `AH` prefers `contact + whiff` and only falls back to `requested_attack_became_active` when neither contact nor whiff fired
 - counters reset on remote runtime reset and on round/episode rollover
 - outcome overlay now adds:
   - `AH`: accumulated real attack starts this round
@@ -29,7 +32,8 @@ Implementation notes:
   - `AWC`: accumulated likely whiffs this round
 
 Validation:
-- pending local telemetry build and diff check
+- `git diff --check` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed.
 
 ## 2026-04-23: Milestone 4 Attack Activation Refinement
 

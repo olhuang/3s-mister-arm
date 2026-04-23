@@ -600,13 +600,14 @@ static void RLSession_FinalizeLedgerEntry(RLDecisionLedgerEntry* entry, bool don
     remote_debug.last_observed_attack_code_changed = entry->observed_attack_code_changed;
     remote_debug.last_observed_attack_counter_started = entry->observed_attack_counter_started;
     remote_debug.last_requested_jump_started = entry->requested_jump_started;
-    if (entry->requested_attack_became_active) {
+    if (entry->requested_attack_made_contact) {
+        remote_debug.episode_attack_contact_count++;
         remote_debug.episode_attack_active_count++;
-        if (entry->requested_attack_made_contact) {
-            remote_debug.episode_attack_contact_count++;
-        } else if (entry->requested_attack_likely_whiffed) {
-            remote_debug.episode_attack_whiff_count++;
-        }
+    } else if (entry->requested_attack_likely_whiffed) {
+        remote_debug.episode_attack_whiff_count++;
+        remote_debug.episode_attack_active_count++;
+    } else if (entry->requested_attack_became_active) {
+        remote_debug.episode_attack_active_count++;
     }
 }
 

@@ -1733,10 +1733,20 @@ MiSTer validation matrix:
 
 Recommended runtime matrix:
 
-- `P1C`: watch fake-agent movement, attack button-category codes, combat/contact transitions, and action-context countdown
-- `P2C`: repeat the same checks from the opposite side to catch self/opp perspective mistakes
+- `P1C` with `rl-network = on`: primary remote-policy bring-up against CPU; watch `OBS/Q/EX`, action-context countdown, and transition export counters
+- `P2C` with `rl-network = on`: repeat the same checks from the opposite side to catch self/opp perspective mistakes
+- `P1C` / `P2C` with `rl-network = off`: older local fake-agent fallback path for basic non-network sanity checks
 - `P1H` / `P2H` with `rl-network = on`: same remote-policy path as `P1C` / `P2C`, but against human input on the other side
 - `P1H` / `P2H` with `rl-network = off`: use `RL Movement = Forward / Back / Jump Forward / Down Back` to sanity-check that relative move-intent labels still agree with remapped directions
+
+Suggested test sequence:
+
+1. Start with `P1C` or `P2C` plus `rl-network = on`:
+   - validate remote handshake, queue/execution counters, and basic action delivery without human-input variables
+2. Move to `P1H` or `P2H` plus `rl-network = on`:
+   - validate the real remote-policy path while a human controls the other side
+3. Finish with `P1H` or `P2H` plus `rl-network = off`:
+   - run the deterministic movement remap checks (`Forward`, `Back`, `Jump Forward`, `Down Back`)
 
 ### Milestone 2: Session handshake, network probe, and delay budget
 

@@ -121,6 +121,31 @@ Notes:
 - When `rl-opponent-mode = human` and `rl-network = on`, `P1H` / `P2H` use the same remote-policy path as `P1C` / `P2C`.
 - When `rl-opponent-mode = human` and `rl-network = off`, the current scripted validation movement is appended as `F`, `B`, `JF`, or `DB`.
 
+Quick mode matrix:
+
+- `P1C`: RL controls player 1, opponent is CPU, remote policy path if `rl-network = on`, local fake-agent fallback if `rl-network = off`
+- `P2C`: RL controls player 2, opponent is CPU, remote policy path if `rl-network = on`, local fake-agent fallback if `rl-network = off`
+- `P1H`: RL controls player 1, opponent is human, remote policy path if `rl-network = on`, scripted movement helper if `rl-network = off`
+- `P2H`: RL controls player 2, opponent is human, remote policy path if `rl-network = on`, scripted movement helper if `rl-network = off`
+
+Recommended spot checks:
+
+1. Remote bring-up:
+   - `rl-opponent-mode = cpu`
+   - `rl-network = on`
+   - use `P1C` or `P2C`
+   - confirm `OBS/Q/EX` rise together and the RL side acts from remote policy
+2. Human-vs-RL remote debug:
+   - `rl-opponent-mode = human`
+   - `rl-network = on`
+   - use `P1H` or `P2H`
+   - confirm the human side still accepts local input while the RL side follows remote actions
+3. Facing/remap validation:
+   - `rl-opponent-mode = human`
+   - `rl-network = off`
+   - use `P1H:F/B/JF/DB` or `P2H:F/B/JF/DB`
+   - confirm the relative movement label matches the actual remapped direction after side switches
+
 ### `rl-debug-view`
 
 Selects which RL debug category is shown when `show-fps = rl-debug`.

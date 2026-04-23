@@ -4,8 +4,11 @@
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import socket
 import struct
+import threading
 import time
 
 
@@ -30,6 +33,120 @@ RL_MOVE_DOWN_FORWARD = 0x0008
 BTN_LP = 0x0010
 BTN_HP = 0x0040
 BTN_LK = 0x0100
+
+
+class InferenceStats:
+    def __init__(self, capacity: int = 512) -> None:
+        self._capacity = capacity
+        self._samples_us: list[int] = []
+        self._lock = threading.Lock()
+
+    def record(self, elapsed_us: int) -> None:
+        with self._lock:
+            self._samples_us.append(elapsed_us)
+            if len(self._samples_us) > self._capacity:
+                del self._samples_us[: len(self._samples_us) - self._capacity]
+
+    def snapshot(self) -> dict[str, int]:
+        with self._lock:
+            samples = sorted(self._samples_us)
+        if not samples:
+            return {"count": 0, "p50_us": 0, "p95_us": 0, "max_us": 0}
+        return {
+            "count": len(samples),
+            "p50_us": samples[len(samples) // 2],
+            "p95_us": samples[min(len(samples) - 1, int(len(samples) * 0.95))],
+            "max_us": samples[-1],
+        }
+
+
+class LearnerLogTailer(threading.Thread):
+    def __init__(
+        self,
+        path: str,
+        stats_interval_sec: float,
+        tail_from_start: bool,
+        inference_stats: InferenceStats,
+    ) -> None:
+        super().__init__(daemon=True)
+        self._path = path
+        self._stats_interval_sec = max(0.1, stats_interval_sec)
+        self._tail_from_start = tail_from_start
+        self._inference_stats = inference_stats
+        self._rows = 0
+        self._done = 0
+        self._attack_events = 0
+        self._attack_contacts = 0
+        self._attack_whiffs = 0
+        self._latest_episode = 0
+        self._latest_model_version = 0
+
+    def _consume_row(self, row: dict[str, object]) -> None:
+        self._rows += 1
+        self._latest_episode = int(row.get("episode_id", self._latest_episode) or 0)
+        self._latest_model_version = int(row.get("model_version_executed", self._latest_model_version) or 0)
+        if row.get("done") is True:
+            self._done += 1
+        if row.get("overlay_attack_event_finalized") == 1:
+            self._attack_events += 1
+            if row.get("overlay_attack_contact") == 1:
+                self._attack_contacts += 1
+            if row.get("overlay_attack_whiff") == 1:
+                self._attack_whiffs += 1
+
+    def _print_stats(self) -> None:
+        inf = self._inference_stats.snapshot()
+        print(
+            "LEARNER "
+            f"rows={self._rows} done={self._done} ep={self._latest_episode} "
+            f"atk={self._attack_events}/{self._attack_contacts}/{self._attack_whiffs} "
+            f"model={self._latest_model_version} "
+            f"inf={inf['count']}:{inf['p50_us']}/{inf['p95_us']}/{inf['max_us']}us",
+            flush=True,
+        )
+
+    def run(self) -> None:
+        next_stats_ns = time.monotonic_ns() + int(self._stats_interval_sec * 1_000_000_000)
+        stream = None
+        position = 0
+        while True:
+            if stream is None:
+                try:
+                    stream = open(self._path, "r", encoding="utf-8")
+                    if not self._tail_from_start:
+                        stream.seek(0, os.SEEK_END)
+                    position = stream.tell()
+                    print(f"LEARNER tailing {self._path}", flush=True)
+                except OSError:
+                    time.sleep(0.5)
+                    continue
+
+            line = stream.readline()
+            if line:
+                position = stream.tell()
+                try:
+                    self._consume_row(json.loads(line))
+                except json.JSONDecodeError:
+                    pass
+                continue
+
+            try:
+                if os.path.getsize(self._path) < position:
+                    stream.close()
+                    stream = None
+                    position = 0
+                    continue
+            except OSError:
+                stream.close()
+                stream = None
+                position = 0
+                continue
+
+            now_ns = time.monotonic_ns()
+            if now_ns >= next_stats_ns:
+                self._print_stats()
+                next_stats_ns = now_ns + int(self._stats_interval_sec * 1_000_000_000)
+            time.sleep(0.01)
 
 
 def packet_name(packet_type: int) -> str:
@@ -182,16 +299,28 @@ def serve(
     obs_reply_mode: str,
     model_version: int,
     policy_repeat_delay_ms: int,
+    transition_log: str | None,
+    learner_stats_interval_sec: float,
+    learner_tail_from_start: bool,
 ) -> None:
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind((host, port))
     print(f"RL probe server listening on {host}:{port}")
     hello_count: dict[int, int] = {}
     policy_states: dict[tuple[int, int, str], dict[str, int]] = {}
+    inference_stats = InferenceStats()
+    if transition_log:
+        LearnerLogTailer(
+            transition_log,
+            learner_stats_interval_sec,
+            learner_tail_from_start,
+            inference_stats,
+        ).start()
 
     while True:
         data, addr = sock.recvfrom(2048)
         if len(data) == OBS_HEADER.size:
+            inference_start_ns = time.monotonic_ns()
             (
                 magic,
                 version,
@@ -241,6 +370,7 @@ def serve(
                         f" model_expected={model_version_expected} model={model_version}"
                         f" wire=0x{target_wire:04x}"
                     )
+            inference_stats.record((time.monotonic_ns() - inference_start_ns) // 1000)
             continue
         if len(data) != PACKET.size:
             if verbose:
@@ -310,6 +440,22 @@ def main() -> None:
         default=0,
         help="Neutral stand delay after each scripted policy loop before repeating",
     )
+    parser.add_argument(
+        "--transition-log",
+        default=None,
+        help="Optional local rl-transitions.ndjson path for background learner/log-reader stats",
+    )
+    parser.add_argument(
+        "--learner-stats-interval-sec",
+        type=float,
+        default=5.0,
+        help="Stats print interval for the optional background learner/log reader",
+    )
+    parser.add_argument(
+        "--learner-tail-from-start",
+        action="store_true",
+        help="Read --transition-log from the beginning instead of tailing new rows",
+    )
     parser.add_argument("--verbose", action="store_true", help="Log every valid packet")
     args = parser.parse_args()
     serve(
@@ -322,6 +468,9 @@ def main() -> None:
         args.obs_reply_mode,
         args.model_version,
         args.policy_repeat_delay_ms,
+        args.transition_log,
+        args.learner_stats_interval_sec,
+        args.learner_tail_from_start,
     )
 
 

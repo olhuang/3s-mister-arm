@@ -2156,13 +2156,13 @@ Goal:
 
 Tasks:
 
-- [ ] Split inference and learner services
-- [ ] Keep training work off the critical action path
+- [x] Split inference and learner services
+- [x] Keep training work off the critical action path
 - [ ] Publish versioned actor weights
 - [ ] Atomically hot-swap actor weights
 - [x] Include `model_version_current` in session ack or telemetry
 - [x] Include model version in action/transition logs
-- [ ] Track inference latency while training is active
+- [x] Track inference latency while training is active
 
 Done when:
 
@@ -2203,6 +2203,13 @@ Implementation notes:
   - `DOWN_FORWARD + HP`
   - neutral recovery frames
 - `tools/rl_probe_server.py --policy-repeat-delay-ms N` holds neutral after each scripted policy loop before repeating.
+- `tools/rl_probe_server.py --transition-log PATH` starts a background learner/log-reader thread while keeping UDP inference on the main path.
+- the optional learner thread tails transition NDJSON and periodically reports:
+  - rows / done rows / latest episode
+  - attack events/contact/whiff counts
+  - latest executed model version
+  - inference response latency samples as `count:p50/p95/maxus`
+- `tools/rl_probe_server.py --learner-tail-from-start` reads an existing transition log from the beginning; otherwise it tails only new rows.
 
 ### Milestone 6: Higher-control-rate policy and curriculum
 

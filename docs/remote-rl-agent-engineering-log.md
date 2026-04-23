@@ -34,6 +34,37 @@ Validation:
 - `git diff --check` passed.
 - `tools/mister/build-game.sh --flavor telemetry` passed.
 
+## 2026-04-23: Milestone 5 Async Learner Skeleton
+
+Milestone:
+- Milestone 5: Async learner and model hot-swap
+
+Files changed:
+- `tools/rl_probe_server.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- split the remote-side critical inference path from slower learner/log processing before adding real training or hot-swap
+
+Implementation notes:
+- `tools/rl_probe_server.py` now keeps UDP observation handling and action replies on the main thread
+- optional `--transition-log PATH` starts a daemon learner/log-reader thread that tails local transition NDJSON
+- the learner/log reader reports:
+  - transition rows and done count
+  - latest episode
+  - attack event/contact/whiff counts
+  - latest executed model version
+  - inference response latency samples as `count:p50/p95/maxus`
+- `--learner-tail-from-start` imports an existing file from the beginning; default behavior tails only new rows
+- this is intentionally a skeleton: it proves non-critical learner work can run beside inference, but it does not train or hot-swap weights yet
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py` passed.
+- local UDP bind / learner-tail smoke passed with `/tmp/rl-transitions-smoke.ndjson`, reporting `rows=2 done=1 ep=1 atk=2/1/1 model=12`
+- `git diff --check` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed.
+
 ## 2026-04-23: Probe Scripted Move Policies
 
 Milestone:

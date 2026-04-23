@@ -29,6 +29,22 @@ Implementation notes:
 Validation:
 - `git diff --check` passed.
 - `tools/mister/build-game.sh --flavor telemetry` passed.
+- Hardware ledger/overlay closeout passed with the sampled window:
+  - `rows=274`
+  - `overlay_attack_events=23`
+  - `overlay_attack_contacts=3`
+  - `overlay_attack_whiffs=20`
+  - `last_ah=23`
+  - `last_acc=3`
+  - `last_awc=20`
+  - ledger event totals matched the RL Outcome overlay counters
+
+Status:
+- Milestone 4 is closed.
+- Remaining refinement items are intentionally deferred to later schema/learner work:
+  - split `contact` into hit / blocked / throw when we need richer reward shaping
+  - decide whether the older decision-window `requested_attack_*` heuristics should be removed after replay-buffer import lands
+  - make model/version fields part of Milestone 5 logs and packets
 
 ## 2026-04-23: Outcome Overlay Attack Counters
 

@@ -1917,11 +1917,11 @@ Implementation notes:
 
 Status:
 
-- [ ] Milestone complete
+- [x] Milestone complete
 
 Goal:
 
-- [ ] Make the environment actually trainable
+- [x] Make the environment actually trainable
 
 Tasks:
 
@@ -1981,9 +1981,18 @@ Implementation notes:
   - per-frame `delta_opp_hp - delta_self_hp`
   - `+100` round win bonus
   - `-100` round loss penalty
-- [ ] Transition schema has an explicit decision on whether to include first-pass action outcome / delta fields
+- Milestone 4 closeout hardware validation:
+  - last sampled ledger window: `rows=274`
+  - `overlay_attack_events=23`
+  - `overlay_attack_contacts=3`
+  - `overlay_attack_whiffs=20`
+  - `last_ah=23`
+  - `last_acc=3`
+  - `last_awc=20`
+  - event totals matched the RL Outcome overlay `AC/AW/AH/ACC/AWC` counters
+- [x] Transition schema has an explicit decision on whether to include first-pass action outcome / delta fields
 - [x] Transition schema has a first-pass action outcome / delta field set
-- [ ] Learner-side replay buffer can distinguish remote action, repeated-last-action, down-back fallback, and neutral fallback
+- [x] Learner-side replay buffer can distinguish remote action, repeated-last-action, down-back fallback, and neutral fallback
 - [x] Transition schema is documented as an evolving debug/training schema, not a frozen learner contract
 
 Current first-pass action outcome / delta fields:

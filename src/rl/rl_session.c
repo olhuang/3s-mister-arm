@@ -87,9 +87,11 @@ typedef struct RLDecisionLedgerEntry {
     u8 self_attack_state_seen;
     u8 self_attack_started;
     u8 self_attack_code_changed;
+    u8 self_attack_counter_started;
     u8 self_attack_routine_started;
     u8 opp_attack_started;
     u8 opp_attack_code_changed;
+    u8 opp_attack_counter_started;
     u8 opp_attack_routine_started;
     u8 self_airborne_seen;
     u8 opp_airborne_seen;
@@ -109,7 +111,7 @@ typedef struct RLDecisionLedgerEntry {
     u8 requested_attack_became_active;
     u8 observed_attack_state_started;
     u8 observed_attack_code_changed;
-    u8 observed_attack_routine_started;
+    u8 observed_attack_counter_started;
     u8 requested_jump_started;
     float reward_accum;
 } RLDecisionLedgerEntry;
@@ -365,7 +367,7 @@ static void RLSession_UpdateDerivedOutcomeFields(RLDecisionLedgerEntry* entry) {
     entry->requested_attack_became_active = 0;
     entry->observed_attack_state_started = 0;
     entry->observed_attack_code_changed = 0;
-    entry->observed_attack_routine_started = 0;
+    entry->observed_attack_counter_started = 0;
     entry->requested_jump_started = 0;
 
     if (entry->was_executed && RLSession_MoveIntentRequestsMovement(requested_move)) {
@@ -404,10 +406,10 @@ static void RLSession_UpdateDerivedOutcomeFields(RLDecisionLedgerEntry* entry) {
 
     if (entry->was_executed && requested_attacks != 0) {
         entry->requested_attack_input_started = (u8)(entry->executed_attack_bits != 0);
-        entry->requested_attack_became_active = entry->self_attack_routine_started;
+        entry->requested_attack_became_active = entry->self_attack_counter_started;
         entry->observed_attack_state_started = entry->self_attack_started;
         entry->observed_attack_code_changed = entry->self_attack_code_changed;
-        entry->observed_attack_routine_started = entry->self_attack_routine_started;
+        entry->observed_attack_counter_started = entry->self_attack_counter_started;
         entry->requested_attack_entered_state = entry->self_attack_state_seen;
         entry->requested_attack_made_contact =
             (u8)(entry->self_entered_hit_stop || entry->opp_entered_hit_stop ||
@@ -487,10 +489,11 @@ static void RLSession_AppendTransitionLog(const RLDecisionLedgerEntry* entry) {
                      "\"requested_attack_became_active\":%u,"
                      "\"observed_attack_state_started\":%u,"
                      "\"observed_attack_code_changed\":%u,"
-                     "\"observed_attack_routine_started\":%u,"
+                     "\"observed_attack_counter_started\":%u,"
                      "\"requested_jump_started\":%u,"
                      "\"self_attack_started\":%u,\"opp_attack_started\":%u,"
                      "\"self_attack_code_changed\":%u,\"opp_attack_code_changed\":%u,"
+                     "\"self_attack_counter_started\":%u,\"opp_attack_counter_started\":%u,"
                      "\"self_attack_routine_started\":%u,\"opp_attack_routine_started\":%u,"
                      "\"self_airborne_started\":%u,\"opp_airborne_started\":%u,"
                      "\"was_executed\":%s,\"execution_frame_actual\":%u,"
@@ -532,12 +535,14 @@ static void RLSession_AppendTransitionLog(const RLDecisionLedgerEntry* entry) {
                      entry->requested_attack_became_active,
                      entry->observed_attack_state_started,
                      entry->observed_attack_code_changed,
-                     entry->observed_attack_routine_started,
+                     entry->observed_attack_counter_started,
                      entry->requested_jump_started,
                      entry->self_attack_started,
                      entry->opp_attack_started,
                      entry->self_attack_code_changed,
                      entry->opp_attack_code_changed,
+                     entry->self_attack_counter_started,
+                     entry->opp_attack_counter_started,
                      entry->self_attack_routine_started,
                      entry->opp_attack_routine_started,
                      entry->self_airborne_started,
@@ -590,7 +595,7 @@ static void RLSession_FinalizeLedgerEntry(RLDecisionLedgerEntry* entry, bool don
     remote_debug.last_requested_attack_became_active = entry->requested_attack_became_active;
     remote_debug.last_observed_attack_state_started = entry->observed_attack_state_started;
     remote_debug.last_observed_attack_code_changed = entry->observed_attack_code_changed;
-    remote_debug.last_observed_attack_routine_started = entry->observed_attack_routine_started;
+    remote_debug.last_observed_attack_counter_started = entry->observed_attack_counter_started;
     remote_debug.last_requested_jump_started = entry->requested_jump_started;
 }
 
@@ -649,9 +654,11 @@ void RLSession_OnObservationFrameEnd(const RLObservationV1* obs) {
     active_ledger_entry->self_attack_state_seen |= (u8)(obs->self_current_attack != 0);
     active_ledger_entry->self_attack_started |= obs->self_attack_started;
     active_ledger_entry->self_attack_code_changed |= obs->self_attack_code_changed;
+    active_ledger_entry->self_attack_counter_started |= obs->self_attack_counter_started;
     active_ledger_entry->self_attack_routine_started |= obs->self_attack_routine_started;
     active_ledger_entry->opp_attack_started |= obs->opp_attack_started;
     active_ledger_entry->opp_attack_code_changed |= obs->opp_attack_code_changed;
+    active_ledger_entry->opp_attack_counter_started |= obs->opp_attack_counter_started;
     active_ledger_entry->opp_attack_routine_started |= obs->opp_attack_routine_started;
     active_ledger_entry->self_airborne_seen |= obs->self_airborne;
     active_ledger_entry->opp_airborne_seen |= obs->opp_airborne;

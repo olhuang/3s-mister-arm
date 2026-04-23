@@ -2015,9 +2015,10 @@ Current first-pass action outcome / delta fields:
   - `requested_attack_became_active`
   - `observed_attack_state_started`
   - `observed_attack_code_changed`
-  - `observed_attack_routine_started`
+  - `observed_attack_counter_started`
   - `self_attack_started`, `opp_attack_started`
   - `self_attack_code_changed`, `opp_attack_code_changed`
+  - `self_attack_counter_started`, `opp_attack_counter_started`
   - `self_attack_routine_started`, `opp_attack_routine_started`
   - `self_airborne_started`, `opp_airborne_started`
 - the decision-span delta/event aggregation is now driven from `RLObservation_OnFrameEnd()` so it tracks post-logic frame results instead of pre-logic input staging
@@ -2032,10 +2033,10 @@ Current first-pass action outcome / delta fields:
 - `was_executed=false` terminal entries should stay in debug logs, but the first learner replay buffer should filter them unless it explicitly wants canceled decisions.
 - `logs/rl-transitions.ndjson` is still an evolving debug/training schema. Do not treat it as a frozen learner contract until the replay-buffer import path is implemented.
 - `requested_attack_input_started` means this decision actually executed an attack-button pulse.
-- `requested_attack_became_active` means the decision window entered `routine_no[1] == 4` at least once. Today this is the closest runtime proxy for "the game actually accepted a new attack" and is the better field for counting real punch/kick starts.
+- `requested_attack_became_active` means the defender-side `Attack_Counter` edge fired for this requested attack. Today this is the closest runtime proxy for "the game actually accepted a new attack" and is the better field for counting real punch/kick starts.
 - `observed_attack_state_started` is the stricter runtime `current_attack: 0 -> nonzero` edge. It can undercount repeated punches if the engine keeps `current_attack` nonzero across many decision windows.
 - `observed_attack_code_changed` means runtime `current_attack` changed into a nonzero code during the decision window. Treat both observed attack fields as debug / reverse-engineering signals unless a later milestone proves they help the learner.
-- `observed_attack_routine_started` mirrors the runtime `routine_no[1] != 4 -> 4` edge and should stay close to `requested_attack_became_active` for attack-request windows.
+- `observed_attack_counter_started` mirrors the defender-side `Attack_Counter` edge and should stay close to `requested_attack_became_active` for attack-request windows.
 - `requested_attack_entered_state`, `requested_attack_made_contact`, and `requested_attack_likely_whiffed` are window-level heuristics. `requested_attack_likely_whiffed` now means "became active but made no contact".
 - `self_airborne_seen` / `opp_airborne_seen` are span-level state-seen flags. Use `self_airborne_started` / `opp_airborne_started` when counting jump/airborne entry edges.
 - `RL Debug` is now split by `rl-debug-view` / OSD `RL Debug View`:
@@ -2065,7 +2066,7 @@ tail -n 1000 logs/rl-transitions.ndjson | jq -s '{
   attack_became_active: map(select(.requested_attack_became_active == 1)) | length,
   observed_attack_state_started: map(select(.observed_attack_state_started == 1)) | length,
   observed_attack_code_changed: map(select(.observed_attack_code_changed == 1)) | length,
-  observed_attack_routine_started: map(select(.observed_attack_routine_started == 1)) | length,
+  observed_attack_counter_started: map(select(.observed_attack_counter_started == 1)) | length,
   self_airborne_started: map(select(.self_airborne_started == 1)) | length,
   opp_stun_increased: map(select(.delta_opp_stun > 0)) | length,
   opp_stun_recovered: map(select(.delta_opp_stun < 0)) | length,
@@ -2094,7 +2095,7 @@ tail -n 80 logs/rl-transitions.ndjson | jq 'select(.requested_attack_bits != 0) 
   requested_attack_entered_state,
   observed_attack_state_started,
   observed_attack_code_changed,
-  observed_attack_routine_started,
+  observed_attack_counter_started,
   requested_attack_made_contact,
   requested_attack_likely_whiffed,
   delta_opp_hp,

@@ -23,6 +23,7 @@ static s16 prev_frame_stun[2];
 static s16 prev_frame_pos_x[2];
 static s16 prev_frame_pos_y[2];
 static u16 prev_frame_current_attack[2];
+static s16 prev_frame_attack_counter[2];
 static u16 prev_frame_routine1[2];
 static u8 prev_frame_airborne[2];
 static u8 prev_frame_hit_stop[2];
@@ -268,6 +269,8 @@ void RLObservation_OnFrameEnd() {
             (u8)(prev_frame_current_attack[self] != obs.self_current_attack && obs.self_current_attack != 0);
         obs.opp_attack_code_changed =
             (u8)(prev_frame_current_attack[opp] != obs.opp_current_attack && obs.opp_current_attack != 0);
+        obs.self_attack_counter_started = (u8)(Attack_Counter[opp] != prev_frame_attack_counter[opp]);
+        obs.opp_attack_counter_started = (u8)(Attack_Counter[self] != prev_frame_attack_counter[self]);
         obs.self_attack_routine_started = (u8)(prev_frame_routine1[self] != 4 && obs.self_routine[1] == 4);
         obs.opp_attack_routine_started = (u8)(prev_frame_routine1[opp] != 4 && obs.opp_routine[1] == 4);
         obs.self_entered_contact_state = (u8)(!prev_frame_contact_state[self] && self_contact_state);
@@ -302,6 +305,8 @@ void RLObservation_OnFrameEnd() {
     prev_frame_pos_y[opp] = plw[opp].wu.position_y;
     prev_frame_current_attack[self] = obs.self_current_attack;
     prev_frame_current_attack[opp] = obs.opp_current_attack;
+    prev_frame_attack_counter[self] = Attack_Counter[self];
+    prev_frame_attack_counter[opp] = Attack_Counter[opp];
     prev_frame_routine1[self] = obs.self_routine[1];
     prev_frame_routine1[opp] = obs.opp_routine[1];
     prev_frame_airborne[self] = obs.self_airborne;
@@ -506,7 +511,7 @@ void RLObservation_FormatDebugOverlay(char* out, size_t out_size, const char* se
                             remote->last_requested_attack_became_active,
                             remote->last_observed_attack_state_started,
                             remote->last_observed_attack_code_changed,
-                            remote->last_observed_attack_routine_started,
+                            remote->last_observed_attack_counter_started,
                             remote->last_requested_attack_made_contact,
                             remote->last_requested_attack_likely_whiffed,
                             remote->last_requested_jump_started);

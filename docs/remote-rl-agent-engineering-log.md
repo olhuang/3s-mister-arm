@@ -20,18 +20,20 @@ Purpose:
 - separate raw attack-button pulses from the smaller set of decisions that actually become a new in-game attack, so whiff/contact counts line up better with observed gameplay
 
 Implementation notes:
-- added runtime edge fields for `routine_no[1] != 4 -> 4`:
+- added runtime edge fields for both attack-routine and attack-counter bring-up:
   - `self_attack_routine_started`
   - `opp_attack_routine_started`
+  - `self_attack_counter_started`
+  - `opp_attack_counter_started`
 - transition logs now also export:
   - `requested_attack_became_active`
-  - `observed_attack_routine_started`
-- `requested_attack_became_active` is now the preferred first-pass count for "real punches/kicks actually started"
+  - `observed_attack_counter_started`
+- `requested_attack_became_active` is now driven by the defender-side `Attack_Counter` edge and is the preferred first-pass count for "real punches/kicks actually started"
 - `requested_attack_likely_whiffed` now keys off `requested_attack_became_active && !requested_attack_made_contact` instead of the broader `current_attack != 0` state-seen flag
 - RL outcome overlay now shows `AR` so runtime bring-up can distinguish:
   - `AI`: input pulse sent
-  - `AR`: attack routine actually started
-  - `OS`: older `current_attack`-derived debug signals plus routine-start edge
+  - `AR`: attack counter actually advanced
+  - `OS`: older `current_attack`-derived debug signals plus attack-counter edge
 
 Validation:
 - `git diff --check` passed.

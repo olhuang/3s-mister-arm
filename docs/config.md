@@ -185,8 +185,8 @@ Notes:
   - `RF`: last exported transition's facing-relative forward delta
   - `MS`: requested movement succeeded heuristic
   - `AI`: requested attack input pulse executed
-  - `AR`: requested attack became an actual attack-state transition
-  - `OS`: observed attack state start / observed attack code changed / attack-routine start
+  - `AR`: requested attack became a real in-game attack start
+  - `OS`: observed attack state start / observed attack code changed / attack-counter start
   - `AC`: requested attack made contact heuristic
   - `AW`: requested attack likely whiffed heuristic
   - `J`: requested jump started

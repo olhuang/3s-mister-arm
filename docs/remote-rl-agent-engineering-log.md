@@ -2,6 +2,32 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-23: Character Identity in Transition Ledger
+
+Milestone:
+- Milestone 4 closeout / Milestone 5 preparation
+
+Files changed:
+- `src/rl/rl_session.c`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- make transition rows self-describing for matchup-aware learner import
+
+Implementation notes:
+- each transition NDJSON row now includes:
+  - `agent_character_id`
+  - `agent_character_name`
+  - `opponent_character_id`
+  - `opponent_character_name`
+- character IDs are captured from runtime `My_char[self/opp]` when the decision ledger entry is created
+- learner import should use the ID fields as canonical and names as debug metadata
+
+Validation:
+- `git diff --check` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed.
+
 ## 2026-04-23: Event-Aligned Attack Outcomes in Ledger
 
 Milestone:

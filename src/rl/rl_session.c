@@ -65,6 +65,8 @@ typedef struct RLDecisionLedgerEntry {
     bool was_executed;
     u32 episode_id;
     u32 decision_id;
+    u8 agent_character_id;
+    u8 opponent_character_id;
     u32 obs_frame;
     u32 target_frame;
     u32 execution_frame_actual;
@@ -393,6 +395,36 @@ static const char* RLSession_TerminalReasonLabel(u8 terminal_reason) {
     }
 }
 
+static const char* RLSession_CharacterName(u8 character_id) {
+    static const char* const kCharacterNames[] = {
+        "gill",
+        "alex",
+        "ryu",
+        "yun",
+        "dudley",
+        "necro",
+        "hugo",
+        "ibuki",
+        "elena",
+        "oro",
+        "yang",
+        "ken",
+        "sean",
+        "urien",
+        "akuma",
+#if CPS3
+        "shin_akuma",
+#endif
+        "chunli",
+        "makoto",
+        "q",
+        "twelve",
+        "remy",
+    };
+    const size_t count = sizeof(kCharacterNames) / sizeof(kCharacterNames[0]);
+    return (character_id < count) ? kCharacterNames[character_id] : "unknown";
+}
+
 static bool RLSession_MoveIntentRequestsMovement(u8 move_intent) {
     return move_intent != RL_MOVE_NEUTRAL;
 }
@@ -527,6 +559,8 @@ static void RLSession_AppendTransitionLog(const RLDecisionLedgerEntry* entry) {
         SDL_snprintf(line,
                      sizeof(line),
                      "{\"episode_id\":%u,\"decision_id\":%u,\"obs_frame\":%u,\"target_frame\":%u,"
+                     "\"agent_character_id\":%u,\"opponent_character_id\":%u,"
+                     "\"agent_character_name\":\"%s\",\"opponent_character_name\":\"%s\","
                      "\"requested_action_wire\":%u,\"requested_move_intent\":%u,\"requested_attack_bits\":%u,"
                      "\"executed_action_wire\":%u,\"executed_move_intent\":%u,\"executed_attack_bits\":%u,"
                      "\"delta_self_hp\":%d,\"delta_opp_hp\":%d,\"delta_self_stun\":%d,\"delta_opp_stun\":%d,"
@@ -564,6 +598,10 @@ static void RLSession_AppendTransitionLog(const RLDecisionLedgerEntry* entry) {
                      entry->decision_id,
                      entry->obs_frame,
                      entry->target_frame,
+                     entry->agent_character_id,
+                     entry->opponent_character_id,
+                     RLSession_CharacterName(entry->agent_character_id),
+                     RLSession_CharacterName(entry->opponent_character_id),
                      entry->requested_action_wire,
                      RLSession_DecodeMoveIntent(entry->requested_action_wire),
                      RLSession_DecodeAttackBits(entry->requested_action_wire),
@@ -1187,6 +1225,8 @@ bool RLSession_SendRemoteObservationIfDue() {
     ledger->valid = true;
     ledger->episode_id = header.episode_id;
     ledger->decision_id = header.decision_id;
+    ledger->agent_character_id = My_char[RLSession_AgentPlayerIndex()];
+    ledger->opponent_character_id = My_char[RLSession_OpponentPlayerIndex()];
     ledger->obs_frame = header.obs_frame;
     ledger->target_frame = header.target_frame;
     ledger->terminal_reason = 3;

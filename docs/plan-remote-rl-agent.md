@@ -1961,6 +1961,10 @@ Implementation notes:
 - Each ledger entry currently records:
   - `episode_id`
   - `decision_id`
+  - `agent_character_id`
+  - `agent_character_name`
+  - `opponent_character_id`
+  - `opponent_character_name`
   - `obs_frame`
   - `target_frame`
   - `requested_action_wire`
@@ -1994,6 +1998,9 @@ Implementation notes:
 - [x] Transition schema has a first-pass action outcome / delta field set
 - [x] Learner-side replay buffer can distinguish remote action, repeated-last-action, down-back fallback, and neutral fallback
 - [x] Transition schema is documented as an evolving debug/training schema, not a frozen learner contract
+- Character identity closeout:
+  - every transition records the agent and opponent SF3 character IDs / names from runtime `My_char[self/opp]`
+  - learner import should treat `*_character_id` as canonical and `*_character_name` as debug-friendly metadata
 
 Current first-pass action outcome / delta fields:
 
@@ -2007,6 +2014,8 @@ Current first-pass action outcome / delta fields:
   - `self_entered_contact_state`, `opp_entered_contact_state`
   - `self_entered_damage_state`, `opp_entered_damage_state`
 - transition NDJSON now exports decision-span aggregates for:
+  - `agent_character_id`, `opponent_character_id`
+  - `agent_character_name`, `opponent_character_name`
   - `delta_self_hp`, `delta_opp_hp`
   - `delta_self_stun`, `delta_opp_stun`
   - `delta_self_x`, `delta_self_y`
@@ -2046,6 +2055,7 @@ Current first-pass action outcome / delta fields:
   - negative means stun recovered
 - `entered_contact_state` is currently a conservative derived signal based on `guard_flag != 0 || hit_stop`; it is not a precise hit/block result.
 - `was_executed=false` terminal entries should stay in debug logs, but the first learner replay buffer should filter them unless it explicitly wants canceled decisions.
+- `agent_character_id` / `opponent_character_id` identify the actual SF3 characters for matchup-aware training; names are included for readability.
 - `logs/rl-transitions.ndjson` is still an evolving debug/training schema. Do not treat it as a frozen learner contract until the replay-buffer import path is implemented.
 - `requested_attack_input_started` means this decision actually executed an attack-button pulse.
 - `requested_attack_became_active` means the defender-side `Attack_Counter` edge fired for this requested attack. Today this is the closest runtime proxy for "the game actually accepted a new attack" and is the better field for counting real punch/kick starts.
@@ -2121,6 +2131,17 @@ tail -n 80 logs/rl-transitions.ndjson | jq 'select(.requested_attack_bits != 0) 
   delta_opp_hp,
   delta_opp_stun
 }'
+
+# Group recent transition rows by matchup.
+tail -n 2000 logs/rl-transitions.ndjson | jq -s '
+  group_by(.agent_character_name + "_vs_" + .opponent_character_name)
+  | map({
+      matchup: .[0].agent_character_name + "_vs_" + .[0].opponent_character_name,
+      rows: length,
+      overlay_attack_events: map(select(.overlay_attack_event_finalized == 1)) | length,
+      overlay_attack_contacts: map(select(.overlay_attack_event_finalized == 1 and .overlay_attack_contact == 1)) | length,
+      overlay_attack_whiffs: map(select(.overlay_attack_event_finalized == 1 and .overlay_attack_whiff == 1)) | length
+    })'
 ```
 
 ### Milestone 5: Async learner and model hot-swap

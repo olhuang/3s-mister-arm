@@ -35,7 +35,14 @@ def make_packet(packet_type: int, nonce: int, sequence: int, config_hash: int, s
     return PACKET.pack(MAGIC, PACKET_VERSION, packet_type, nonce, sequence, config_hash, send_time_us)
 
 
-def make_action_packet(nonce: int, episode_id: int, decision_id: int, target_frame: int, action_wire: int) -> bytes:
+def make_action_packet(
+    nonce: int,
+    episode_id: int,
+    decision_id: int,
+    target_frame: int,
+    action_wire: int,
+    model_version: int,
+) -> bytes:
     return ACTION_PACKET.pack(
         MAGIC,
         PACKET_VERSION,
@@ -46,7 +53,7 @@ def make_action_packet(nonce: int, episode_id: int, decision_id: int, target_fra
         target_frame,
         action_wire,
         0,
-        0,
+        model_version,
     )
 
 
@@ -57,6 +64,7 @@ def maybe_send_action(
     action_mode: str,
     nonce: int,
     sequence: int,
+    model_version: int,
     verbose: bool,
 ) -> None:
     if action_port is None or action_mode == "off":
@@ -66,11 +74,11 @@ def maybe_send_action(
     if action_mode == "stale":
         send_nonce = (nonce - 1) & 0xFFFFFFFFFFFFFFFF
 
-    payload = make_action_packet(send_nonce, 1, sequence, sequence + 4, 0x0040)
+    payload = make_action_packet(send_nonce, 1, sequence, sequence + 4, 0x0040, model_version)
     target = (addr[0], action_port)
     sock.sendto(payload, target)
     if verbose:
-        print(f"{target} ACTION mode={action_mode} nonce={send_nonce} decision={sequence}")
+        print(f"{target} ACTION mode={action_mode} nonce={send_nonce} decision={sequence} model={model_version}")
 
 
 def fixed_action_wire(policy: str) -> int:
@@ -90,6 +98,7 @@ def serve(
     action_mode: str,
     policy: str,
     obs_reply_mode: str,
+    model_version: int,
 ) -> None:
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind((host, port))
@@ -124,6 +133,7 @@ def serve(
                     decision_id,
                     target_frame,
                     target_wire,
+                    model_version,
                 )
                 target = (addr[0], action_port)
                 sock.sendto(payload, target)
@@ -136,6 +146,7 @@ def serve(
                         decision_id,
                         target_frame + 1,
                         target_wire,
+                        model_version,
                     )
                     sock.sendto(wrong_payload, target)
                 if verbose:
@@ -143,6 +154,7 @@ def serve(
                         f"{target} OBS-ACTION policy={policy} reply={obs_reply_mode} "
                         f"ep={episode_id} dec={decision_id} obs={obs_frame} "
                         f"target={target_frame} hold={action_hold_frames}"
+                        f" model_expected={model_version_expected} model={model_version}"
                     )
             continue
         if len(data) != PACKET.size:
@@ -158,7 +170,7 @@ def serve(
 
         if packet_type == TYPE_HELLO:
             if action_mode == "pre-ack":
-                maybe_send_action(sock, addr, action_port, "valid", nonce, sequence, verbose)
+                maybe_send_action(sock, addr, action_port, "valid", nonce, sequence, model_version, verbose)
                 count = hello_count.get(nonce, 0) + 1
                 hello_count[nonce] = count
                 if count < 4:
@@ -174,7 +186,7 @@ def serve(
             reply = make_packet(TYPE_PONG, nonce, sequence, config_hash, send_time_us)
             sock.sendto(reply, addr)
             if action_mode in {"valid", "stale"}:
-                maybe_send_action(sock, addr, action_port, action_mode, nonce, sequence, verbose)
+                maybe_send_action(sock, addr, action_port, action_mode, nonce, sequence, model_version, verbose)
 
         if verbose:
             print(
@@ -206,9 +218,19 @@ def main() -> None:
         default="normal",
         help="How to reply to Milestone 3 observation headers",
     )
+    parser.add_argument("--model-version", type=int, default=0, help="Model version stamped into action packets")
     parser.add_argument("--verbose", action="store_true", help="Log every valid packet")
     args = parser.parse_args()
-    serve(args.host, args.port, args.verbose, args.action_port, args.action_mode, args.policy, args.obs_reply_mode)
+    serve(
+        args.host,
+        args.port,
+        args.verbose,
+        args.action_port,
+        args.action_mode,
+        args.policy,
+        args.obs_reply_mode,
+        args.model_version,
+    )
 
 
 if __name__ == "__main__":

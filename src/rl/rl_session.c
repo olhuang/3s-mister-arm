@@ -32,6 +32,7 @@ typedef struct RLQueuedRemoteAction {
     u32 decision_id;
     u32 target_frame;
     u16 action_wire;
+    u32 model_version;
 } RLQueuedRemoteAction;
 
 typedef struct RLExpectedRemoteDecision {
@@ -70,6 +71,9 @@ typedef struct RLDecisionLedgerEntry {
     u32 obs_frame;
     u32 target_frame;
     u32 execution_frame_actual;
+    u32 model_version_expected;
+    u32 model_version_requested;
+    u32 model_version_executed;
     u16 requested_action_wire;
     u16 executed_action_wire;
     s16 delta_self_hp;
@@ -155,6 +159,7 @@ static bool overlay_attack_event_contact_seen;
 static u32 overlay_attack_event_seq;
 static u32 overlay_attack_event_logged_seq;
 static u16 last_executed_action_wire;
+static u32 last_executed_model_version;
 static RLActionContext action_context = {
     .last_executed_move_intent = RL_MOVE_NEUTRAL,
     .last_executed_attack_bits = 0,
@@ -209,6 +214,7 @@ static void RLSession_ClearRemoteQueue() {
     memset(&active_remote_action, 0, sizeof(active_remote_action));
     active_ledger_entry = NULL;
     last_executed_action_wire = 0;
+    last_executed_model_version = 0;
     remote_debug.queue_depth = 0;
 }
 
@@ -561,6 +567,9 @@ static void RLSession_AppendTransitionLog(const RLDecisionLedgerEntry* entry) {
                      "{\"episode_id\":%u,\"decision_id\":%u,\"obs_frame\":%u,\"target_frame\":%u,"
                      "\"agent_character_id\":%u,\"opponent_character_id\":%u,"
                      "\"agent_character_name\":\"%s\",\"opponent_character_name\":\"%s\","
+                     "\"model_version_expected\":%u,"
+                     "\"model_version_requested\":%u,"
+                     "\"model_version_executed\":%u,"
                      "\"requested_action_wire\":%u,\"requested_move_intent\":%u,\"requested_attack_bits\":%u,"
                      "\"executed_action_wire\":%u,\"executed_move_intent\":%u,\"executed_attack_bits\":%u,"
                      "\"delta_self_hp\":%d,\"delta_opp_hp\":%d,\"delta_self_stun\":%d,\"delta_opp_stun\":%d,"
@@ -602,6 +611,9 @@ static void RLSession_AppendTransitionLog(const RLDecisionLedgerEntry* entry) {
                      entry->opponent_character_id,
                      RLSession_CharacterName(entry->agent_character_id),
                      RLSession_CharacterName(entry->opponent_character_id),
+                     entry->model_version_expected,
+                     entry->model_version_requested,
+                     entry->model_version_executed,
                      entry->requested_action_wire,
                      RLSession_DecodeMoveIntent(entry->requested_action_wire),
                      RLSession_DecodeAttackBits(entry->requested_action_wire),
@@ -991,6 +1003,7 @@ static void RLSession_StartActiveRemoteAction(u32 episode_id,
                                               u32 decision_id,
                                               u8 move_intent,
                                               u16 attack_bits,
+                                              u32 model_version,
                                               RLExecutionSource source) {
     RLDecisionLedgerEntry* ledger = RLSession_FindLedgerEntry(episode_id, decision_id);
     const u16 executed_action_wire = RLSession_EncodeActionWire(move_intent, attack_bits);
@@ -1003,6 +1016,8 @@ static void RLSession_StartActiveRemoteAction(u32 episode_id,
     action_context.last_executed_move_intent = move_intent;
     action_context.last_executed_attack_bits = attack_bits;
     last_executed_action_wire = executed_action_wire;
+    last_executed_model_version = model_version;
+    remote_debug.model_version_current = model_version;
     if (ledger != NULL) {
         ledger->was_executed = true;
         ledger->executed_action_wire = executed_action_wire;
@@ -1010,6 +1025,7 @@ static void RLSession_StartActiveRemoteAction(u32 episode_id,
         ledger->execution_source = (u8)source;
         ledger->executed_move_intent = move_intent;
         ledger->executed_attack_bits = attack_bits;
+        ledger->model_version_executed = model_version;
         RLSession_SetActiveLedgerEntry(ledger);
     }
     if (source == RL_EXECUTION_SOURCE_REMOTE) {
@@ -1039,6 +1055,7 @@ static bool RLSession_ExecuteDueQueuedAction() {
                                       best->decision_id,
                                       RLSession_DecodeMoveIntent(best->action_wire),
                                       RLSession_DecodeAttackBits(best->action_wire),
+                                      best->model_version,
                                       RL_EXECUTION_SOURCE_REMOTE);
     RLSession_RemoveExpectedDecision(RLSession_FindExpectedDecision(best->episode_id, best->decision_id));
     memset(best, 0, sizeof(*best));
@@ -1061,9 +1078,15 @@ static void RLSession_ApplyExpectedFallbackIfDue() {
             if (last_executed_action_wire != 0) {
                 move_intent = RLSession_DecodeMoveIntent(last_executed_action_wire);
                 attack_bits = RLSession_DecodeAttackBits(last_executed_action_wire);
+                last_executed_model_version = remote_debug.model_version_current;
                 source = RL_EXECUTION_SOURCE_REPEATED_LAST_ACTION;
             }
-            RLSession_StartActiveRemoteAction(entry->episode_id, entry->decision_id, move_intent, attack_bits, source);
+            RLSession_StartActiveRemoteAction(entry->episode_id,
+                                              entry->decision_id,
+                                              move_intent,
+                                              attack_bits,
+                                              last_executed_model_version,
+                                              source);
         }
         RLSession_RemoveExpectedDecision(entry);
         return;
@@ -1160,6 +1183,7 @@ RLRemoteActionSubmitResult RLSession_SubmitRemoteAction(const RLActionPacket* pa
     queued->decision_id = packet->decision_id;
     queued->target_frame = packet->target_frame;
     queued->action_wire = packet->action_wire;
+    queued->model_version = packet->model_version;
     seen = RLSession_AllocSeenDecision();
     seen->valid = true;
     seen->episode_id = packet->episode_id;
@@ -1169,6 +1193,7 @@ RLRemoteActionSubmitResult RLSession_SubmitRemoteAction(const RLActionPacket* pa
         RLDecisionLedgerEntry* ledger = RLSession_FindLedgerEntry(packet->episode_id, packet->decision_id);
         if (ledger != NULL) {
             ledger->requested_action_wire = packet->action_wire;
+            ledger->model_version_requested = packet->model_version;
         }
     }
     expected->fulfilled = true;
@@ -1211,6 +1236,7 @@ bool RLSession_SendRemoteObservationIfDue() {
     header.target_frame = remote_debug.frame_id + RLSession_DelayFrames();
     header.obs_len = 0;
     header.action_hold_frames = RLSession_ActionHoldFrames();
+    header.model_version_expected = remote_debug.model_version_current;
 
     if (!RLNet_SendObservationHeader(&header)) {
         return false;
@@ -1229,6 +1255,7 @@ bool RLSession_SendRemoteObservationIfDue() {
     ledger->opponent_character_id = My_char[RLSession_OpponentPlayerIndex()];
     ledger->obs_frame = header.obs_frame;
     ledger->target_frame = header.target_frame;
+    ledger->model_version_expected = header.model_version_expected;
     ledger->terminal_reason = 3;
     remote_debug.obs_sent_count++;
     return true;

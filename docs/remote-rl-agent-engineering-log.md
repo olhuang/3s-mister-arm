@@ -2,6 +2,38 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-23: Milestone 5 Model Version Plumbing
+
+Milestone:
+- Milestone 5: Async learner and model hot-swap
+
+Files changed:
+- `src/rl/rl_session.h`
+- `src/rl/rl_session.c`
+- `src/rl/rl_observation.c`
+- `tools/rl_probe_server.py`
+- `docs/config.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- make model versions visible in packets, overlay, and transition logs before adding learner hot-swap machinery
+
+Implementation notes:
+- MiSTer now sends `RLObsPacketHeader.model_version_expected` from the currently executed remote model version
+- accepted remote action packets store `RLActionPacket.model_version` in the queue and ledger
+- transition NDJSON now exports:
+  - `model_version_expected`
+  - `model_version_requested`
+  - `model_version_executed`
+- RL net overlay shows current model version as `MV`
+- `tools/rl_probe_server.py --model-version N` stamps fixed-policy action packets for bring-up
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py` passed.
+- `git diff --check` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed.
+
 ## 2026-04-23: Character Identity in Transition Ledger
 
 Milestone:

@@ -59,6 +59,7 @@ typedef struct RLRemoteDebugState {
     u32 episode_attack_active_count;
     u32 episode_attack_contact_count;
     u32 episode_attack_whiff_count;
+    u32 model_version_current;
     u8 last_overlay_attack_contact;
     u8 last_overlay_attack_whiff;
     s16 last_delta_self_forward;

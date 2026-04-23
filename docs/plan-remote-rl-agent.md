@@ -2160,15 +2160,27 @@ Tasks:
 - [ ] Keep training work off the critical action path
 - [ ] Publish versioned actor weights
 - [ ] Atomically hot-swap actor weights
-- [ ] Include `model_version_current` in session ack or telemetry
-- [ ] Include model version in action/transition logs
+- [x] Include `model_version_current` in session ack or telemetry
+- [x] Include model version in action/transition logs
 - [ ] Track inference latency while training is active
 
 Done when:
 
 - [ ] Action latency stays stable during training
-- [ ] Model version changes are visible in logs and packets
+- [x] Model version changes are visible in logs and packets
 - [ ] Inference continues to respond while learner updates weights
+
+Implementation notes:
+
+- First Milestone 5 slice adds model-version plumbing without introducing training work on the critical action path.
+- `RLObsPacketHeader.model_version_expected` now carries MiSTer's current executed model version to the remote service.
+- `RLActionPacket.model_version` is accepted from the remote service and stored with queued/executed actions.
+- Transition NDJSON now exports:
+  - `model_version_expected`
+  - `model_version_requested`
+  - `model_version_executed`
+- RL net overlay shows `MV` for the currently executed model version.
+- `tools/rl_probe_server.py --model-version N` stamps fixed-policy action packets for bring-up.
 
 ### Milestone 6: Higher-control-rate policy and curriculum
 

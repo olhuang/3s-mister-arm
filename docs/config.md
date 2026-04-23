@@ -166,7 +166,7 @@ Notes:
 - `off` keeps `show-fps = rl-debug` selected but hides the RL overlay text.
 - `all` shows the full bring-up view.
 - `net` shows the UDP/session/action queue counters:
-  - `NET`: network state, sample count, p50/p95/p99/max RTT, and socket error count
+  - `NET`: network state, current model version (`MV`), sample count, p50/p95/p99/max RTT, and socket error count
   - `ACT/OK/UA/SN/BV/BM`: action gate counters
   - `OBS/Q/EX/LT/DU/TM/FB`: observation, queue, execution, late, duplicate, target-mismatch, and fallback counters
 - `input` shows action-context and the colored key row:

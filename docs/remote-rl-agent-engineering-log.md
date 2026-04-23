@@ -34,6 +34,36 @@ Validation:
 - `git diff --check` passed.
 - `tools/mister/build-game.sh --flavor telemetry` passed.
 
+## 2026-04-23: Probe Scripted Move Policies
+
+Milestone:
+- Milestone 5: Async learner and model hot-swap
+
+Files changed:
+- `tools/rl_probe_server.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- add deterministic special/throw action scripts for validating command input, contact, whiff, and future outcome labeling
+
+Implementation notes:
+- added `--policy ryu-fireball`, which loops:
+  - `DOWN`
+  - `DOWN_FORWARD`
+  - `FORWARD`
+  - `FORWARD + LP`
+  - neutral recovery frames
+- added `--policy throw`, which loops:
+  - `FORWARD + LP + LK`
+  - neutral recovery frames
+- both policies use the existing relative-movement action wire, so MiSTer still maps forward/down-forward at execution time based on current facing
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py` passed.
+- `git diff --check` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed.
+
 ## 2026-04-23: Character Identity in Transition Ledger
 
 Milestone:

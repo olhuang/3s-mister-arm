@@ -20,6 +20,15 @@ PACKET = struct.Struct("<IHHQIIQ")
 ACTION_PACKET = struct.Struct("<IHHQIIIHHI")
 OBS_HEADER = struct.Struct("<IHHQIIIIHHI")
 
+RL_MOVE_NEUTRAL = 0x0000
+RL_MOVE_DOWN = 0x0002
+RL_MOVE_FORWARD = 0x0004
+RL_MOVE_DOWN_FORWARD = 0x0008
+
+BTN_LP = 0x0010
+BTN_HP = 0x0040
+BTN_LK = 0x0100
+
 
 def packet_name(packet_type: int) -> str:
     return {
@@ -81,13 +90,37 @@ def maybe_send_action(
         print(f"{target} ACTION mode={action_mode} nonce={send_nonce} decision={sequence} model={model_version}")
 
 
-def fixed_action_wire(policy: str) -> int:
-    return {
+def scripted_action_wire(policy: str, decision_id: int) -> int:
+    fixed = {
         "forward": 0x0004,
         "back": 0x0003,
         "hp": 0x0040,
         "forward-hp": 0x0044,
-    }.get(policy, 0x0004)
+    }
+    if policy in fixed:
+        return fixed[policy]
+
+    if policy == "ryu-fireball":
+        sequence = (
+            RL_MOVE_DOWN,
+            RL_MOVE_DOWN_FORWARD,
+            RL_MOVE_FORWARD,
+            RL_MOVE_FORWARD | BTN_LP,
+            RL_MOVE_NEUTRAL,
+            RL_MOVE_NEUTRAL,
+        )
+        return sequence[decision_id % len(sequence)]
+
+    if policy == "throw":
+        sequence = (
+            RL_MOVE_FORWARD | BTN_LP | BTN_LK,
+            RL_MOVE_NEUTRAL,
+            RL_MOVE_NEUTRAL,
+            RL_MOVE_NEUTRAL,
+        )
+        return sequence[decision_id % len(sequence)]
+
+    return fixed["forward"]
 
 
 def serve(
@@ -126,7 +159,7 @@ def serve(
                     print(f"{addr} bad_obs_header magic=0x{magic:08x} version={version} type={packet_type}")
                 continue
             if action_port is not None:
-                target_wire = fixed_action_wire(policy)
+                target_wire = scripted_action_wire(policy, decision_id)
                 payload = make_action_packet(
                     nonce,
                     episode_id,
@@ -208,9 +241,9 @@ def main() -> None:
     )
     parser.add_argument(
         "--policy",
-        choices=["forward", "back", "hp", "forward-hp"],
+        choices=["forward", "back", "hp", "forward-hp", "ryu-fireball", "throw"],
         default="forward",
-        help="Fixed action used when MiSTer sends Milestone 3 observation headers",
+        help="Fixed or scripted action used when MiSTer sends observation headers",
     )
     parser.add_argument(
         "--obs-reply-mode",

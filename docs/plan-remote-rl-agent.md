@@ -2180,7 +2180,16 @@ Implementation notes:
   - `model_version_requested`
   - `model_version_executed`
 - RL net overlay shows `MV` for the currently executed model version.
-- `tools/rl_probe_server.py --model-version N` stamps fixed-policy action packets for bring-up.
+- `tools/rl_probe_server.py --model-version N` stamps fixed/scripted policy action packets for bring-up.
+- `tools/rl_probe_server.py --policy ryu-fireball` loops a relative Ryu fireball script:
+  - `DOWN`
+  - `DOWN_FORWARD`
+  - `FORWARD`
+  - `FORWARD + LP`
+  - neutral recovery frames
+- `tools/rl_probe_server.py --policy throw` loops:
+  - `FORWARD + LP + LK`
+  - neutral recovery frames
 
 ### Milestone 6: Higher-control-rate policy and curriculum
 

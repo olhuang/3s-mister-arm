@@ -142,6 +142,8 @@ static RLSeenRemoteDecision seen_decisions[RL_REMOTE_SEEN_CAP];
 static RLDecisionLedgerEntry decision_ledger[RL_DECISION_LEDGER_CAP];
 static RLRemoteActiveAction active_remote_action;
 static RLDecisionLedgerEntry* active_ledger_entry;
+static bool overlay_attack_event_pending;
+static bool overlay_attack_event_contact_seen;
 static u16 last_executed_action_wire;
 static RLActionContext action_context = {
     .last_executed_move_intent = RL_MOVE_NEUTRAL,
@@ -200,17 +202,37 @@ static void RLSession_ClearRemoteQueue() {
     remote_debug.queue_depth = 0;
 }
 
+static void RLSession_ResetOverlayAttackCounters() {
+    remote_debug.episode_attack_active_count = 0;
+    remote_debug.episode_attack_contact_count = 0;
+    remote_debug.episode_attack_whiff_count = 0;
+    overlay_attack_event_pending = false;
+    overlay_attack_event_contact_seen = false;
+}
+
+static void RLSession_FinalizeOverlayAttackEvent() {
+    if (!overlay_attack_event_pending) {
+        return;
+    }
+    remote_debug.episode_attack_active_count++;
+    if (overlay_attack_event_contact_seen) {
+        remote_debug.episode_attack_contact_count++;
+    } else {
+        remote_debug.episode_attack_whiff_count++;
+    }
+    overlay_attack_event_pending = false;
+    overlay_attack_event_contact_seen = false;
+}
+
 static void RLSession_ResetRemoteRuntime(bool reset_counters) {
     RLSession_ClearRemoteQueue();
     RLSession_ClearActionContext();
     active_round_num = Round_num;
     remote_runtime_initialized = false;
-    remote_debug.episode_attack_active_count = 0;
-    remote_debug.episode_attack_contact_count = 0;
-    remote_debug.episode_attack_whiff_count = 0;
     if (reset_counters) {
         memset(&remote_debug, 0, sizeof(remote_debug));
     }
+    RLSession_ResetOverlayAttackCounters();
 }
 
 bool RLSession_IsActive() {
@@ -600,15 +622,6 @@ static void RLSession_FinalizeLedgerEntry(RLDecisionLedgerEntry* entry, bool don
     remote_debug.last_observed_attack_code_changed = entry->observed_attack_code_changed;
     remote_debug.last_observed_attack_counter_started = entry->observed_attack_counter_started;
     remote_debug.last_requested_jump_started = entry->requested_jump_started;
-    if (entry->requested_attack_made_contact) {
-        remote_debug.episode_attack_contact_count++;
-        remote_debug.episode_attack_active_count++;
-    } else if (entry->requested_attack_likely_whiffed) {
-        remote_debug.episode_attack_whiff_count++;
-        remote_debug.episode_attack_active_count++;
-    } else if (entry->requested_attack_became_active) {
-        remote_debug.episode_attack_active_count++;
-    }
 }
 
 static void RLSession_SetActiveLedgerEntry(RLDecisionLedgerEntry* entry) {
@@ -622,6 +635,7 @@ static void RLSession_SetActiveLedgerEntry(RLDecisionLedgerEntry* entry) {
 }
 
 static void RLSession_FinalizeEpisodeLedger(u32 episode_id) {
+    RLSession_FinalizeOverlayAttackEvent();
     if (active_ledger_entry != NULL && active_ledger_entry->valid && active_ledger_entry->episode_id == episode_id) {
         const s16 self = RLSession_AgentPlayerIndex();
         const s16 opp = RLSession_OpponentPlayerIndex();
@@ -646,6 +660,18 @@ void RLSession_OnObservationFrameEnd(const RLObservationV1* obs) {
     if (obs == NULL || !obs->valid) {
         return;
     }
+
+    if (obs->self_attack_counter_started) {
+        RLSession_FinalizeOverlayAttackEvent();
+        overlay_attack_event_pending = true;
+        overlay_attack_event_contact_seen = false;
+    }
+    if (overlay_attack_event_pending &&
+        (obs->self_entered_hit_stop || obs->opp_entered_hit_stop || obs->opp_entered_contact_state ||
+         obs->opp_entered_damage_state || obs->delta_opp_hp > 0 || obs->delta_opp_stun > 0)) {
+        overlay_attack_event_contact_seen = true;
+    }
+
     if (active_ledger_entry == NULL || !active_ledger_entry->valid || !active_ledger_entry->active) {
         return;
     }
@@ -777,18 +803,15 @@ static void RLSession_MaybeInitRemoteRuntime() {
     if (!remote_runtime_initialized) {
         active_round_num = Round_num;
         remote_debug.episode_id = Round_num;
-        remote_debug.episode_attack_active_count = 0;
-        remote_debug.episode_attack_contact_count = 0;
-        remote_debug.episode_attack_whiff_count = 0;
+        RLSession_ResetOverlayAttackCounters();
         remote_runtime_initialized = true;
     }
     if (active_round_num != Round_num) {
+        RLSession_FinalizeOverlayAttackEvent();
         RLSession_FinalizeEpisodeLedger(remote_debug.episode_id);
         active_round_num = Round_num;
         remote_debug.episode_id = Round_num;
-        remote_debug.episode_attack_active_count = 0;
-        remote_debug.episode_attack_contact_count = 0;
-        remote_debug.episode_attack_whiff_count = 0;
+        RLSession_ResetOverlayAttackCounters();
         RLSession_ClearRemoteQueue();
     }
 }

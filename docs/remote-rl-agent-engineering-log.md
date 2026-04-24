@@ -2,6 +2,363 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-24: Learner And Actor Version Observability Tightening
+
+Milestone:
+- Milestone 5: Async learner and model hot-swap
+
+Files changed:
+- `tools/rl_probe_server.py`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- make Milestone 5 hot-swap validation easier by separating learner replay progress from actor publish/load/execute version telemetry in the probe-server stats line
+
+Implementation notes:
+- `ActorModelStore` now exposes a status snapshot with:
+  - active actor version
+  - last published version
+  - last loaded version
+  - publish count
+  - load count
+- learner stats now print:
+  - `run`
+  - `model_exec`
+  - `model_active`
+  - `model_pub`
+  - `model_load`
+  - `model_counts`
+- this should make it obvious whether:
+  - new transition batches are still arriving
+  - learner publishes are advancing
+  - the in-memory actor has switched
+  - executed transitions are still coming from an older actor version
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py` passed.
+- `git diff --check -- tools/rl_probe_server.py docs/remote-rl-agent-engineering-log.md` passed.
+- Current live test command:
+  ```sh
+  python \\wsl.localhost\Ubuntu\home\olhua\src\3s-mister-arm\tools\rl_probe_server.py --host 0.0.0.0 --port 37330 --action-port 37331 --policy hp --policy-repeat-delay-ms 3000 --model-version 0 --model-dir \\wsl.localhost\Ubuntu\home\olhua\src\3s-mister-arm\model\rl-model-live --transition-log \\wsl.localhost\Ubuntu\home\olhua\src\3s-mister-arm\logs\rl-transitions-live.ndjson --learner-auto-publish --learner-publish-interval-sec 10 --learner-warmup-rows 100 --learner-batch-size 32
+  ```
+
+## 2026-04-24: HP-Zero Active-Round Control And Background Model Watch
+
+Milestone:
+- Milestone 5: Async learner and model hot-swap / Milestone 4 ledger correctness follow-up
+
+Files changed:
+- `src/rl/rl_session.c`
+- `tools/rl_probe_server.py`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- keep remote input alive when visible HP reaches zero but the game has not yet ended the round, and remove model-manifest filesystem checks from the inference hot path
+
+Implementation notes:
+- RL input/observation gating now follows the game battle-active flags (`Allow_a_battle_f != 0 && Demo_Time_Stop == 0`) instead of requiring both players' raw HP to stay above zero
+- HP reaching zero remains an observation/reward signal, but no longer directly stops remote input or finalizes the episode
+- episode finalization now waits for the game to leave battle-active state, so it should align with the actual round conclusion instead of the first zero-HP frame
+- `ActorModelStore.current()` now returns only the in-memory actor
+- external `current.json` refresh checks moved to a background watcher thread, while learner publishes still update the in-memory actor immediately
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py` passed.
+- `git diff --check -- src/rl/rl_session.c tools/rl_probe_server.py docs/remote-rl-agent-engineering-log.md` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed.
+- Fresh hardware validation needed: confirm auto punch continues while `Allow_a_battle_f` is still active even if visible HP is zero, and confirm inference `p95/max` improves because OBS replies no longer touch the model directory.
+
+## 2026-04-24: Fixed-Policy Repeat Delay And Model Refresh Throttle
+
+Milestone:
+- Milestone 5: Async learner and model hot-swap
+
+Files changed:
+- `tools/rl_probe_server.py`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- fix `--policy-repeat-delay-ms` being ignored by fixed policies such as `hp`, and reduce inference latency spikes caused by checking `current.json` on every observation packet
+
+Implementation notes:
+- fixed policies now share the same per `(nonce, run_id, episode_id, policy)` cooldown state as scripted policies
+- `--policy hp --policy-repeat-delay-ms 3000` now emits one HP action, then neutral actions until the 3000 ms cooldown expires
+- `ActorModelStore.current()` now throttles external `current.json` refresh checks to every 250 ms by default instead of every observation
+- the refresh interval can be overridden with `RL_MODEL_REFRESH_INTERVAL_SEC`
+- learner-side publishes still update the in-memory active actor immediately
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py` passed.
+- `git diff --check -- tools/rl_probe_server.py docs/remote-rl-agent-engineering-log.md` passed.
+- local policy smoke confirmed fixed `hp` emits `[64, 0, 64]` across a 200 ms cooldown.
+
+## 2026-04-24: Learner Actor Manifest Publish And Hot-Swap Skeleton
+
+Milestone:
+- Milestone 5: Async learner and model hot-swap
+
+Files changed:
+- `tools/rl_probe_server.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- add a first versioned actor publication and atomic hot-swap path so the remote inference service can move from fixed `--model-version` stamping to learner-published actor versions
+
+Implementation notes:
+- added `ActorModelStore` to `tools/rl_probe_server.py`
+- `--model-dir DIR` enables actor manifest storage:
+  - `actor-vN.json` records immutable published actor metadata
+  - `current.json` is updated through `os.replace()` for atomic hot-swap
+- inference reads the current actor before each observation reply and stamps action packets with that actor's `version` and `policy`
+- `--learner-auto-publish` lets the learner/log-reader publish a new actor manifest after replay warmup and every `--learner-publish-interval-sec`
+- `--learner-publish-policy POLICY` can force the policy used by learner-published manifests; otherwise publishing keeps the active policy
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py` passed.
+- `git diff --check -- tools/rl_probe_server.py docs/plan-remote-rl-agent.md docs/remote-rl-agent-engineering-log.md` passed.
+- learner-only smoke with `--model-dir`, `--learner-auto-publish`, and existing `logs/rl-transitions.ndjson` ran under `timeout 3`; expected timeout exit `124` after publishing `actor-v0.json` through `actor-v5.json` and atomically updating `current.json`.
+- Live MiSTer validation still needed: run the probe server with `--model-dir` and confirm RL overlay/logs show `model_version_executed` increasing after learner publication while observation replies continue.
+
+## 2026-04-24: RL Round-Playable Episode Boundary Fix
+
+Milestone:
+- Milestone 5: Async learner and model hot-swap / Milestone 4 ledger correctness follow-up
+
+Files changed:
+- `src/rl/rl_session.c`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- fix fresh hardware logs where each episode began after the round HP was already terminal, causing the whole HP/reward delta to land on the final executed decision and adding one extra `was_executed=false` terminal row per round
+
+Implementation notes:
+- remote input override and observation send are now gated on a playable round:
+  - `Allow_a_battle_f != 0`
+  - `Demo_Time_Stop == 0`
+  - both agent and opponent HP are above zero
+- stale action packets received during non-playable round phases are rejected before they can initialize a new runtime episode
+- terminal HP observations now finalize the active episode immediately at frame end, before the next frame can clear the ledger during KO / round-end flow
+- unexecuted in-flight ledger entries are discarded at episode finalization instead of being exported as zero-reward terminal transitions
+
+Validation:
+- `git diff --check -- src/rl/rl_session.c docs/remote-rl-agent-engineering-log.md` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed.
+- Fresh hardware validation still needed: run a 3-round match and confirm each episode starts at live HP, HP deltas appear before the terminal row when damage occurs mid-round, and no extra `was_executed=false` terminal row is emitted.
+
+## 2026-04-24: Protocol v2 Run ID And Unique Round Episodes
+
+Milestone:
+- Milestone 5: Async learner and model hot-swap
+
+Files changed:
+- `src/rl/rl_protocol.h`
+- `src/rl/rl_net.h`
+- `src/rl/rl_net.c`
+- `src/rl/rl_session.h`
+- `src/rl/rl_session.c`
+- `tools/rl_probe_server.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- make every round-scoped RL episode uniquely identifiable in `rl-transitions.ndjson`, remote action packets, and transition-batch uploads instead of reusing `Round_num` as `episode_id`
+
+Implementation notes:
+- bumped the RL observation/action/batch protocol to v2 while keeping the UDP hello/ping probe packet version at v1
+- added `run_id` to:
+  - `RLObsPacketHeader`
+  - `RLActionPacket`
+  - `RLTransitionBatchHeader`
+  - `RLTransitionBatchAck`
+- MiSTer now persists the last allocated run id in `logs/rl-run-state.txt`
+- `episode_id` is now a per-run monotonic round rollout sequence
+- transition NDJSON now exports:
+  - `run_id`
+  - unique per-run `episode_id`
+  - game-facing `round_num`
+- expected-decision, queued-action, seen-action, and decision-ledger lookups now key by `run_id` as well as `episode_id` / `decision_id`
+- learner replay import now keeps `run_id` / `round_num` and dedupes by `(run_id, episode_id, decision_id)`
+- transition-batch ACKs validate both `run_id` and `episode_id`
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py` passed.
+- `git diff --check -- src/rl/rl_protocol.h src/rl/rl_net.h src/rl/rl_net.c src/rl/rl_session.h src/rl/rl_session.c tools/rl_probe_server.py` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed.
+
+## 2026-04-24: Ledger HP Delta Recovery And Round Boundary Cleanup
+
+Milestone:
+- Milestone 5: Async learner and model hot-swap / Milestone 4 ledger correctness follow-up
+
+Files changed:
+- `src/rl/rl_observation.h`
+- `src/rl/rl_observation.c`
+- `src/rl/rl_session.c`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- fix transition rows where round win/loss rewards were present but every per-decision HP delta stayed zero, making training depend almost entirely on sparse terminal rewards
+
+Implementation notes:
+- `RLObservationV1` now carries raw `self_hp`, `opp_hp`, `self_hp_start`, and `opp_hp_start`
+- ledger reward accumulation now derives HP deltas from cumulative round damage:
+  - `self_damage_total = self_hp_start - self_hp`
+  - `opp_damage_total = opp_hp_start - opp_hp`
+  - each observation contributes the difference from the previous observed damage total
+- transition rows now include diagnostic HP fields:
+  - `start_self_hp`
+  - `start_opp_hp`
+  - `final_self_hp`
+  - `final_opp_hp`
+- round episode changes now key only off `Round_num` to avoid `PL_Wins` / `VS_Win_Record` updates creating empty skipped episode ids during round-end flow
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py` passed.
+- `git diff --check -- src/rl/rl_observation.h src/rl/rl_observation.c src/rl/rl_session.c` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed.
+- Needs hardware replay validation with a fresh `rl-transitions.ndjson` to confirm `hp_rows > 0` when visible HP damage occurs.
+
+## 2026-04-23: Milestone 5 Episode Batch Transport
+
+Milestone:
+- Milestone 5: Async learner and model hot-swap
+
+Files changed:
+- `src/rl/rl_protocol.h`
+- `src/rl/rl_net.h`
+- `src/rl/rl_net.c`
+- `src/rl/rl_session.c`
+- `tools/rl_probe_server.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- replace manual transition-log copying with a first formal non-critical transport that uploads completed episode batches from MiSTer to the remote learner while keeping local NDJSON logging intact
+
+Implementation notes:
+- added `RLTransitionBatchHeader` / `RLTransitionBatchAck` protocol structs
+- MiSTer now:
+  - keeps local `rl-transitions.ndjson` append behavior unchanged
+  - accumulates finalized NDJSON rows for the current episode in memory
+  - queues the completed episode for background TCP upload on `obs_port + 2`
+  - expects a per-episode ACK from the remote learner service
+- transport work is kept off the action critical path by a background sender thread and a small pending queue in `src/rl/rl_net.c`
+- `tools/rl_probe_server.py` now also hosts a TCP transition-batch listener:
+  - appends received payloads into `--transition-log`
+  - ACKs the batch after a successful append
+  - defaults `--transition-port` to `--action-port + 1` when transition logging is enabled
+- the earlier pull-mirror path remains available for smoke / fallback use, but the intended path is now direct episode-batch upload
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed.
+- local socket-level runtime smoke for the TCP listener could not be completed in this sandbox because local Python socket creation is denied with `PermissionError: [Errno 1] Operation not permitted`.
+
+## 2026-04-23: Milestone 5 Transition Pull Mirror
+
+Milestone:
+- Milestone 5: Async learner and model hot-swap
+
+Files changed:
+- `tools/rl_probe_server.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- remove the manual-copy requirement for learner bring-up by letting the remote-side probe server mirror a MiSTer transition log into a local learner file on a non-critical background thread
+
+Implementation notes:
+- added a `TransitionPuller` background thread to `tools/rl_probe_server.py`
+- the puller supports:
+  - `--transition-pull-remote-path PATH` for read-only SCP polling from MiSTer using `MISTER_HOST`, `MISTER_USER`, and `MISTER_PASSWORD` defaults
+  - `--transition-pull-local-source PATH` for local smoke tests of the same mirror/update path
+- the puller writes into the local `--transition-log` path:
+  - appends only the new suffix when the fetched file is a strict extension of the current mirror
+  - rewrites the mirror if the source diverges, while the learner importer dedupes replay rows by `(episode_id, decision_id)`
+- added `--learner-only` so the transition pull / replay import path can run without binding the UDP action server
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py` passed.
+- local mirror smoke passed with:
+  - `python3 tools/rl_probe_server.py --learner-only --transition-pull-local-source <source> --transition-log <mirror> --learner-tail-from-start --learner-stats-interval-sec 0.2 --transition-pull-interval-sec 0.2 --learner-warmup-rows 2 --learner-batch-size 1`
+  - first pull imported one replay row
+  - appending a second row to the source produced:
+    - `PULLER updated local mirror pulls=2`
+    - `replay=2/2`
+    - `done=1`
+    - `ready=yes`
+
+## 2026-04-23: Milestone 5 Replay Buffer Import Skeleton
+
+Milestone:
+- Milestone 5: Async learner and model hot-swap
+
+Files changed:
+- `tools/rl_probe_server.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- move the learner skeleton from "tail transition logs and print counters" to "import a learner-safe replay subset and report replay readiness" without adding real training yet
+
+Implementation notes:
+- added a fixed-capacity in-memory replay buffer to `tools/rl_probe_server.py`
+- added `learner_replay_row(...)` to import only the current learner-safe subset:
+  - executed action fields
+  - reward / done / terminal fields
+  - compact HP / stun / movement deltas
+  - overlay attack auxiliary labels
+  - character IDs and executed model version as metadata
+- rows with `was_executed != true` are skipped during replay import
+- learner stats now report:
+  - replay size and imported row count
+  - skipped unexecuted rows
+  - positive / negative / zero reward counts
+  - execution-source mix
+  - warmup readiness and sampled batch mean reward
+- added CLI knobs:
+  - `--replay-capacity`
+  - `--learner-batch-size`
+  - `--learner-warmup-rows`
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py` passed.
+- `python3 tools/rl_probe_server.py --transition-log logs/rl-transitions.ndjson --learner-tail-from-start --learner-stats-interval-sec 0.2 --learner-warmup-rows 10 --learner-batch-size 8 --port 0` printed stable learner stats with:
+  - `rows=4423`
+  - `replay=4420/4420`
+  - `skipped=3`
+  - `sources=remote:3173,repeated-last-action:1247`
+  - `ready=yes`
+  - `model=12`
+
+## 2026-04-23: First Learner Replay Subset And Reward Notes
+
+Milestone:
+- Milestone 5 follow-up planning / Milestone 6 preparation
+
+Files changed:
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- document which transition fields are learner-safe for a first replay-buffer import and clarify how the current HP-based reward is expected to teach defense only through delayed credit
+
+Implementation notes:
+- recorded a first learner whitelist centered on:
+  - executed action fields
+  - reward / done / terminal fields
+  - HP / stun / movement deltas
+  - character IDs and executed model version as metadata
+- explicitly marked requested-action heuristics, observed attack-state fields, and cumulative overlay counters as debug / analysis-only for the first learner import
+- clarified that:
+  - `reward_accum` remains `delta_opp_hp - delta_self_hp` plus round win/loss bonus
+  - defense and avoidance are expected to arrive through long-horizon credit rather than a dedicated v1 defensive label
+  - `overlay_attack_*` fields remain auxiliary labels until move-family validation proves they are learner-safe across normals, specials, projectiles, throws, and multistage moves
+
+Validation:
+- reviewed the updated learner-field and reward notes against the existing Milestone 4 closeout notes and current `src/rl/rl_session.c` reward / ledger export logic
+
 ## 2026-04-23: Milestone 5 Model Version Plumbing
 
 Milestone:
@@ -747,17 +1104,23 @@ Project rules:
 
 ## Current Status
 
-Last updated: 2026-04-22
+Last updated: 2026-04-24
 
 - [x] Milestone 0A: Baseline match-flow confirmation spike
 - [x] Milestone 0B: Facing and remap validation micro-spike
 - [x] Milestone 0C: Local fake agent spike
 - [x] Milestone 1: Compact observation builder
 - [x] Milestone 2: Session handshake, network probe, and delay budget
-- [ ] Milestone 3: Remote inference only
-- [ ] Milestone 4: Decision ledger and transition logging
+- [x] Milestone 3: Remote inference only
+- [x] Milestone 4: Decision ledger and transition logging
 - [ ] Milestone 5: Async learner and model hot-swap
 - [ ] Milestone 6: Higher-control-rate policy and curriculum
+
+Current read:
+
+- Milestone 5 is active.
+- Implemented Milestone 5 slices include protocol v2 run identity, unique round episode ids, model-version packet/log plumbing, learner-safe replay import, transition pull mirroring, and non-critical episode-batch upload.
+- Remaining Milestone 5 work is real versioned actor publication, atomic actor hot-swap, and latency validation while learner updates are active.
 
 ## Decision Log
 
@@ -2149,6 +2512,8 @@ Open questions:
 
 - curriculum schedule
 - expanded observation schema versioning strategy
+- whether `overlay_attack_event_finalized` / `overlay_attack_contact` / `overlay_attack_whiff` keep consistent learner semantics across normals, specials, projectiles, throws, and multistage moves, or should remain debug / auxiliary-only labels until move-family validation is complete
+- how human-vs-CPU demo episodes should be recorded and tagged so they can bootstrap learner training without being confused with remote-agent-generated experience
 
 ## Test And Build Records
 
@@ -2208,13 +2573,14 @@ Notes:
 
 ## Open Issues
 
-- [ ] Confirm exact `MODE_VERSUS + rl_session_active` setup hook
-- [ ] Confirm `rl_flag` mapping with runtime observation
-- [ ] Confirm first playable frame for `round_start_hp[i]`
-- [ ] Choose `config_hash` algorithm
-- [ ] Choose remote heuristic server location
-- [ ] Choose transition log format
+- [ ] Validate whether overlay attack-outcome fields are learner-safe across normals, specials, projectiles, throws, and multistage moves
+- [ ] Define a human-demo recording / ingest path for learner bootstrapping, including replay metadata and mixing policy with remote-agent episodes
 
 ## Closed Issues
 
-- None yet.
+- [x] Confirm exact `MODE_VERSUS + rl_session_active` setup hook
+- [x] Confirm `rl_flag` mapping with runtime observation
+- [x] Confirm first playable frame for `round_start_hp[i]`
+- [x] Choose `config_hash` algorithm
+- [x] Choose remote heuristic server location
+- [x] Choose transition log format

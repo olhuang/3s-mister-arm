@@ -4,24 +4,32 @@
 from __future__ import annotations
 
 import argparse
+import collections
 import json
 import os
+import random
 import socket
 import struct
+import subprocess
+import tempfile
 import threading
 import time
+from dataclasses import dataclass
 
 
 MAGIC = 0x33524C41
 PACKET_VERSION = 1
+PROTOCOL_VERSION = 2
 TYPE_HELLO = 1
 TYPE_ACK = 2
 TYPE_PING = 3
 TYPE_PONG = 4
 TYPE_OBS = 5
 PACKET = struct.Struct("<IHHQIIQ")
-ACTION_PACKET = struct.Struct("<IHHQIIIHHI")
-OBS_HEADER = struct.Struct("<IHHQIIIIHHI")
+ACTION_PACKET = struct.Struct("<IHHQQIIIHHI")
+OBS_HEADER = struct.Struct("<IHHQQIIIIHHI")
+TRANSITION_BATCH_HEADER = struct.Struct("<IHHQQIII")
+TRANSITION_BATCH_ACK = struct.Struct("<IHHQQII")
 
 RL_MOVE_NEUTRAL = 0x0000
 RL_MOVE_DOWN = 0x0002
@@ -33,6 +41,131 @@ RL_MOVE_DOWN_FORWARD = 0x0008
 BTN_LP = 0x0010
 BTN_HP = 0x0040
 BTN_LK = 0x0100
+POLICY_CHOICES = ("forward", "back", "hp", "forward-hp", "ryu-fireball", "throw", "tatsu", "shoryuken")
+
+
+@dataclass(frozen=True)
+class ActorModel:
+    version: int
+    policy: str
+    source: str
+
+
+@dataclass(frozen=True)
+class ActorModelStatus:
+    active: ActorModel
+    last_published_version: int
+    last_loaded_version: int
+    publish_count: int
+    load_count: int
+
+
+class ActorModelStore:
+    def __init__(self, model_dir: str | None, initial_policy: str, initial_version: int) -> None:
+        self._model_dir = model_dir
+        self._current_path = os.path.join(model_dir, "current.json") if model_dir else None
+        self._lock = threading.Lock()
+        self._active = ActorModel(max(0, initial_version), initial_policy, "cli")
+        self._last_published_version = self._active.version
+        self._last_loaded_version = self._active.version
+        self._publish_count = 0
+        self._load_count = 0
+        self._current_mtime_ns = 0
+        self._refresh_interval_ns = int(float(os.environ.get("RL_MODEL_REFRESH_INTERVAL_SEC", "0.25")) * 1_000_000_000)
+        if self._model_dir:
+            os.makedirs(self._model_dir, exist_ok=True)
+            self._load_current(force=True)
+            if self._current_path and not os.path.exists(self._current_path):
+                self.publish(self._active.policy, source="bootstrap", version=self._active.version)
+            threading.Thread(target=self._watch_current, daemon=True).start()
+
+    def _load_current(self, force: bool = False) -> None:
+        if not self._current_path:
+            return
+        try:
+            stat = os.stat(self._current_path)
+        except OSError:
+            return
+        if not force and stat.st_mtime_ns == self._current_mtime_ns:
+            return
+        try:
+            with open(self._current_path, "r", encoding="utf-8") as stream:
+                data = json.load(stream)
+        except (OSError, json.JSONDecodeError):
+            return
+        version = int(data.get("version", self._active.version) or 0)
+        policy = str(data.get("policy", self._active.policy) or self._active.policy)
+        source = str(data.get("source", "file") or "file")
+        with self._lock:
+            if version >= self._active.version:
+                self._active = ActorModel(version, policy, source)
+                self._current_mtime_ns = stat.st_mtime_ns
+                self._last_loaded_version = version
+                self._load_count += 1
+
+    def current(self) -> ActorModel:
+        with self._lock:
+            return self._active
+
+    def status(self) -> ActorModelStatus:
+        with self._lock:
+            return ActorModelStatus(
+                active=self._active,
+                last_published_version=self._last_published_version,
+                last_loaded_version=self._last_loaded_version,
+                publish_count=self._publish_count,
+                load_count=self._load_count,
+            )
+
+    def _watch_current(self) -> None:
+        interval_sec = max(0.05, self._refresh_interval_ns / 1_000_000_000)
+        while True:
+            time.sleep(interval_sec)
+            self._load_current()
+
+    def publish(self, policy: str, source: str, version: int | None = None, metadata: dict[str, object] | None = None) -> ActorModel:
+        if not self._model_dir or not self._current_path:
+            with self._lock:
+                next_version = self._active.version if version is None else max(0, version)
+                self._active = ActorModel(next_version, policy, source)
+                self._last_published_version = self._active.version
+                self._publish_count += 1
+                return self._active
+
+        with self._lock:
+            next_version = self._active.version + 1 if version is None else max(0, version)
+            if next_version < self._active.version:
+                next_version = self._active.version
+            model = ActorModel(next_version, policy, source)
+            payload = {
+                "version": model.version,
+                "policy": model.policy,
+                "source": model.source,
+                "created_at_unix": time.time(),
+                "metadata": metadata or {},
+            }
+            version_path = os.path.join(self._model_dir, f"actor-v{model.version}.json")
+            fd, temp_path = tempfile.mkstemp(prefix=f".actor-v{model.version}.", suffix=".tmp", dir=self._model_dir)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                    json.dump(payload, stream, sort_keys=True)
+                    stream.write("\n")
+                os.replace(temp_path, version_path)
+                fd, temp_path = tempfile.mkstemp(prefix=".current.", suffix=".tmp", dir=self._model_dir)
+                with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                    json.dump(payload, stream, sort_keys=True)
+                    stream.write("\n")
+                os.replace(temp_path, self._current_path)
+                self._current_mtime_ns = os.stat(self._current_path).st_mtime_ns
+            finally:
+                if os.path.exists(temp_path):
+                    os.unlink(temp_path)
+            self._active = model
+            self._last_published_version = model.version
+            self._last_loaded_version = model.version
+            self._publish_count += 1
+            print(f"MODEL published version={model.version} policy={model.policy} source={model.source}", flush=True)
+            return model
 
 
 class InferenceStats:
@@ -60,6 +193,272 @@ class InferenceStats:
         }
 
 
+class ReplayBuffer:
+    def __init__(self, capacity: int) -> None:
+        self._rows: collections.deque[dict[str, object]] = collections.deque(maxlen=max(1, capacity))
+
+    def add(self, row: dict[str, object]) -> None:
+        self._rows.append(row)
+
+    def __len__(self) -> int:
+        return len(self._rows)
+
+    def can_sample(self, batch_size: int) -> bool:
+        return len(self._rows) >= max(1, batch_size)
+
+    def sample(self, batch_size: int) -> list[dict[str, object]]:
+        return random.sample(list(self._rows), min(len(self._rows), max(1, batch_size)))
+
+
+def learner_replay_row(row: dict[str, object]) -> dict[str, object] | None:
+    if row.get("was_executed") is not True:
+        return None
+
+    return {
+        "run_id": int(row.get("run_id", 0) or 0),
+        "episode_id": int(row.get("episode_id", 0) or 0),
+        "decision_id": int(row.get("decision_id", 0) or 0),
+        "round_num": int(row.get("round_num", 0) or 0),
+        "obs_frame": int(row.get("obs_frame", 0) or 0),
+        "target_frame": int(row.get("target_frame", 0) or 0),
+        "agent_character_id": int(row.get("agent_character_id", 0) or 0),
+        "opponent_character_id": int(row.get("opponent_character_id", 0) or 0),
+        "executed_action_wire": int(row.get("executed_action_wire", 0) or 0),
+        "executed_move_intent": int(row.get("executed_move_intent", 0) or 0),
+        "executed_attack_bits": int(row.get("executed_attack_bits", 0) or 0),
+        "execution_source": str(row.get("execution_source", "none") or "none"),
+        "delta_self_hp": int(row.get("delta_self_hp", 0) or 0),
+        "delta_opp_hp": int(row.get("delta_opp_hp", 0) or 0),
+        "delta_self_stun": int(row.get("delta_self_stun", 0) or 0),
+        "delta_opp_stun": int(row.get("delta_opp_stun", 0) or 0),
+        "delta_self_x": int(row.get("delta_self_x", 0) or 0),
+        "delta_self_y": int(row.get("delta_self_y", 0) or 0),
+        "delta_opp_x": int(row.get("delta_opp_x", 0) or 0),
+        "delta_opp_y": int(row.get("delta_opp_y", 0) or 0),
+        "delta_self_forward": int(row.get("delta_self_forward", 0) or 0),
+        "delta_opp_forward": int(row.get("delta_opp_forward", 0) or 0),
+        "overlay_attack_event_finalized": int(row.get("overlay_attack_event_finalized", 0) or 0),
+        "overlay_attack_contact": int(row.get("overlay_attack_contact", 0) or 0),
+        "overlay_attack_whiff": int(row.get("overlay_attack_whiff", 0) or 0),
+        "reward_accum": float(row.get("reward_accum", 0.0) or 0.0),
+        "done": bool(row.get("done", False)),
+        "terminal_reason": str(row.get("terminal_reason", "unknown") or "unknown"),
+        "model_version_executed": int(row.get("model_version_executed", 0) or 0),
+    }
+
+
+def mister_ssh_args() -> list[str]:
+    connect_timeout = int(os.environ.get("MISTER_SSH_CONNECT_TIMEOUT", "10") or "10")
+    return [
+        "-o",
+        "StrictHostKeyChecking=no",
+        "-o",
+        f"ConnectTimeout={connect_timeout}",
+        "-o",
+        "ConnectionAttempts=1",
+    ]
+
+
+def mister_ssh_password_args() -> list[str]:
+    return mister_ssh_args() + [
+        "-o",
+        "PubkeyAuthentication=no",
+        "-o",
+        "PreferredAuthentications=password",
+        "-o",
+        "NumberOfPasswordPrompts=1",
+    ]
+
+
+def mister_ssh_key_only_args() -> list[str]:
+    return mister_ssh_args() + [
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "IdentitiesOnly=yes",
+        "-o",
+        "IdentityAgent=none",
+        "-o",
+        "PreferredAuthentications=publickey",
+        "-o",
+        "NumberOfPasswordPrompts=0",
+    ]
+
+
+class TransitionPuller(threading.Thread):
+    def __init__(
+        self,
+        local_path: str,
+        pull_interval_sec: float,
+        remote_host: str | None,
+        remote_user: str,
+        remote_password: str | None,
+        remote_path: str | None,
+        local_source_path: str | None,
+    ) -> None:
+        super().__init__(daemon=True)
+        self._local_path = local_path
+        self._pull_interval_sec = max(0.2, pull_interval_sec)
+        self._remote_host = remote_host
+        self._remote_user = remote_user
+        self._remote_password = remote_password
+        self._remote_path = remote_path
+        self._local_source_path = local_source_path
+        self._last_error: str | None = None
+        self._pull_count = 0
+
+    def _source_label(self) -> str:
+        if self._local_source_path:
+            return self._local_source_path
+        return f"{self._remote_user}@{self._remote_host}:{self._remote_path}"
+
+    def _download_remote_to_temp(self, temp_path: str) -> None:
+        if not self._remote_host or not self._remote_path:
+            raise RuntimeError("remote transition pull requires host and remote path")
+
+        target = f"{self._remote_user}@{self._remote_host}:{self._remote_path}"
+        if self._remote_password:
+            command = [
+                "sshpass",
+                "-p",
+                self._remote_password,
+                "scp",
+                *mister_ssh_password_args(),
+                target,
+                temp_path,
+            ]
+        else:
+            command = ["scp", *mister_ssh_key_only_args(), target, temp_path]
+
+        subprocess.run(command, check=True, capture_output=True, text=True)
+
+    def _copy_local_source_to_temp(self, temp_path: str) -> None:
+        if not self._local_source_path:
+            raise RuntimeError("local source path missing")
+        with open(self._local_source_path, "rb") as src, open(temp_path, "wb") as dst:
+            dst.write(src.read())
+
+    def _fetch_to_temp(self, temp_path: str) -> None:
+        if self._local_source_path:
+            self._copy_local_source_to_temp(temp_path)
+            return
+        self._download_remote_to_temp(temp_path)
+
+    def _sync_local_mirror(self, temp_path: str) -> bool:
+        os.makedirs(os.path.dirname(self._local_path) or ".", exist_ok=True)
+        with open(temp_path, "rb") as fetched:
+            fetched_bytes = fetched.read()
+
+        if not os.path.exists(self._local_path):
+            with open(self._local_path, "wb") as dst:
+                dst.write(fetched_bytes)
+            return True
+
+        with open(self._local_path, "rb") as current:
+            current_bytes = current.read()
+
+        if fetched_bytes == current_bytes:
+            return False
+
+        # Fast path: remote log only grew, so append the new suffix and keep the tailer position stable.
+        if fetched_bytes.startswith(current_bytes):
+            with open(self._local_path, "ab") as dst:
+                dst.write(fetched_bytes[len(current_bytes) :])
+            return True
+
+        # Fallback: rewrite the local mirror. The learner tailer dedupes imported rows by key.
+        with open(self._local_path, "wb") as dst:
+            dst.write(fetched_bytes)
+        return True
+
+    def run(self) -> None:
+        print(f"PULLER watching {self._source_label()} -> {self._local_path}", flush=True)
+        while True:
+            temp_path = ""
+            try:
+                with tempfile.NamedTemporaryFile(prefix="rl-transitions-pull-", suffix=".ndjson", delete=False) as temp:
+                    temp_path = temp.name
+                self._fetch_to_temp(temp_path)
+                if self._sync_local_mirror(temp_path):
+                    self._pull_count += 1
+                    print(f"PULLER updated local mirror pulls={self._pull_count}", flush=True)
+                self._last_error = None
+            except (OSError, RuntimeError, subprocess.CalledProcessError) as exc:
+                message = str(exc)
+                if self._last_error != message:
+                    print(f"PULLER error: {message}", flush=True)
+                    self._last_error = message
+            finally:
+                if temp_path:
+                    try:
+                        os.unlink(temp_path)
+                    except OSError:
+                        pass
+            time.sleep(self._pull_interval_sec)
+
+
+class TransitionBatchServer(threading.Thread):
+    def __init__(self, host: str, port: int, transition_log: str) -> None:
+        super().__init__(daemon=True)
+        self._host = host
+        self._port = port
+        self._transition_log = transition_log
+        self._write_lock = threading.Lock()
+
+    @staticmethod
+    def _recv_exact(conn: socket.socket, size: int) -> bytes:
+        payload = bytearray()
+        while len(payload) < size:
+            chunk = conn.recv(size - len(payload))
+            if not chunk:
+                break
+            payload.extend(chunk)
+        return bytes(payload)
+
+    def _append_payload(self, payload: bytes) -> None:
+        os.makedirs(os.path.dirname(self._transition_log) or ".", exist_ok=True)
+        with self._write_lock, open(self._transition_log, "ab") as stream:
+            stream.write(payload)
+
+    def run(self) -> None:
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server.bind((self._host, self._port))
+        server.listen()
+        print(f"TRANSITIONS listening on {self._host}:{self._port} -> {self._transition_log}", flush=True)
+        while True:
+            conn, addr = server.accept()
+            with conn:
+                try:
+                    header_data = self._recv_exact(conn, TRANSITION_BATCH_HEADER.size)
+                    if len(header_data) != TRANSITION_BATCH_HEADER.size:
+                        continue
+                    (
+                        magic,
+                        version,
+                        packet_type,
+                        nonce,
+                        run_id,
+                        episode_id,
+                        payload_len,
+                        row_count,
+                    ) = TRANSITION_BATCH_HEADER.unpack(header_data)
+                    if magic != MAGIC or version != PROTOCOL_VERSION or packet_type != 6:
+                        continue
+                    payload = self._recv_exact(conn, payload_len)
+                    if len(payload) != payload_len:
+                        continue
+                    self._append_payload(payload)
+                    ack = TRANSITION_BATCH_ACK.pack(MAGIC, PROTOCOL_VERSION, 7, nonce, run_id, episode_id, 0)
+                    conn.sendall(ack)
+                    print(
+                        f"TRANSITIONS batch run={run_id} ep={episode_id} rows={row_count} bytes={payload_len} from={addr[0]}:{addr[1]}",
+                        flush=True,
+                    )
+                except OSError:
+                    continue
+
+
 class LearnerLogTailer(threading.Thread):
     def __init__(
         self,
@@ -67,24 +466,50 @@ class LearnerLogTailer(threading.Thread):
         stats_interval_sec: float,
         tail_from_start: bool,
         inference_stats: InferenceStats,
+        replay_capacity: int,
+        learner_batch_size: int,
+        learner_warmup_rows: int,
+        model_store: ActorModelStore,
+        learner_auto_publish: bool,
+        learner_publish_interval_sec: float,
+        learner_publish_policy: str | None,
     ) -> None:
         super().__init__(daemon=True)
         self._path = path
         self._stats_interval_sec = max(0.1, stats_interval_sec)
         self._tail_from_start = tail_from_start
         self._inference_stats = inference_stats
+        self._replay = ReplayBuffer(replay_capacity)
+        self._learner_batch_size = max(1, learner_batch_size)
+        self._learner_warmup_rows = max(1, learner_warmup_rows)
+        self._model_store = model_store
+        self._learner_auto_publish = learner_auto_publish
+        self._learner_publish_interval_ns = int(max(0.1, learner_publish_interval_sec) * 1_000_000_000)
+        self._learner_publish_policy = learner_publish_policy
+        self._next_publish_ns = time.monotonic_ns() + self._learner_publish_interval_ns
         self._rows = 0
+        self._imported_rows = 0
+        self._skipped_unexecuted = 0
+        self._reward_positive = 0
+        self._reward_negative = 0
+        self._reward_zero = 0
         self._done = 0
         self._attack_events = 0
         self._attack_contacts = 0
         self._attack_whiffs = 0
+        self._latest_run_id = 0
         self._latest_episode = 0
-        self._latest_model_version = 0
+        self._latest_model_version_executed = 0
+        self._execution_source_counts: collections.Counter[str] = collections.Counter()
+        self._seen_keys: set[tuple[int, int, int]] = set()
 
     def _consume_row(self, row: dict[str, object]) -> None:
         self._rows += 1
+        self._latest_run_id = int(row.get("run_id", self._latest_run_id) or 0)
         self._latest_episode = int(row.get("episode_id", self._latest_episode) or 0)
-        self._latest_model_version = int(row.get("model_version_executed", self._latest_model_version) or 0)
+        self._latest_model_version_executed = int(
+            row.get("model_version_executed", self._latest_model_version_executed) or 0
+        )
         if row.get("done") is True:
             self._done += 1
         if row.get("overlay_attack_event_finalized") == 1:
@@ -94,16 +519,77 @@ class LearnerLogTailer(threading.Thread):
             if row.get("overlay_attack_whiff") == 1:
                 self._attack_whiffs += 1
 
+        replay_key = (
+            int(row.get("run_id", 0) or 0),
+            int(row.get("episode_id", 0) or 0),
+            int(row.get("decision_id", 0) or 0),
+        )
+        if replay_key in self._seen_keys:
+            return
+
+        replay_row = learner_replay_row(row)
+        if replay_row is None:
+            self._skipped_unexecuted += 1
+            return
+
+        self._seen_keys.add(replay_key)
+        self._replay.add(replay_row)
+        self._imported_rows += 1
+        self._execution_source_counts.update([str(replay_row["execution_source"])])
+        reward = float(replay_row["reward_accum"])
+        if reward > 0:
+            self._reward_positive += 1
+        elif reward < 0:
+            self._reward_negative += 1
+        else:
+            self._reward_zero += 1
+
     def _print_stats(self) -> None:
         inf = self._inference_stats.snapshot()
+        learner_ready = len(self._replay) >= self._learner_warmup_rows and self._replay.can_sample(self._learner_batch_size)
+        batch_mean_reward = 0.0
+        model_status = self._model_store.status()
+        if learner_ready:
+            batch = self._replay.sample(self._learner_batch_size)
+            if batch:
+                batch_mean_reward = sum(float(item["reward_accum"]) for item in batch) / len(batch)
+        source_counts = ",".join(f"{key}:{value}" for key, value in sorted(self._execution_source_counts.items())) or "none:0"
         print(
             "LEARNER "
-            f"rows={self._rows} done={self._done} ep={self._latest_episode} "
+            f"rows={self._rows} done={self._done} run={self._latest_run_id} ep={self._latest_episode} "
             f"atk={self._attack_events}/{self._attack_contacts}/{self._attack_whiffs} "
-            f"model={self._latest_model_version} "
+            f"replay={len(self._replay)}/{self._imported_rows} skipped={self._skipped_unexecuted} "
+            f"rew=+{self._reward_positive}/-{self._reward_negative}/0{self._reward_zero} "
+            f"sources={source_counts} "
+            f"ready={'yes' if learner_ready else 'no'} warmup={self._learner_warmup_rows} "
+            f"batch={self._learner_batch_size} batch_mean={batch_mean_reward:.3f} "
+            f"model_exec={self._latest_model_version_executed} "
+            f"model_active={model_status.active.version} "
+            f"model_pub={model_status.last_published_version} "
+            f"model_load={model_status.last_loaded_version} "
+            f"model_counts={model_status.publish_count}/{model_status.load_count} "
             f"inf={inf['count']}:{inf['p50_us']}/{inf['p95_us']}/{inf['max_us']}us",
             flush=True,
         )
+        if self._learner_auto_publish and learner_ready:
+            now_ns = time.monotonic_ns()
+            if now_ns >= self._next_publish_ns:
+                active = self._model_store.current()
+                policy = self._learner_publish_policy or active.policy
+                self._model_store.publish(
+                    policy,
+                    source="learner",
+                    metadata={
+                        "rows_seen": self._rows,
+                        "replay_rows": len(self._replay),
+                        "imported_rows": self._imported_rows,
+                        "batch_mean_reward": batch_mean_reward,
+                        "reward_positive": self._reward_positive,
+                        "reward_negative": self._reward_negative,
+                        "reward_zero": self._reward_zero,
+                    },
+                )
+                self._next_publish_ns = now_ns + self._learner_publish_interval_ns
 
     def run(self) -> None:
         next_stats_ns = time.monotonic_ns() + int(self._stats_interval_sec * 1_000_000_000)
@@ -165,6 +651,7 @@ def make_packet(packet_type: int, nonce: int, sequence: int, config_hash: int, s
 
 def make_action_packet(
     nonce: int,
+    run_id: int,
     episode_id: int,
     decision_id: int,
     target_frame: int,
@@ -173,9 +660,10 @@ def make_action_packet(
 ) -> bytes:
     return ACTION_PACKET.pack(
         MAGIC,
-        PACKET_VERSION,
+        PROTOCOL_VERSION,
         0,
         nonce,
+        run_id,
         episode_id,
         decision_id,
         target_frame,
@@ -202,7 +690,7 @@ def maybe_send_action(
     if action_mode == "stale":
         send_nonce = (nonce - 1) & 0xFFFFFFFFFFFFFFFF
 
-    payload = make_action_packet(send_nonce, 1, sequence, sequence + 4, 0x0040, model_version)
+    payload = make_action_packet(send_nonce, 0, 1, sequence, sequence + 4, 0x0040, model_version)
     target = (addr[0], action_port)
     sock.sendto(payload, target)
     if verbose:
@@ -256,20 +744,13 @@ def scripted_sequence(policy: str) -> tuple[int, ...] | None:
 
 def scripted_action_wire(
     policy: str,
-    policy_states: dict[tuple[int, int, str], dict[str, int]],
+    policy_states: dict[tuple[int, int, int, str], dict[str, int]],
     nonce: int,
+    run_id: int,
     episode_id: int,
     repeat_delay_ms: int,
 ) -> int:
-    fixed = fixed_action_wire(policy)
-    if fixed is not None:
-        return fixed
-
-    sequence = scripted_sequence(policy)
-    if sequence is None:
-        return RL_MOVE_FORWARD
-
-    key = (nonce, episode_id, policy)
+    key = (nonce, run_id, episode_id, policy)
     state = policy_states.setdefault(key, {"index": 0, "delay_until_ns": 0})
     now_ns = time.monotonic_ns()
     if state["delay_until_ns"] > now_ns:
@@ -277,6 +758,16 @@ def scripted_action_wire(
     if state["delay_until_ns"] != 0:
         state["delay_until_ns"] = 0
         state["index"] = 0
+
+    fixed = fixed_action_wire(policy)
+    if fixed is not None:
+        if repeat_delay_ms > 0:
+            state["delay_until_ns"] = now_ns + (repeat_delay_ms * 1_000_000)
+        return fixed
+
+    sequence = scripted_sequence(policy)
+    if sequence is None:
+        return RL_MOVE_FORWARD
 
     index = state["index"]
     action_wire = sequence[index]
@@ -302,30 +793,72 @@ def serve(
     transition_log: str | None,
     learner_stats_interval_sec: float,
     learner_tail_from_start: bool,
+    replay_capacity: int,
+    learner_batch_size: int,
+    learner_warmup_rows: int,
+    transition_pull_interval_sec: float,
+    transition_pull_host: str | None,
+    transition_pull_user: str,
+    transition_pull_password: str | None,
+    transition_pull_remote_path: str | None,
+    transition_pull_local_source: str | None,
+    transition_server_port: int,
+    learner_only: bool,
+    model_dir: str | None,
+    learner_auto_publish: bool,
+    learner_publish_interval_sec: float,
+    learner_publish_policy: str | None,
 ) -> None:
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.bind((host, port))
-    print(f"RL probe server listening on {host}:{port}")
-    hello_count: dict[int, int] = {}
-    policy_states: dict[tuple[int, int, str], dict[str, int]] = {}
     inference_stats = InferenceStats()
+    model_store = ActorModelStore(model_dir, policy, model_version)
+    if transition_log and (transition_pull_remote_path or transition_pull_local_source):
+        TransitionPuller(
+            transition_log,
+            transition_pull_interval_sec,
+            transition_pull_host,
+            transition_pull_user,
+            transition_pull_password,
+            transition_pull_remote_path,
+            transition_pull_local_source,
+        ).start()
+    if transition_log and transition_server_port > 0:
+        TransitionBatchServer(host, transition_server_port, transition_log).start()
     if transition_log:
         LearnerLogTailer(
             transition_log,
             learner_stats_interval_sec,
             learner_tail_from_start,
             inference_stats,
+            replay_capacity,
+            learner_batch_size,
+            learner_warmup_rows,
+            model_store,
+            learner_auto_publish,
+            learner_publish_interval_sec,
+            learner_publish_policy,
         ).start()
+    if learner_only:
+        print("RL probe learner-only mode active", flush=True)
+        while True:
+            time.sleep(1.0)
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.bind((host, port))
+    print(f"RL probe server listening on {host}:{port}")
+    hello_count: dict[int, int] = {}
+    policy_states: dict[tuple[int, int, int, str], dict[str, int]] = {}
 
     while True:
         data, addr = sock.recvfrom(2048)
         if len(data) == OBS_HEADER.size:
             inference_start_ns = time.monotonic_ns()
+            active_model = model_store.current()
             (
                 magic,
                 version,
                 packet_type,
                 nonce,
+                run_id,
                 episode_id,
                 decision_id,
                 obs_frame,
@@ -334,19 +867,27 @@ def serve(
                 action_hold_frames,
                 model_version_expected,
             ) = OBS_HEADER.unpack(data)
-            if magic != MAGIC or version != PACKET_VERSION or packet_type != TYPE_OBS:
+            if magic != MAGIC or version != PROTOCOL_VERSION or packet_type != TYPE_OBS:
                 if verbose:
                     print(f"{addr} bad_obs_header magic=0x{magic:08x} version={version} type={packet_type}")
                 continue
             if action_port is not None:
-                target_wire = scripted_action_wire(policy, policy_states, nonce, episode_id, policy_repeat_delay_ms)
+                target_wire = scripted_action_wire(
+                    active_model.policy,
+                    policy_states,
+                    nonce,
+                    run_id,
+                    episode_id,
+                    policy_repeat_delay_ms,
+                )
                 payload = make_action_packet(
                     nonce,
+                    run_id,
                     episode_id,
                     decision_id,
                     target_frame,
                     target_wire,
-                    model_version,
+                    active_model.version,
                 )
                 target = (addr[0], action_port)
                 sock.sendto(payload, target)
@@ -355,19 +896,20 @@ def serve(
                 elif obs_reply_mode == "wrong-target":
                     wrong_payload = make_action_packet(
                         nonce,
+                        run_id,
                         episode_id,
                         decision_id,
                         target_frame + 1,
                         target_wire,
-                        model_version,
+                        active_model.version,
                     )
                     sock.sendto(wrong_payload, target)
                 if verbose:
                     print(
-                        f"{target} OBS-ACTION policy={policy} reply={obs_reply_mode} "
-                        f"ep={episode_id} dec={decision_id} obs={obs_frame} "
+                        f"{target} OBS-ACTION policy={active_model.policy} reply={obs_reply_mode} "
+                        f"run={run_id} ep={episode_id} dec={decision_id} obs={obs_frame} "
                         f"target={target_frame} hold={action_hold_frames}"
-                        f" model_expected={model_version_expected} model={model_version}"
+                        f" model_expected={model_version_expected} model={active_model.version}"
                         f" wire=0x{target_wire:04x}"
                     )
             inference_stats.record((time.monotonic_ns() - inference_start_ns) // 1000)
@@ -385,7 +927,7 @@ def serve(
 
         if packet_type == TYPE_HELLO:
             if action_mode == "pre-ack":
-                maybe_send_action(sock, addr, action_port, "valid", nonce, sequence, model_version, verbose)
+                maybe_send_action(sock, addr, action_port, "valid", nonce, sequence, model_store.current().version, verbose)
                 count = hello_count.get(nonce, 0) + 1
                 hello_count[nonce] = count
                 if count < 4:
@@ -401,7 +943,7 @@ def serve(
             reply = make_packet(TYPE_PONG, nonce, sequence, config_hash, send_time_us)
             sock.sendto(reply, addr)
             if action_mode in {"valid", "stale"}:
-                maybe_send_action(sock, addr, action_port, action_mode, nonce, sequence, model_version, verbose)
+                maybe_send_action(sock, addr, action_port, action_mode, nonce, sequence, model_store.current().version, verbose)
 
         if verbose:
             print(
@@ -423,7 +965,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--policy",
-        choices=["forward", "back", "hp", "forward-hp", "ryu-fireball", "throw", "tatsu", "shoryuken"],
+        choices=POLICY_CHOICES,
         default="forward",
         help="Fixed or scripted action used when MiSTer sends observation headers",
     )
@@ -456,8 +998,96 @@ def main() -> None:
         action="store_true",
         help="Read --transition-log from the beginning instead of tailing new rows",
     )
+    parser.add_argument(
+        "--replay-capacity",
+        type=int,
+        default=100000,
+        help="Maximum number of learner-safe transition rows kept in the local replay buffer",
+    )
+    parser.add_argument(
+        "--learner-batch-size",
+        type=int,
+        default=128,
+        help="Batch size used for replay readiness stats and sampling smoke checks",
+    )
+    parser.add_argument(
+        "--learner-warmup-rows",
+        type=int,
+        default=5000,
+        help="Minimum replay rows before the learner is considered ready to train",
+    )
+    parser.add_argument(
+        "--transition-pull-interval-sec",
+        type=float,
+        default=5.0,
+        help="Background poll interval for pulling transition logs into --transition-log",
+    )
+    parser.add_argument(
+        "--transition-pull-host",
+        default=os.environ.get("MISTER_HOST", "192.168.1.171"),
+        help="MiSTer host used by the optional transition puller",
+    )
+    parser.add_argument(
+        "--transition-pull-user",
+        default=os.environ.get("MISTER_USER", "root"),
+        help="MiSTer SSH user used by the optional transition puller",
+    )
+    parser.add_argument(
+        "--transition-pull-password",
+        default=os.environ.get("MISTER_PASSWORD"),
+        help="MiSTer SSH password used by the optional transition puller",
+    )
+    parser.add_argument(
+        "--transition-pull-remote-path",
+        default=None,
+        help="Optional remote transition log path to pull into --transition-log using SCP",
+    )
+    parser.add_argument(
+        "--transition-pull-local-source",
+        default=None,
+        help="Optional local source file used to smoke-test the background puller without remote access",
+    )
+    parser.add_argument(
+        "--transition-port",
+        type=int,
+        default=None,
+        help="TCP port for non-critical episode transition batch uploads; defaults to --action-port + 1 when transition logging is enabled",
+    )
+    parser.add_argument(
+        "--learner-only",
+        action="store_true",
+        help="Skip UDP bind and run only the transition pull / replay-import background paths",
+    )
+    parser.add_argument(
+        "--model-dir",
+        default=None,
+        help="Optional directory for versioned actor manifests and atomic current.json hot-swap",
+    )
+    parser.add_argument(
+        "--learner-auto-publish",
+        action="store_true",
+        help="Publish a new actor manifest whenever replay warmup is ready and the publish interval elapses",
+    )
+    parser.add_argument(
+        "--learner-publish-interval-sec",
+        type=float,
+        default=30.0,
+        help="Minimum interval between learner actor publications when --learner-auto-publish is set",
+    )
+    parser.add_argument(
+        "--learner-publish-policy",
+        choices=POLICY_CHOICES,
+        default=None,
+        help="Policy stamped into learner-published actor manifests; defaults to the currently active policy",
+    )
     parser.add_argument("--verbose", action="store_true", help="Log every valid packet")
     args = parser.parse_args()
+    transition_log = args.transition_log
+    if transition_log is None and (args.transition_pull_remote_path or args.transition_pull_local_source):
+        transition_log = "/tmp/rl-transitions-pulled.ndjson"
+    transition_server_port = args.transition_port
+    if transition_server_port is None and transition_log is not None and args.action_port is not None:
+        transition_server_port = args.action_port + 1
     serve(
         args.host,
         args.port,
@@ -468,9 +1098,24 @@ def main() -> None:
         args.obs_reply_mode,
         args.model_version,
         args.policy_repeat_delay_ms,
-        args.transition_log,
+        transition_log,
         args.learner_stats_interval_sec,
         args.learner_tail_from_start,
+        args.replay_capacity,
+        args.learner_batch_size,
+        args.learner_warmup_rows,
+        args.transition_pull_interval_sec,
+        args.transition_pull_host,
+        args.transition_pull_user,
+        args.transition_pull_password,
+        args.transition_pull_remote_path,
+        args.transition_pull_local_source,
+        transition_server_port or 0,
+        args.learner_only,
+        args.model_dir,
+        args.learner_auto_publish,
+        args.learner_publish_interval_sec,
+        args.learner_publish_policy,
     )
 
 

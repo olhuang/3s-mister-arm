@@ -1241,8 +1241,16 @@ Recommended v1 target-frame policy:
 - MiSTer computes `target_frame = obs_frame + decision_delay_frames`
 - remote must echo the exact `target_frame` from the triggering `ObsPacket`
 - remote must not choose a new `target_frame`
-- if `ActionPacket.target_frame` does not match the ledger entry for `(episode_id, decision_id)`, MiSTer treats it as a protocol error
+- if `ActionPacket.target_frame` does not match the ledger entry for `(run_id, episode_id, decision_id)`, MiSTer treats it as a protocol error
 - if `RLSessionAck.accepted_config_hash` does not match `RLSessionHello.config_hash`, MiSTer treats the session setup as rejected
+
+Protocol v2 identity rules:
+
+- `run_id` is a persisted `u64` RL dataset/run identity allocated by MiSTer when the RL runtime initializes.
+- `episode_id` is unique only within one `run_id` and increments for each round-scoped rollout.
+- `round_num` is the game-facing `Round_num` and is logged for analysis; it is not used as a unique episode key.
+- learner/replay dedupe must use `(run_id, episode_id, decision_id)`.
+- observation, action, transition-batch, and transition-batch-ack packets all carry `run_id`.
 
 ## Observation packet
 
@@ -1251,6 +1259,7 @@ typedef struct RLObsHeader {
     uint32_t magic;
     uint16_t version;
     uint16_t flags;
+    uint64_t run_id;
     uint32_t episode_id;
     uint32_t decision_id;
     uint32_t obs_frame;
@@ -1274,6 +1283,7 @@ typedef struct RLActionPacket {
     uint32_t magic;
     uint16_t version;
     uint16_t flags;
+    uint64_t run_id;
     uint32_t episode_id;
     uint32_t decision_id;
     uint32_t target_frame;
@@ -1562,10 +1572,10 @@ Milestone index:
 - [x] Milestone 0A: Baseline match-flow confirmation spike
 - [x] Milestone 0B: Facing and remap validation micro-spike
 - [x] Milestone 0C: Local fake agent spike
-- [ ] Milestone 1: Compact observation builder
-- [ ] Milestone 2: Session handshake, network probe, and delay budget
-- [ ] Milestone 3: Remote inference only
-- [ ] Milestone 4: Decision ledger and transition logging
+- [x] Milestone 1: Compact observation builder
+- [x] Milestone 2: Session handshake, network probe, and delay budget
+- [x] Milestone 3: Remote inference only
+- [x] Milestone 4: Decision ledger and transition logging
 - [ ] Milestone 5: Async learner and model hot-swap
 - [ ] Milestone 6: Higher-control-rate policy and curriculum
 
@@ -1756,7 +1766,7 @@ Status:
 
 Goal:
 
-- [ ] Agree on session config and measure the real transport envelope before choosing final control timing
+- [x] Agree on session config and measure the real transport envelope before choosing final control timing
 
 Tasks:
 
@@ -1868,7 +1878,7 @@ Status:
 
 Goal:
 
-- [ ] Connect MiSTer to a remote rule-based or heuristic server
+- [x] Connect MiSTer to a remote rule-based or heuristic server
 
 Tasks:
 
@@ -2078,6 +2088,105 @@ Current first-pass action outcome / delta fields:
   - richer movement phase labels
   - explicit `hit / blocked / whiff / throw` outcome enums
 
+### First Learner-Safe Replay Subset
+
+Until the replay-buffer import path is implemented and validated, the first learner should not ingest the full transition ledger as if every field were equally trustworthy.
+
+Recommended v1 learner whitelist:
+
+- replay row keys:
+  - `run_id`
+  - `episode_id`
+  - `decision_id`
+  - `round_num`
+  - `obs_frame`
+  - `target_frame`
+- action actually trained against:
+  - `executed_action_wire`
+  - `executed_move_intent`
+  - `executed_attack_bits`
+  - `execution_source`
+- reward / termination:
+  - `reward_accum`
+  - `done`
+  - `terminal_reason`
+- compact outcome and delta fields:
+  - `delta_self_hp`, `delta_opp_hp`
+  - `delta_self_stun`, `delta_opp_stun`
+  - `delta_self_x`, `delta_self_y`
+  - `delta_opp_x`, `delta_opp_y`
+  - `delta_self_forward`, `delta_opp_forward`
+  - `overlay_attack_event_finalized`
+  - `overlay_attack_contact`
+  - `overlay_attack_whiff`
+- replay metadata:
+  - `agent_character_id`
+  - `opponent_character_id`
+  - `model_version_executed`
+
+Recommended v1 replay-buffer filters:
+
+- filter out `was_executed == false` rows unless the experiment explicitly wants canceled decisions
+- dedupe imported rows by `(run_id, episode_id, decision_id)`
+- treat `execution_source` as replay metadata and sample-control information first, not as a gameplay observation feature
+- treat `agent_character_name` / `opponent_character_name` as debug-only labels
+
+Fields that should remain debug / analysis-only in the first learner import:
+
+- requested-action fields:
+  - `requested_action_wire`
+  - `requested_move_intent`
+  - `requested_attack_bits`
+- older decision-window heuristics:
+  - `requested_movement_succeeded`
+  - `requested_attack_entered_state`
+  - `requested_attack_made_contact`
+  - `requested_attack_likely_whiffed`
+  - `requested_attack_input_started`
+  - `requested_attack_became_active`
+- reverse-engineering / runtime attack-state signals:
+  - `observed_attack_state_started`
+  - `observed_attack_code_changed`
+  - `observed_attack_counter_started`
+  - `self_attack_started`, `opp_attack_started`
+  - `self_attack_code_changed`, `opp_attack_code_changed`
+  - `self_attack_counter_started`, `opp_attack_counter_started`
+  - `self_attack_routine_started`, `opp_attack_routine_started`
+- cumulative counters:
+  - `overlay_attack_active_count`
+  - `overlay_attack_contact_count`
+  - `overlay_attack_whiff_count`
+
+Rationale:
+
+- the learner should train primarily on what actually executed, not only on what the remote service intended to send
+- HP / stun / position deltas are accumulated from post-logic frame observations and are the most trustworthy compact outcome signals available today
+- `overlay_attack_*` fields are useful auxiliary labels, but should not yet be treated as universally correct attack-result truth across every move family
+
+### V1 Reward Interpretation
+
+Current v1 reward remains intentionally simple:
+
+- per-frame reward contribution:
+  - `delta_opp_hp - delta_self_hp`
+- episode-close bonus:
+  - `+100` for winning the round
+  - `-100` for losing the round
+
+What this means for defense and avoidance:
+
+- the first learner does not get a dedicated "good block", "good backdash", or "good evade" scalar in every transition
+- instead, defense is learned indirectly through delayed credit:
+  - defensive movement that avoids later damage should improve future return because `delta_self_hp` stays lower
+  - successful avoidance that creates a later punish opportunity should also be credited through later positive reward
+- this is a sparse signal for defense, so sequence credit assignment and later curriculum / human-demo support are expected to matter
+
+Do not overread the attack-outcome helpers in v1:
+
+- `overlay_attack_event_finalized` / `overlay_attack_contact` / `overlay_attack_whiff` are acceptable as auxiliary replay labels and analysis counters
+- do not yet use them as the sole reward or universal "success/failure" truth for normals, specials, projectiles, throws, and multistage moves
+- if later reward shaping wants explicit punish / whiff / defensive-success bonuses, promote those only after move-family validation and schema-versioned notes
+
 Useful jq validation recipes:
 
 ```bash
@@ -2158,8 +2267,8 @@ Tasks:
 
 - [x] Split inference and learner services
 - [x] Keep training work off the critical action path
-- [ ] Publish versioned actor weights
-- [ ] Atomically hot-swap actor weights
+- [x] Publish versioned actor weights
+- [x] Atomically hot-swap actor weights
 - [x] Include `model_version_current` in session ack or telemetry
 - [x] Include model version in action/transition logs
 - [x] Track inference latency while training is active
@@ -2168,19 +2277,47 @@ Done when:
 
 - [ ] Action latency stays stable during training
 - [x] Model version changes are visible in logs and packets
-- [ ] Inference continues to respond while learner updates weights
+- [x] Inference continues to respond while learner updates weights
 
 Implementation notes:
 
+- Protocol v2 adds persisted `run_id` identity to observation, action, transition-batch, and transition-batch-ack packets.
+- MiSTer persists the last allocated `run_id` in `logs/rl-run-state.txt` and allocates a new run id when the RL runtime initializes.
+- `episode_id` is now a per-run round rollout sequence instead of `Round_num`; transition rows include `round_num` separately for analysis.
+- Ledger HP reward accumulation now uses cumulative round damage deltas from raw HP snapshots, and transition rows include `start_self_hp`, `start_opp_hp`, `final_self_hp`, and `final_opp_hp` for validation.
+- Round episode changes now follow `Round_num` instead of `PL_Wins` / `VS_Win_Record` mutations, which avoids empty skipped episode ids during round-end bookkeeping.
+- The learner replay importer dedupes by `(run_id, episode_id, decision_id)`.
 - First Milestone 5 slice adds model-version plumbing without introducing training work on the critical action path.
 - `RLObsPacketHeader.model_version_expected` now carries MiSTer's current executed model version to the remote service.
 - `RLActionPacket.model_version` is accepted from the remote service and stored with queued/executed actions.
 - Transition NDJSON now exports:
   - `model_version_expected`
   - `model_version_requested`
+- Current Windows-to-WSL live learner/inference launch command:
+  ```sh
+  python \\wsl.localhost\Ubuntu\home\olhua\src\3s-mister-arm\tools\rl_probe_server.py --host 0.0.0.0 --port 37330 --action-port 37331 --policy hp --policy-repeat-delay-ms 3000 --model-version 0 --model-dir \\wsl.localhost\Ubuntu\home\olhua\src\3s-mister-arm\model\rl-model-live --transition-log \\wsl.localhost\Ubuntu\home\olhua\src\3s-mister-arm\logs\rl-transitions-live.ndjson --learner-auto-publish --learner-publish-interval-sec 10 --learner-warmup-rows 100 --learner-batch-size 32
+  ```
   - `model_version_executed`
 - RL net overlay shows `MV` for the currently executed model version.
 - `tools/rl_probe_server.py --model-version N` stamps fixed/scripted policy action packets for bring-up.
+- `tools/rl_probe_server.py --model-dir DIR` stores versioned actor manifests as `actor-vN.json` and atomically hot-swaps `current.json`.
+- `tools/rl_probe_server.py --learner-auto-publish` publishes a new actor manifest from the learner/log-reader thread after replay warmup and at `--learner-publish-interval-sec`.
+- inference reads the current actor manifest before replying to observation packets, so action packets use the hot-swapped actor policy and model version without blocking on learner work.
+- `tools/rl_probe_server.py --transition-log PATH` now imports a learner-safe replay subset in the background log-reader thread:
+  - filters out `was_executed=false` rows
+  - keeps executed action, reward / done, compact delta fields, overlay attack auxiliaries, and metadata such as character IDs and executed model version
+  - tracks replay capacity, warmup readiness, reward-sign counts, and execution-source mix for learner bring-up
+- MiSTer now also has a first non-critical episode-batch transport:
+  - finalized transition rows still append to local `logs/rl-transitions.ndjson`
+  - episode-close also queues the episode's NDJSON rows for background TCP upload to the remote learner on `obs_port + 2`
+  - transport runs off the action critical path and expects an ACK per uploaded episode batch
+- `tools/rl_probe_server.py` now also supports a non-critical transition pull path:
+  - `--transition-pull-remote-path PATH` uses read-only SCP polling to mirror a MiSTer-side transition log into the local `--transition-log`
+  - `--transition-pull-local-source PATH` provides the same mirror/update flow for local smoke tests
+  - `--learner-only` skips UDP bind so the pull/import path can be validated or run standalone without the live action server
+- `tools/rl_probe_server.py` also accepts the episode-batch transport on TCP:
+  - `--transition-port PORT` listens for uploaded episode batches and appends them into `--transition-log`
+  - when `--transition-log` is set and `--transition-port` is omitted, it defaults to `--action-port + 1`
 - `tools/rl_probe_server.py --policy ryu-fireball` loops a relative Ryu fireball script:
   - `DOWN`
   - `DOWN_FORWARD`
@@ -2228,6 +2365,10 @@ Tasks:
 - [ ] Tune `action_hold_frames`
 - [ ] Expand observation features only with schema versioning
 - [ ] Expand reward features only after baseline reward is stable
+- [ ] Review whether `overlay_attack_event_finalized` / `overlay_attack_contact` / `overlay_attack_whiff` have consistent learner semantics across normals, specials, projectiles, throws, and multistage moves before promoting them beyond debug / auxiliary labels
+- [ ] Run move-family validation passes with scripted policies such as `hp`, `throw`, `ryu-fireball`, `tatsu`, and `shoryuken`, then document which attack-outcome fields are trustworthy enough for learner use versus debug-only analysis
+- [ ] Add a human-demo recording path so human-vs-CPU play can export learner-ingestible episodes for bootstrapping / behavior-cloning experiments
+- [ ] Define how replay-buffer import mixes human-demo episodes with remote-agent episodes, including metadata such as data source, control mode, and player side
 - [ ] Add character curriculum
 - [ ] Add stage curriculum
 - [ ] Add automated reset loops
@@ -2238,6 +2379,8 @@ Done when:
 
 - [ ] Control timing improvements are backed by telemetry
 - [ ] Any promoted derived observation features have schema-versioned docs and validation notes
+- [ ] Any promoted attack-outcome labels have move-family validation notes showing how normals, specials, projectiles, throws, and multistage moves were checked
+- [ ] Any human-demo ingest path has documented replay-buffer metadata and a clear statement of whether it is used for bootstrapping, behavior cloning, evaluation, or mixed training
 - [ ] Curriculum changes are reflected in logs and reproducible configs
 - [ ] Policy strength improves without destabilizing the transport/control path
 

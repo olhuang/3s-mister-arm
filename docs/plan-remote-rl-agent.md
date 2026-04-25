@@ -2427,8 +2427,9 @@ Implementation notes:
   - transition rows are bucketed from the compact spacing snapshot (`obs_abs_dx`, `obs_abs_dy`, front/back edge distances, `obs_opp_in_front`)
   - the learner maintains per-state action scores for explicit actions: `forward`, `back`, `hp`, and `forward-hp`
   - neutral rows are not learned as greedy actions in the first version, because delayed damage/recovery rewards can otherwise make "do nothing" look falsely good
-  - when a neutral/recovery row carries nonzero reward, the learner conservatively credits that reward to the most recent explicit action bucket
-  - each imported replay row applies an exponential update toward `reward_accum` for the executed action
+  - tabular score updates use a learner-local reward of `delta_opp_hp - delta_self_hp`; transition `reward_accum` still keeps full episode reward including terminal win/loss bonuses for future sequential RL learners
+  - when a neutral/recovery row carries nonzero HP-delta reward, the learner conservatively credits that reward to the most recent explicit action bucket
+  - each imported replay row applies an exponential update toward that tabular HP-delta reward for the executed action
   - learner-published `tabular` actor manifests include `actions`, `epsilon`, `fallback_policy`, `updated_rows`, and `q`
   - inference uses the active actor q-table when a positive-scoring action exists for the latest learned bucket, otherwise it falls back to a scripted policy such as `hp`
   - current limitation: the UDP OBS packet still carries only the header with `obs_len=0`, so Python-side tabular inference uses the latest spacing bucket imported from transition replay rather than an exact same-frame observation bucket

@@ -411,6 +411,10 @@ def tabular_action_name(action_wire: int) -> str | None:
     return TABULAR_ACTION_NAMES_BY_WIRE.get(action_wire & 0xFFFF)
 
 
+def tabular_training_reward(row: dict[str, object]) -> float:
+    return float(int(row.get("delta_opp_hp", 0) or 0) - int(row.get("delta_self_hp", 0) or 0))
+
+
 class TabularPolicyLearner:
     def __init__(
         self,
@@ -427,6 +431,7 @@ class TabularPolicyLearner:
         self._updates = 0
         self._ignored_actions = 0
         self._delayed_reward_updates = 0
+        self._training_reward_total = 0.0
         self._last_explicit_action: tuple[str, str] | None = None
         self._lock = threading.Lock()
 
@@ -436,7 +441,7 @@ class TabularPolicyLearner:
 
     def update(self, row: dict[str, object]) -> str | None:
         action_name = tabular_action_name(int(row.get("executed_action_wire", 0) or 0))
-        reward = float(row.get("reward_accum", 0.0) or 0.0)
+        reward = tabular_training_reward(row)
         if action_name is None or action_name not in self._actions:
             with self._lock:
                 self._ignored_actions += 1
@@ -447,6 +452,7 @@ class TabularPolicyLearner:
                     scores[delayed_action] = old_score + self._alpha * (reward - old_score)
                     self._updates += 1
                     self._delayed_reward_updates += 1
+                    self._training_reward_total += reward
                     return state_key
             return None
         state_key = tabular_state_key(row)
@@ -455,6 +461,7 @@ class TabularPolicyLearner:
             old_score = float(scores.get(action_name, 0.0))
             scores[action_name] = old_score + self._alpha * (reward - old_score)
             self._updates += 1
+            self._training_reward_total += reward
             self._last_explicit_action = (state_key, action_name)
         return state_key
 
@@ -481,6 +488,7 @@ class TabularPolicyLearner:
                 "updates": self._updates,
                 "ignored_actions": self._ignored_actions,
                 "delayed_reward_updates": self._delayed_reward_updates,
+                "training_reward_total": self._training_reward_total,
                 "top_state": top_state,
                 "top_action": top_action,
                 "top_score": top_score,
@@ -851,6 +859,7 @@ class LearnerLogTailer(threading.Thread):
             f"batch={self._learner_batch_size} batch_mean={batch_mean_reward:.3f} "
             f"tab_states={tabular['states']} tab_updates={tabular['updates']} "
             f"tab_ignored={tabular['ignored_actions']} tab_delayed={tabular['delayed_reward_updates']} "
+            f"tab_reward=hp-delta:{float(tabular['training_reward_total']):.1f} "
             f"eps={float(tabular['epsilon']):.2f} top={top} "
             f"model_exec={self._latest_model_version_executed} "
             f"model_active={model_status.active.version} "
@@ -882,6 +891,8 @@ class LearnerLogTailer(threading.Thread):
                         "tabular_updates": tabular_snapshot["updates"],
                         "tabular_ignored_actions": tabular_snapshot["ignored_actions"],
                         "tabular_delayed_reward_updates": tabular_snapshot["delayed_reward_updates"],
+                        "tabular_reward_source": "hp-delta",
+                        "tabular_training_reward_total": tabular_snapshot["training_reward_total"],
                     },
                     q_table=q_table if isinstance(q_table, dict) else None,
                     actions=tabular_snapshot["actions"] if isinstance(tabular_snapshot["actions"], tuple) else TABULAR_DEFAULT_ACTIONS,

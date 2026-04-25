@@ -2,6 +2,41 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-25: Split Tabular Reward From Episode Reward
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / minimum learner reward hygiene
+
+Files changed:
+- `tools/rl_probe_server.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- keep terminal win/loss reward available for future sequential RL while preventing the current contextual-bandit tabular learner from assigning the whole `+100/-100` episode result to the last executed action
+
+Implementation notes:
+- transition `reward_accum` remains unchanged and still represents the full reward stream, including terminal win/loss bonus.
+- tabular q-score updates now use learner-local `tabular_reward = delta_opp_hp - delta_self_hp`.
+- neutral/recovery rows are still not learned as greedy actions.
+- if a neutral/recovery row carries nonzero HP-delta reward, delayed credit now applies that HP-delta reward to the most recent explicit action bucket.
+- learner stats now include `tab_reward=hp-delta:<sum>` to distinguish the tabular training signal from aggregate transition `rew=...`.
+- learner-published actor metadata includes:
+  - `tabular_reward_source = hp-delta`
+  - `tabular_training_reward_total`
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py` passed.
+- `git diff --check -- tools/rl_probe_server.py docs/plan-remote-rl-agent.md docs/remote-rl-agent-engineering-log.md` passed.
+- synthetic learner-only smoke passed:
+  - a terminal `forward` row with `reward_accum=105` but `delta_opp_hp=5` updated toward `5`, not `105`
+  - a nonterminal `hp` row with `delta_opp_hp=15` became top action with `hp:0.75`
+  - learner stats reported `tab_reward=hp-delta:20.0`
+  - actor metadata included `tabular_reward_source=hp-delta` and `tabular_training_reward_total=20.0`
+
+Follow-up:
+- rerun live tabular smoke after deploy; expect HP-delta action scores to favor actions that directly cause damage or avoid damage, while `reward_accum` remains available for the future DQN/sequence learner.
+
 ## 2026-04-25: Preserve RL Transition Flush Across VS Rematch
 
 Milestone:

@@ -14,7 +14,7 @@ import subprocess
 import tempfile
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 MAGIC = 0x33524C41
@@ -41,7 +41,17 @@ RL_MOVE_DOWN_FORWARD = 0x0008
 BTN_LP = 0x0010
 BTN_HP = 0x0040
 BTN_LK = 0x0100
-POLICY_CHOICES = ("forward", "back", "hp", "forward-hp", "ryu-fireball", "throw", "tatsu", "shoryuken")
+POLICY_CHOICES = ("forward", "back", "hp", "forward-hp", "ryu-fireball", "throw", "tatsu", "shoryuken", "tabular")
+
+TABULAR_ACTION_WIRES = {
+    "neutral": RL_MOVE_NEUTRAL,
+    "forward": RL_MOVE_FORWARD,
+    "back": RL_MOVE_BACK,
+    "hp": BTN_HP,
+    "forward-hp": RL_MOVE_FORWARD | BTN_HP,
+}
+TABULAR_ACTION_NAMES_BY_WIRE = {wire: name for name, wire in TABULAR_ACTION_WIRES.items()}
+TABULAR_DEFAULT_ACTIONS = ("forward", "back", "hp", "forward-hp")
 
 
 @dataclass(frozen=True)
@@ -49,6 +59,11 @@ class ActorModel:
     version: int
     policy: str
     source: str
+    q_table: dict[str, dict[str, float]] = field(default_factory=dict)
+    actions: tuple[str, ...] = TABULAR_DEFAULT_ACTIONS
+    epsilon: float = 0.0
+    fallback_policy: str = "hp"
+    updated_rows: int = 0
 
 
 @dataclass(frozen=True)
@@ -80,6 +95,38 @@ class PolicyBucketStats:
     fallback_rows: int = 0
 
 
+def _coerce_action_names(value: object) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        return TABULAR_DEFAULT_ACTIONS
+    actions: list[str] = []
+    for item in value:
+        name = str(item)
+        if name in TABULAR_ACTION_WIRES and name not in actions:
+            actions.append(name)
+    return tuple(actions) or TABULAR_DEFAULT_ACTIONS
+
+
+def _coerce_q_table(value: object) -> dict[str, dict[str, float]]:
+    if not isinstance(value, dict):
+        return {}
+    q_table: dict[str, dict[str, float]] = {}
+    for state_key, scores in value.items():
+        if not isinstance(scores, dict):
+            continue
+        clean_scores: dict[str, float] = {}
+        for action_name, score in scores.items():
+            action = str(action_name)
+            if action not in TABULAR_ACTION_WIRES:
+                continue
+            try:
+                clean_scores[action] = float(score)
+            except (TypeError, ValueError):
+                continue
+        if clean_scores:
+            q_table[str(state_key)] = clean_scores
+    return q_table
+
+
 class ActorModelStore:
     def __init__(self, model_dir: str | None, initial_policy: str, initial_version: int) -> None:
         self._model_dir = model_dir
@@ -87,6 +134,7 @@ class ActorModelStore:
         self._lock = threading.Lock()
         self._active = ActorModel(max(0, initial_version), initial_policy, "cli")
         self._known_policies: dict[int, str] = {self._active.version: self._active.policy}
+        self._latest_tabular_state: str | None = None
         self._last_published_version = self._active.version
         self._last_loaded_version = self._active.version
         self._publish_count = 0
@@ -117,9 +165,29 @@ class ActorModelStore:
         version = int(data.get("version", self._active.version) or 0)
         policy = str(data.get("policy", self._active.policy) or self._active.policy)
         source = str(data.get("source", "file") or "file")
+        q_table = _coerce_q_table(data.get("q"))
+        actions = _coerce_action_names(data.get("actions"))
+        try:
+            epsilon = float(data.get("epsilon", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            epsilon = 0.0
+        fallback_policy = str(data.get("fallback_policy", "hp") or "hp")
+        try:
+            updated_rows = int(data.get("updated_rows", 0) or 0)
+        except (TypeError, ValueError):
+            updated_rows = 0
         with self._lock:
             if version >= self._active.version:
-                self._active = ActorModel(version, policy, source)
+                self._active = ActorModel(
+                    version,
+                    policy,
+                    source,
+                    q_table=q_table,
+                    actions=actions,
+                    epsilon=epsilon,
+                    fallback_policy=fallback_policy,
+                    updated_rows=updated_rows,
+                )
                 self._known_policies[version] = policy
                 self._current_mtime_ns = stat.st_mtime_ns
                 self._last_loaded_version = version
@@ -165,17 +233,46 @@ class ActorModelStore:
             self._known_policies[version] = policy
         return policy
 
+    def set_latest_tabular_state(self, state_key: str) -> None:
+        with self._lock:
+            self._latest_tabular_state = state_key
+
+    def latest_tabular_state(self) -> str | None:
+        with self._lock:
+            return self._latest_tabular_state
+
     def _watch_current(self) -> None:
         interval_sec = max(0.05, self._refresh_interval_ns / 1_000_000_000)
         while True:
             time.sleep(interval_sec)
             self._load_current()
 
-    def publish(self, policy: str, source: str, version: int | None = None, metadata: dict[str, object] | None = None) -> ActorModel:
+    def publish(
+        self,
+        policy: str,
+        source: str,
+        version: int | None = None,
+        metadata: dict[str, object] | None = None,
+        q_table: dict[str, dict[str, float]] | None = None,
+        actions: tuple[str, ...] = TABULAR_DEFAULT_ACTIONS,
+        epsilon: float = 0.0,
+        fallback_policy: str = "hp",
+        updated_rows: int = 0,
+    ) -> ActorModel:
         if not self._model_dir or not self._current_path:
             with self._lock:
                 next_version = self._active.version if version is None else max(0, version)
-                self._active = ActorModel(next_version, policy, source)
+                self._active = ActorModel(
+                    next_version,
+                    policy,
+                    source,
+                    q_table=q_table or {},
+                    actions=actions,
+                    epsilon=epsilon,
+                    fallback_policy=fallback_policy,
+                    updated_rows=updated_rows,
+                )
+                self._known_policies[self._active.version] = self._active.policy
                 self._last_published_version = self._active.version
                 self._publish_count += 1
                 return self._active
@@ -184,7 +281,16 @@ class ActorModelStore:
             next_version = self._active.version + 1 if version is None else max(0, version)
             if next_version < self._active.version:
                 next_version = self._active.version
-            model = ActorModel(next_version, policy, source)
+            model = ActorModel(
+                next_version,
+                policy,
+                source,
+                q_table=q_table or {},
+                actions=actions,
+                epsilon=epsilon,
+                fallback_policy=fallback_policy,
+                updated_rows=updated_rows,
+            )
             payload = {
                 "version": model.version,
                 "policy": model.policy,
@@ -192,6 +298,16 @@ class ActorModelStore:
                 "created_at_unix": time.time(),
                 "metadata": metadata or {},
             }
+            if model.policy == "tabular":
+                payload.update(
+                    {
+                        "actions": list(model.actions),
+                        "epsilon": model.epsilon,
+                        "fallback_policy": model.fallback_policy,
+                        "q": model.q_table,
+                        "updated_rows": model.updated_rows,
+                    }
+                )
             version_path = os.path.join(self._model_dir, f"actor-v{model.version}.json")
             fd, temp_path = tempfile.mkstemp(prefix=f".actor-v{model.version}.", suffix=".tmp", dir=self._model_dir)
             try:
@@ -260,6 +376,115 @@ class ReplayBuffer:
 
     def sample(self, batch_size: int) -> list[dict[str, object]]:
         return random.sample(list(self._rows), min(len(self._rows), max(1, batch_size)))
+
+
+def bucket_range(value: int, thresholds: tuple[int, int], labels: tuple[str, str, str]) -> str:
+    if value <= thresholds[0]:
+        return labels[0]
+    if value <= thresholds[1]:
+        return labels[1]
+    return labels[2]
+
+
+def tabular_state_key(row: dict[str, object]) -> str:
+    abs_dx = int(row.get("obs_abs_dx", 0) or 0)
+    abs_dy = int(row.get("obs_abs_dy", 0) or 0)
+    self_front = int(row.get("obs_self_front_edge_dist", 0) or 0)
+    self_back = int(row.get("obs_self_back_edge_dist", 0) or 0)
+    opp_front = int(row.get("obs_opp_front_edge_dist", 0) or 0)
+    opp_back = int(row.get("obs_opp_back_edge_dist", 0) or 0)
+    opp_in_front = 1 if int(row.get("obs_opp_in_front", 0) or 0) else 0
+    return "|".join(
+        (
+            f"front={opp_in_front}",
+            f"dx={bucket_range(abs_dx, (48, 144), ('close', 'mid', 'far'))}",
+            f"dy={bucket_range(abs_dy, (16, 64), ('flat', 'offset', 'high'))}",
+            f"self_front={bucket_range(self_front, (48, 160), ('corner', 'mid', 'open'))}",
+            f"self_back={bucket_range(self_back, (48, 160), ('corner', 'mid', 'open'))}",
+            f"opp_front={bucket_range(opp_front, (48, 160), ('corner', 'mid', 'open'))}",
+            f"opp_back={bucket_range(opp_back, (48, 160), ('corner', 'mid', 'open'))}",
+        )
+    )
+
+
+def tabular_action_name(action_wire: int) -> str | None:
+    return TABULAR_ACTION_NAMES_BY_WIRE.get(action_wire & 0xFFFF)
+
+
+class TabularPolicyLearner:
+    def __init__(
+        self,
+        alpha: float,
+        epsilon: float,
+        fallback_policy: str,
+        actions: tuple[str, ...] = TABULAR_DEFAULT_ACTIONS,
+    ) -> None:
+        self._alpha = min(1.0, max(0.0, alpha))
+        self._epsilon = min(1.0, max(0.0, epsilon))
+        self._fallback_policy = fallback_policy
+        self._actions = actions
+        self._q_table: dict[str, dict[str, float]] = {}
+        self._updates = 0
+        self._ignored_actions = 0
+        self._delayed_reward_updates = 0
+        self._last_explicit_action: tuple[str, str] | None = None
+        self._lock = threading.Lock()
+
+    @property
+    def fallback_policy(self) -> str:
+        return self._fallback_policy
+
+    def update(self, row: dict[str, object]) -> str | None:
+        action_name = tabular_action_name(int(row.get("executed_action_wire", 0) or 0))
+        reward = float(row.get("reward_accum", 0.0) or 0.0)
+        if action_name is None or action_name not in self._actions:
+            with self._lock:
+                self._ignored_actions += 1
+                if reward != 0.0 and self._last_explicit_action is not None:
+                    state_key, delayed_action = self._last_explicit_action
+                    scores = self._q_table.setdefault(state_key, {name: 0.0 for name in self._actions})
+                    old_score = float(scores.get(delayed_action, 0.0))
+                    scores[delayed_action] = old_score + self._alpha * (reward - old_score)
+                    self._updates += 1
+                    self._delayed_reward_updates += 1
+                    return state_key
+            return None
+        state_key = tabular_state_key(row)
+        with self._lock:
+            scores = self._q_table.setdefault(state_key, {name: 0.0 for name in self._actions})
+            old_score = float(scores.get(action_name, 0.0))
+            scores[action_name] = old_score + self._alpha * (reward - old_score)
+            self._updates += 1
+            self._last_explicit_action = (state_key, action_name)
+        return state_key
+
+    def snapshot(self) -> dict[str, object]:
+        with self._lock:
+            q_table = {state: dict(scores) for state, scores in self._q_table.items()}
+            top_state = ""
+            top_action = ""
+            top_score = 0.0
+            for state, scores in q_table.items():
+                if not scores:
+                    continue
+                action, score = max(scores.items(), key=lambda item: (item[1], item[0]))
+                if not top_state or score > top_score:
+                    top_state = state
+                    top_action = action
+                    top_score = score
+            return {
+                "q_table": q_table,
+                "actions": self._actions,
+                "epsilon": self._epsilon,
+                "fallback_policy": self._fallback_policy,
+                "states": len(q_table),
+                "updates": self._updates,
+                "ignored_actions": self._ignored_actions,
+                "delayed_reward_updates": self._delayed_reward_updates,
+                "top_state": top_state,
+                "top_action": top_action,
+                "top_score": top_score,
+            }
 
 
 def learner_replay_row(row: dict[str, object]) -> dict[str, object] | None:
@@ -522,6 +747,9 @@ class LearnerLogTailer(threading.Thread):
         learner_auto_publish: bool,
         learner_publish_interval_sec: float,
         learner_publish_policy: str | None,
+        tabular_alpha: float,
+        tabular_epsilon: float,
+        tabular_fallback_policy: str,
     ) -> None:
         super().__init__(daemon=True)
         self._path = path
@@ -535,6 +763,7 @@ class LearnerLogTailer(threading.Thread):
         self._learner_auto_publish = learner_auto_publish
         self._learner_publish_interval_ns = int(max(0.1, learner_publish_interval_sec) * 1_000_000_000)
         self._learner_publish_policy = learner_publish_policy
+        self._tabular_learner = TabularPolicyLearner(tabular_alpha, tabular_epsilon, tabular_fallback_policy)
         self._next_publish_ns = time.monotonic_ns() + self._learner_publish_interval_ns
         self._rows = 0
         self._imported_rows = 0
@@ -576,6 +805,9 @@ class LearnerLogTailer(threading.Thread):
 
         self._seen_keys.add(replay_key)
         self._replay.add(replay_row)
+        state_key = self._tabular_learner.update(replay_row)
+        if state_key is not None:
+            self._model_store.set_latest_tabular_state(state_key)
         self._imported_rows += 1
         policy_name = self._model_store.policy_for_version(int(replay_row["model_version_executed"]))
         policy_bucket = self._policy_buckets.setdefault(policy_name, PolicyBucketStats())
@@ -603,6 +835,10 @@ class LearnerLogTailer(threading.Thread):
             if batch:
                 batch_mean_reward = sum(float(item["reward_accum"]) for item in batch) / len(batch)
         policy_bucket = self._policy_buckets.get(self._latest_model_policy_executed, PolicyBucketStats())
+        tabular = self._tabular_learner.snapshot()
+        top = "none"
+        if tabular["top_state"]:
+            top = f"{tabular['top_action']}:{float(tabular['top_score']):.2f}"
         print(
             "LEARNER "
             f"rows={self._rows} done={self._done} run={self._latest_run_id} ep={self._latest_episode} "
@@ -613,6 +849,9 @@ class LearnerLogTailer(threading.Thread):
             f"policy_rew=+{policy_bucket.reward_positive}/-{policy_bucket.reward_negative}/0{policy_bucket.reward_zero} "
             f"ready={'yes' if learner_ready else 'no'} warmup={self._learner_warmup_rows} "
             f"batch={self._learner_batch_size} batch_mean={batch_mean_reward:.3f} "
+            f"tab_states={tabular['states']} tab_updates={tabular['updates']} "
+            f"tab_ignored={tabular['ignored_actions']} tab_delayed={tabular['delayed_reward_updates']} "
+            f"eps={float(tabular['epsilon']):.2f} top={top} "
             f"model_exec={self._latest_model_version_executed} "
             f"model_active={model_status.active.version} "
             f"model_pub={model_status.last_published_version} "
@@ -626,6 +865,8 @@ class LearnerLogTailer(threading.Thread):
             if now_ns >= self._next_publish_ns:
                 active = self._model_store.current()
                 policy = self._learner_publish_policy or active.policy
+                tabular_snapshot = self._tabular_learner.snapshot()
+                q_table = tabular_snapshot["q_table"] if policy == "tabular" else None
                 self._model_store.publish(
                     policy,
                     source="learner",
@@ -637,7 +878,16 @@ class LearnerLogTailer(threading.Thread):
                         "reward_positive": self._reward_positive,
                         "reward_negative": self._reward_negative,
                         "reward_zero": self._reward_zero,
+                        "tabular_states": tabular_snapshot["states"],
+                        "tabular_updates": tabular_snapshot["updates"],
+                        "tabular_ignored_actions": tabular_snapshot["ignored_actions"],
+                        "tabular_delayed_reward_updates": tabular_snapshot["delayed_reward_updates"],
                     },
+                    q_table=q_table if isinstance(q_table, dict) else None,
+                    actions=tabular_snapshot["actions"] if isinstance(tabular_snapshot["actions"], tuple) else TABULAR_DEFAULT_ACTIONS,
+                    epsilon=float(tabular_snapshot["epsilon"]),
+                    fallback_policy=str(tabular_snapshot["fallback_policy"]),
+                    updated_rows=int(tabular_snapshot["updates"]),
                 )
                 self._next_publish_ns = now_ns + self._learner_publish_interval_ns
 
@@ -830,6 +1080,36 @@ def scripted_action_wire(
     return action_wire
 
 
+def tabular_actor_action_wire(actor: ActorModel, state_key: str | None) -> int | None:
+    if actor.policy != "tabular" or not state_key:
+        return None
+    if random.random() < actor.epsilon:
+        return TABULAR_ACTION_WIRES[random.choice(actor.actions)]
+    scores = actor.q_table.get(state_key)
+    if not scores:
+        return None
+    best_action = max(actor.actions, key=lambda action: (float(scores.get(action, 0.0)), action))
+    if float(scores.get(best_action, 0.0)) <= 0.0:
+        return None
+    return TABULAR_ACTION_WIRES.get(best_action)
+
+
+def policy_action_wire(
+    actor: ActorModel,
+    model_store: ActorModelStore,
+    policy_states: dict[tuple[int, int, int, str], dict[str, int]],
+    nonce: int,
+    run_id: int,
+    episode_id: int,
+    repeat_delay_ms: int,
+) -> int:
+    tabular_wire = tabular_actor_action_wire(actor, model_store.latest_tabular_state())
+    if tabular_wire is not None:
+        return tabular_wire
+    fallback_policy = actor.fallback_policy if actor.policy == "tabular" else actor.policy
+    return scripted_action_wire(fallback_policy, policy_states, nonce, run_id, episode_id, repeat_delay_ms)
+
+
 def serve(
     host: str,
     port: int,
@@ -858,6 +1138,9 @@ def serve(
     learner_auto_publish: bool,
     learner_publish_interval_sec: float,
     learner_publish_policy: str | None,
+    tabular_alpha: float,
+    tabular_epsilon: float,
+    tabular_fallback_policy: str,
 ) -> None:
     inference_stats = InferenceStats()
     model_store = ActorModelStore(model_dir, policy, model_version)
@@ -886,6 +1169,9 @@ def serve(
             learner_auto_publish,
             learner_publish_interval_sec,
             learner_publish_policy,
+            tabular_alpha,
+            tabular_epsilon,
+            tabular_fallback_policy,
         ).start()
     if learner_only:
         print("RL probe learner-only mode active", flush=True)
@@ -922,8 +1208,9 @@ def serve(
                     print(f"{addr} bad_obs_header magic=0x{magic:08x} version={version} type={packet_type}")
                 continue
             if action_port is not None:
-                target_wire = scripted_action_wire(
-                    active_model.policy,
+                target_wire = policy_action_wire(
+                    active_model,
+                    model_store,
                     policy_states,
                     nonce,
                     run_id,
@@ -1130,6 +1417,24 @@ def main() -> None:
         default=None,
         help="Policy stamped into learner-published actor manifests; defaults to the currently active policy",
     )
+    parser.add_argument(
+        "--tabular-alpha",
+        type=float,
+        default=0.05,
+        help="Contextual-bandit learning rate used by the tabular learner",
+    )
+    parser.add_argument(
+        "--tabular-epsilon",
+        type=float,
+        default=0.10,
+        help="Exploration probability stamped into learner-published tabular actors",
+    )
+    parser.add_argument(
+        "--tabular-fallback-policy",
+        choices=POLICY_CHOICES[:-1],
+        default="hp",
+        help="Scripted policy used when a tabular actor has no score for the current bucket",
+    )
     parser.add_argument("--verbose", action="store_true", help="Log every valid packet")
     args = parser.parse_args()
     transition_log = args.transition_log
@@ -1166,6 +1471,9 @@ def main() -> None:
         args.learner_auto_publish,
         args.learner_publish_interval_sec,
         args.learner_publish_policy,
+        args.tabular_alpha,
+        args.tabular_epsilon,
+        args.tabular_fallback_policy,
     )
 
 

@@ -2,6 +2,75 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-25: Minimal Tabular Learner Actor Loop
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / minimum training loop
+
+Files changed:
+- `tools/rl_probe_server.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- make the remote RL path train something real before adding more transition fields or neural-network dependencies
+- prove that replay rows can update an actor manifest and that the action path can use the updated actor
+
+Implementation notes:
+- added `--policy tabular`.
+- added a small contextual-bandit learner inside `tools/rl_probe_server.py`.
+- transition rows are bucketed using the compact spacing snapshot:
+  - `obs_abs_dx`
+  - `obs_abs_dy`
+  - `obs_self_front_edge_dist`
+  - `obs_self_back_edge_dist`
+  - `obs_opp_front_edge_dist`
+  - `obs_opp_back_edge_dist`
+  - `obs_opp_in_front`
+- supported learned actions are:
+  - `forward`
+  - `back`
+  - `hp`
+  - `forward-hp`
+- neutral rows are intentionally not learned as greedy actions in this first version, because delayed damage / recovery rewards can make "do nothing" look falsely positive before reward attribution is refined.
+- when a neutral/recovery row carries nonzero reward, the learner conservatively credits that reward to the most recent explicit action bucket. This is a small learner-side credit-delay patch, not a replacement for later reward/transition refinement.
+- each imported replay row updates one score with:
+  - `score += alpha * (reward_accum - score)`
+- learner-published `tabular` actor manifests now include:
+  - `actions`
+  - `epsilon`
+  - `fallback_policy`
+  - `updated_rows`
+  - `q`
+- OBS inference chooses from the active tabular q-table only when the latest known state has a positive-scoring action. Otherwise it falls back to a scripted policy, defaulting to `hp`.
+- Current limitation:
+  - MiSTer still sends a header-only OBS packet with `obs_len=0`.
+  - Therefore Python-side tabular inference uses the latest spacing bucket imported by the learner from transition replay, not an exact same-frame OBS-derived state.
+  - This is acceptable for the first closed-loop smoke, but a later schema-versioned OBS payload is needed before treating tabular policy quality as meaningful gameplay evidence.
+- learner stats now include:
+  - `tab_states`
+  - `tab_updates`
+  - `tab_ignored`
+  - `tab_delayed`
+  - `eps`
+  - `top`
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py` passed.
+- `git diff --check -- tools/rl_probe_server.py` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed.
+- synthetic smoke passed:
+  - one HP replay row with positive reward created one spacing bucket
+  - publishing that q-table as a `tabular` actor selected `executed_action_wire=64` for the same latest bucket
+- learner-only smoke against `logs/rl-transitions-hp-4-3-3.ndjson` imported `585` rows, created `13` tabular states, applied `87` updates, ignored `518` neutral rows, credited `20` delayed reward rows back to the previous explicit action, published tabular actors, and reported `top=hp:10.38`.
+
+Follow-up:
+- run first live `tabular` pass at timing `4/3/3`.
+- confirm learner logs show nonzero `tab_states` and `tab_updates`.
+- confirm actor manifests in `model/rl-model-tabular` contain `q`.
+- confirm transition rows show `model_version_executed` advancing after learner publishes.
+- do not judge gameplay quality until OBS carries same-frame learner state or the transition/import delay is explicitly modeled.
+
 ## 2026-04-25: Add Compact Spacing State To Transition Replay Rows
 
 Milestone:

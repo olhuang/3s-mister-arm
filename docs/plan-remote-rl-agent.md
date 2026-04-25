@@ -2446,6 +2446,7 @@ Implementation notes:
   - C-side VS result rematch now forces `MODE_VERSUS` / `Play_Mode = 1` while RL is active before entering the character-select transition
 - RL active VS result now auto-selects rematch through the existing VS result case-6 path:
   - this is the conservative "方案 A" path: it avoids manual result-screen input but still uses `Setup_VS_Mode()` and the normal rematch transition instead of hard-resetting battle state
+  - auto-rematch marks the next character-select pass to retain the previous `My_char[]` values and auto-complete SA selection, so the next match can start without manual character/SA input
   - faster direct match restart remains a later option after this path is validated
 - Example first live tabular command:
   ```sh

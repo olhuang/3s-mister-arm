@@ -6,6 +6,7 @@
 #include "sf33rd/Source/Game/screen/sel_pl.h"
 #include "common.h"
 #include "constants.h"
+#include "rl/rl_session.h"
 #include "sf33rd/AcrSDK/common/pad.h"
 #include "sf33rd/Source/Game/com/com_data.h"
 #include "sf33rd/Source/Game/debug/Debug.h"
@@ -777,10 +778,20 @@ void PL_Sel_1st() {
         ret |= ret2;
 
         if (ret != 0) {
+            if (RLSession_IsActive() && Mode_Type == MODE_VERSUS) {
+                Sel_Arts_Complete[ID2] = -1;
+                Setup_ID();
+                Used_char[ID2] = My_char[ID2];
+            }
             return;
         }
 
         if (My_char[ID2] == 0) {
+            if (RLSession_IsActive() && Mode_Type == MODE_VERSUS) {
+                Sel_Arts_Complete[ID2] = -1;
+                Setup_ID();
+                Used_char[ID2] = My_char[ID2];
+            }
             return;
         }
 
@@ -790,6 +801,13 @@ void PL_Sel_1st() {
         effect_50_init(ID2, 1, 1);
         effect_50_init(ID2, 2, 0);
         effect_50_init(ID2, 2, 1);
+
+        if (RLSession_IsActive() && Mode_Type == MODE_VERSUS) {
+            Sel_Arts_Complete[ID2] = -1;
+            Setup_ID();
+            Used_char[ID2] = My_char[ID2];
+            return;
+        }
 
         if (Debug_w[29]) {
             My_char[0] = Debug_w[29] - 1;

@@ -22,11 +22,16 @@ Implementation notes:
 - in `VS_Result()` case 4, when `RLSession_IsActive()` and `Mode_Type == MODE_VERSUS`, the menu now auto-confirms both result cursors and advances to existing case 6.
 - case 6 still performs the real rematch transition through `Setup_VS_Mode(...)`, `G_No[1] = 12`, and `G_No[2] = 1`.
 - the existing RL rematch guard in case 6 still forces `MODE_VERSUS`, `Play_Mode = 1`, and reapplies `RLSession_ApplyVersusOperatorSetup()`.
+- live testing showed this reached character select but did not auto-confirm the same characters into the next match.
+- the RL rematch path now marks both players with `Sel_PL_Complete = -0x8000`, reusing the existing character-select fast path that keeps `My_char[]` and enqueues player loading.
+- when that fast path runs while RL is active in VS mode, `PL_Sel_1st()` immediately marks SA selection complete for the retained character, including the no-SA / `My_char == 0` paths.
 - this is the conservative auto-rematch path; direct skip from win scene to next match remains deferred until this proves stable.
 
 Validation:
-- `git diff --check -- src/sf33rd/Source/Game/menu/menu.c docs/plan-remote-rl-agent.md docs/remote-rl-agent-engineering-log.md` passed.
-- `tools/mister/build-game.sh --flavor telemetry` passed and produced `build/mister-telemetry-package`.
+- previous `git diff --check -- src/sf33rd/Source/Game/menu/menu.c docs/plan-remote-rl-agent.md docs/remote-rl-agent-engineering-log.md` passed before the character-select follow-up.
+- previous `tools/mister/build-game.sh --flavor telemetry` passed and produced `build/mister-telemetry-package` before the character-select follow-up.
+- `git diff --check -- src/sf33rd/Source/Game/menu/menu.c src/sf33rd/Source/Game/screen/sel_pl.c docs/plan-remote-rl-agent.md docs/remote-rl-agent-engineering-log.md` passed after the character-select follow-up.
+- `tools/mister/build-game.sh --flavor telemetry` passed after the character-select follow-up and produced `build/mister-telemetry-package`.
 
 Follow-up:
 - deploy the telemetry package and verify a full RL match can end and enter the next match without manual VS result input.

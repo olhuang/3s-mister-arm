@@ -3771,6 +3771,8 @@ void VS_Result(struct _TASK* task_ptr) {
             if (RLSession_IsActive()) {
                 Mode_Type = MODE_VERSUS;
                 Play_Mode = 1;
+                Sel_PL_Complete[0] = -0x8000;
+                Sel_PL_Complete[1] = -0x8000;
                 RLSession_ApplyVersusOperatorSetup();
             }
             break;

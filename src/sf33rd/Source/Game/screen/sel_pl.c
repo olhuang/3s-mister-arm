@@ -54,6 +54,7 @@
 
 void Switch_Work();
 void Sel_PL_Control();
+static void RLSession_AutoConfirmRematchSelect();
 void Sel_PL_Cont_1st();
 void Check_Use_Gill();
 void Sel_PL_Cont_2nd();
@@ -217,6 +218,7 @@ void Sel_PL_Control() {
     void (*Sel_PL_Cont_Tbl[4])() = { Sel_PL_Cont_1st, Sel_PL_Cont_2nd, Sel_PL_Cont_3rd, Sel_PL_Cont_4th };
     Setup_Select_Status();
     Sel_PL_Cont_Tbl[S_No[0]]();
+    RLSession_AutoConfirmRematchSelect();
     Face_Control();
     OBJ_Control();
     ID2 = 0;
@@ -224,6 +226,29 @@ void Sel_PL_Control() {
     ID2 = 1;
     Player_Select_Control();
     Check_Exit();
+}
+
+static void RLSession_AutoConfirmRematchSelect() {
+    if (!RLSession_IsActive() || Mode_Type != MODE_VERSUS) {
+        return;
+    }
+
+    for (s16 pl_id = 0; pl_id < 2; pl_id++) {
+        if (Sel_PL_Complete[pl_id] != -0x8000) {
+            continue;
+        }
+
+        Push_LDREQ_Queue_Player(pl_id, My_char[pl_id]);
+        Sel_PL_Complete[pl_id] = 1;
+        Sel_Arts_Complete[pl_id] = -1;
+        SP_No[pl_id][0] = 3;
+        SP_No[pl_id][1] = 4;
+        SP_No[pl_id][3] = 0;
+        Used_char[pl_id] = My_char[pl_id];
+    }
+
+    Setup_ID();
+    Setup_Select_Status();
 }
 
 void Sel_PL_Cont_1st() {

@@ -25,6 +25,10 @@ Implementation notes:
 - live testing showed this reached character select but did not auto-confirm the same characters into the next match.
 - the RL rematch path now marks both players with `Sel_PL_Complete = -0x8000`, reusing the existing character-select fast path that keeps `My_char[]` and enqueues player loading.
 - when that fast path runs while RL is active in VS mode, `PL_Sel_1st()` immediately marks SA selection complete for the retained character, including the no-SA / `My_char == 0` paths.
+- live testing still required each side to press LK twice, so the sentinel handling was moved earlier into `Sel_PL_Control()`:
+  - `RLSession_AutoConfirmRematchSelect()` consumes `Sel_PL_Complete = -0x8000`
+  - it enqueues player loading for the retained `My_char[]`
+  - it marks character and SA selection complete before normal select input handling can wait for manual attack confirms
 - this is the conservative auto-rematch path; direct skip from win scene to next match remains deferred until this proves stable.
 
 Validation:
@@ -32,6 +36,8 @@ Validation:
 - previous `tools/mister/build-game.sh --flavor telemetry` passed and produced `build/mister-telemetry-package` before the character-select follow-up.
 - `git diff --check -- src/sf33rd/Source/Game/menu/menu.c src/sf33rd/Source/Game/screen/sel_pl.c docs/plan-remote-rl-agent.md docs/remote-rl-agent-engineering-log.md` passed after the character-select follow-up.
 - `tools/mister/build-game.sh --flavor telemetry` passed after the character-select follow-up and produced `build/mister-telemetry-package`.
+- `git diff --check -- src/sf33rd/Source/Game/screen/sel_pl.c docs/plan-remote-rl-agent.md docs/remote-rl-agent-engineering-log.md` passed after moving sentinel handling into `Sel_PL_Control()`.
+- `tools/mister/build-game.sh --flavor telemetry` passed after moving sentinel handling into `Sel_PL_Control()` and produced `build/mister-telemetry-package`.
 
 Follow-up:
 - deploy the telemetry package and verify a full RL match can end and enter the next match without manual VS result input.

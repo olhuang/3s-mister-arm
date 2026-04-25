@@ -38,6 +38,11 @@ Follow-up:
 - watch for `top=.../<count>` and confirm low-count actions no longer dominate live behavior.
 - if policy remains unstable after this gate, the next code step is same-frame OBS payload support so inference no longer depends on the latest learner-imported transition bucket.
 
+Live follow-up:
+- Windows Python running from a `\\wsl.localhost\Ubuntu\...` model directory hit a transient `PermissionError` during atomic `current.json` replacement:
+  - `PermissionError: [WinError 5] Access is denied: '.current.<tmp>' -> 'current.json'`
+- `tools/rl_probe_server.py` now wraps actor-manifest `os.replace(...)` calls in a short retry loop so a temporary Windows/UNC file lock does not kill the learner thread.
+
 ## 2026-04-25: Split Tabular Reward From Episode Reward
 
 Milestone:

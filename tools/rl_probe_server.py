@@ -150,6 +150,17 @@ def _coerce_q_counts(value: object) -> dict[str, dict[str, int]]:
     return q_counts
 
 
+def replace_with_retries(src: str, dst: str, attempts: int = 8, delay_sec: float = 0.025) -> None:
+    for attempt in range(max(1, attempts)):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if attempt + 1 >= attempts:
+                raise
+            time.sleep(delay_sec * (attempt + 1))
+
+
 class ActorModelStore:
     def __init__(self, model_dir: str | None, initial_policy: str, initial_version: int) -> None:
         self._model_dir = model_dir
@@ -352,12 +363,12 @@ class ActorModelStore:
                 with os.fdopen(fd, "w", encoding="utf-8") as stream:
                     json.dump(payload, stream, sort_keys=True)
                     stream.write("\n")
-                os.replace(temp_path, version_path)
+                replace_with_retries(temp_path, version_path)
                 fd, temp_path = tempfile.mkstemp(prefix=".current.", suffix=".tmp", dir=self._model_dir)
                 with os.fdopen(fd, "w", encoding="utf-8") as stream:
                     json.dump(payload, stream, sort_keys=True)
                     stream.write("\n")
-                os.replace(temp_path, self._current_path)
+                replace_with_retries(temp_path, self._current_path)
                 self._current_mtime_ns = os.stat(self._current_path).st_mtime_ns
             finally:
                 if os.path.exists(temp_path):

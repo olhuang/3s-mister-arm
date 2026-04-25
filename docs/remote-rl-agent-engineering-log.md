@@ -2,6 +2,43 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-26: Add Fireball / Throw To Tabular Action Set
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / tabular action diversity and observability
+
+Files changed:
+- `tools/rl_probe_server.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- expand the first tabular learner action set beyond movement and HP so distance-specific behavior has clearer options to discover
+- expose ready greedy action distribution by distance bucket instead of relying only on the single global `top_ready` action
+
+Implementation notes:
+- the default tabular action set is now `forward`, `back`, `hp`, `forward-hp`, `fireball`, and `throw`.
+- tabular `throw` maps to the same single-frame wire used by the scripted throw probe: `forward + LP + LK`.
+- tabular `fireball` runs the existing QCF+LP scripted sequence under the shorter learner action name `fireball`.
+- transition rows map the final `forward + LP` execution wire back to `fireball`, allowing delayed HP-delta rewards to be credited to the high-level tabular action.
+- learner snapshots now count the best ready greedy action per state and print:
+  - `ready_actions=<action>:<state_count>,...`
+  - `ready_dx=close{...} mid{...} far{...}`
+- this summary uses the same `min_n` and positive-score gate as greedy tabular inference.
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py` passed.
+- synthetic Python smoke passed:
+  - `forward+LP` mapped to `fireball`
+  - `forward+LP+LK` mapped to `throw`
+  - ready summary produced `close{throw:1} mid{fireball:1} far{forward:1}` for a hand-built q-table
+- synthetic policy smoke passed: a tabular q-table whose best ready action was `fireball` emitted the expected QCF+LP sequence (`0x2`, `0x8`, `0x4`, `0x14`).
+- `git diff --check -- tools/rl_probe_server.py docs/plan-remote-rl-agent.md docs/remote-rl-agent-engineering-log.md` passed.
+
+Follow-up:
+- run live tabular and watch whether `ready_actions` / `ready_dx` diversify beyond `hp`.
+- expect early learning to be slower because the action space grew from four actions to six.
+
 ## 2026-04-26: Same-Frame OBS Spacing Payload For Tabular Inference
 
 Milestone:

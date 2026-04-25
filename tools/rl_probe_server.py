@@ -45,15 +45,20 @@ BTN_HP = 0x0040
 BTN_LK = 0x0100
 POLICY_CHOICES = ("forward", "back", "hp", "forward-hp", "ryu-fireball", "throw", "tatsu", "shoryuken", "tabular")
 
+TABULAR_ACTION_NAMES = ("forward", "back", "hp", "forward-hp", "fireball", "throw")
 TABULAR_ACTION_WIRES = {
     "neutral": RL_MOVE_NEUTRAL,
     "forward": RL_MOVE_FORWARD,
     "back": RL_MOVE_BACK,
     "hp": BTN_HP,
     "forward-hp": RL_MOVE_FORWARD | BTN_HP,
+    "throw": RL_MOVE_FORWARD | BTN_LP | BTN_LK,
 }
-TABULAR_ACTION_NAMES_BY_WIRE = {wire: name for name, wire in TABULAR_ACTION_WIRES.items()}
-TABULAR_DEFAULT_ACTIONS = ("forward", "back", "hp", "forward-hp")
+TABULAR_ACTION_NAMES_BY_WIRE = {
+    wire: name for name, wire in TABULAR_ACTION_WIRES.items() if name != "neutral"
+}
+TABULAR_ACTION_NAMES_BY_WIRE[RL_MOVE_FORWARD | BTN_LP] = "fireball"
+TABULAR_DEFAULT_ACTIONS = TABULAR_ACTION_NAMES
 
 
 @dataclass(frozen=True)
@@ -105,7 +110,7 @@ def _coerce_action_names(value: object) -> tuple[str, ...]:
     actions: list[str] = []
     for item in value:
         name = str(item)
-        if name in TABULAR_ACTION_WIRES and name not in actions:
+        if name in TABULAR_ACTION_NAMES and name not in actions:
             actions.append(name)
     return tuple(actions) or TABULAR_DEFAULT_ACTIONS
 
@@ -120,7 +125,7 @@ def _coerce_q_table(value: object) -> dict[str, dict[str, float]]:
         clean_scores: dict[str, float] = {}
         for action_name, score in scores.items():
             action = str(action_name)
-            if action not in TABULAR_ACTION_WIRES:
+            if action not in TABULAR_ACTION_NAMES:
                 continue
             try:
                 clean_scores[action] = float(score)
@@ -141,7 +146,7 @@ def _coerce_q_counts(value: object) -> dict[str, dict[str, int]]:
         clean_counts: dict[str, int] = {}
         for action_name, count in counts.items():
             action = str(action_name)
-            if action not in TABULAR_ACTION_WIRES:
+            if action not in TABULAR_ACTION_NAMES:
                 continue
             try:
                 clean_counts[action] = max(0, int(count))
@@ -487,6 +492,56 @@ def tabular_state_key(row: dict[str, object]) -> str:
     )
 
 
+def tabular_state_part(state_key: str, name: str) -> str:
+    prefix = f"{name}="
+    for part in state_key.split("|"):
+        if part.startswith(prefix):
+            return part[len(prefix) :]
+    return "unknown"
+
+
+def summarize_ready_actions(
+    q_table: dict[str, dict[str, float]],
+    q_counts: dict[str, dict[str, int]],
+    actions: tuple[str, ...],
+    min_action_count: int,
+) -> tuple[dict[str, int], dict[str, dict[str, int]]]:
+    min_count = max(1, min_action_count)
+    ready_actions = {action: 0 for action in actions}
+    ready_dx_actions = {bucket: {action: 0 for action in actions} for bucket in ("close", "mid", "far", "unknown")}
+    for state, scores in q_table.items():
+        best_action = ""
+        best_score = 0.0
+        counts = q_counts.get(state, {})
+        for action in actions:
+            score = float(scores.get(action, 0.0))
+            count = int(counts.get(action, 0))
+            if count < min_count or score <= 0.0:
+                continue
+            if not best_action or score > best_score:
+                best_action = action
+                best_score = score
+        if not best_action:
+            continue
+        dx = tabular_state_part(state, "dx")
+        if dx not in ready_dx_actions:
+            dx = "unknown"
+        ready_actions[best_action] += 1
+        ready_dx_actions[dx][best_action] += 1
+    return ready_actions, ready_dx_actions
+
+
+def format_action_counts(counts: dict[str, int]) -> str:
+    parts = [f"{action}:{count}" for action, count in counts.items() if count > 0]
+    return ",".join(parts) if parts else "none"
+
+
+def format_dx_action_counts(dx_counts: dict[str, dict[str, int]]) -> str:
+    return " ".join(
+        f"{bucket}{{{format_action_counts(dx_counts.get(bucket, {}))}}}" for bucket in ("close", "mid", "far")
+    )
+
+
 def parse_obs_spacing_payload(payload: bytes) -> dict[str, object] | None:
     if len(payload) != OBS_SPACING_PAYLOAD.size:
         return None
@@ -591,6 +646,7 @@ class TabularPolicyLearner:
             ready_score = 0.0
             ready_count = 0
             min_count = max(1, min_action_count)
+            ready_actions, ready_dx_actions = summarize_ready_actions(q_table, q_counts, self._actions, min_count)
             for state, scores in q_table.items():
                 if not scores:
                     continue
@@ -628,6 +684,8 @@ class TabularPolicyLearner:
                 "ready_action": ready_action,
                 "ready_score": ready_score,
                 "ready_count": ready_count,
+                "ready_actions": ready_actions,
+                "ready_dx_actions": ready_dx_actions,
             }
 
 
@@ -989,6 +1047,8 @@ class LearnerLogTailer(threading.Thread):
         top_ready = "none"
         if tabular["ready_state"]:
             top_ready = f"{tabular['ready_action']}:{float(tabular['ready_score']):.2f}/{int(tabular['ready_count'])}"
+        ready_actions = format_action_counts(tabular["ready_actions"] if isinstance(tabular["ready_actions"], dict) else {})
+        ready_dx = format_dx_action_counts(tabular["ready_dx_actions"] if isinstance(tabular["ready_dx_actions"], dict) else {})
         print(
             "LEARNER "
             f"rows={self._rows} done={self._done} run={self._latest_run_id} ep={self._latest_episode} "
@@ -1004,6 +1064,7 @@ class LearnerLogTailer(threading.Thread):
             f"tab_reward=hp-delta:{float(tabular['training_reward_total']):.1f} "
             f"eps={float(tabular['epsilon']):.2f} min_n={self._tabular_min_action_count} "
             f"top_raw={top_raw} top_ready={top_ready} "
+            f"ready_actions={ready_actions} ready_dx={ready_dx} "
             f"model_exec={self._latest_model_version_executed} "
             f"model_active={model_status.active.version} "
             f"model_pub={model_status.last_published_version} "
@@ -1169,11 +1230,20 @@ def fixed_action_wire(policy: str) -> int | None:
         "back": RL_MOVE_BACK,
         "hp": BTN_HP,
         "forward-hp": RL_MOVE_FORWARD | BTN_HP,
+        "throw": RL_MOVE_FORWARD | BTN_LP | BTN_LK,
     }.get(policy)
 
 
 def scripted_sequence(policy: str) -> tuple[int, ...] | None:
     scripts = {
+        "fireball": (
+            RL_MOVE_DOWN,
+            RL_MOVE_DOWN_FORWARD,
+            RL_MOVE_FORWARD,
+            RL_MOVE_FORWARD | BTN_LP,
+            RL_MOVE_NEUTRAL,
+            RL_MOVE_NEUTRAL,
+        ),
         "ryu-fireball": (
             RL_MOVE_DOWN,
             RL_MOVE_DOWN_FORWARD,
@@ -1246,11 +1316,11 @@ def scripted_action_wire(
     return action_wire
 
 
-def tabular_actor_action_wire(actor: ActorModel, state_key: str | None) -> int | None:
+def tabular_actor_action_name(actor: ActorModel, state_key: str | None) -> str | None:
     if actor.policy != "tabular" or not state_key:
         return None
     if random.random() < actor.epsilon:
-        return TABULAR_ACTION_WIRES[random.choice(actor.actions)]
+        return random.choice(actor.actions)
     scores = actor.q_table.get(state_key)
     if not scores:
         return None
@@ -1262,8 +1332,7 @@ def tabular_actor_action_wire(actor: ActorModel, state_key: str | None) -> int |
     ]
     if not eligible_actions:
         return None
-    best_action = max(eligible_actions, key=lambda action: (float(scores.get(action, 0.0)), action))
-    return TABULAR_ACTION_WIRES.get(best_action)
+    return max(eligible_actions, key=lambda action: (float(scores.get(action, 0.0)), action))
 
 
 def policy_action_wire(
@@ -1277,9 +1346,12 @@ def policy_action_wire(
     tabular_state_key_override: str | None = None,
 ) -> int:
     tabular_state = tabular_state_key_override if tabular_state_key_override else model_store.latest_tabular_state()
-    tabular_wire = tabular_actor_action_wire(actor, tabular_state)
-    if tabular_wire is not None:
-        return tabular_wire
+    tabular_action = tabular_actor_action_name(actor, tabular_state)
+    if tabular_action is not None:
+        fixed = fixed_action_wire(tabular_action)
+        if fixed is not None:
+            return fixed
+        return scripted_action_wire(tabular_action, policy_states, nonce, run_id, episode_id, repeat_delay_ms)
     fallback_policy = actor.fallback_policy if actor.policy == "tabular" else actor.policy
     return scripted_action_wire(fallback_policy, policy_states, nonce, run_id, episode_id, repeat_delay_ms)
 

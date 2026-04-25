@@ -2403,6 +2403,7 @@ Tasks:
 - [x] Add a minimum-sample confidence gate before tabular q-scores can drive greedy inference
 - [x] Avoid publishing duplicate tabular actor versions when no new learner updates arrived
 - [x] Add same-frame compact spacing payloads to UDP OBS packets for tabular inference
+- [x] Add `fireball` / `throw` to the first tabular action set and log ready action distributions by distance bucket
 - [ ] Expand observation features only with schema versioning
 - [ ] Expand reward features only after baseline reward is stable
 - [ ] Review whether `overlay_attack_event_finalized` / `overlay_attack_contact` / `overlay_attack_whiff` have consistent learner semantics across normals, specials, projectiles, throws, and multistage moves before promoting them beyond debug / auxiliary labels
@@ -2429,7 +2430,7 @@ Implementation notes:
 
 - `tools/rl_probe_server.py --policy tabular` now supports a minimal contextual-bandit learner loop:
   - transition rows are bucketed from the compact spacing snapshot (`obs_abs_dx`, `obs_abs_dy`, front/back edge distances, `obs_opp_in_front`)
-  - the learner maintains per-state action scores for explicit actions: `forward`, `back`, `hp`, and `forward-hp`
+  - the learner maintains per-state action scores for explicit actions: `forward`, `back`, `hp`, `forward-hp`, `fireball`, and `throw`
   - neutral rows are not learned as greedy actions in the first version, because delayed damage/recovery rewards can otherwise make "do nothing" look falsely good
   - tabular score updates use a learner-local reward of `delta_opp_hp - delta_self_hp`; transition `reward_accum` still keeps full episode reward including terminal win/loss bonuses for future sequential RL learners
   - when a neutral/recovery row carries nonzero HP-delta reward, the learner conservatively credits that reward to the most recent explicit action bucket
@@ -2438,6 +2439,7 @@ Implementation notes:
   - inference uses the active actor q-table only when a positive-scoring action has at least `min_action_count` updates for the latest learned bucket; otherwise it falls back to a scripted policy such as `hp`
   - `--tabular-min-action-count` defaults to `8` to keep sparse lucky hits from immediately becoming greedy actions
   - learner stats print `top_raw=<action>:<score>/<count>` for the highest q-score and `top_ready=<action>:<score>/<count>` for the highest action that satisfies the same minimum-count gate used by greedy inference
+  - learner stats also print `ready_actions=...` and `ready_dx=close{...} mid{...} far{...}` so live runs can show whether ready greedy choices are diversifying by spacing bucket
   - learner auto-publish skips duplicate tabular actor publication when `tab_updates` has not increased since the previous publish
   - UDP OBS packets now carry a schema-versioned compact spacing payload (`payload_version=1`) with the same bucket inputs used by transition replay: `obs_abs_dx`, `obs_abs_dy`, front/back edge distances, and `obs_opp_in_front`
   - Python-side tabular inference prefers the same-frame OBS spacing bucket and falls back to the latest replay-imported bucket only when an old header-only OBS packet or invalid payload is seen

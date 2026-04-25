@@ -29,6 +29,8 @@ Implementation notes:
   - `RLSession_AutoConfirmRematchSelect()` consumes `Sel_PL_Complete = -0x8000`
   - it enqueues player loading for the retained `My_char[]`
   - it marks character and SA selection complete before normal select input handling can wait for manual attack confirms
+- live testing then reached the handicap/stage and CPU-character-select path. Root cause: RL-vs-CPU select still looked like one human operator plus one CPU operator, so normal VS/CPU selection logic did not take the "both sides selected" exit path.
+- the auto-rematch select helper now temporarily marks both players as operators during the select exit path, sets an `rl_auto_rematch_select_ready` guard, and skips the handicap branch only for this guarded RL rematch path. `Game2_0()` still reapplies `RLSession_ApplyVersusOperatorSetup()` before battle, restoring the configured agent-vs-CPU operator split.
 - this is the conservative auto-rematch path; direct skip from win scene to next match remains deferred until this proves stable.
 
 Validation:
@@ -38,6 +40,8 @@ Validation:
 - `tools/mister/build-game.sh --flavor telemetry` passed after the character-select follow-up and produced `build/mister-telemetry-package`.
 - `git diff --check -- src/sf33rd/Source/Game/screen/sel_pl.c docs/plan-remote-rl-agent.md docs/remote-rl-agent-engineering-log.md` passed after moving sentinel handling into `Sel_PL_Control()`.
 - `tools/mister/build-game.sh --flavor telemetry` passed after moving sentinel handling into `Sel_PL_Control()` and produced `build/mister-telemetry-package`.
+- `git diff --check -- src/sf33rd/Source/Game/screen/sel_pl.c docs/plan-remote-rl-agent.md docs/remote-rl-agent-engineering-log.md` passed after adding the guarded both-operators select exit.
+- `tools/mister/build-game.sh --flavor telemetry` passed after adding the guarded both-operators select exit and produced `build/mister-telemetry-package`.
 
 Follow-up:
 - deploy the telemetry package and verify a full RL match can end and enter the next match without manual VS result input.

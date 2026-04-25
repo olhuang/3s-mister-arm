@@ -132,6 +132,7 @@ s32 Check_Boss(s16 PL_id);
 u8 Setup_Battle_Country();
 
 u8 SEL_PL_X;
+static bool rl_auto_rematch_select_ready;
 s16 Play_Type_1st;
 u16 Color7[2];
 u8 Decide_Stage;
@@ -239,12 +240,19 @@ static void RLSession_AutoConfirmRematchSelect() {
         }
 
         Push_LDREQ_Queue_Player(pl_id, My_char[pl_id]);
+        plw[pl_id].wu.operator = 1;
+        Operator_Status[pl_id] = 1;
         Sel_PL_Complete[pl_id] = 1;
         Sel_Arts_Complete[pl_id] = -1;
         SP_No[pl_id][0] = 3;
         SP_No[pl_id][1] = 4;
         SP_No[pl_id][3] = 0;
         Used_char[pl_id] = My_char[pl_id];
+    }
+
+    if (Sel_PL_Complete[0] == 1 && Sel_PL_Complete[1] == 1 && Sel_Arts_Complete[0] < 0 &&
+        Sel_Arts_Complete[1] < 0) {
+        rl_auto_rematch_select_ready = true;
     }
 
     Setup_ID();
@@ -1598,7 +1606,7 @@ void Exit_1st() {
     Order_Timer[8] = 1;
     Setup_Training_Difficulty();
 
-    if (Mode_Type == MODE_VERSUS && save_w[Present_Mode].Handicap != 0) {
+    if (Mode_Type == MODE_VERSUS && save_w[Present_Mode].Handicap != 0 && !rl_auto_rematch_select_ready) {
         Exit_No = 7;
     } else {
         Exit_No++;
@@ -1618,6 +1626,7 @@ void Exit_2nd() {
     S_No[1] = 0;
 
     if (Select_Status[0] == 3) {
+        rl_auto_rematch_select_ready = false;
         Exit_No = 3;
         Last_My_char[0] = My_char[0];
         Last_My_char[1] = My_char[1];

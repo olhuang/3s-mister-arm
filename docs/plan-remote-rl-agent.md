@@ -2400,6 +2400,7 @@ Tasks:
 - [ ] Tune `decision_interval_frames`
 - [ ] Tune `action_hold_frames`
 - [x] Bring up a minimal tabular learner loop that updates actor policy from transition replay rows
+- [x] Add a minimum-sample confidence gate before tabular q-scores can drive greedy inference
 - [ ] Expand observation features only with schema versioning
 - [ ] Expand reward features only after baseline reward is stable
 - [ ] Review whether `overlay_attack_event_finalized` / `overlay_attack_contact` / `overlay_attack_whiff` have consistent learner semantics across normals, specials, projectiles, throws, and multistage moves before promoting them beyond debug / auxiliary labels
@@ -2430,8 +2431,9 @@ Implementation notes:
   - tabular score updates use a learner-local reward of `delta_opp_hp - delta_self_hp`; transition `reward_accum` still keeps full episode reward including terminal win/loss bonuses for future sequential RL learners
   - when a neutral/recovery row carries nonzero HP-delta reward, the learner conservatively credits that reward to the most recent explicit action bucket
   - each imported replay row applies an exponential update toward that tabular HP-delta reward for the executed action
-  - learner-published `tabular` actor manifests include `actions`, `epsilon`, `fallback_policy`, `updated_rows`, and `q`
-  - inference uses the active actor q-table when a positive-scoring action exists for the latest learned bucket, otherwise it falls back to a scripted policy such as `hp`
+  - learner-published `tabular` actor manifests include `actions`, `epsilon`, `fallback_policy`, `updated_rows`, `q`, `q_counts`, and `min_action_count`
+  - inference uses the active actor q-table only when a positive-scoring action has at least `min_action_count` updates for the latest learned bucket; otherwise it falls back to a scripted policy such as `hp`
+  - `--tabular-min-action-count` defaults to `8` to keep sparse lucky hits from immediately becoming greedy actions
   - current limitation: the UDP OBS packet still carries only the header with `obs_len=0`, so Python-side tabular inference uses the latest spacing bucket imported from transition replay rather than an exact same-frame observation bucket
 - Live tabular testing exposed a VS rematch / second-match transition issue:
   - second-match action control could continue, but episode transition batches stopped arriving after a later round ended
@@ -2440,7 +2442,7 @@ Implementation notes:
   - C-side VS result rematch now forces `MODE_VERSUS` / `Play_Mode = 1` while RL is active before entering the character-select transition
 - Example first live tabular command:
   ```sh
-  python \\wsl.localhost\Ubuntu\home\olhua\src\3s-mister-arm\tools\rl_probe_server.py --host 0.0.0.0 --port 37330 --action-port 37331 --policy tabular --policy-repeat-delay-ms 3000 --model-version 0 --model-dir \\wsl.localhost\Ubuntu\home\olhua\src\3s-mister-arm\model\rl-model-tabular --transition-log \\wsl.localhost\Ubuntu\home\olhua\src\3s-mister-arm\logs\rl-transitions-tabular-4-3-3.ndjson --learner-auto-publish --learner-publish-policy tabular --learner-publish-interval-sec 10 --learner-warmup-rows 100 --learner-batch-size 32 --tabular-alpha 0.05 --tabular-epsilon 0.10 --tabular-fallback-policy hp
+  python \\wsl.localhost\Ubuntu\home\olhua\src\3s-mister-arm\tools\rl_probe_server.py --host 0.0.0.0 --port 37330 --action-port 37331 --policy tabular --policy-repeat-delay-ms 3000 --model-version 0 --model-dir \\wsl.localhost\Ubuntu\home\olhua\src\3s-mister-arm\model\rl-model-tabular --transition-log \\wsl.localhost\Ubuntu\home\olhua\src\3s-mister-arm\logs\rl-transitions-tabular-4-3-3.ndjson --learner-auto-publish --learner-publish-policy tabular --learner-publish-interval-sec 10 --learner-warmup-rows 100 --learner-batch-size 32 --tabular-alpha 0.05 --tabular-epsilon 0.10 --tabular-fallback-policy hp --tabular-min-action-count 8
   ```
 - transition NDJSON now carries `decision_delay_frames`, `decision_interval_frames`, and `action_hold_frames` so timing sweeps can be analyzed after the fact
 - learner stats now print both `timing=` and `fallback_pct=` to make early Milestone 6 comparison runs easier to interpret

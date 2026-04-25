@@ -2,6 +2,42 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-25: Add Tabular Minimum-Sample Gate
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / tabular policy stability
+
+Files changed:
+- `tools/rl_probe_server.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- prevent sparse lucky-hit tabular q-scores from immediately becoming greedy actions during live play
+- make early tabular learning more stable before adding same-frame OBS payloads or a neural learner
+
+Implementation notes:
+- `TabularPolicyLearner` now tracks per-state/action update counts alongside q-scores.
+- learner-published tabular actor manifests now include:
+  - `q_counts`
+  - `min_action_count`
+- `tabular_actor_action_wire()` only uses a positive q-score for greedy inference when that state/action count is at least `min_action_count`.
+- `--tabular-min-action-count` defaults to `8`.
+- epsilon exploration can still sample the configured tabular action set; the min-count gate applies to greedy q-table selection.
+- learner stats now print `min_n=<count>` and `top=<action>:<score>/<count>` so live logs show whether the top-scoring action is well-supported or sparse.
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py` passed.
+- synthetic actor smoke passed:
+  - with `hp=10.0/count=1`, `forward=1.0/count=8`, and `min_action_count=8`, tabular inference selected `forward` (`wire=4`)
+  - after raising `hp` to `count=8`, tabular inference selected `hp` (`wire=64`)
+- learner-only smoke against the current tabular transition log published a tabular actor with `min_action_count=8`, `metadata.tabular_min_action_count=8`, and `q_counts` in `current.json`.
+
+Follow-up:
+- rerun live tabular with `--tabular-min-action-count 8`.
+- watch for `top=.../<count>` and confirm low-count actions no longer dominate live behavior.
+- if policy remains unstable after this gate, the next code step is same-frame OBS payload support so inference no longer depends on the latest learner-imported transition bucket.
+
 ## 2026-04-25: Split Tabular Reward From Episode Reward
 
 Milestone:

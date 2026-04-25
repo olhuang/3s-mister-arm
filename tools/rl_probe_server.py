@@ -60,10 +60,12 @@ class ActorModel:
     policy: str
     source: str
     q_table: dict[str, dict[str, float]] = field(default_factory=dict)
+    q_counts: dict[str, dict[str, int]] = field(default_factory=dict)
     actions: tuple[str, ...] = TABULAR_DEFAULT_ACTIONS
     epsilon: float = 0.0
     fallback_policy: str = "hp"
     updated_rows: int = 0
+    min_action_count: int = 1
 
 
 @dataclass(frozen=True)
@@ -127,6 +129,27 @@ def _coerce_q_table(value: object) -> dict[str, dict[str, float]]:
     return q_table
 
 
+def _coerce_q_counts(value: object) -> dict[str, dict[str, int]]:
+    if not isinstance(value, dict):
+        return {}
+    q_counts: dict[str, dict[str, int]] = {}
+    for state_key, counts in value.items():
+        if not isinstance(counts, dict):
+            continue
+        clean_counts: dict[str, int] = {}
+        for action_name, count in counts.items():
+            action = str(action_name)
+            if action not in TABULAR_ACTION_WIRES:
+                continue
+            try:
+                clean_counts[action] = max(0, int(count))
+            except (TypeError, ValueError):
+                continue
+        if clean_counts:
+            q_counts[str(state_key)] = clean_counts
+    return q_counts
+
+
 class ActorModelStore:
     def __init__(self, model_dir: str | None, initial_policy: str, initial_version: int) -> None:
         self._model_dir = model_dir
@@ -166,6 +189,7 @@ class ActorModelStore:
         policy = str(data.get("policy", self._active.policy) or self._active.policy)
         source = str(data.get("source", "file") or "file")
         q_table = _coerce_q_table(data.get("q"))
+        q_counts = _coerce_q_counts(data.get("q_counts"))
         actions = _coerce_action_names(data.get("actions"))
         try:
             epsilon = float(data.get("epsilon", 0.0) or 0.0)
@@ -176,6 +200,10 @@ class ActorModelStore:
             updated_rows = int(data.get("updated_rows", 0) or 0)
         except (TypeError, ValueError):
             updated_rows = 0
+        try:
+            min_action_count = max(1, int(data.get("min_action_count", 1) or 1))
+        except (TypeError, ValueError):
+            min_action_count = 1
         with self._lock:
             if version >= self._active.version:
                 self._active = ActorModel(
@@ -183,10 +211,12 @@ class ActorModelStore:
                     policy,
                     source,
                     q_table=q_table,
+                    q_counts=q_counts,
                     actions=actions,
                     epsilon=epsilon,
                     fallback_policy=fallback_policy,
                     updated_rows=updated_rows,
+                    min_action_count=min_action_count,
                 )
                 self._known_policies[version] = policy
                 self._current_mtime_ns = stat.st_mtime_ns
@@ -254,10 +284,12 @@ class ActorModelStore:
         version: int | None = None,
         metadata: dict[str, object] | None = None,
         q_table: dict[str, dict[str, float]] | None = None,
+        q_counts: dict[str, dict[str, int]] | None = None,
         actions: tuple[str, ...] = TABULAR_DEFAULT_ACTIONS,
         epsilon: float = 0.0,
         fallback_policy: str = "hp",
         updated_rows: int = 0,
+        min_action_count: int = 1,
     ) -> ActorModel:
         if not self._model_dir or not self._current_path:
             with self._lock:
@@ -267,10 +299,12 @@ class ActorModelStore:
                     policy,
                     source,
                     q_table=q_table or {},
+                    q_counts=q_counts or {},
                     actions=actions,
                     epsilon=epsilon,
                     fallback_policy=fallback_policy,
                     updated_rows=updated_rows,
+                    min_action_count=max(1, min_action_count),
                 )
                 self._known_policies[self._active.version] = self._active.policy
                 self._last_published_version = self._active.version
@@ -286,10 +320,12 @@ class ActorModelStore:
                 policy,
                 source,
                 q_table=q_table or {},
+                q_counts=q_counts or {},
                 actions=actions,
                 epsilon=epsilon,
                 fallback_policy=fallback_policy,
                 updated_rows=updated_rows,
+                min_action_count=max(1, min_action_count),
             )
             payload = {
                 "version": model.version,
@@ -305,7 +341,9 @@ class ActorModelStore:
                         "epsilon": model.epsilon,
                         "fallback_policy": model.fallback_policy,
                         "q": model.q_table,
+                        "q_counts": model.q_counts,
                         "updated_rows": model.updated_rows,
+                        "min_action_count": model.min_action_count,
                     }
                 )
             version_path = os.path.join(self._model_dir, f"actor-v{model.version}.json")
@@ -428,6 +466,7 @@ class TabularPolicyLearner:
         self._fallback_policy = fallback_policy
         self._actions = actions
         self._q_table: dict[str, dict[str, float]] = {}
+        self._q_counts: dict[str, dict[str, int]] = {}
         self._updates = 0
         self._ignored_actions = 0
         self._delayed_reward_updates = 0
@@ -448,8 +487,10 @@ class TabularPolicyLearner:
                 if reward != 0.0 and self._last_explicit_action is not None:
                     state_key, delayed_action = self._last_explicit_action
                     scores = self._q_table.setdefault(state_key, {name: 0.0 for name in self._actions})
+                    counts = self._q_counts.setdefault(state_key, {name: 0 for name in self._actions})
                     old_score = float(scores.get(delayed_action, 0.0))
                     scores[delayed_action] = old_score + self._alpha * (reward - old_score)
+                    counts[delayed_action] = int(counts.get(delayed_action, 0)) + 1
                     self._updates += 1
                     self._delayed_reward_updates += 1
                     self._training_reward_total += reward
@@ -458,8 +499,10 @@ class TabularPolicyLearner:
         state_key = tabular_state_key(row)
         with self._lock:
             scores = self._q_table.setdefault(state_key, {name: 0.0 for name in self._actions})
+            counts = self._q_counts.setdefault(state_key, {name: 0 for name in self._actions})
             old_score = float(scores.get(action_name, 0.0))
             scores[action_name] = old_score + self._alpha * (reward - old_score)
+            counts[action_name] = int(counts.get(action_name, 0)) + 1
             self._updates += 1
             self._training_reward_total += reward
             self._last_explicit_action = (state_key, action_name)
@@ -468,9 +511,11 @@ class TabularPolicyLearner:
     def snapshot(self) -> dict[str, object]:
         with self._lock:
             q_table = {state: dict(scores) for state, scores in self._q_table.items()}
+            q_counts = {state: dict(counts) for state, counts in self._q_counts.items()}
             top_state = ""
             top_action = ""
             top_score = 0.0
+            top_count = 0
             for state, scores in q_table.items():
                 if not scores:
                     continue
@@ -479,8 +524,10 @@ class TabularPolicyLearner:
                     top_state = state
                     top_action = action
                     top_score = score
+                    top_count = int(q_counts.get(state, {}).get(action, 0))
             return {
                 "q_table": q_table,
+                "q_counts": q_counts,
                 "actions": self._actions,
                 "epsilon": self._epsilon,
                 "fallback_policy": self._fallback_policy,
@@ -492,6 +539,7 @@ class TabularPolicyLearner:
                 "top_state": top_state,
                 "top_action": top_action,
                 "top_score": top_score,
+                "top_count": top_count,
             }
 
 
@@ -758,6 +806,7 @@ class LearnerLogTailer(threading.Thread):
         tabular_alpha: float,
         tabular_epsilon: float,
         tabular_fallback_policy: str,
+        tabular_min_action_count: int,
     ) -> None:
         super().__init__(daemon=True)
         self._path = path
@@ -772,6 +821,7 @@ class LearnerLogTailer(threading.Thread):
         self._learner_publish_interval_ns = int(max(0.1, learner_publish_interval_sec) * 1_000_000_000)
         self._learner_publish_policy = learner_publish_policy
         self._tabular_learner = TabularPolicyLearner(tabular_alpha, tabular_epsilon, tabular_fallback_policy)
+        self._tabular_min_action_count = max(1, tabular_min_action_count)
         self._next_publish_ns = time.monotonic_ns() + self._learner_publish_interval_ns
         self._rows = 0
         self._imported_rows = 0
@@ -846,7 +896,7 @@ class LearnerLogTailer(threading.Thread):
         tabular = self._tabular_learner.snapshot()
         top = "none"
         if tabular["top_state"]:
-            top = f"{tabular['top_action']}:{float(tabular['top_score']):.2f}"
+            top = f"{tabular['top_action']}:{float(tabular['top_score']):.2f}/{int(tabular['top_count'])}"
         print(
             "LEARNER "
             f"rows={self._rows} done={self._done} run={self._latest_run_id} ep={self._latest_episode} "
@@ -860,7 +910,7 @@ class LearnerLogTailer(threading.Thread):
             f"tab_states={tabular['states']} tab_updates={tabular['updates']} "
             f"tab_ignored={tabular['ignored_actions']} tab_delayed={tabular['delayed_reward_updates']} "
             f"tab_reward=hp-delta:{float(tabular['training_reward_total']):.1f} "
-            f"eps={float(tabular['epsilon']):.2f} top={top} "
+            f"eps={float(tabular['epsilon']):.2f} min_n={self._tabular_min_action_count} top={top} "
             f"model_exec={self._latest_model_version_executed} "
             f"model_active={model_status.active.version} "
             f"model_pub={model_status.last_published_version} "
@@ -876,6 +926,7 @@ class LearnerLogTailer(threading.Thread):
                 policy = self._learner_publish_policy or active.policy
                 tabular_snapshot = self._tabular_learner.snapshot()
                 q_table = tabular_snapshot["q_table"] if policy == "tabular" else None
+                q_counts = tabular_snapshot["q_counts"] if policy == "tabular" else None
                 self._model_store.publish(
                     policy,
                     source="learner",
@@ -893,12 +944,15 @@ class LearnerLogTailer(threading.Thread):
                         "tabular_delayed_reward_updates": tabular_snapshot["delayed_reward_updates"],
                         "tabular_reward_source": "hp-delta",
                         "tabular_training_reward_total": tabular_snapshot["training_reward_total"],
+                        "tabular_min_action_count": self._tabular_min_action_count,
                     },
                     q_table=q_table if isinstance(q_table, dict) else None,
+                    q_counts=q_counts if isinstance(q_counts, dict) else None,
                     actions=tabular_snapshot["actions"] if isinstance(tabular_snapshot["actions"], tuple) else TABULAR_DEFAULT_ACTIONS,
                     epsilon=float(tabular_snapshot["epsilon"]),
                     fallback_policy=str(tabular_snapshot["fallback_policy"]),
                     updated_rows=int(tabular_snapshot["updates"]),
+                    min_action_count=self._tabular_min_action_count,
                 )
                 self._next_publish_ns = now_ns + self._learner_publish_interval_ns
 
@@ -1099,9 +1153,15 @@ def tabular_actor_action_wire(actor: ActorModel, state_key: str | None) -> int |
     scores = actor.q_table.get(state_key)
     if not scores:
         return None
-    best_action = max(actor.actions, key=lambda action: (float(scores.get(action, 0.0)), action))
-    if float(scores.get(best_action, 0.0)) <= 0.0:
+    counts = actor.q_counts.get(state_key, {})
+    eligible_actions = [
+        action
+        for action in actor.actions
+        if int(counts.get(action, 0)) >= actor.min_action_count and float(scores.get(action, 0.0)) > 0.0
+    ]
+    if not eligible_actions:
         return None
+    best_action = max(eligible_actions, key=lambda action: (float(scores.get(action, 0.0)), action))
     return TABULAR_ACTION_WIRES.get(best_action)
 
 
@@ -1152,6 +1212,7 @@ def serve(
     tabular_alpha: float,
     tabular_epsilon: float,
     tabular_fallback_policy: str,
+    tabular_min_action_count: int,
 ) -> None:
     inference_stats = InferenceStats()
     model_store = ActorModelStore(model_dir, policy, model_version)
@@ -1183,6 +1244,7 @@ def serve(
             tabular_alpha,
             tabular_epsilon,
             tabular_fallback_policy,
+            tabular_min_action_count,
         ).start()
     if learner_only:
         print("RL probe learner-only mode active", flush=True)
@@ -1446,6 +1508,12 @@ def main() -> None:
         default="hp",
         help="Scripted policy used when a tabular actor has no score for the current bucket",
     )
+    parser.add_argument(
+        "--tabular-min-action-count",
+        type=int,
+        default=8,
+        help="Minimum state/action update count before a tabular q-score can drive greedy inference",
+    )
     parser.add_argument("--verbose", action="store_true", help="Log every valid packet")
     args = parser.parse_args()
     transition_log = args.transition_log
@@ -1485,6 +1553,7 @@ def main() -> None:
         args.tabular_alpha,
         args.tabular_epsilon,
         args.tabular_fallback_policy,
+        args.tabular_min_action_count,
     )
 
 

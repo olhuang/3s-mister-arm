@@ -94,10 +94,17 @@ static u64 make_session_nonce(void) {
     return nonce ^ 0x33524C4147454E54ull;
 }
 
+static void reset_transition_queue(void) {
+    for (u32 i = 0; i < RL_NET_TRANSITION_QUEUE_CAP; i++) {
+        SDL_free(transition_queue[i].payload);
+        memset(&transition_queue[i], 0, sizeof(transition_queue[i]));
+    }
+}
+
 static void reset_runtime_state(void) {
     memset(&rl_net_state, 0, sizeof(rl_net_state));
     memset(probe_samples_us, 0, sizeof(probe_samples_us));
-    memset(transition_queue, 0, sizeof(transition_queue));
+    reset_transition_queue();
     SDL_zeroa(transition_remote_ip);
     transition_remote_port = 0;
     probe_sample_count = 0;
@@ -341,12 +348,20 @@ static int RLNet_TransitionSenderThreadMain(void* userdata) {
 
 static void RLNet_MaybeStartTransitionSenderThread(void) {
     RLNet_EnsureTransitionQueueMutex();
-    if (transition_queue_mutex == NULL || transition_sender_thread_running) {
+    if (transition_queue_mutex == NULL) {
         return;
     }
-    transition_sender_thread = SDL_CreateThread(RLNet_TransitionSenderThreadMain, "rl-transition-sender", NULL);
     if (transition_sender_thread != NULL) {
-        transition_sender_thread_running = true;
+        if (transition_sender_thread_running) {
+            return;
+        }
+        SDL_WaitThread(transition_sender_thread, NULL);
+        transition_sender_thread = NULL;
+    }
+    transition_sender_thread_running = true;
+    transition_sender_thread = SDL_CreateThread(RLNet_TransitionSenderThreadMain, "rl-transition-sender", NULL);
+    if (transition_sender_thread == NULL) {
+        transition_sender_thread_running = false;
     }
 }
 

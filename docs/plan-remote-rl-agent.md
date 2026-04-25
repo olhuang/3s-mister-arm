@@ -2414,6 +2414,7 @@ Tasks:
 - [ ] Add stage curriculum
 - [ ] Add automated reset loops
 - [x] Add a conservative RL auto-rematch path through the existing VS result rematch flow
+- [x] Fix long-run transition sender thread resource leak that could OOM-kill `3s-arm`
 - [ ] Evaluate higher control rate after latency p95/p99 is stable
 - [ ] Review derived movement/action-phase candidates from the Human-Fighter Observer Gap Review before changing the observation schema
 
@@ -2453,6 +2454,10 @@ Implementation notes:
   - this is the conservative "方案 A" path: it avoids manual result-screen input but still uses `Setup_VS_Mode()` and the normal rematch transition instead of hard-resetting battle state
   - auto-rematch marks the next character-select pass to retain the previous `My_char[]` values, enqueue player loading, auto-complete character/SA selection, and skip the handicap / CPU-select branch before manual confirms are required
   - faster direct match restart remains a later option after this path is validated
+- Long-run RL stability:
+  - MiSTer `dmesg` showed Linux OOM-killed `3s-arm` at roughly `445MB` RSS during a long RL run
+  - root cause candidate: each transition batch could create a short-lived sender thread, but completed thread handles were not joined before the pointer was overwritten by a later batch
+  - `src/rl/rl_net.c` now reaps completed transition sender threads before starting another one and frees any queued transition payloads during runtime reset
 - Example first live tabular command:
   ```sh
   python \\wsl.localhost\Ubuntu\home\olhua\src\3s-mister-arm\tools\rl_probe_server.py --host 0.0.0.0 --port 37330 --action-port 37331 --policy tabular --policy-repeat-delay-ms 3000 --model-version 0 --model-dir \\wsl.localhost\Ubuntu\home\olhua\src\3s-mister-arm\model\rl-model-tabular --transition-log \\wsl.localhost\Ubuntu\home\olhua\src\3s-mister-arm\logs\rl-transitions-tabular-4-3-3.ndjson --learner-auto-publish --learner-publish-policy tabular --learner-publish-interval-sec 10 --learner-warmup-rows 100 --learner-batch-size 32 --tabular-alpha 0.05 --tabular-epsilon 0.10 --tabular-fallback-policy hp --tabular-min-action-count 8

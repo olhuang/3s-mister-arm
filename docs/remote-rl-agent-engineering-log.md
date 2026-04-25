@@ -2,6 +2,46 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-26: Fix Long-Run RL Transition Sender Thread Leak
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / long-run stability
+
+Files changed:
+- `src/rl/rl_net.c`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- stop long RL runs from eventually exhausting MiSTer memory and getting `3s-arm` killed by the kernel OOM killer
+
+Investigation notes:
+- MiSTer `dmesg` showed:
+  - `Out of memory: Killed process ... (3s-arm)`
+  - `total-vm:459000kB`
+  - `anon-rss:445584kB`
+- the device itself had about `492MB` RAM, so this matched the observed "MiSTer side restarts" symptom: `3s-arm` was killed and the wrapper/front-end recovered.
+- the highest-risk RL path was transition batch sending:
+  - every episode can queue a transition batch
+  - `RLNet_MaybeStartTransitionSenderThread()` created a short-lived sender thread
+  - when the thread finished, it only set `transition_sender_thread_running = false`
+  - the next batch could overwrite `transition_sender_thread` with a new handle without joining the completed thread
+
+Implementation notes:
+- `RLNet_MaybeStartTransitionSenderThread()` now:
+  - returns while an existing sender is still running
+  - joins and clears a completed sender thread before creating another one
+  - sets `transition_sender_thread_running` before thread creation and clears it on create failure
+- runtime reset now frees any queued transition batch payloads before clearing the queue, covering the rare reset/create-failure path.
+
+Validation:
+- `git diff --check -- src/rl/rl_net.c docs/plan-remote-rl-agent.md docs/remote-rl-agent-engineering-log.md` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed and produced `build/mister-telemetry-package`.
+
+Follow-up:
+- deploy and run a long RL session while sampling `/proc/<3s-arm pid>/status`; `VmRSS` should stop climbing episode-by-episode.
+- watch MiSTer overlay transition counters `TBQ/TBS/TBA/TBF` to confirm transition batches still send after the thread lifecycle change.
+
 ## 2026-04-26: Add Fireball / Throw To Tabular Action Set
 
 Milestone:

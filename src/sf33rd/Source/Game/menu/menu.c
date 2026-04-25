@@ -3759,8 +3759,11 @@ void VS_Result(struct _TASK* task_ptr) {
             Setup_VS_Mode(task_ptr);
             G_No[1] = 12;
             G_No[2] = 1;
-            // We should leave Mode_Type be, no need to reset it
-            // Mode_Type = MODE_VERSUS;
+            if (RLSession_IsActive()) {
+                Mode_Type = MODE_VERSUS;
+                Play_Mode = 1;
+                RLSession_ApplyVersusOperatorSetup();
+            }
             break;
         }
 

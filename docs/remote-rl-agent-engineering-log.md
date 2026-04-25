@@ -2,6 +2,37 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-25: Preserve RL Transition Flush Across VS Rematch
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / live tabular smoke stability
+
+Files changed:
+- `src/rl/rl_session.c`
+- `src/sf33rd/Source/Game/menu/menu.c`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- fix the live observation where second-match action control continued but transition batches stopped arriving after a later round ended
+- keep RL active VS rematch flow from falling back into an arcade-style next-opponent route
+
+Implementation notes:
+- `RLSession_ApplyRemoteActionToBuffers()` now calls a reset guard before clearing remote runtime state.
+- The guard finalizes the current episode ledger before reset when the remote runtime is initialized and gameplay has left the override-eligible battle state.
+- This prevents `RLSession_ResetRemoteRuntime(false)` from clearing `transition_batch_payload` without first queueing it through `RLNet_QueueTransitionBatch(...)`.
+- VS result rematch now forces `Mode_Type = MODE_VERSUS` and `Play_Mode = 1` while RL is active before entering the character-select transition.
+- The VS rematch path also reapplies `RLSession_ApplyVersusOperatorSetup()` after forcing mode state, so the configured RL agent/operator split is restored for the next match.
+
+Validation:
+- `git diff --check -- src/rl/rl_session.c src/sf33rd/Source/Game/menu/menu.c` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed.
+
+Follow-up:
+- deploy the telemetry package to MiSTer before the next live test.
+- rerun `--policy tabular` and confirm that a second match can end a round and still append transition rows.
+- watch for duplicate `episode_end` rows; the transition importer dedupes by `(run_id, episode_id, decision_id)`, but duplicate terminal rows would still indicate C-side finalize sequencing needs one more guard.
+
 ## 2026-04-25: Minimal Tabular Learner Actor Loop
 
 Milestone:

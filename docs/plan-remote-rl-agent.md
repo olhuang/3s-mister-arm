@@ -2432,6 +2432,11 @@ Implementation notes:
   - learner-published `tabular` actor manifests include `actions`, `epsilon`, `fallback_policy`, `updated_rows`, and `q`
   - inference uses the active actor q-table when a positive-scoring action exists for the latest learned bucket, otherwise it falls back to a scripted policy such as `hp`
   - current limitation: the UDP OBS packet still carries only the header with `obs_len=0`, so Python-side tabular inference uses the latest spacing bucket imported from transition replay rather than an exact same-frame observation bucket
+- Live tabular testing exposed a VS rematch / second-match transition issue:
+  - second-match action control could continue, but episode transition batches stopped arriving after a later round ended
+  - observed second-match flow could resemble arcade next-opponent selection
+  - C-side fix now flushes the current episode ledger before remote runtime reset when gameplay leaves the override-eligible battle state
+  - C-side VS result rematch now forces `MODE_VERSUS` / `Play_Mode = 1` while RL is active before entering the character-select transition
 - Example first live tabular command:
   ```sh
   python \\wsl.localhost\Ubuntu\home\olhua\src\3s-mister-arm\tools\rl_probe_server.py --host 0.0.0.0 --port 37330 --action-port 37331 --policy tabular --policy-repeat-delay-ms 3000 --model-version 0 --model-dir \\wsl.localhost\Ubuntu\home\olhua\src\3s-mister-arm\model\rl-model-tabular --transition-log \\wsl.localhost\Ubuntu\home\olhua\src\3s-mister-arm\logs\rl-transitions-tabular-4-3-3.ndjson --learner-auto-publish --learner-publish-policy tabular --learner-publish-interval-sec 10 --learner-warmup-rows 100 --learner-batch-size 32 --tabular-alpha 0.05 --tabular-epsilon 0.10 --tabular-fallback-policy hp

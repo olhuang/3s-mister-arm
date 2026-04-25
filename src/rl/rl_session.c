@@ -916,6 +916,16 @@ static void RLSession_FinalizeEpisodeLedger(u32 episode_id) {
     active_ledger_entry = NULL;
 }
 
+static void RLSession_FinalizeRuntimeBeforeReset() {
+    if (!remote_runtime_initialized || remote_debug.run_id == 0 || remote_debug.episode_id == 0) {
+        return;
+    }
+    if (RLSession_IsRoundBattleActive() && Mode_Type == MODE_VERSUS && mpp_w.inGame && Play_Mode == 1) {
+        return;
+    }
+    RLSession_FinalizeEpisodeLedger(remote_debug.episode_id);
+}
+
 static bool RLSession_IsTerminalObservation(const RLObservationV1* obs) {
     return obs != NULL && obs->valid && !RLSession_IsRoundBattleActive();
 }
@@ -1348,6 +1358,7 @@ static void RLSession_ApplyExpectedFallbackIfDue() {
 
 static void RLSession_ApplyRemoteActionToBuffers() {
     if (!RLSession_CanOverrideGameplayInput()) {
+        RLSession_FinalizeRuntimeBeforeReset();
         RLSession_ResetRemoteRuntime(false);
         return;
     }

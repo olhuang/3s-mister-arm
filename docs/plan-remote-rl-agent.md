@@ -2411,6 +2411,7 @@ Tasks:
 - [ ] Add character curriculum
 - [ ] Add stage curriculum
 - [ ] Add automated reset loops
+- [x] Add a conservative RL auto-rematch path through the existing VS result rematch flow
 - [ ] Evaluate higher control rate after latency p95/p99 is stable
 - [ ] Review derived movement/action-phase candidates from the Human-Fighter Observer Gap Review before changing the observation schema
 
@@ -2443,6 +2444,9 @@ Implementation notes:
   - observed second-match flow could resemble arcade next-opponent selection
   - C-side fix now flushes the current episode ledger before remote runtime reset when gameplay leaves the override-eligible battle state
   - C-side VS result rematch now forces `MODE_VERSUS` / `Play_Mode = 1` while RL is active before entering the character-select transition
+- RL active VS result now auto-selects rematch through the existing VS result case-6 path:
+  - this is the conservative "方案 A" path: it avoids manual result-screen input but still uses `Setup_VS_Mode()` and the normal rematch transition instead of hard-resetting battle state
+  - faster direct match restart remains a later option after this path is validated
 - Example first live tabular command:
   ```sh
   python \\wsl.localhost\Ubuntu\home\olhua\src\3s-mister-arm\tools\rl_probe_server.py --host 0.0.0.0 --port 37330 --action-port 37331 --policy tabular --policy-repeat-delay-ms 3000 --model-version 0 --model-dir \\wsl.localhost\Ubuntu\home\olhua\src\3s-mister-arm\model\rl-model-tabular --transition-log \\wsl.localhost\Ubuntu\home\olhua\src\3s-mister-arm\logs\rl-transitions-tabular-4-3-3.ndjson --learner-auto-publish --learner-publish-policy tabular --learner-publish-interval-sec 10 --learner-warmup-rows 100 --learner-batch-size 32 --tabular-alpha 0.05 --tabular-epsilon 0.10 --tabular-fallback-policy hp --tabular-min-action-count 8

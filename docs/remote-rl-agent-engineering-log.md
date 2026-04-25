@@ -2,6 +2,36 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-25: Auto-Select VS Rematch For RL Sessions
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / automated reset loop
+
+Files changed:
+- `src/sf33rd/Source/Game/menu/menu.c`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- let RL sessions continue into another match without manual VS result input
+- use the safest available path first by reusing the existing VS result rematch branch instead of hard-resetting match state
+
+Implementation notes:
+- a checkpoint commit was created before this change:
+  - `9882679c checkpoint: before rl auto rematch`
+- in `VS_Result()` case 4, when `RLSession_IsActive()` and `Mode_Type == MODE_VERSUS`, the menu now auto-confirms both result cursors and advances to existing case 6.
+- case 6 still performs the real rematch transition through `Setup_VS_Mode(...)`, `G_No[1] = 12`, and `G_No[2] = 1`.
+- the existing RL rematch guard in case 6 still forces `MODE_VERSUS`, `Play_Mode = 1`, and reapplies `RLSession_ApplyVersusOperatorSetup()`.
+- this is the conservative auto-rematch path; direct skip from win scene to next match remains deferred until this proves stable.
+
+Validation:
+- `git diff --check -- src/sf33rd/Source/Game/menu/menu.c docs/plan-remote-rl-agent.md docs/remote-rl-agent-engineering-log.md` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed and produced `build/mister-telemetry-package`.
+
+Follow-up:
+- deploy the telemetry package and verify a full RL match can end and enter the next match without manual VS result input.
+- confirm transition batches keep arriving after the automatically rematched match ends.
+
 ## 2026-04-25: Split Tabular Raw Top From Ready Top
 
 Milestone:

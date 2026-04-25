@@ -3727,6 +3727,15 @@ void VS_Result(struct _TASK* task_ptr) {
         break;
 
     case 4:
+        if (RLSession_IsActive() && Mode_Type == MODE_VERSUS) {
+            Menu_Cursor_X[0] = 1;
+            Menu_Cursor_X[1] = 1;
+            task_ptr->r_no[2] = 6;
+            task_ptr->r_no[3] = 0;
+            task_ptr->timer = 15;
+            break;
+        }
+
         if (VS_Result_Select_Sub(task_ptr, 0) == 0) {
             VS_Result_Select_Sub(task_ptr, 1);
         }

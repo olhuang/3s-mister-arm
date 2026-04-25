@@ -2402,6 +2402,7 @@ Tasks:
 - [x] Bring up a minimal tabular learner loop that updates actor policy from transition replay rows
 - [x] Add a minimum-sample confidence gate before tabular q-scores can drive greedy inference
 - [x] Avoid publishing duplicate tabular actor versions when no new learner updates arrived
+- [x] Add same-frame compact spacing payloads to UDP OBS packets for tabular inference
 - [ ] Expand observation features only with schema versioning
 - [ ] Expand reward features only after baseline reward is stable
 - [ ] Review whether `overlay_attack_event_finalized` / `overlay_attack_contact` / `overlay_attack_whiff` have consistent learner semantics across normals, specials, projectiles, throws, and multistage moves before promoting them beyond debug / auxiliary labels
@@ -2438,7 +2439,9 @@ Implementation notes:
   - `--tabular-min-action-count` defaults to `8` to keep sparse lucky hits from immediately becoming greedy actions
   - learner stats print `top_raw=<action>:<score>/<count>` for the highest q-score and `top_ready=<action>:<score>/<count>` for the highest action that satisfies the same minimum-count gate used by greedy inference
   - learner auto-publish skips duplicate tabular actor publication when `tab_updates` has not increased since the previous publish
-  - current limitation: the UDP OBS packet still carries only the header with `obs_len=0`, so Python-side tabular inference uses the latest spacing bucket imported from transition replay rather than an exact same-frame observation bucket
+  - UDP OBS packets now carry a schema-versioned compact spacing payload (`payload_version=1`) with the same bucket inputs used by transition replay: `obs_abs_dx`, `obs_abs_dy`, front/back edge distances, and `obs_opp_in_front`
+  - Python-side tabular inference prefers the same-frame OBS spacing bucket and falls back to the latest replay-imported bucket only when an old header-only OBS packet or invalid payload is seen
+  - learner stats print `obs=<payload>/<header-only>` and `tab_state=obs:<n>/latest:<n>` so live runs can confirm whether tabular inference is using same-frame OBS state
 - Live tabular testing exposed a VS rematch / second-match transition issue:
   - second-match action control could continue, but episode transition batches stopped arriving after a later round ended
   - observed second-match flow could resemble arcade next-opponent selection

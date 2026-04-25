@@ -38,6 +38,7 @@ void RLNet_Shutdown(void);
 const RLNetState* RLNet_GetState(void);
 bool RLNet_IsHandshakeAccepted(void);
 bool RLNet_SendObservationHeader(const RLObsPacketHeader* header);
+bool RLNet_SendObservation(const RLObsPacketHeader* header, const void* payload, u16 payload_len);
 bool RLNet_QueueTransitionBatch(u64 run_id, u32 episode_id, const char* payload, u32 payload_len, u32 row_count);
 
 #endif

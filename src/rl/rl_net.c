@@ -592,13 +592,29 @@ bool RLNet_IsHandshakeAccepted(void) {
 }
 
 bool RLNet_SendObservationHeader(const RLObsPacketHeader* header) {
+    return RLNet_SendObservation(header, NULL, 0);
+}
+
+bool RLNet_SendObservation(const RLObsPacketHeader* header, const void* payload, u16 payload_len) {
     if (header == NULL || !rl_net_state.socket_open || !rl_net_state.handshake_accepted) {
+        return false;
+    }
+    if ((payload == NULL && payload_len != 0) || (payload != NULL && payload_len == 0)) {
         return false;
     }
 
 #if !defined(_WIN32)
-    const ssize_t sent = send(probe_socket, header, sizeof(*header), 0);
-    if (sent == (ssize_t)sizeof(*header)) {
+    u8 packet[sizeof(*header) + sizeof(RLObsSpacingPayloadV1)];
+    const size_t packet_len = sizeof(*header) + payload_len;
+    if (packet_len > sizeof(packet)) {
+        return false;
+    }
+    memcpy(packet, header, sizeof(*header));
+    if (payload_len > 0) {
+        memcpy(packet + sizeof(*header), payload, payload_len);
+    }
+    const ssize_t sent = send(probe_socket, packet, packet_len, 0);
+    if (sent == (ssize_t)packet_len) {
         rl_net_state.sent_count++;
         return true;
     }

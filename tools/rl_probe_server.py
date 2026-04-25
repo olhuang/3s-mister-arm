@@ -28,6 +28,8 @@ TYPE_OBS = 5
 PACKET = struct.Struct("<IHHQIIQ")
 ACTION_PACKET = struct.Struct("<IHHQQIIIHHI")
 OBS_HEADER = struct.Struct("<IHHQQIIIIHHI")
+OBS_SPACING_PAYLOAD = struct.Struct("<HHhhhhhhBB")
+OBS_SPACING_PAYLOAD_VERSION = 1
 TRANSITION_BATCH_HEADER = struct.Struct("<IHHQQIII")
 TRANSITION_BATCH_ACK = struct.Struct("<IHHQQII")
 
@@ -386,19 +388,44 @@ class InferenceStats:
     def __init__(self, capacity: int = 512) -> None:
         self._capacity = capacity
         self._samples_ns: list[int] = []
+        self._obs_payload = 0
+        self._obs_header_only = 0
+        self._tabular_obs_state = 0
+        self._tabular_latest_state = 0
         self._lock = threading.Lock()
 
-    def record(self, elapsed_ns: int) -> None:
+    def record(self, elapsed_ns: int, *, obs_payload: bool = False, tabular_state_source: str = "") -> None:
         with self._lock:
             self._samples_ns.append(elapsed_ns)
             if len(self._samples_ns) > self._capacity:
                 del self._samples_ns[: len(self._samples_ns) - self._capacity]
+            if obs_payload:
+                self._obs_payload += 1
+            else:
+                self._obs_header_only += 1
+            if tabular_state_source == "obs":
+                self._tabular_obs_state += 1
+            elif tabular_state_source == "latest":
+                self._tabular_latest_state += 1
 
     def snapshot(self) -> dict[str, float | int]:
         with self._lock:
             samples_ns = sorted(self._samples_ns)
+            obs_payload = self._obs_payload
+            obs_header_only = self._obs_header_only
+            tabular_obs_state = self._tabular_obs_state
+            tabular_latest_state = self._tabular_latest_state
         if not samples_ns:
-            return {"count": 0, "p50_us": 0.0, "p95_us": 0.0, "max_us": 0.0}
+            return {
+                "count": 0,
+                "p50_us": 0.0,
+                "p95_us": 0.0,
+                "max_us": 0.0,
+                "obs_payload": obs_payload,
+                "obs_header_only": obs_header_only,
+                "tabular_obs_state": tabular_obs_state,
+                "tabular_latest_state": tabular_latest_state,
+            }
         p50_ns = samples_ns[len(samples_ns) // 2]
         p95_ns = samples_ns[min(len(samples_ns) - 1, int(len(samples_ns) * 0.95))]
         max_ns = samples_ns[-1]
@@ -407,6 +434,10 @@ class InferenceStats:
             "p50_us": p50_ns / 1000.0,
             "p95_us": p95_ns / 1000.0,
             "max_us": max_ns / 1000.0,
+            "obs_payload": obs_payload,
+            "obs_header_only": obs_header_only,
+            "tabular_obs_state": tabular_obs_state,
+            "tabular_latest_state": tabular_latest_state,
         }
 
 
@@ -454,6 +485,34 @@ def tabular_state_key(row: dict[str, object]) -> str:
             f"opp_back={bucket_range(opp_back, (48, 160), ('corner', 'mid', 'open'))}",
         )
     )
+
+
+def parse_obs_spacing_payload(payload: bytes) -> dict[str, object] | None:
+    if len(payload) != OBS_SPACING_PAYLOAD.size:
+        return None
+    (
+        payload_version,
+        _reserved0,
+        obs_abs_dx,
+        obs_abs_dy,
+        obs_self_front_edge_dist,
+        obs_self_back_edge_dist,
+        obs_opp_front_edge_dist,
+        obs_opp_back_edge_dist,
+        obs_opp_in_front,
+        _reserved1,
+    ) = OBS_SPACING_PAYLOAD.unpack(payload)
+    if payload_version != OBS_SPACING_PAYLOAD_VERSION:
+        return None
+    return {
+        "obs_abs_dx": obs_abs_dx,
+        "obs_abs_dy": obs_abs_dy,
+        "obs_self_front_edge_dist": obs_self_front_edge_dist,
+        "obs_self_back_edge_dist": obs_self_back_edge_dist,
+        "obs_opp_front_edge_dist": obs_opp_front_edge_dist,
+        "obs_opp_back_edge_dist": obs_opp_back_edge_dist,
+        "obs_opp_in_front": obs_opp_in_front,
+    }
 
 
 def tabular_action_name(action_wire: int) -> str | None:
@@ -950,6 +1009,8 @@ class LearnerLogTailer(threading.Thread):
             f"model_pub={model_status.last_published_version} "
             f"model_load={model_status.last_loaded_version} "
             f"model_counts={model_status.publish_count}/{model_status.load_count} "
+            f"obs={inf['obs_payload']}/{inf['obs_header_only']} "
+            f"tab_state=obs:{inf['tabular_obs_state']}/latest:{inf['tabular_latest_state']} "
             f"inf={inf['count']}:{inf['p50_us']:.1f}/{inf['p95_us']:.1f}/{inf['max_us']:.1f}us",
             flush=True,
         )
@@ -1213,8 +1274,10 @@ def policy_action_wire(
     run_id: int,
     episode_id: int,
     repeat_delay_ms: int,
+    tabular_state_key_override: str | None = None,
 ) -> int:
-    tabular_wire = tabular_actor_action_wire(actor, model_store.latest_tabular_state())
+    tabular_state = tabular_state_key_override if tabular_state_key_override else model_store.latest_tabular_state()
+    tabular_wire = tabular_actor_action_wire(actor, tabular_state)
     if tabular_wire is not None:
         return tabular_wire
     fallback_policy = actor.fallback_policy if actor.policy == "tabular" else actor.policy
@@ -1299,7 +1362,7 @@ def serve(
 
     while True:
         data, addr = sock.recvfrom(2048)
-        if len(data) == OBS_HEADER.size:
+        if len(data) >= OBS_HEADER.size:
             inference_start_ns = time.perf_counter_ns()
             active_model = model_store.current()
             (
@@ -1315,11 +1378,31 @@ def serve(
                 obs_len,
                 action_hold_frames,
                 model_version_expected,
-            ) = OBS_HEADER.unpack(data)
+            ) = OBS_HEADER.unpack(data[: OBS_HEADER.size])
             if magic != MAGIC or version != PROTOCOL_VERSION or packet_type != TYPE_OBS:
                 if verbose:
                     print(f"{addr} bad_obs_header magic=0x{magic:08x} version={version} type={packet_type}")
                 continue
+            expected_len = OBS_HEADER.size + obs_len
+            if len(data) != expected_len:
+                if verbose:
+                    print(f"{addr} bad_obs_size size={len(data)} expected={expected_len} obs_len={obs_len}")
+                continue
+            obs_state_key: str | None = None
+            obs_payload_valid = False
+            if obs_len:
+                obs_row = parse_obs_spacing_payload(data[OBS_HEADER.size:])
+                if obs_row is not None:
+                    obs_payload_valid = True
+                    obs_state_key = tabular_state_key(obs_row)
+                elif verbose:
+                    print(f"{addr} bad_obs_payload obs_len={obs_len}")
+            tabular_state_source = ""
+            if active_model.policy == "tabular":
+                if obs_state_key is not None:
+                    tabular_state_source = "obs"
+                elif model_store.latest_tabular_state() is not None:
+                    tabular_state_source = "latest"
             if action_port is not None:
                 target_wire = policy_action_wire(
                     active_model,
@@ -1329,6 +1412,7 @@ def serve(
                     run_id,
                     episode_id,
                     policy_repeat_delay_ms,
+                    obs_state_key,
                 )
                 payload = make_action_packet(
                     nonce,
@@ -1360,9 +1444,14 @@ def serve(
                         f"run={run_id} ep={episode_id} dec={decision_id} obs={obs_frame} "
                         f"target={target_frame} hold={action_hold_frames}"
                         f" model_expected={model_version_expected} model={active_model.version}"
+                        f" obs_payload={'yes' if obs_payload_valid else 'no'} state={tabular_state_source or 'n/a'}"
                         f" wire=0x{target_wire:04x}"
                     )
-            inference_stats.record(time.perf_counter_ns() - inference_start_ns)
+            inference_stats.record(
+                time.perf_counter_ns() - inference_start_ns,
+                obs_payload=obs_payload_valid,
+                tabular_state_source=tabular_state_source,
+            )
             continue
         if len(data) != PACKET.size:
             if verbose:

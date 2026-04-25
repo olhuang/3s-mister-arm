@@ -645,24 +645,48 @@ static s16 RLSession_BackEdgeDistance(s8 facing_sign, s32 x) {
                            : RLSession_ClampNonnegativeDistanceS16(x - scrl);
 }
 
+static void RLSession_FillObsSpacingPayload(RLObsSpacingPayloadV1* payload, const RLObservationV1* obs) {
+    s16 self;
+    s16 opp;
+    s32 self_x;
+    s32 self_y;
+    s32 opp_x;
+    s32 opp_y;
+
+    if (payload == NULL || obs == NULL) {
+        return;
+    }
+    self = RLSession_AgentPlayerIndex();
+    opp = RLSession_OpponentPlayerIndex();
+    self_x = plw[self].wu.position_x;
+    self_y = plw[self].wu.position_y;
+    opp_x = plw[opp].wu.position_x;
+    opp_y = plw[opp].wu.position_y;
+    memset(payload, 0, sizeof(*payload));
+    payload->payload_version = 1;
+    payload->obs_abs_dx = RLSession_ClampDistanceS16(opp_x - self_x);
+    payload->obs_abs_dy = RLSession_ClampDistanceS16(opp_y - self_y);
+    payload->obs_self_front_edge_dist = RLSession_FrontEdgeDistance(obs->self_facing_sign, self_x);
+    payload->obs_self_back_edge_dist = RLSession_BackEdgeDistance(obs->self_facing_sign, self_x);
+    payload->obs_opp_front_edge_dist = RLSession_FrontEdgeDistance(obs->opp_facing_sign, opp_x);
+    payload->obs_opp_back_edge_dist = RLSession_BackEdgeDistance(obs->opp_facing_sign, opp_x);
+    payload->obs_opp_in_front = obs->opp_in_front ? 1u : 0u;
+}
+
 static void RLSession_CaptureObservationSpacing(RLDecisionLedgerEntry* entry, const RLObservationV1* obs) {
-    const s16 self = RLSession_AgentPlayerIndex();
-    const s16 opp = RLSession_OpponentPlayerIndex();
-    const s32 self_x = plw[self].wu.position_x;
-    const s32 self_y = plw[self].wu.position_y;
-    const s32 opp_x = plw[opp].wu.position_x;
-    const s32 opp_y = plw[opp].wu.position_y;
+    RLObsSpacingPayloadV1 payload;
 
     if (entry == NULL || obs == NULL) {
         return;
     }
-    entry->obs_abs_dx = RLSession_ClampDistanceS16(opp_x - self_x);
-    entry->obs_abs_dy = RLSession_ClampDistanceS16(opp_y - self_y);
-    entry->obs_self_front_edge_dist = RLSession_FrontEdgeDistance(obs->self_facing_sign, self_x);
-    entry->obs_self_back_edge_dist = RLSession_BackEdgeDistance(obs->self_facing_sign, self_x);
-    entry->obs_opp_front_edge_dist = RLSession_FrontEdgeDistance(obs->opp_facing_sign, opp_x);
-    entry->obs_opp_back_edge_dist = RLSession_BackEdgeDistance(obs->opp_facing_sign, opp_x);
-    entry->obs_opp_in_front = obs->opp_in_front;
+    RLSession_FillObsSpacingPayload(&payload, obs);
+    entry->obs_abs_dx = payload.obs_abs_dx;
+    entry->obs_abs_dy = payload.obs_abs_dy;
+    entry->obs_self_front_edge_dist = payload.obs_self_front_edge_dist;
+    entry->obs_self_back_edge_dist = payload.obs_self_back_edge_dist;
+    entry->obs_opp_front_edge_dist = payload.obs_opp_front_edge_dist;
+    entry->obs_opp_back_edge_dist = payload.obs_opp_back_edge_dist;
+    entry->obs_opp_in_front = payload.obs_opp_in_front;
 }
 
 static void RLSession_AccumulateDeltaS16(s16* accum, s32 delta) {
@@ -1480,6 +1504,7 @@ RLRemoteActionSubmitResult RLSession_SubmitRemoteAction(const RLActionPacket* pa
 
 bool RLSession_SendRemoteObservationIfDue() {
     RLObsPacketHeader header;
+    RLObsSpacingPayloadV1 payload;
     RLExpectedRemoteDecision* expected = NULL;
     RLDecisionLedgerEntry* ledger = NULL;
     const RLObservationV1* obs = RLObservation_GetLatest();
@@ -1502,6 +1527,7 @@ bool RLSession_SendRemoteObservationIfDue() {
     if (expected == NULL || ledger == NULL) {
         return false;
     }
+    RLSession_FillObsSpacingPayload(&payload, obs);
 
     memset(&header, 0, sizeof(header));
     header.magic = RL_PROTOCOL_MAGIC;
@@ -1513,11 +1539,11 @@ bool RLSession_SendRemoteObservationIfDue() {
     header.decision_id = remote_debug.next_decision_id++;
     header.obs_frame = remote_debug.frame_id;
     header.target_frame = remote_debug.frame_id + RLSession_DelayFrames();
-    header.obs_len = 0;
+    header.obs_len = sizeof(payload);
     header.action_hold_frames = RLSession_ActionHoldFrames();
     header.model_version_expected = remote_debug.model_version_current;
 
-    if (!RLNet_SendObservationHeader(&header)) {
+    if (!RLNet_SendObservation(&header, &payload, sizeof(payload))) {
         return false;
     }
 

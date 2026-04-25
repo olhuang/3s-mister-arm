@@ -101,6 +101,19 @@ typedef struct RL_PROTOCOL_PACKED RLObsPacketHeader {
     u32 model_version_expected;
 } RLObsPacketHeader;
 
+typedef struct RL_PROTOCOL_PACKED RLObsSpacingPayloadV1 {
+    u16 payload_version;
+    u16 reserved0;
+    s16 obs_abs_dx;
+    s16 obs_abs_dy;
+    s16 obs_self_front_edge_dist;
+    s16 obs_self_back_edge_dist;
+    s16 obs_opp_front_edge_dist;
+    s16 obs_opp_back_edge_dist;
+    u8 obs_opp_in_front;
+    u8 reserved1;
+} RLObsSpacingPayloadV1;
+
 typedef struct RL_PROTOCOL_PACKED RLTransitionBatchHeader {
     u32 magic;
     u16 version;

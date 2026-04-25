@@ -2,6 +2,42 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-26: Same-Frame OBS Spacing Payload For Tabular Inference
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / tabular state freshness
+
+Files changed:
+- `src/rl/rl_protocol.h`
+- `src/rl/rl_net.h`
+- `src/rl/rl_net.c`
+- `src/rl/rl_session.c`
+- `tools/rl_probe_server.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- remove the tabular actor's dependence on the latest transition-replay bucket when choosing a live action
+- make each UDP OBS request carry the current compact spacing snapshot so the PC chooses from the state seen on that OBS frame
+
+Implementation notes:
+- `RLObsSpacingPayloadV1` was added as a packed, schema-versioned payload behind the existing `RLObsPacketHeader.obs_len` field.
+- MiSTer OBS packets now send `header + RLObsSpacingPayloadV1` and set `obs_len = sizeof(payload)`.
+- the spacing payload uses the same fields already exported in transition rows: `obs_abs_dx`, `obs_abs_dy`, both players' front/back edge distances, and `obs_opp_in_front`.
+- `RLSession_CaptureObservationSpacing()` and OBS payload creation share the same fill helper so ledger rows and live OBS state stay aligned.
+- `tools/rl_probe_server.py` now parses the spacing payload, derives the same tabular bucket key, and passes that same-frame key to tabular inference.
+- header-only or invalid OBS payloads still fall back to `latest_tabular_state`, preserving compatibility with older MiSTer builds.
+- learner stats now include `obs=<payload>/<header-only>` and `tab_state=obs:<n>/latest:<n>` to make live state-source checks visible.
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py` passed.
+- synthetic Python smoke packed an OBS spacing payload, parsed it, derived a tabular key, and selected the expected `forward-hp` action through the min-count gate.
+- `git diff --check -- src/rl/rl_protocol.h src/rl/rl_net.h src/rl/rl_net.c src/rl/rl_session.c tools/rl_probe_server.py docs/plan-remote-rl-agent.md docs/remote-rl-agent-engineering-log.md` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed and produced `build/mister-telemetry-package`.
+
+Follow-up:
+- live-run tabular and confirm learner stats show `obs` payload counts rising and `tab_state=obs` dominating `latest`.
+
 ## 2026-04-25: Auto-Select VS Rematch For RL Sessions
 
 Milestone:

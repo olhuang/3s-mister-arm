@@ -29,6 +29,8 @@ static u8 prev_frame_caution[2];
 static u8 prev_frame_airborne[2];
 static u8 prev_frame_hit_stop[2];
 static u8 prev_frame_contact_state[2];
+static u8 prev_frame_throw_active[2];
+static u8 prev_frame_throw_caught[2];
 static bool prev_frame_valid;
 static Uint64 obs_build_total_ns;
 static Uint64 obs_build_max_ns;
@@ -184,6 +186,10 @@ void RLObservation_OnFrameEnd() {
     debug.opp_hp = clamp_s16_nonnegative(plw[opp].wu.vital_new);
     debug.self_hp_start = round_start_hp[self];
     debug.opp_hp_start = round_start_hp[opp];
+    obs.self_hp = debug.self_hp;
+    obs.opp_hp = debug.opp_hp;
+    obs.self_hp_start = debug.self_hp_start;
+    obs.opp_hp_start = debug.opp_hp_start;
     debug.self_super_stock = safe_super_store(self);
     debug.self_super_stock_max = safe_super_max(self);
     debug.opp_super_stock = safe_super_store(opp);
@@ -206,6 +212,8 @@ void RLObservation_OnFrameEnd() {
     obs.opp_hp_ratio = clamp_ratio(debug.opp_hp, debug.opp_hp_start);
     obs.self_airborne = (u8)(plw[self].wu.position_y != 0);
     obs.opp_airborne = (u8)(plw[opp].wu.position_y != 0);
+    obs.self_throw_active = (u8)(plw[self].tsukami_f != 0);
+    obs.opp_throw_caught = (u8)(plw[opp].tsukamare_f != 0);
     obs.self_super_stock = (u8)debug.self_super_stock;
     obs.self_super_stock_max = (u8)debug.self_super_stock_max;
     obs.opp_super_stock = (u8)debug.opp_super_stock;
@@ -264,6 +272,8 @@ void RLObservation_OnFrameEnd() {
         obs.opp_entered_hit_stop = (u8)(!prev_frame_hit_stop[opp] && obs.opp_hit_stop);
         obs.self_airborne_started = (u8)(!prev_frame_airborne[self] && obs.self_airborne);
         obs.opp_airborne_started = (u8)(!prev_frame_airborne[opp] && obs.opp_airborne);
+        obs.self_throw_started = (u8)(!prev_frame_throw_active[self] && obs.self_throw_active);
+        obs.opp_throw_caught_started = (u8)(!prev_frame_throw_caught[opp] && obs.opp_throw_caught);
         obs.self_attack_started = (u8)(prev_frame_current_attack[self] == 0 && obs.self_current_attack != 0);
         obs.opp_attack_started = (u8)(prev_frame_current_attack[opp] == 0 && obs.opp_current_attack != 0);
         obs.self_attack_code_changed =
@@ -320,6 +330,10 @@ void RLObservation_OnFrameEnd() {
     prev_frame_stun[opp] = debug.opp_stun;
     prev_frame_hit_stop[self] = obs.self_hit_stop;
     prev_frame_hit_stop[opp] = obs.opp_hit_stop;
+    prev_frame_throw_active[self] = obs.self_throw_active;
+    prev_frame_throw_active[opp] = (u8)(plw[opp].tsukami_f != 0);
+    prev_frame_throw_caught[self] = (u8)(plw[self].tsukamare_f != 0);
+    prev_frame_throw_caught[opp] = obs.opp_throw_caught;
     prev_frame_valid = true;
     RLSession_OnObservationFrameEnd(&latest_obs);
 
@@ -578,5 +592,13 @@ void RLObservation_FormatDebugOverlay(char* out, size_t out_size, const char* se
                             (unsigned int)remote->duplicate_drop_count,
                             (unsigned int)remote->target_mismatch_count,
                             (unsigned int)remote->fallback_count);
+        append_overlay_line(out,
+                            out_size,
+                            &used,
+                            "TBQ%u TBS%u TBA%u TBF%u",
+                            (unsigned int)net->transition_batch_queued_count,
+                            (unsigned int)net->transition_batch_sent_count,
+                            (unsigned int)net->transition_batch_ack_count,
+                            (unsigned int)net->transition_batch_failed_count);
     }
 }

@@ -2288,17 +2288,47 @@ Implementation notes:
 - Round episode changes now follow `Round_num` instead of `PL_Wins` / `VS_Win_Record` mutations, which avoids empty skipped episode ids during round-end bookkeeping.
 - The learner replay importer dedupes by `(run_id, episode_id, decision_id)`.
 - First Milestone 5 slice adds model-version plumbing without introducing training work on the critical action path.
+- Live learner/inference validation now shows publish-to-execute catch-up on real traffic:
+  - one sampled window still lagged with `model_exec=346` while `model_active=model_pub=model_load=351`
+  - a later sampled window reached `model_exec=352 model_active=352 model_pub=352 model_load=352` immediately after `MODEL published version=352`
+  - treat this as current evidence that actor hot-swap is reaching executed transitions, not just manifest publication
+- A later sample strengthened that conclusion further:
+  - `rows=4603 done=16 sources=neutral-fallback:1,remote:4602`
+  - `model_exec=375 model_active=376 model_pub=376 model_load=376`
+  - this suggests the execute path is typically trailing the active actor by only one version, which is acceptable for the current async publish flow
+- The current live run also showed `sources=neutral-fallback:1,remote:3083`, which suggests fallback execution is rare enough that Milestone 5 logs are mostly reflecting remote-policy decisions.
+- The old `inf=512:0/0/16000us` summary was traced to a probe-server telemetry bug:
+  - service-time samples were truncated to integer microseconds before aggregation
+  - short OBS-to-action work often collapsed to `0`
+  - the remaining visible outlier was often a scheduler-scale spike near `16000us`
+- The probe server now measures with `perf_counter_ns()` and aggregates raw nanosecond samples before printing fractional microseconds.
+- Do not mark `Action latency stays stable during training` complete until fresh live logs are collected with the fixed `inf=` telemetry.
+- Transition export has now been slimmed to reduce runtime cost:
+  - serialized transition rows no longer include duplicated character-name strings
+  - several debug-only span-state / attack-heuristic / running-count fields are no longer written into NDJSON or sent in episode batches
+  - finalized rows are now formatted once and reused for both local append and remote batch accumulation
+- The slimmer transition row now keeps a small learner-safe spacing snapshot from the decision observation:
+  - `obs_abs_dx`
+  - `obs_abs_dy`
+  - `obs_self_front_edge_dist`
+  - `obs_self_back_edge_dist`
+  - `obs_opp_front_edge_dist`
+  - `obs_opp_back_edge_dist`
+  - `obs_opp_in_front`
+- These spacing fields intentionally use raw absolute enemy distance plus facing-relative raw front/back edge distances first. Keep signed `dx/dy` and left/right corner ratios as debug/future-schema candidates unless later validation shows the learner needs the extra world-coordinate detail.
+- Treat the current slimmer transition row plus the compact spacing snapshot as the default learner/debug contract unless a later Milestone 6 or validation task explicitly needs one of the removed debug-only fields restored.
+- Deferred transition refinement: consider adding learner-safe SA state back into transition/replay rows after the RL loop is running reliably. The live observation already carries `self_super_stock`, `self_super_gauge_ratio`, `opp_super_stock`, and `opp_super_gauge_ratio`, but replay-only learner paths may need those fields, or compact `can_super` / `opp_can_super` derivatives, to learn when supers are available.
 - `RLObsPacketHeader.model_version_expected` now carries MiSTer's current executed model version to the remote service.
 - `RLActionPacket.model_version` is accepted from the remote service and stored with queued/executed actions.
 - Transition NDJSON now exports:
   - `model_version_expected`
   - `model_version_requested`
+  - `model_version_executed`
+- RL net overlay shows `MV` for the currently executed model version.
 - Current Windows-to-WSL live learner/inference launch command:
   ```sh
   python \\wsl.localhost\Ubuntu\home\olhua\src\3s-mister-arm\tools\rl_probe_server.py --host 0.0.0.0 --port 37330 --action-port 37331 --policy hp --policy-repeat-delay-ms 3000 --model-version 0 --model-dir \\wsl.localhost\Ubuntu\home\olhua\src\3s-mister-arm\model\rl-model-live --transition-log \\wsl.localhost\Ubuntu\home\olhua\src\3s-mister-arm\logs\rl-transitions-live.ndjson --learner-auto-publish --learner-publish-interval-sec 10 --learner-warmup-rows 100 --learner-batch-size 32
   ```
-  - `model_version_executed`
-- RL net overlay shows `MV` for the currently executed model version.
 - `tools/rl_probe_server.py --model-version N` stamps fixed/scripted policy action packets for bring-up.
 - `tools/rl_probe_server.py --model-dir DIR` stores versioned actor manifests as `actor-vN.json` and atomically hot-swaps `current.json`.
 - `tools/rl_probe_server.py --learner-auto-publish` publishes a new actor manifest from the learner/log-reader thread after replay warmup and at `--learner-publish-interval-sec`.
@@ -2345,6 +2375,12 @@ Implementation notes:
   - rows / done rows / latest episode
   - attack events/contact/whiff counts
   - latest executed model version
+  - latest timing config as `timing=k/decision_interval/action_hold`
+  - current timing bucket size / done count / reward-sign mix as `timing_rows=... timing_done=... timing_rew=...`
+  - current policy bucket size / done count / reward-sign mix as `policy_rows=... policy_done=... policy_rew=...`
+  - aggregate fallback percentage as `fallback_pct=...`
+  - current timing bucket fallback percentage as `timing_fallback_pct=...`
+  - current policy bucket fallback percentage as `policy_fallback_pct=...`
   - inference response latency samples as `count:p50/p95/maxus`
 - `tools/rl_probe_server.py --learner-tail-from-start` reads an existing transition log from the beginning; otherwise it tails only new rows.
 
@@ -2366,7 +2402,7 @@ Tasks:
 - [ ] Expand observation features only with schema versioning
 - [ ] Expand reward features only after baseline reward is stable
 - [ ] Review whether `overlay_attack_event_finalized` / `overlay_attack_contact` / `overlay_attack_whiff` have consistent learner semantics across normals, specials, projectiles, throws, and multistage moves before promoting them beyond debug / auxiliary labels
-- [ ] Run move-family validation passes with scripted policies such as `hp`, `throw`, `ryu-fireball`, `tatsu`, and `shoryuken`, then document which attack-outcome fields are trustworthy enough for learner use versus debug-only analysis
+- [x] Run move-family validation passes with scripted policies such as `hp`, `throw`, `ryu-fireball`, `tatsu`, and `shoryuken`, then document which attack-outcome fields are trustworthy enough for learner use versus debug-only analysis
 - [ ] Add a human-demo recording path so human-vs-CPU play can export learner-ingestible episodes for bootstrapping / behavior-cloning experiments
 - [ ] Define how replay-buffer import mixes human-demo episodes with remote-agent episodes, including metadata such as data source, control mode, and player side
 - [ ] Add character curriculum
@@ -2383,6 +2419,82 @@ Done when:
 - [ ] Any human-demo ingest path has documented replay-buffer metadata and a clear statement of whether it is used for bootstrapping, behavior cloning, evaluation, or mixed training
 - [ ] Curriculum changes are reflected in logs and reproducible configs
 - [ ] Policy strength improves without destabilizing the transport/control path
+
+Implementation notes:
+
+- transition NDJSON now carries `decision_delay_frames`, `decision_interval_frames`, and `action_hold_frames` so timing sweeps can be analyzed after the fact
+- learner stats now print both `timing=` and `fallback_pct=` to make early Milestone 6 comparison runs easier to interpret
+- learner stats now also keep a per-timing aggregate bucket so short timing sweeps can be compared inside one accumulated log stream
+- learner stats now also keep a per-policy aggregate bucket so scripted move-family validation can compare `hp`, `throw`, `ryu-fireball`, `tatsu`, and `shoryuken` inside one log stream
+- first short live timing sweep result:
+  - `4/3/3` produced `sources=remote:256`
+  - `fallback_pct=0.00`
+  - `timing_fallback_pct=0.00`
+  - `inf=512:95.7/189.2/939.6us`
+  - treat `4/3/3` as the current first candidate baseline for Milestone 6 follow-up comparisons
+- first fixed-policy move-family pass set is now complete:
+  - `ryu-fireball`: pass
+  - `shoryuken`: pass
+  - `throw`: provisional pass; the old `logs/rl-transitions-throw-4-3-3.ndjson` contains the expected aggregate `320` opponent HP damage (`20` estimated 16-HP throws) across two rounds, but the old ledger compressed it into only `5` positive damage rows because decision rows used round-start HP and terminal cleanup could be counted as combat damage
+  - `tatsu`: provisional pass
+  - `hp`: control-path pass, but not the cleanest apples-to-apples fixed-policy comparison because it used the live learner/model-dir path
+- throw follow-up fix:
+  - `src/rl/rl_session.c` now exports decision-start `start_*_hp` values from the current observation HP
+  - terminal non-battle observations now accumulate the final HP/stun/contact delta before episode finalization, so the last hit is not reduced to only the round-win bonus
+  - the rerun still showed a round-end HP sync row (`144 -> 3`, `delta_opp_hp=141`) while only six rows actually requested/executed the throw macro, so throw validation needs direct throw/caught labels instead of HP-only counting
+  - transition rows now include `self_throw_started`, `opp_throw_caught_started`, `self_throw_seen`, and `opp_throw_caught_seen`
+  - learner logs now print `throw=<self_started>/<opp_caught_started>`
+  - attack decisions now keep a 240-frame pending outcome window so late HP/contact/throw results can be credited back to the attack row instead of later neutral rows, including slower specials and projectile-style outcomes
+  - round win/loss bonus now also prefers the pending attack row, so final-hit damage and KO reward stay together when possible
+  - large `<=3 HP` round-conclusion sync jumps are only suppressed when no pending attack owner exists; otherwise they are retained for attack attribution
+  - requested attack outcome fields are back in transition rows, and learner logs now print `reqatk=<active>/<contact>/<whiff>`
+  - rerun a short `throw` pass before promoting throw outcome labels beyond debug / auxiliary status
+- current next sub-phase:
+  - fixed movement-prefix attack validation
+  - examples: walk-forward-then-attack, crouch-then-attack, short retreat-then-attack
+- do not promote all attack-outcome labels to learner-safe status yet; use the move-family pass set as evidence that the control path is stable enough to continue into prefix-based validation
+
+### Milestone 6 Move-Family Validation Table
+
+Use this table to keep early attack-validation passes stable and comparable.
+
+Common setup:
+
+- timing baseline: `4/3/3`
+- learner command: keep the same `tools/rl_probe_server.py` command except for `--policy ...`
+- reset / clear the transition log before each short policy pass when possible
+- use a fixed opponent behavior for the pass:
+  - preferred first pass: opponent steadily approaches the RL side
+  - avoid mixing free-form CPU behavior and scripted approach behavior in the same comparison set
+- keep run length short and repeatable:
+  - target at least `rows >= 256`
+  - target at least `done >= 2` when practical
+
+| Policy | Opponent setup | RL prefix before attack | Primary question | Expected healthy log signals | Pass if | Notes to record |
+| --- | --- | --- | --- | --- | --- | --- |
+| `hp` | steady approach | none | do simple grounded attacks enter the attack path and produce plausible contact/whiff labels? | `policy=hp`, `policy_fallback_pct=0.00`, nonzero `atk`, nonzero `overlay_attack_event_finalized` | punches visibly occur and the attack-event counters/logs move in plausible proportion | note whether whiffs dominate because of spacing |
+| `throw` | steady approach into close range | optional short walk-forward | do throw attempts produce distinct close-range behavior and avoid being mislabeled as generic strike contact? | `policy=throw`, low/no fallback, visible throw attempts, stable `policy_rows` growth | throw attempts are visibly present and logs do not look identical to plain `hp` behavior | record whether proximity is sufficient without extra walk-up prefix |
+| `ryu-fireball` | steady approach | none | do projectile-style attacks keep plausible whiff/contact behavior at range? | `policy=ryu-fireball`, low/no fallback, repeated attack events, lower close-contact expectation than `hp` | fireballs visibly occur and attack-event counters grow without requiring close-range contact | note whether contact labels undercount projectile hits |
+| `tatsu` | steady approach | none | do advancing specials preserve attack-event labeling while movement changes? | `policy=tatsu`, low/no fallback, repeated attack events, visible forward-moving special | tatsu visibly occurs and logs stay plausible despite movement during the move | note whether movement causes more whiff than expected |
+| `shoryuken` | steady approach | none | do vertical / rising specials still produce plausible attack-event labels? | `policy=shoryuken`, low/no fallback, repeated attack events, visible rising special | shoryuken visibly occurs and attack-event counters remain plausible | note whether contact is undercounted because of fast state changes |
+
+Per-pass record fields:
+
+- date / build / run id
+- policy
+- opponent setup
+- timing tuple
+- rows / done
+- `policy_rows`
+- `policy_rew`
+- `policy_fallback_pct`
+- `atk`
+- visible outcome summary:
+  - attack visibly occurs?
+  - contact observed?
+  - whiff observed?
+- pass / fail
+- follow-up notes
 
 ## Biggest Risks
 

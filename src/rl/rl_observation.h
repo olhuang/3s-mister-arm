@@ -8,6 +8,10 @@
 
 typedef struct RLObservationV1 {
     bool valid;
+    s16 self_hp;
+    s16 opp_hp;
+    s16 self_hp_start;
+    s16 opp_hp_start;
     f32 self_hp_ratio;
     f32 opp_hp_ratio;
     s16 delta_self_hp;
@@ -65,6 +69,10 @@ typedef struct RLObservationV1 {
     u8 opp_entered_contact_state;
     u8 self_entered_damage_state;
     u8 opp_entered_damage_state;
+    u8 self_throw_active;
+    u8 opp_throw_caught;
+    u8 self_throw_started;
+    u8 opp_throw_caught_started;
     u16 self_routine[3];
     u16 opp_routine[3];
     u8 round_num;

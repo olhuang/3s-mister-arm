@@ -23,6 +23,10 @@ typedef struct RLNetState {
     u32 action_rejected_nonce_count;
     u32 action_rejected_version_count;
     u32 action_rejected_malformed_count;
+    u32 transition_batch_queued_count;
+    u32 transition_batch_sent_count;
+    u32 transition_batch_ack_count;
+    u32 transition_batch_failed_count;
     RLSessionConfig config;
     RLProbeStats probe_stats;
 } RLNetState;
@@ -34,5 +38,6 @@ void RLNet_Shutdown(void);
 const RLNetState* RLNet_GetState(void);
 bool RLNet_IsHandshakeAccepted(void);
 bool RLNet_SendObservationHeader(const RLObsPacketHeader* header);
+bool RLNet_QueueTransitionBatch(u64 run_id, u32 episode_id, const char* payload, u32 payload_len, u32 row_count);
 
 #endif

@@ -60,12 +60,33 @@ class ActorModelStatus:
     load_count: int
 
 
+@dataclass
+class TimingBucketStats:
+    rows: int = 0
+    done: int = 0
+    reward_positive: int = 0
+    reward_negative: int = 0
+    reward_zero: int = 0
+    fallback_rows: int = 0
+
+
+@dataclass
+class PolicyBucketStats:
+    rows: int = 0
+    done: int = 0
+    reward_positive: int = 0
+    reward_negative: int = 0
+    reward_zero: int = 0
+    fallback_rows: int = 0
+
+
 class ActorModelStore:
     def __init__(self, model_dir: str | None, initial_policy: str, initial_version: int) -> None:
         self._model_dir = model_dir
         self._current_path = os.path.join(model_dir, "current.json") if model_dir else None
         self._lock = threading.Lock()
         self._active = ActorModel(max(0, initial_version), initial_policy, "cli")
+        self._known_policies: dict[int, str] = {self._active.version: self._active.policy}
         self._last_published_version = self._active.version
         self._last_loaded_version = self._active.version
         self._publish_count = 0
@@ -99,6 +120,7 @@ class ActorModelStore:
         with self._lock:
             if version >= self._active.version:
                 self._active = ActorModel(version, policy, source)
+                self._known_policies[version] = policy
                 self._current_mtime_ns = stat.st_mtime_ns
                 self._last_loaded_version = version
                 self._load_count += 1
@@ -116,6 +138,32 @@ class ActorModelStore:
                 publish_count=self._publish_count,
                 load_count=self._load_count,
             )
+
+    def policy_for_version(self, version: int) -> str:
+        if version <= 0:
+            with self._lock:
+                return self._known_policies.get(version, self._active.policy)
+        with self._lock:
+            known = self._known_policies.get(version)
+            if known is not None:
+                return known
+        if not self._model_dir:
+            with self._lock:
+                return self._active.policy
+        version_path = os.path.join(self._model_dir, f"actor-v{version}.json")
+        try:
+            with open(version_path, "r", encoding="utf-8") as stream:
+                data = json.load(stream)
+        except (OSError, json.JSONDecodeError):
+            with self._lock:
+                return self._active.policy
+        policy = str(data.get("policy", "") or "")
+        if not policy:
+            with self._lock:
+                return self._active.policy
+        with self._lock:
+            self._known_policies[version] = policy
+        return policy
 
     def _watch_current(self) -> None:
         interval_sec = max(0.05, self._refresh_interval_ns / 1_000_000_000)
@@ -161,6 +209,7 @@ class ActorModelStore:
                 if os.path.exists(temp_path):
                     os.unlink(temp_path)
             self._active = model
+            self._known_policies[model.version] = model.policy
             self._last_published_version = model.version
             self._last_loaded_version = model.version
             self._publish_count += 1
@@ -171,25 +220,28 @@ class ActorModelStore:
 class InferenceStats:
     def __init__(self, capacity: int = 512) -> None:
         self._capacity = capacity
-        self._samples_us: list[int] = []
+        self._samples_ns: list[int] = []
         self._lock = threading.Lock()
 
-    def record(self, elapsed_us: int) -> None:
+    def record(self, elapsed_ns: int) -> None:
         with self._lock:
-            self._samples_us.append(elapsed_us)
-            if len(self._samples_us) > self._capacity:
-                del self._samples_us[: len(self._samples_us) - self._capacity]
+            self._samples_ns.append(elapsed_ns)
+            if len(self._samples_ns) > self._capacity:
+                del self._samples_ns[: len(self._samples_ns) - self._capacity]
 
-    def snapshot(self) -> dict[str, int]:
+    def snapshot(self) -> dict[str, float | int]:
         with self._lock:
-            samples = sorted(self._samples_us)
-        if not samples:
-            return {"count": 0, "p50_us": 0, "p95_us": 0, "max_us": 0}
+            samples_ns = sorted(self._samples_ns)
+        if not samples_ns:
+            return {"count": 0, "p50_us": 0.0, "p95_us": 0.0, "max_us": 0.0}
+        p50_ns = samples_ns[len(samples_ns) // 2]
+        p95_ns = samples_ns[min(len(samples_ns) - 1, int(len(samples_ns) * 0.95))]
+        max_ns = samples_ns[-1]
         return {
-            "count": len(samples),
-            "p50_us": samples[len(samples) // 2],
-            "p95_us": samples[min(len(samples) - 1, int(len(samples) * 0.95))],
-            "max_us": samples[-1],
+            "count": len(samples_ns),
+            "p50_us": p50_ns / 1000.0,
+            "p95_us": p95_ns / 1000.0,
+            "max_us": max_ns / 1000.0,
         }
 
 
@@ -211,39 +263,36 @@ class ReplayBuffer:
 
 
 def learner_replay_row(row: dict[str, object]) -> dict[str, object] | None:
-    if row.get("was_executed") is not True:
-        return None
-
     return {
         "run_id": int(row.get("run_id", 0) or 0),
         "episode_id": int(row.get("episode_id", 0) or 0),
         "decision_id": int(row.get("decision_id", 0) or 0),
         "round_num": int(row.get("round_num", 0) or 0),
         "obs_frame": int(row.get("obs_frame", 0) or 0),
-        "target_frame": int(row.get("target_frame", 0) or 0),
         "agent_character_id": int(row.get("agent_character_id", 0) or 0),
         "opponent_character_id": int(row.get("opponent_character_id", 0) or 0),
         "executed_action_wire": int(row.get("executed_action_wire", 0) or 0),
-        "executed_move_intent": int(row.get("executed_move_intent", 0) or 0),
-        "executed_attack_bits": int(row.get("executed_attack_bits", 0) or 0),
-        "execution_source": str(row.get("execution_source", "none") or "none"),
         "delta_self_hp": int(row.get("delta_self_hp", 0) or 0),
         "delta_opp_hp": int(row.get("delta_opp_hp", 0) or 0),
         "delta_self_stun": int(row.get("delta_self_stun", 0) or 0),
         "delta_opp_stun": int(row.get("delta_opp_stun", 0) or 0),
-        "delta_self_x": int(row.get("delta_self_x", 0) or 0),
         "delta_self_y": int(row.get("delta_self_y", 0) or 0),
-        "delta_opp_x": int(row.get("delta_opp_x", 0) or 0),
         "delta_opp_y": int(row.get("delta_opp_y", 0) or 0),
         "delta_self_forward": int(row.get("delta_self_forward", 0) or 0),
         "delta_opp_forward": int(row.get("delta_opp_forward", 0) or 0),
-        "overlay_attack_event_finalized": int(row.get("overlay_attack_event_finalized", 0) or 0),
-        "overlay_attack_contact": int(row.get("overlay_attack_contact", 0) or 0),
-        "overlay_attack_whiff": int(row.get("overlay_attack_whiff", 0) or 0),
+        "obs_abs_dx": int(row.get("obs_abs_dx", 0) or 0),
+        "obs_abs_dy": int(row.get("obs_abs_dy", 0) or 0),
+        "obs_self_front_edge_dist": int(row.get("obs_self_front_edge_dist", 0) or 0),
+        "obs_self_back_edge_dist": int(row.get("obs_self_back_edge_dist", 0) or 0),
+        "obs_opp_front_edge_dist": int(row.get("obs_opp_front_edge_dist", 0) or 0),
+        "obs_opp_back_edge_dist": int(row.get("obs_opp_back_edge_dist", 0) or 0),
+        "obs_opp_in_front": int(row.get("obs_opp_in_front", 0) or 0),
+        "final_self_hp": int(row.get("final_self_hp", 0) or 0),
+        "final_opp_hp": int(row.get("final_opp_hp", 0) or 0),
+        "model_version_executed": int(row.get("model_version_executed", 0) or 0),
         "reward_accum": float(row.get("reward_accum", 0.0) or 0.0),
         "done": bool(row.get("done", False)),
         "terminal_reason": str(row.get("terminal_reason", "unknown") or "unknown"),
-        "model_version_executed": int(row.get("model_version_executed", 0) or 0),
     }
 
 
@@ -494,13 +543,11 @@ class LearnerLogTailer(threading.Thread):
         self._reward_negative = 0
         self._reward_zero = 0
         self._done = 0
-        self._attack_events = 0
-        self._attack_contacts = 0
-        self._attack_whiffs = 0
         self._latest_run_id = 0
         self._latest_episode = 0
         self._latest_model_version_executed = 0
-        self._execution_source_counts: collections.Counter[str] = collections.Counter()
+        self._latest_model_policy_executed = "unknown"
+        self._policy_buckets: dict[str, PolicyBucketStats] = {}
         self._seen_keys: set[tuple[int, int, int]] = set()
 
     def _consume_row(self, row: dict[str, object]) -> None:
@@ -510,14 +557,9 @@ class LearnerLogTailer(threading.Thread):
         self._latest_model_version_executed = int(
             row.get("model_version_executed", self._latest_model_version_executed) or 0
         )
+        self._latest_model_policy_executed = self._model_store.policy_for_version(self._latest_model_version_executed)
         if row.get("done") is True:
             self._done += 1
-        if row.get("overlay_attack_event_finalized") == 1:
-            self._attack_events += 1
-            if row.get("overlay_attack_contact") == 1:
-                self._attack_contacts += 1
-            if row.get("overlay_attack_whiff") == 1:
-                self._attack_whiffs += 1
 
         replay_key = (
             int(row.get("run_id", 0) or 0),
@@ -535,14 +577,21 @@ class LearnerLogTailer(threading.Thread):
         self._seen_keys.add(replay_key)
         self._replay.add(replay_row)
         self._imported_rows += 1
-        self._execution_source_counts.update([str(replay_row["execution_source"])])
+        policy_name = self._model_store.policy_for_version(int(replay_row["model_version_executed"]))
+        policy_bucket = self._policy_buckets.setdefault(policy_name, PolicyBucketStats())
+        policy_bucket.rows += 1
+        if bool(replay_row["done"]):
+            policy_bucket.done += 1
         reward = float(replay_row["reward_accum"])
         if reward > 0:
             self._reward_positive += 1
+            policy_bucket.reward_positive += 1
         elif reward < 0:
             self._reward_negative += 1
+            policy_bucket.reward_negative += 1
         else:
             self._reward_zero += 1
+            policy_bucket.reward_zero += 1
 
     def _print_stats(self) -> None:
         inf = self._inference_stats.snapshot()
@@ -553,14 +602,15 @@ class LearnerLogTailer(threading.Thread):
             batch = self._replay.sample(self._learner_batch_size)
             if batch:
                 batch_mean_reward = sum(float(item["reward_accum"]) for item in batch) / len(batch)
-        source_counts = ",".join(f"{key}:{value}" for key, value in sorted(self._execution_source_counts.items())) or "none:0"
+        policy_bucket = self._policy_buckets.get(self._latest_model_policy_executed, PolicyBucketStats())
         print(
             "LEARNER "
             f"rows={self._rows} done={self._done} run={self._latest_run_id} ep={self._latest_episode} "
-            f"atk={self._attack_events}/{self._attack_contacts}/{self._attack_whiffs} "
             f"replay={len(self._replay)}/{self._imported_rows} skipped={self._skipped_unexecuted} "
             f"rew=+{self._reward_positive}/-{self._reward_negative}/0{self._reward_zero} "
-            f"sources={source_counts} "
+            f"policy={self._latest_model_policy_executed} "
+            f"policy_rows={policy_bucket.rows} policy_done={policy_bucket.done} "
+            f"policy_rew=+{policy_bucket.reward_positive}/-{policy_bucket.reward_negative}/0{policy_bucket.reward_zero} "
             f"ready={'yes' if learner_ready else 'no'} warmup={self._learner_warmup_rows} "
             f"batch={self._learner_batch_size} batch_mean={batch_mean_reward:.3f} "
             f"model_exec={self._latest_model_version_executed} "
@@ -568,7 +618,7 @@ class LearnerLogTailer(threading.Thread):
             f"model_pub={model_status.last_published_version} "
             f"model_load={model_status.last_loaded_version} "
             f"model_counts={model_status.publish_count}/{model_status.load_count} "
-            f"inf={inf['count']}:{inf['p50_us']}/{inf['p95_us']}/{inf['max_us']}us",
+            f"inf={inf['count']}:{inf['p50_us']:.1f}/{inf['p95_us']:.1f}/{inf['max_us']:.1f}us",
             flush=True,
         )
         if self._learner_auto_publish and learner_ready:
@@ -851,7 +901,7 @@ def serve(
     while True:
         data, addr = sock.recvfrom(2048)
         if len(data) == OBS_HEADER.size:
-            inference_start_ns = time.monotonic_ns()
+            inference_start_ns = time.perf_counter_ns()
             active_model = model_store.current()
             (
                 magic,
@@ -912,7 +962,7 @@ def serve(
                         f" model_expected={model_version_expected} model={active_model.version}"
                         f" wire=0x{target_wire:04x}"
                     )
-            inference_stats.record((time.monotonic_ns() - inference_start_ns) // 1000)
+            inference_stats.record(time.perf_counter_ns() - inference_start_ns)
             continue
         if len(data) != PACKET.size:
             if verbose:

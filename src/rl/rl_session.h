@@ -45,6 +45,7 @@ typedef enum RLExecutionSource {
 
 typedef struct RLRemoteDebugState {
     u32 frame_id;
+    u64 run_id;
     u32 episode_id;
     u32 next_decision_id;
     u32 obs_sent_count;

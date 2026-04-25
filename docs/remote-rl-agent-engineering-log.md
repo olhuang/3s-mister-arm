@@ -2,6 +2,537 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-25: Add Compact Spacing State To Transition Replay Rows
+
+Milestone:
+- Milestone 5: Async learner and model hot-swap / Milestone 6 transition data quality
+
+Files changed:
+- `src/rl/rl_session.c`
+- `tools/rl_probe_server.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- keep the RL loop moving while restoring the minimum spacing state replay-only learners need to learn distance, approach, retreat, and corner pressure
+- avoid restoring the full debug-heavy observation schema into transition rows
+
+Implementation notes:
+- transition NDJSON now includes a decision-observation spacing snapshot:
+  - `obs_abs_dx`
+  - `obs_abs_dy`
+  - `obs_self_front_edge_dist`
+  - `obs_self_back_edge_dist`
+  - `obs_opp_front_edge_dist`
+  - `obs_opp_back_edge_dist`
+  - `obs_opp_in_front`
+- `obs_abs_dx` / `obs_abs_dy` are raw absolute enemy distances from the controlled agent's perspective.
+- front/back edge distances are derived from each fighter's facing sign:
+  - facing world-left: front is left edge, back is right edge
+  - facing world-right: front is right edge, back is left edge
+- `tools/rl_probe_server.py` learner replay import now preserves the same seven fields.
+- Signed `dx/dy` and left/right corner ratios remain useful debug/future-schema candidates, but are intentionally not part of the first learner-safe replay spacing subset.
+
+Validation:
+- `git diff --check -- src/rl/rl_session.c tools/rl_probe_server.py docs/plan-remote-rl-agent.md docs/remote-rl-agent-engineering-log.md` passed.
+- `python3 -m py_compile tools/rl_probe_server.py` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed.
+- local synthetic `learner_replay_row()` smoke passed for the new spacing fields: `obs_abs_dx`, `obs_abs_dy`, front/back edge distances, and `obs_opp_in_front`.
+- live `hp` policy validation produced `logs/rl-transitions-hp-4-3-3.ndjson` with:
+  - `rows=585`
+  - `done=2`
+  - `terminal_reason` counts: `decision_replaced=583`, `episode_end=2`
+  - `obs_frame` out-of-order count: `0`
+  - spacing fields present on all `585` rows
+  - `obs_abs_dx` range: `1..322`
+  - `obs_abs_dy` range: `0..125`
+  - `obs_opp_in_front`: `579` rows true, `6` rows false
+  - actions: `executed_action_wire=64` on `67` rows, neutral on `518` rows
+  - both episodes ended with `final_self_hp=160`, `final_opp_hp=0`, `total_reward=260`
+
+## 2026-04-25: Slim Transition Log From 55 to 22 Fields
+
+Milestone:
+- Milestone 5: Async learner and model hot-swap / transition data quality
+
+Files changed:
+- `src/rl/rl_session.c`
+- `tools/rl_probe_server.py`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- reduce transition log (rl-transitions.ndjson) to only the fields needed for RL training and debugging
+- remove 33 debug-only, redundant, and stale fields to shrink per-row JSON size and simplify the learner pipeline
+
+Kept fields (22):
+- Identity: `run_id`, `episode_id`, `decision_id`, `round_num`, `obs_frame`
+- Characters: `agent_character_id`, `opponent_character_id`
+- Action: `executed_action_wire`
+- Combat deltas: `delta_self_hp`, `delta_opp_hp`, `delta_self_stun`, `delta_opp_stun`
+- Movement deltas: `delta_self_y`, `delta_opp_y`, `delta_self_forward`, `delta_opp_forward`
+- Debug HP: `final_self_hp`, `final_opp_hp`
+- Model: `model_version_executed`
+- RL core: `reward_accum`, `done`, `terminal_reason`
+
+Removed fields (33):
+- Config constants repeated every row: `decision_delay_frames`, `decision_interval_frames`, `action_hold_frames`
+- Redundant HP snapshots: `start_self_hp`, `start_opp_hp` (recoverable from prior final_hp)
+- Redundant action decomposition: `executed_move_intent`, `executed_attack_bits`, `requested_action_wire`, `requested_move_intent`, `requested_attack_bits`
+- Now-constant flags: `was_executed` (always true), `execution_source` (always remote)
+- Debug timing: `target_frame`, `execution_frame_actual`
+- Redundant position: `delta_self_x`, `delta_opp_x` (forward already accounts for facing)
+- Debug model versions: `model_version_expected`, `model_version_requested`
+- Overlay attack counters: `overlay_attack_event_finalized`, `overlay_attack_contact`, `overlay_attack_whiff`
+- Requested attack tracking: `requested_attack_entered_state`, `requested_attack_made_contact`, `requested_attack_likely_whiffed`, `requested_attack_input_started`, `requested_attack_became_active`
+- Observed attack tracking: `observed_attack_state_started`, `observed_attack_code_changed`, `observed_attack_counter_started`
+- Throw tracking: `self_throw_started`, `opp_throw_caught_started`, `self_throw_seen`, `opp_throw_caught_seen`
+
+Python side changes:
+- `learner_replay_row()` whitelist updated to match 22-field schema
+- Removed `was_executed` guard (no longer needed, all exported rows are executed)
+- `LearnerLogTailer._consume_row()` simplified: removed timing bucket, execution source, overlay attack, and throw counter tracking
+- `LearnerLogTailer._print_stats()` simplified: removed timing/source/fallback reporting
+- Removed stale init member variables
+- Removed `RLSession_ExecutionSourceLabel()` (unused after removing execution_source from log)
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed.
+
+
+## 2026-04-25: Remove Pending Attack Outcome Mechanism — Fix Reward Routing And Log Ordering
+
+Milestone:
+- Milestone 5: Async learner and model hot-swap / transition correctness follow-up
+
+Files changed:
+- `src/rl/rl_session.c`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- fix severe reward routing bug where 98.5% of transition rows had `reward_accum = 0` because the `pending_attack_outcome` mechanism routed all HP damage reward to old decisions instead of the currently active one
+- fix out-of-order `obs_frame` in transition logs caused by delayed finalization of attack outcome entries
+
+Root cause analysis:
+- the earlier `pending_attack_outcome` mechanism (added 2026-04-25 "Attack Outcome Attribution Window Fix") held old decisions alive for 240 frames to capture delayed HP damage
+- this caused `combat_entry` to point at a stale ledger entry instead of the currently active one, so per-frame `opp_hp_delta - self_hp_delta` reward accumulated on old decisions
+- when the 240-frame window expired, the old entry was finalized with `terminal_reason = attack_outcome_window_closed` and written to the log after much newer entries, breaking obs_frame ordering
+- evidence from `logs/rl-transitions-throw-4-3-3.ndjson`:
+  - 1404 of 1426 rows (98.5%) had `reward_accum = 0`
+  - 21 `attack_outcome_window_closed` rows carried all the HP damage reward
+  - 25 out-of-order obs_frame entries, each delayed by exactly 237 frames (~4 seconds)
+  - 3 `episode_end` done=true rows per episode instead of one
+
+Implementation notes:
+- removed the `pending_attack_outcome` and `attack_outcome_deadline_frame` fields from `RLDecisionLedgerEntry`
+- removed `RLSession_FindPendingAttackOutcomeEntry()` and `RLSession_FinalizeExpiredAttackOutcomeEntries()` functions
+- removed terminal_reason `4` (`attack_outcome_window_closed`) — only `decision_replaced`, `episode_end`, and `not_terminal` remain
+- removed `RL_ATTACK_OUTCOME_WINDOW_FRAMES` constant
+- simplified `RLSession_SetActiveLedgerEntry()` — old entries are always finalized with `decision_replaced` instead of being held alive
+- simplified `RLSession_FinalizeEpisodeLedger()` — win/loss +100/-100 bonus goes directly to `active_ledger_entry`
+- simplified `RLSession_OnObservationFrameEnd()`:
+  - removed `pending_attack_entry`, `combat_entry`, and `has_combat_signal` variables
+  - all HP delta / stun / combat signals now accumulate on the currently active decision entry
+  - `RLSession_IsRoundEndHpSync()` guard simplified (no longer conditioned on pending_attack_entry)
+- overlay attack counters (ACC/AWC/AH) remain unchanged — they use their own independent `overlay_attack_event_pending` / `overlay_attack_event_seq` mechanism which is not affected
+
+Design rationale:
+- for RL training, the reward signal must be associated with the decision that was **active when damage occurred**, not the decision that initiated the attack
+- the RL learner will learn temporal credit assignment through its own value function / Q-network; the transition export should not try to do temporal credit assignment itself
+- this makes every `decision_replaced` row self-contained: it includes all HP/stun deltas and reward that occurred during that decision's active window
+
+Expected behavior after fix:
+- every `decision_replaced` row that spans a damage frame will have nonzero `delta_opp_hp` or `delta_self_hp`
+- `reward_accum` will be nonzero on the decision that was active when damage actually occurred
+- transition log will always be in `obs_frame` order (no delayed finalization)
+- each episode will have exactly one `done=true` row with `terminal_reason = episode_end`
+
+Validation:
+- `git diff --check -- src/rl/rl_session.c` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed.
+- Hardware validation needed: rerun throw policy match and confirm rewarded rows are spread across active decisions instead of concentrated on stale attack outcomes.
+
+
+## 2026-04-25: Attack Outcome Attribution Window Fix
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / transition correctness follow-up
+
+Files changed:
+- `src/rl/rl_session.c`
+- `tools/rl_probe_server.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- fix severe transition shrinkage where attacks visibly hit but HP reward and attack outcome labels were exported on later neutral rows or compressed into terminal rows
+
+Implementation notes:
+- attack decisions now keep a 240-frame pending outcome window after their input frame instead of being finalized immediately when the next decision becomes active
+- pending attack ledgers are protected from reuse until exported, so later hit/contact/throw observations can still be attributed back to the attack that caused them
+- combat deltas now prefer the most recent pending attack ledger within the outcome window; movement span data still accrues to the active decision row
+- terminal observations now compute and apply the final HP/stun/contact deltas before episode finalization instead of returning early
+- round win/loss bonus now also prefers the pending attack owner, so final-hit damage and KO reward land on the same attack decision when possible
+- round-end HP sync suppression is no longer allowed to drop large terminal damage if a pending attack owner exists
+- transition rows again export the requested attack outcome fields:
+  - `requested_attack_entered_state`
+  - `requested_attack_made_contact`
+  - `requested_attack_likely_whiffed`
+  - `requested_attack_input_started`
+  - `requested_attack_became_active`
+  - `observed_attack_state_started`
+  - `observed_attack_code_changed`
+  - `observed_attack_counter_started`
+- learner stats now print `reqatk=<active>/<contact>/<whiff>` alongside the existing overlay `atk=` summary
+
+Validation:
+- `git diff --check -- src/rl/rl_session.c tools/rl_probe_server.py` passed.
+- `python3 -m py_compile tools/rl_probe_server.py` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed.
+
+Follow-up:
+- rerun short `hp`, `throw`, and one special policy pass to confirm positive damage rows now align with attack-request rows instead of mostly neutral/terminal rows
+- tune `RL_ATTACK_OUTCOME_WINDOW_FRAMES` if 240 frames is too wide for overlapping multi-attack policies or still too short for slow projectile/special outcomes
+
+## 2026-04-25: Throw Transition HP Span Fix
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum
+
+Files changed:
+- `src/rl/rl_session.c`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- fix move-family review evidence where `logs/rl-transitions-throw-4-3-3.ndjson` won two rounds by throw but exported too few positive damage rows and misleading round-start HP spans
+
+Implementation notes:
+- reviewed `logs/rl-transitions-throw-4-3-3.ndjson`:
+  - `rows=256`
+  - `done=2`
+  - `total_delta_opp_hp=320`
+  - `estimated_16hp_successes=20`
+  - `row_positive_damage=5`
+- root cause:
+  - transition rows exported `start_self_hp` / `start_opp_hp` from round-start HP, not decision-start HP
+  - terminal non-battle observations could be accumulated as combat damage before episode finalization, compressing remaining round damage into the last decision row
+- `RLSession_SendRemoteObservationIfDue()` and the active-ledger fallback now initialize `start_*_hp` from the current observation HP
+- `RLSession_OnObservationFrameEnd()` now finalizes terminal observations before damage/reward accumulation, preserving the round-win bonus without treating post-round state cleanup as a huge hit
+
+Validation:
+- old-log review command:
+  ```sh
+  jq -s '{rows:length,done:map(select(.done==true))|length,row_positive_damage:map(select(.delta_opp_hp>0))|length,total_delta_opp_hp:(map(.delta_opp_hp)|add),estimated_16hp_successes:((map(.delta_opp_hp)|add)/16),positive_reward_rows:map(select(.reward_accum>0))|length,total_reward:(map(.reward_accum)|add),rounds:([.[].episode_id]|unique)}' logs/rl-transitions-throw-4-3-3.ndjson
+  ```
+- old-log review result:
+  ```text
+  rows=256 done=2 row_positive_damage=5 total_delta_opp_hp=320 estimated_16hp_successes=20 positive_reward_rows=5 total_reward=520 rounds=1,2
+  ```
+- `git diff --check -- src/rl/rl_session.c` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed.
+
+Follow-up after rerun:
+- a new `logs/rl-transitions-throw-4-3-3.ndjson` still showed the same shape:
+  - `rows=256`
+  - `done=2`
+  - `row_positive_damage=4`
+  - `total_delta_opp_hp=314`
+  - `estimated_16hp_successes=19.625`
+  - `positive_reward_rows=4`
+- the first fix worked for decision-local `start_opp_hp`, but did not remove the round-end HP sync:
+  - the last row in episode 2 exported `start_opp_hp=144`, `final_opp_hp=3`, `delta_opp_hp=141`, `reward_accum=241`
+- the log also showed only six rows where the throw macro was actually requested / executed, so "won two rounds by throw" cannot be validated by counting requested throw action rows alone
+- added direct throw/caught observation and transition fields:
+  - `self_throw_started`
+  - `opp_throw_caught_started`
+  - `self_throw_seen`
+  - `opp_throw_caught_seen`
+- learner stats now print `throw=<self_started>/<opp_caught_started>` for live validation
+- added a conservative round-end HP sync guard to keep large `<=3 HP` conclusion-state jumps out of per-decision HP reward while preserving the explicit round-win bonus
+
+Follow-up validation:
+- `python3 -m py_compile tools/rl_probe_server.py` passed.
+- `git diff --check -- src/rl/rl_session.c src/rl/rl_observation.c src/rl/rl_observation.h tools/rl_probe_server.py` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed.
+
+## 2026-04-24: First Scripted Move-Family Pass Set Completed
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum
+
+Files changed:
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- record the first full fixed-policy move-family pass set and establish the next phase after baseline timing stabilization
+
+Implementation notes:
+- the first fixed `4/3/3` move-family pass set was completed for:
+  - `hp`
+  - `throw`
+  - `ryu-fireball`
+  - `tatsu`
+  - `shoryuken`
+- all five runs kept the control path healthy:
+  - `sources=remote:...`
+  - `fallback_pct=0.00`
+  - `policy_fallback_pct=0.00`
+  - stable sub-millisecond `inf` telemetry
+- current first-pass interpretation:
+  - `ryu-fireball`: pass
+  - `shoryuken`: pass
+  - `throw`: provisional pass
+  - `tatsu`: provisional pass
+  - `hp`: control-path pass, but not a clean apples-to-apples comparison run because it used the live learner/model-dir path instead of the fixed-policy-only path
+- this is enough to move to the next sub-phase:
+  - fixed movement-prefix attack validation
+  - examples: walk-forward-then-attack, crouch-then-attack, short retreat-then-attack
+- this is not yet enough to promote all attack-outcome fields to learner-safe labels across every move family
+
+Validation:
+- representative learner logs:
+  ```text
+  LEARNER rows=256 done=2 run=5 ep=5 atk=6/6/0 replay=256/256 skipped=0 rew=+6/-0/0250 timing=4/3/3 timing_rows=256 timing_done=2 timing_rew=+6/-0/0250 policy=ryu-fireball policy_rows=256 policy_done=2 policy_rew=+6/-0/0250 sources=remote:256 fallback_pct=0.00 timing_fallback_pct=0.00 policy_fallback_pct=0.00 ready=yes warmup=100 batch=32 batch_mean=0.000 model_exec=0 model_active=0 model_pub=0 model_load=0 model_counts=0/0 inf=512:106.9/205.9/368.8us
+  LEARNER rows=256 done=2 run=9 ep=2 atk=6/6/0 replay=256/256 skipped=0 rew=+7/-0/0249 timing=4/3/3 timing_rows=256 timing_done=2 timing_rew=+7/-0/0249 policy=shoryuken policy_rows=256 policy_done=2 policy_rew=+7/-0/0249 sources=remote:256 fallback_pct=0.00 timing_fallback_pct=0.00 policy_fallback_pct=0.00 ready=yes warmup=100 batch=32 batch_mean=0.000 model_exec=0 model_active=0 model_pub=0 model_load=0 model_counts=0/0 inf=512:111.9/207.3/289.2us
+  LEARNER rows=256 done=2 run=8 ep=2 atk=4/3/1 replay=256/256 skipped=0 rew=+4/-0/0252 timing=4/3/3 timing_rows=256 timing_done=2 timing_rew=+4/-0/0252 policy=tatsu policy_rows=256 policy_done=2 policy_rew=+4/-0/0252 sources=remote:256 fallback_pct=0.00 timing_fallback_pct=0.00 policy_fallback_pct=0.00 ready=yes warmup=100 batch=32 batch_mean=8.125 model_exec=0 model_active=0 model_pub=0 model_load=0 model_counts=0/0 inf=512:118.8/204.6/278.3us
+  ```
+
+## 2026-04-24: Policy-Bucket Learner Summary For Move-Family Validation
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum
+
+Files changed:
+- `tools/rl_probe_server.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- prepare move-family validation by letting one learner log report per-policy replay aggregates, not just overall or per-timing aggregates
+
+Implementation notes:
+- `ActorModelStore` now keeps a lightweight version-to-policy lookup using published actor manifests
+- learner log tailing now maintains a small aggregate bucket per executed policy
+- each `LEARNER` line now reports for the latest executed policy:
+  - `policy=...`
+  - `policy_rows=...`
+  - `policy_done=...`
+  - `policy_rew=+/-/0`
+  - `policy_fallback_pct=...`
+- this is aimed at upcoming scripted move-family passes with policies such as:
+  - `hp`
+  - `throw`
+  - `ryu-fireball`
+  - `tatsu`
+  - `shoryuken`
+- the current implementation assumes actor manifests remain available in `--model-dir` for executed model versions that appear in transition rows
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py` pending.
+- `git diff --check -- tools/rl_probe_server.py docs/plan-remote-rl-agent.md docs/remote-rl-agent-engineering-log.md` pending.
+
+## 2026-04-24: First Clean 4/3/3 Timing Candidate
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum
+
+Files changed:
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- record the first short live timing sweep where `4/3/3` produced clean remote-only execution with zero fallback in the learner log
+
+Implementation notes:
+- live learner logs for `timing=4/3/3` showed:
+  - `sources=remote:128`, then `sources=remote:256`
+  - `fallback_pct=0.00`
+  - `timing_fallback_pct=0.00`
+  - `inf=512:95.7/189.2/939.6us` by the second sampled window
+- the same run also showed stable publish-to-execute lag:
+  - `model_exec=596 model_active=599 model_pub=599`
+  - later `model_exec=599 model_active=600 model_pub=600`
+- this is strong early evidence that `4/3/3` is a viable Milestone 6 timing candidate from a transport/control-path perspective
+- this does not yet prove stronger gameplay outcomes than `4/4/4`; the sample is still small:
+  - `rows=256`
+  - `done=2`
+  - `rew=+2/-6/0248`
+
+Validation:
+- Live log evidence:
+  ```text
+  LEARNER rows=128 done=1 run=5 ep=2 atk=7/1/6 replay=128/128 skipped=0 rew=+0/-1/0127 timing=4/3/3 timing_rows=128 timing_done=1 timing_rew=+0/-1/0127 sources=remote:128 fallback_pct=0.00 timing_fallback_pct=0.00 ready=yes warmup=100 batch=32 batch_mean=0.000 model_exec=596 model_active=599 model_pub=599 model_load=599 model_counts=3/1 inf=512:109.5/201.2/300.1us
+  TRANSITIONS batch run=5 ep=3 rows=128 bytes=123703 from=192.168.0.133:40378
+  LEARNER rows=256 done=2 run=5 ep=3 atk=10/4/6 replay=256/256 skipped=0 rew=+2/-6/0248 timing=4/3/3 timing_rows=256 timing_done=2 timing_rew=+2/-6/0248 sources=remote:256 fallback_pct=0.00 timing_fallback_pct=0.00 ready=yes warmup=100 batch=32 batch_mean=0.000 model_exec=599 model_active=600 model_pub=600 model_load=600 model_counts=4/1 inf=512:95.7/189.2/939.6us
+  ```
+
+## 2026-04-24: Per-Timing Learner Summary For Sweep Comparison
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum
+
+Files changed:
+- `tools/rl_probe_server.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- make timing sweeps easier to compare when one learner log contains rows from multiple timing configurations
+
+Implementation notes:
+- learner log tailing now keeps a small aggregate bucket per timing tuple:
+  - `(decision_delay_frames, decision_interval_frames, action_hold_frames)`
+- each `LEARNER` line now reports for the latest timing tuple:
+  - `timing_rows`
+  - `timing_done`
+  - `timing_rew=+/-/0`
+  - `timing_fallback_pct`
+- this is meant to support Milestone 6 timing sweeps without forcing a separate transition log file for every short experiment
+- the overall `rows`, `rew`, `sources`, and `fallback_pct` fields still describe the full imported replay set
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py` pending.
+- `git diff --check -- tools/rl_probe_server.py docs/plan-remote-rl-agent.md docs/remote-rl-agent-engineering-log.md` pending.
+
+## 2026-04-24: Milestone 6 Timing-Tuning Telemetry Bring-Up
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum
+
+Files changed:
+- `src/rl/rl_session.c`
+- `tools/rl_probe_server.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- make timing sweeps for `k / decision_interval_frames / action_hold_frames` traceable in transition data and learner logs before changing policy cadence itself
+
+Implementation notes:
+- transition NDJSON / episode-batch export now includes:
+  - `decision_delay_frames`
+  - `decision_interval_frames`
+  - `action_hold_frames`
+- `tools/rl_probe_server.py` now carries those timing fields into the learner-safe replay row metadata
+- learner stats now print:
+  - `timing=<k>/<decision_interval>/<action_hold>`
+  - `fallback_pct=<percent>`
+- this should make it much easier to compare runs after config changes without relying on separate handwritten notes
+- this change does not yet alter runtime timing behavior; it only improves observability for the next Milestone 6 tuning passes
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py` passed.
+- `git diff --check -- src/rl/rl_session.c tools/rl_probe_server.py docs/plan-remote-rl-agent.md docs/remote-rl-agent-engineering-log.md` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed.
+
+## 2026-04-24: Transition Export Slimming For Runtime Smoothness
+
+Milestone:
+- Milestone 5: Async learner and model hot-swap / Milestone 6 prep
+
+Files changed:
+- `src/rl/rl_session.c`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- reduce live gameplay stutter by shrinking per-decision transition export work before attempting bigger control-timing changes
+
+Implementation notes:
+- `RLSession_FormatTransitionLogLine(...)` now exports a smaller learner-safe / validation-safe subset instead of the previous debug-heavy row
+- removed from the serialized NDJSON / transition-batch payload:
+  - character-name strings duplicated by character IDs
+  - span-state booleans such as airborne / hit-stop / contact / damage-state flags
+  - older requested/observed attack heuristics that the learner path does not currently ingest
+  - overlay attack active/contact/whiff running counts
+  - several attack-start / attack-code / airborne-start booleans that were mainly useful for early bring-up forensics
+- kept in the serialized output:
+  - run / episode / decision ids
+  - frame ids
+  - start/final HP
+  - character IDs
+  - model-version expected/requested/executed
+  - requested / executed action wires and decoded executed action fields
+  - compact HP / stun / position / facing-relative deltas
+  - overlay attack finalized/contact/whiff flags
+  - execution source, reward, done, and terminal reason
+- `RLSession_FinalizeLedgerEntry(...)` no longer formats the same transition row twice; it now reuses the already-formatted line for both local append and episode-batch accumulation
+- this change reduces both CPU formatting cost and TCP batch payload size, but it does not yet explain or fix the higher `neutral-fallback` rate from the latest run
+
+Validation:
+- `git diff --check -- src/rl/rl_session.c docs/plan-remote-rl-agent.md docs/remote-rl-agent-engineering-log.md tools/rl_probe_server.py` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed.
+
+## 2026-04-24: Inference Latency Telemetry Precision Fix
+
+Milestone:
+- Milestone 5: Async learner and model hot-swap
+
+Files changed:
+- `tools/rl_probe_server.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- fix the probe server latency telemetry bug where `inf=` frequently collapsed to `0/0/16000us`, which made Milestone 5 latency evidence unreliable
+
+Implementation notes:
+- the probe server now measures OBS-to-action service time with `time.perf_counter_ns()` instead of `time.monotonic_ns()`
+- `InferenceStats` now stores raw nanosecond samples instead of truncating to integer microseconds before aggregation
+- learner stats still print microseconds, but now with one decimal place:
+  - `inf=<count>:<p50_us>/<p95_us>/<max_us>us`
+- this should preserve sub-millisecond variation and make it much easier to distinguish real Python-side service cost from occasional scheduler spikes
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py` pending.
+- `git diff --check -- tools/rl_probe_server.py docs/plan-remote-rl-agent.md docs/remote-rl-agent-engineering-log.md` pending.
+
+## 2026-04-24: Live Hot-Swap Execute-Path Confirmation
+
+Milestone:
+- Milestone 5: Async learner and model hot-swap
+
+Files changed:
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- record the first live run where learner-published actor versions were observed catching up in executed transitions, not just in publish telemetry
+
+Implementation notes:
+- during live learner/inference testing, the probe server showed:
+  - a temporary lag where `model_exec=346` while `model_active=model_pub=model_load=351`
+  - a later catch-up where `MODEL published version=352` was followed by transition rows with `model_exec=352 model_active=352 model_pub=352 model_load=352`
+- this is the strongest current evidence that the Milestone 5 hot-swap path is functioning end-to-end:
+  - learner publishes new actor versions
+  - the in-memory active actor updates
+  - subsequent executed transitions report the new model version
+- the same live run also showed:
+  - `rows=3084`
+  - `done=11`
+  - `sources=neutral-fallback:1,remote:3083`
+- these counts suggest transition upload and replay import are continuing normally and that fallback execution is now rare in the measured run
+- `model_counts=39/1` indicates the active actor is usually updated directly by local learner publishes rather than by repeated background reloads from disk; this is acceptable for the current single-process learner/inference setup
+- latency proof is still incomplete:
+  - `inf=512:0/0/16000us` does not yet provide enough confidence to mark `Action latency stays stable during training` complete
+
+Validation:
+- Live log evidence observed with the current Windows-to-WSL learner command:
+  ```text
+  LEARNER rows=2742 done=10 run=3 ep=10 ... model_exec=346 model_active=351 model_pub=351 model_load=351 model_counts=38/1 inf=512:0/0/16000us
+  MODEL published version=352 policy=hp source=learner
+  TRANSITIONS batch run=3 ep=11 rows=342 bytes=645060 from=192.168.0.133:44936
+  LEARNER rows=3084 done=11 run=3 ep=11 ... model_exec=352 model_active=352 model_pub=352 model_load=352 model_counts=39/1 inf=512:0/0/16000us
+  ```
+- Additional live evidence from the same run continued to show stable catch-up:
+  ```text
+  LEARNER rows=4603 done=16 run=3 ep=16 atk=271/217/54 replay=4603/4603 skipped=0 rew=+120/-119/04364 sources=neutral-fallback:1,remote:4602 ready=yes warmup=100 batch=32 batch_mean=1.000 model_exec=375 model_active=376 model_pub=376 model_load=376 model_counts=63/1 inf=512:0/0/16000us
+  MODEL published version=377 policy=hp source=learner
+  ```
+- This later sample suggests the execute path is now usually within one published version of the active actor, which is consistent with a healthy publish-to-execute lag instead of a stuck hot-swap path.
+
 ## 2026-04-24: Learner And Actor Version Observability Tightening
 
 Milestone:
@@ -2517,6 +3048,134 @@ Open questions:
 
 ## Test And Build Records
 
+### Move-Family Validation SOP
+
+Use this SOP for the first stable scripted attack-policy validation passes.
+
+1. Choose one policy for the pass:
+   - `hp`
+   - `throw`
+   - `ryu-fireball`
+   - `tatsu`
+   - `shoryuken`
+
+2. Pick a dedicated transition log path for that pass:
+   ```text
+   logs/rl-transitions-<policy>-4-3-3.ndjson
+   ```
+
+3. Start the probe server with:
+   - the selected `--policy`
+   - the dedicated `--transition-log`
+   - the usual live learner arguments
+
+   Example:
+   ```sh
+   python \\wsl.localhost\Ubuntu\home\olhua\src\3s-mister-arm\tools\rl_probe_server.py --host 0.0.0.0 --port 37330 --action-port 37331 --policy hp --policy-repeat-delay-ms 3000 --model-version 0 --model-dir \\wsl.localhost\Ubuntu\home\olhua\src\3s-mister-arm\model\rl-model-live --transition-log \\wsl.localhost\Ubuntu\home\olhua\src\3s-mister-arm\logs\rl-transitions-hp-4-3-3.ndjson --learner-auto-publish --learner-publish-interval-sec 10 --learner-warmup-rows 100 --learner-batch-size 32
+   ```
+
+4. On the MiSTer/game side, set the timing baseline to `4/3/3`:
+   ```ini
+   rl-agent-delay-frames = 4
+   rl-agent-decision-interval = 3
+   rl-agent-action-hold = 3
+   ```
+
+5. Restart the MiSTer/game runtime after changing timing config.
+   Do not assume editing config live will change the active run.
+
+6. Use one fixed opponent behavior for the whole pass:
+   - preferred first pass: opponent steadily approaches the RL side
+   - avoid mixing free-form CPU behavior and scripted approach behavior in the same comparison set
+
+7. Run the pass until at least:
+   - `rows >= 256`
+   - `done >= 2`
+
+8. Capture one or more representative `LEARNER` lines including:
+   - `timing=...`
+   - `policy=...`
+   - `policy_rows=...`
+   - `policy_rew=...`
+   - `policy_fallback_pct=...`
+   - `atk=...`
+   - `inf=...`
+
+9. Do a visible gameplay sanity check:
+   - attack visibly occurs: yes / no
+   - contact observed: yes / no
+   - whiff observed: yes / no
+
+10. Record the run in the move-family validation template below:
+    - date
+    - policy
+    - opponent setup
+    - timing
+    - command
+    - log summary
+    - visible outcome check
+    - pass / fail
+    - follow-up notes
+
+11. Repeat the same procedure for the next policy, changing only:
+    - `--policy`
+    - `--transition-log`
+
+### Move-Family Validation Record Template
+
+Date:
+
+- YYYY-MM-DD
+
+Milestone:
+
+- Milestone 6: Higher-control-rate policy and curriculum
+
+Policy:
+
+- `hp` / `throw` / `ryu-fireball` / `tatsu` / `shoryuken`
+
+Opponent setup:
+
+- steady approach / other fixed setup
+
+Timing:
+
+- `k/decision_interval/action_hold`
+
+Command:
+
+```sh
+# learner/probe command here
+# note any MiSTer-side timing/config overrides here
+```
+
+Log summary:
+
+- `rows=`
+- `done=`
+- `policy_rows=`
+- `policy_rew=`
+- `policy_fallback_pct=`
+- `atk=`
+- `inf=`
+
+Visible outcome check:
+
+- attack visibly occurs: yes / no
+- contact observed: yes / no
+- whiff observed: yes / no
+
+Result:
+
+- pass / fail
+
+Notes:
+
+- spacing / timing observations
+- whether labels looked plausible
+- follow-up action
+
 ### Template
 
 Date:
@@ -2574,6 +3233,7 @@ Notes:
 ## Open Issues
 
 - [ ] Validate whether overlay attack-outcome fields are learner-safe across normals, specials, projectiles, throws, and multistage moves
+- [ ] Revisit transition/replay SA state after the RL loop runs reliably: live observations already include super stock and gauge ratios, but replay-only learner rows may need compact `self_super_stock`, `self_super_gauge_ratio`, `opp_super_stock`, and `opp_super_gauge_ratio` fields or derived `can_super` flags so policies can learn when supers are available.
 - [ ] Define a human-demo recording / ingest path for learner bootstrapping, including replay metadata and mixing policy with remote-agent episodes
 
 ## Closed Issues

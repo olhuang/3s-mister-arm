@@ -2,6 +2,37 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-25: Skip Duplicate Tabular Actor Publishes
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / tabular live-log hygiene
+
+Files changed:
+- `tools/rl_probe_server.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- stop learner auto-publish from creating new actor versions when no new transition rows have produced tabular updates
+- reduce live-log noise where model versions kept increasing while `rows`, `tab_updates`, and q-table contents were unchanged
+
+Implementation notes:
+- `LearnerLogTailer` now records the last published tabular update count.
+- when auto-publish is due for `policy=tabular`, it publishes only if current `tab_updates` is greater than the last published value.
+- skipped duplicate publishes still advance the next publish deadline so the learner does not spin on an expired timer.
+- non-tabular learner publish behavior is unchanged.
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py` passed.
+- `git diff --check -- tools/rl_probe_server.py docs/plan-remote-rl-agent.md docs/remote-rl-agent-engineering-log.md` passed.
+- learner-only smoke with `--learner-stats-interval-sec 1` and `--learner-publish-interval-sec 1` passed:
+  - first ready stats tick published `MODEL published version=1`
+  - subsequent stats ticks had unchanged `rows=37870` and `tab_updates=26073`
+  - `model_pub` stayed at `1` and no duplicate learner model versions were published
+
+Follow-up:
+- rerun live tabular and confirm `MODEL published version=...` only appears after a new transition batch/import increases `tab_updates`.
+
 ## 2026-04-25: Add Tabular Minimum-Sample Gate
 
 Milestone:

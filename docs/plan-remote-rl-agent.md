@@ -2401,6 +2401,7 @@ Tasks:
 - [ ] Tune `action_hold_frames`
 - [x] Bring up a minimal tabular learner loop that updates actor policy from transition replay rows
 - [x] Add a minimum-sample confidence gate before tabular q-scores can drive greedy inference
+- [x] Avoid publishing duplicate tabular actor versions when no new learner updates arrived
 - [ ] Expand observation features only with schema versioning
 - [ ] Expand reward features only after baseline reward is stable
 - [ ] Review whether `overlay_attack_event_finalized` / `overlay_attack_contact` / `overlay_attack_whiff` have consistent learner semantics across normals, specials, projectiles, throws, and multistage moves before promoting them beyond debug / auxiliary labels
@@ -2434,6 +2435,7 @@ Implementation notes:
   - learner-published `tabular` actor manifests include `actions`, `epsilon`, `fallback_policy`, `updated_rows`, `q`, `q_counts`, and `min_action_count`
   - inference uses the active actor q-table only when a positive-scoring action has at least `min_action_count` updates for the latest learned bucket; otherwise it falls back to a scripted policy such as `hp`
   - `--tabular-min-action-count` defaults to `8` to keep sparse lucky hits from immediately becoming greedy actions
+  - learner auto-publish skips duplicate tabular actor publication when `tab_updates` has not increased since the previous publish
   - current limitation: the UDP OBS packet still carries only the header with `obs_len=0`, so Python-side tabular inference uses the latest spacing bucket imported from transition replay rather than an exact same-frame observation bucket
 - Live tabular testing exposed a VS rematch / second-match transition issue:
   - second-match action control could continue, but episode transition batches stopped arriving after a later round ended

@@ -834,6 +834,7 @@ class LearnerLogTailer(threading.Thread):
         self._tabular_learner = TabularPolicyLearner(tabular_alpha, tabular_epsilon, tabular_fallback_policy)
         self._tabular_min_action_count = max(1, tabular_min_action_count)
         self._next_publish_ns = time.monotonic_ns() + self._learner_publish_interval_ns
+        self._last_published_tabular_updates = -1
         self._rows = 0
         self._imported_rows = 0
         self._skipped_unexecuted = 0
@@ -936,6 +937,10 @@ class LearnerLogTailer(threading.Thread):
                 active = self._model_store.current()
                 policy = self._learner_publish_policy or active.policy
                 tabular_snapshot = self._tabular_learner.snapshot()
+                tabular_updates = int(tabular_snapshot["updates"])
+                if policy == "tabular" and tabular_updates <= self._last_published_tabular_updates:
+                    self._next_publish_ns = now_ns + self._learner_publish_interval_ns
+                    return
                 q_table = tabular_snapshot["q_table"] if policy == "tabular" else None
                 q_counts = tabular_snapshot["q_counts"] if policy == "tabular" else None
                 self._model_store.publish(
@@ -950,7 +955,7 @@ class LearnerLogTailer(threading.Thread):
                         "reward_negative": self._reward_negative,
                         "reward_zero": self._reward_zero,
                         "tabular_states": tabular_snapshot["states"],
-                        "tabular_updates": tabular_snapshot["updates"],
+                        "tabular_updates": tabular_updates,
                         "tabular_ignored_actions": tabular_snapshot["ignored_actions"],
                         "tabular_delayed_reward_updates": tabular_snapshot["delayed_reward_updates"],
                         "tabular_reward_source": "hp-delta",
@@ -962,9 +967,11 @@ class LearnerLogTailer(threading.Thread):
                     actions=tabular_snapshot["actions"] if isinstance(tabular_snapshot["actions"], tuple) else TABULAR_DEFAULT_ACTIONS,
                     epsilon=float(tabular_snapshot["epsilon"]),
                     fallback_policy=str(tabular_snapshot["fallback_policy"]),
-                    updated_rows=int(tabular_snapshot["updates"]),
+                    updated_rows=tabular_updates,
                     min_action_count=self._tabular_min_action_count,
                 )
+                if policy == "tabular":
+                    self._last_published_tabular_updates = tabular_updates
                 self._next_publish_ns = now_ns + self._learner_publish_interval_ns
 
     def run(self) -> None:

@@ -2435,6 +2435,7 @@ Implementation notes:
   - learner-published `tabular` actor manifests include `actions`, `epsilon`, `fallback_policy`, `updated_rows`, `q`, `q_counts`, and `min_action_count`
   - inference uses the active actor q-table only when a positive-scoring action has at least `min_action_count` updates for the latest learned bucket; otherwise it falls back to a scripted policy such as `hp`
   - `--tabular-min-action-count` defaults to `8` to keep sparse lucky hits from immediately becoming greedy actions
+  - learner stats print `top_raw=<action>:<score>/<count>` for the highest q-score and `top_ready=<action>:<score>/<count>` for the highest action that satisfies the same minimum-count gate used by greedy inference
   - learner auto-publish skips duplicate tabular actor publication when `tab_updates` has not increased since the previous publish
   - current limitation: the UDP OBS packet still carries only the header with `obs_len=0`, so Python-side tabular inference uses the latest spacing bucket imported from transition replay rather than an exact same-frame observation bucket
 - Live tabular testing exposed a VS rematch / second-match transition issue:

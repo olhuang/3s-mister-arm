@@ -519,7 +519,7 @@ class TabularPolicyLearner:
             self._last_explicit_action = (state_key, action_name)
         return state_key
 
-    def snapshot(self) -> dict[str, object]:
+    def snapshot(self, min_action_count: int = 1) -> dict[str, object]:
         with self._lock:
             q_table = {state: dict(scores) for state, scores in self._q_table.items()}
             q_counts = {state: dict(counts) for state, counts in self._q_counts.items()}
@@ -527,6 +527,11 @@ class TabularPolicyLearner:
             top_action = ""
             top_score = 0.0
             top_count = 0
+            ready_state = ""
+            ready_action = ""
+            ready_score = 0.0
+            ready_count = 0
+            min_count = max(1, min_action_count)
             for state, scores in q_table.items():
                 if not scores:
                     continue
@@ -536,6 +541,15 @@ class TabularPolicyLearner:
                     top_action = action
                     top_score = score
                     top_count = int(q_counts.get(state, {}).get(action, 0))
+                for ready_candidate, ready_candidate_score in scores.items():
+                    count = int(q_counts.get(state, {}).get(ready_candidate, 0))
+                    if count < min_count or float(ready_candidate_score) <= 0.0:
+                        continue
+                    if not ready_state or float(ready_candidate_score) > ready_score:
+                        ready_state = state
+                        ready_action = ready_candidate
+                        ready_score = float(ready_candidate_score)
+                        ready_count = count
             return {
                 "q_table": q_table,
                 "q_counts": q_counts,
@@ -551,6 +565,10 @@ class TabularPolicyLearner:
                 "top_action": top_action,
                 "top_score": top_score,
                 "top_count": top_count,
+                "ready_state": ready_state,
+                "ready_action": ready_action,
+                "ready_score": ready_score,
+                "ready_count": ready_count,
             }
 
 
@@ -905,10 +923,13 @@ class LearnerLogTailer(threading.Thread):
             if batch:
                 batch_mean_reward = sum(float(item["reward_accum"]) for item in batch) / len(batch)
         policy_bucket = self._policy_buckets.get(self._latest_model_policy_executed, PolicyBucketStats())
-        tabular = self._tabular_learner.snapshot()
-        top = "none"
+        tabular = self._tabular_learner.snapshot(self._tabular_min_action_count)
+        top_raw = "none"
         if tabular["top_state"]:
-            top = f"{tabular['top_action']}:{float(tabular['top_score']):.2f}/{int(tabular['top_count'])}"
+            top_raw = f"{tabular['top_action']}:{float(tabular['top_score']):.2f}/{int(tabular['top_count'])}"
+        top_ready = "none"
+        if tabular["ready_state"]:
+            top_ready = f"{tabular['ready_action']}:{float(tabular['ready_score']):.2f}/{int(tabular['ready_count'])}"
         print(
             "LEARNER "
             f"rows={self._rows} done={self._done} run={self._latest_run_id} ep={self._latest_episode} "
@@ -922,7 +943,8 @@ class LearnerLogTailer(threading.Thread):
             f"tab_states={tabular['states']} tab_updates={tabular['updates']} "
             f"tab_ignored={tabular['ignored_actions']} tab_delayed={tabular['delayed_reward_updates']} "
             f"tab_reward=hp-delta:{float(tabular['training_reward_total']):.1f} "
-            f"eps={float(tabular['epsilon']):.2f} min_n={self._tabular_min_action_count} top={top} "
+            f"eps={float(tabular['epsilon']):.2f} min_n={self._tabular_min_action_count} "
+            f"top_raw={top_raw} top_ready={top_ready} "
             f"model_exec={self._latest_model_version_executed} "
             f"model_active={model_status.active.version} "
             f"model_pub={model_status.last_published_version} "
@@ -936,7 +958,7 @@ class LearnerLogTailer(threading.Thread):
             if now_ns >= self._next_publish_ns:
                 active = self._model_store.current()
                 policy = self._learner_publish_policy or active.policy
-                tabular_snapshot = self._tabular_learner.snapshot()
+                tabular_snapshot = self._tabular_learner.snapshot(self._tabular_min_action_count)
                 tabular_updates = int(tabular_snapshot["updates"])
                 if policy == "tabular" and tabular_updates <= self._last_published_tabular_updates:
                     self._next_publish_ns = now_ns + self._learner_publish_interval_ns

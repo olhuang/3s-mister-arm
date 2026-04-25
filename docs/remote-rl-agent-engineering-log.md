@@ -2,6 +2,43 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-25: Split Tabular Raw Top From Ready Top
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / tabular live-log accuracy
+
+Files changed:
+- `tools/rl_probe_server.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- make learner logs distinguish the highest raw q-score from the highest action that is actually eligible for greedy tabular inference
+- avoid misleading logs such as `min_n=8 top=hp:1.10/4`, where the displayed top action was below the min-count gate and could not be used by the actor's greedy path
+
+Implementation notes:
+- `TabularPolicyLearner.snapshot(...)` now accepts `min_action_count`.
+- snapshots still report the raw top q-score.
+- snapshots also report `ready_*` fields for the highest positive q-score whose state/action count is at least `min_action_count`.
+- learner stats now print:
+  - `top_raw=<action>:<score>/<count>`
+  - `top_ready=<action>:<score>/<count>`
+- actor selection behavior is unchanged.
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py` passed.
+- `git diff --check -- tools/rl_probe_server.py docs/plan-remote-rl-agent.md docs/remote-rl-agent-engineering-log.md` passed.
+- synthetic snapshot smoke passed:
+  - raw top was `hp 10.0/1`
+  - ready top was `forward 1.0/8`
+- learner-only smoke against the current tabular transition log printed both fields:
+  - `top_raw=hp:2.24/14`
+  - `top_ready=hp:2.24/14`
+  - duplicate publish gate still held `model_pub=1` on repeated unchanged stats ticks
+
+Follow-up:
+- rerun live tabular and judge min-count readiness from `top_ready`, not `top_raw`.
+
 ## 2026-04-25: Skip Duplicate Tabular Actor Publishes
 
 Milestone:

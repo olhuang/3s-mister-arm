@@ -2406,6 +2406,7 @@ Tasks:
 - [x] Add `fireball` / `throw` to the first tabular action set and log ready action distributions by distance bucket
 - [x] Add tabular macro-action lock so multi-step actions such as `fireball` are not interrupted by the next q-table decision
 - [x] Add an anti-DP fireball macro variant to reduce accidental shoryuken credit pollution
+- [x] Add an offline transition analyzer for action/distance HP-delta attribution
 - [ ] Expand observation features only with schema versioning
 - [ ] Expand reward features only after baseline reward is stable
 - [ ] Review whether `overlay_attack_event_finalized` / `overlay_attack_contact` / `overlay_attack_whiff` have consistent learner semantics across normals, specials, projectiles, throws, and multistage moves before promoting them beyond debug / auxiliary labels
@@ -2449,6 +2450,8 @@ Implementation notes:
   - MiSTer remote config was checked on `192.168.0.133`; no `perf-*` config keys or recent `PERF capture` logs were present, so the latest long-run restart was not explained by an enabled perf capture
   - `src/rl/rl_net.c` now protects the transition sender running-state with the transition queue mutex, clears it while observing an empty queue, reaps completed thread handles before replacement, and avoids clearing the shutdown handle until after the sender is joined
   - learner auto-publish skips duplicate tabular actor publication when `tab_updates` has not increased since the previous publish
+  - `tools/analyze_rl_transitions.py <transition-log>` summarizes direct and delayed-credited HP-delta reward by action and `obs_abs_dx` bucket; use it before changing action sets or reward rules
+  - first full-log analyzer pass on `logs/rl-transitions-tabular-4-3-3.ndjson` (`383918` rows, `448` done rows) showed far fireball as the cleanest positive signal (`direct fireball dx=far reward=+1625`, credited fireball `reward=+2391`) while throw was negative in credited view (`reward=-3435`), so throw should not be treated as learner-safe strength until move-level labels or cleaner credit confirm it
   - UDP OBS packets now carry a schema-versioned compact spacing payload (`payload_version=1`) with the same bucket inputs used by transition replay: `obs_abs_dx`, `obs_abs_dy`, front/back edge distances, and `obs_opp_in_front`
   - Python-side tabular inference prefers the same-frame OBS spacing bucket and falls back to the latest replay-imported bucket only when an old header-only OBS packet or invalid payload is seen
   - learner stats print `obs=<payload>/<header-only>` and `tab_state=obs:<n>/latest:<n>` so live runs can confirm whether tabular inference is using same-frame OBS state

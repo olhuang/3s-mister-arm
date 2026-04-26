@@ -2,6 +2,64 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-26: Add Transition Reward Attribution Analyzer
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / reward diagnosis
+
+Files changed:
+- `tools/analyze_rl_transitions.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- make long-run tabular policy interpretation repeatable by summarizing HP-delta reward by action and distance bucket
+- distinguish direct action-row reward from delayed neutral/recovery reward credited back to the latest explicit action
+
+Implementation notes:
+- added `tools/analyze_rl_transitions.py`.
+- the analyzer reuses `rl_probe_server.py`'s tabular action mapping, `tabular_training_reward()`, and `obs_abs_dx` bucket thresholds.
+- output includes:
+  - `DIRECT_BY_ACTION`
+  - `DIRECT_BY_ACTION_DX`
+  - `CREDITED_BY_ACTION`
+  - `CREDITED_BY_ACTION_DECISION_DX`
+  - `DELAYED_CREDIT_DECISION_DX_TO_REWARD_DX`
+- delayed credit is episode-scoped: nonzero reward on a neutral/unknown row is attributed to the most recent explicit tabular action in the same `(run_id, episode_id)`.
+
+Validation:
+- `python3 -m py_compile tools/analyze_rl_transitions.py` passed.
+- `python3 tools/analyze_rl_transitions.py logs/rl-transitions-tabular-4-3-3.ndjson --tail-rows 100000 --limit 30` passed.
+- `python3 tools/analyze_rl_transitions.py logs/rl-transitions-tabular-4-3-3.ndjson --limit 30` passed on `383918` rows.
+- `git diff --check -- tools/analyze_rl_transitions.py docs/plan-remote-rl-agent.md docs/remote-rl-agent-engineering-log.md` passed.
+
+Long-run readout from `logs/rl-transitions-tabular-4-3-3.ndjson`:
+- full log analyzed: `rows=383918`, `done=448`, `explicit_rows=122774`, `reward_rows=13115`, `delayed_credit_rows=9236`.
+- direct action rows:
+  - `hp`: `reward=+2900`, `mean=+0.072`
+  - `fireball`: `reward=+439`, `mean=+0.015`
+  - `throw`: `reward=-109`, `mean=-0.007`
+- direct distance split:
+  - `fireball dx=far`: `reward=+1625`, `mean=+0.074`
+  - `fireball dx=mid`: `reward=-832`, `mean=-0.125`
+  - `fireball dx=close`: `reward=-354`, `mean=-0.609`
+  - `throw dx=far`: `reward=+514`, `mean=+0.041`
+  - `throw dx=mid`: `reward=-444`, `mean=-0.119`
+  - `throw dx=close`: `reward=-179`, `mean=-0.577`
+- credited view:
+  - `fireball`: `reward=+2391`, `mean=+0.071`
+  - `hp`: `reward=-2303`, `mean=-0.054`
+  - `throw`: `reward=-3435`, `mean=-0.200`
+- key interpretation:
+  - far fireball is currently the cleanest positive signal.
+  - mid/close fireball is strongly punished, so the policy should keep learning spacing sensitivity rather than treating fireball as universally good.
+  - throw is not yet a reliable positive action in the credited view, even if some far throw rows look mildly positive; that far-throw signal is likely spacing/credit leakage rather than real throw strength.
+
+Follow-up:
+- use this analyzer after each long run before changing the action set.
+- if throw remains selected despite negative credited reward, inspect whether the learner's q-table has stale lucky throw buckets or whether move-level labels are needed before throw can be learner-safe.
+- add move-level transition labeling before using projectile/throw/DP labels as hard reward features.
+
 ## 2026-04-26: Fix Transition Sender Running-State Race
 
 Milestone:

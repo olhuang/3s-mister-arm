@@ -43,7 +43,8 @@ RL_MOVE_DOWN_FORWARD = 0x0008
 BTN_LP = 0x0010
 BTN_HP = 0x0040
 BTN_LK = 0x0100
-POLICY_CHOICES = ("forward", "back", "hp", "forward-hp", "ryu-fireball", "throw", "tatsu", "shoryuken", "tabular")
+POLICY_CHOICES = ("forward", "back", "guard", "hp", "forward-hp", "ryu-fireball", "throw", "tatsu", "shoryuken", "tabular")
+GUARD_MACRO_DECISION_STEPS = 6
 
 TABULAR_ACTION_NAMES = ("forward", "back", "hp", "forward-hp", "fireball", "throw")
 TABULAR_ACTION_WIRES = {
@@ -1272,6 +1273,7 @@ def fixed_action_wire(policy: str) -> int | None:
 
 def scripted_sequence(policy: str) -> tuple[int, ...] | None:
     scripts = {
+        "guard": (RL_MOVE_BACK,) * GUARD_MACRO_DECISION_STEPS,
         "fireball": (
             RL_MOVE_DOWN_BACK,
             RL_MOVE_DOWN,
@@ -1428,6 +1430,10 @@ def policy_action_wire(
     tabular_state = tabular_state_key_override if tabular_state_key_override else model_store.latest_tabular_state()
     tabular_action = tabular_actor_action_name(actor, tabular_state)
     if tabular_action is not None:
+        if tabular_action == "back":
+            macro_wire = start_macro_action_wire(macro_states, nonce, run_id, episode_id, "guard")
+            if macro_wire is not None:
+                return macro_wire
         fixed = fixed_action_wire(tabular_action)
         if fixed is not None:
             return fixed

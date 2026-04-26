@@ -2,6 +2,37 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-26: Add Tabular Back Guard Macro
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / strike-defense learning
+
+Files changed:
+- `tools/rl_probe_server.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- make defensive `back` decisions last long enough to cover a realistic strike-defense window.
+- avoid globally increasing `action_hold_frames`, which would also slow movement, throws, fireballs, and attack timing.
+- keep transition credit on the existing `back` action bucket instead of adding a separate tabular `guard` action that the C-side transition log cannot currently distinguish from plain `back` wire input.
+
+Implementation notes:
+- added a scripted `guard` policy sequence for fixed-policy validation: six consecutive `RL_MOVE_BACK` decision replies.
+- tabular inference now maps a greedy/exploratory `back` action into that guard macro via the existing macro lock.
+- with the current `decision_interval=3` and `action_hold=3`, one tabular `back` selection now produces about an 18-frame stand-guard window.
+- `TABULAR_ACTION_NAMES` intentionally remains `forward`, `back`, `hp`, `forward-hp`, `fireball`, and `throw`; learner updates still see wire-level `back` and therefore train the `back` bucket.
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py tools/analyze_rl_transitions.py` passed.
+- guard scripted-policy smoke passed: `scripted_sequence("guard")` produced six consecutive `0x0003` (`RL_MOVE_BACK`) decision replies.
+- tabular macro-lock smoke passed: after a tabular `back` selection, a synthetic actor that switched to preferring `hp` still emitted six `back` wires before allowing `hp`.
+- `git diff --check -- tools/rl_probe_server.py docs/plan-remote-rl-agent.md docs/remote-rl-agent-engineering-log.md` passed.
+
+Follow-up:
+- run a fresh tabular model/log and watch `ready_opp_attack=1{back:...}` plus visible guard behavior.
+- if low attacks become a blocker, add a separate down-back guard macro after validating that action/credit semantics stay clear.
+
 ## 2026-04-26: Promote Opponent Strike Warning Into Tabular State
 
 Milestone:

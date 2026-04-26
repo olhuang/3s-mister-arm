@@ -2414,6 +2414,7 @@ Tasks:
 - [x] Add `fireball` / `throw` to the first tabular action set and log ready action distributions by distance bucket
 - [x] Add tabular macro-action lock so multi-step actions such as `fireball` are not interrupted by the next q-table decision
 - [x] Add an anti-DP fireball macro variant to reduce accidental shoryuken credit pollution
+- [x] Add a guard/back-hold macro so tabular `back` can produce a defense window instead of a single short hold
 - [x] Add an offline transition analyzer for action/distance HP-delta attribution
 - [x] Expand observation features only with schema versioning for the first routine attack/contact-reaction validation probes
 - [x] Promote validated opponent routine attack state into the first tabular strike-defense state split
@@ -2454,6 +2455,8 @@ Implementation notes:
   - `--tabular-min-action-count` defaults to `8` to keep sparse lucky hits from immediately becoming greedy actions
   - learner stats print `top_raw=<action>:<score>/<count>` for the highest q-score and `top_ready=<action>:<score>/<count>` for the highest action that satisfies the same minimum-count gate used by greedy inference
   - learner stats also print `ready_actions=...`, `ready_dx=close{...} mid{...} far{...}`, and `ready_opp_attack=0{...} 1{...}` so live runs can show whether ready greedy choices are diversifying by spacing and opponent strike-warning state
+  - tabular `back` now executes through the same macro lock as a `guard` sequence: six consecutive `back` decision replies, which is roughly an 18-frame stand-guard window with the current `decision_interval=3` / `action_hold=3` timing
+  - `guard` is also available as a scripted probe policy for fixed long-guard validation, but it is not a separate tabular learner action because transition credit is still wire-level and should continue to train the `back` action bucket
   - tabular inference now locks multi-step scripted actions such as `fireball` until the full input sequence has been emitted, preventing later q-table decisions from interrupting QCF+LP before the projectile can come out
   - `fireball` / `ryu-fireball` now use `down-back -> down -> down-forward -> forward+LP -> neutral -> neutral` to reduce accidental DP parsing when a previous action left `forward` in the command buffer
   - MiSTer remote config was checked on `192.168.0.133`; no `perf-*` config keys or recent `PERF capture` logs were present, so the latest long-run restart was not explained by an enabled perf capture

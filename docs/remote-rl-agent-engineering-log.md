@@ -2,6 +2,40 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-26: Lock Tabular Fireball Macro Sequence
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / tabular macro-action execution
+
+Files changed:
+- `tools/rl_probe_server.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- make tabular `fireball` execute as one uninterrupted QCF+LP macro instead of letting every OBS reply re-run q-table selection and break the motion
+
+Investigation notes:
+- transition logs showed `fireball` was attempted (`forward + LP`, `0x0014`) only `16` times while `throw` appeared `220` times.
+- all recorded fireball attempts had `delta_opp_hp = 0` and `delta_self_hp = 0`.
+- the user confirmed no projectile was visible on screen.
+- root cause: tabular selection could choose `fireball` for one decision, then the next decision could choose `hp`, `throw`, or another action before the full `down -> down-forward -> forward -> forward+LP` sequence finished.
+
+Implementation notes:
+- `policy_action_wire()` now receives a `macro_states` table keyed by session/run/episode.
+- when tabular chooses a multi-step scripted action, the probe server starts an active macro and emits the first sequence step.
+- later OBS replies for the same episode emit the next macro step before consulting the q-table again.
+- the macro state is cleared after the full sequence, including neutral recovery frames, is emitted.
+- fixed single-step actions such as `throw` still execute immediately without macro lock.
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py` passed.
+- synthetic macro-lock smoke passed: after a tabular `fireball` selection, later calls whose q-table preferred `hp` still emitted `0x2,0x8,0x4,0x14,0x0,0x0`, then returned to `hp`.
+
+Follow-up:
+- rerun live tabular and confirm a visible projectile appears when fireball is selected.
+- after live confirmation, check transition log for `0x0014` rows followed by nonzero `delta_opp_hp` when fireballs connect.
+
 ## 2026-04-26: Fix Long-Run RL Transition Sender Thread Leak
 
 Milestone:

@@ -1335,23 +1335,69 @@ def tabular_actor_action_name(actor: ActorModel, state_key: str | None) -> str |
     return max(eligible_actions, key=lambda action: (float(scores.get(action, 0.0)), action))
 
 
+def active_macro_action_wire(
+    macro_states: dict[tuple[int, int, int], dict[str, int | str]],
+    nonce: int,
+    run_id: int,
+    episode_id: int,
+) -> int | None:
+    key = (nonce, run_id, episode_id)
+    state = macro_states.get(key)
+    if not state:
+        return None
+    action = str(state.get("action", ""))
+    sequence = scripted_sequence(action)
+    index = int(state.get("index", 0))
+    if sequence is None or index < 0 or index >= len(sequence):
+        macro_states.pop(key, None)
+        return None
+    action_wire = sequence[index]
+    index += 1
+    if index >= len(sequence):
+        macro_states.pop(key, None)
+    else:
+        state["index"] = index
+    return action_wire
+
+
+def start_macro_action_wire(
+    macro_states: dict[tuple[int, int, int], dict[str, int | str]],
+    nonce: int,
+    run_id: int,
+    episode_id: int,
+    action: str,
+) -> int | None:
+    sequence = scripted_sequence(action)
+    if sequence is None:
+        return None
+    macro_states[(nonce, run_id, episode_id)] = {"action": action, "index": 1}
+    return sequence[0]
+
+
 def policy_action_wire(
     actor: ActorModel,
     model_store: ActorModelStore,
     policy_states: dict[tuple[int, int, int, str], dict[str, int]],
+    macro_states: dict[tuple[int, int, int], dict[str, int | str]],
     nonce: int,
     run_id: int,
     episode_id: int,
     repeat_delay_ms: int,
     tabular_state_key_override: str | None = None,
 ) -> int:
+    if actor.policy == "tabular":
+        macro_wire = active_macro_action_wire(macro_states, nonce, run_id, episode_id)
+        if macro_wire is not None:
+            return macro_wire
     tabular_state = tabular_state_key_override if tabular_state_key_override else model_store.latest_tabular_state()
     tabular_action = tabular_actor_action_name(actor, tabular_state)
     if tabular_action is not None:
         fixed = fixed_action_wire(tabular_action)
         if fixed is not None:
             return fixed
-        return scripted_action_wire(tabular_action, policy_states, nonce, run_id, episode_id, repeat_delay_ms)
+        macro_wire = start_macro_action_wire(macro_states, nonce, run_id, episode_id, tabular_action)
+        if macro_wire is not None:
+            return macro_wire
     fallback_policy = actor.fallback_policy if actor.policy == "tabular" else actor.policy
     return scripted_action_wire(fallback_policy, policy_states, nonce, run_id, episode_id, repeat_delay_ms)
 
@@ -1431,6 +1477,7 @@ def serve(
     print(f"RL probe server listening on {host}:{port}")
     hello_count: dict[int, int] = {}
     policy_states: dict[tuple[int, int, int, str], dict[str, int]] = {}
+    macro_states: dict[tuple[int, int, int], dict[str, int | str]] = {}
 
     while True:
         data, addr = sock.recvfrom(2048)
@@ -1480,6 +1527,7 @@ def serve(
                     active_model,
                     model_store,
                     policy_states,
+                    macro_states,
                     nonce,
                     run_id,
                     episode_id,

@@ -2,6 +2,30 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-26: Remove Routine Span Probes From Transition Export
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / observation quality
+
+Files changed:
+- `src/rl/rl_session.c`
+- `tools/rl_probe_server.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- keep transition NDJSON from mixing decision-time observations with post-observation span labels.
+- prevent `*_seen` style fields from being mistaken for learner-safe OBS features.
+
+Implementation notes:
+- new transition rows no longer export:
+  - `span_self_routine_attack_seen`
+  - `span_opp_routine_attack_seen`
+  - `span_self_contact_reaction_seen`
+  - `span_opp_contact_reaction_seen`
+- `obs_self_routine_attack_state`, `obs_opp_routine_attack_state`, `obs_self_contact_reaction_state`, and `obs_opp_contact_reaction_state` remain because they are decision-observation snapshots.
+- run-level defensive-success analysis should be reconstructed offline from consecutive `obs_*` rows plus HP/stun deltas instead of storing future-window labels in each row.
+
 ## 2026-04-26: Rename Routine Span Probes
 
 Milestone:
@@ -18,13 +42,9 @@ Purpose:
 - make it clear that `*_seen` fields contain events that happened during the action span after the observation was sampled.
 
 Implementation notes:
-- transition NDJSON now writes span aggregate fields with a `span_` prefix:
-  - `span_self_routine_attack_seen`
-  - `span_opp_routine_attack_seen`
-  - `span_self_contact_reaction_seen`
-  - `span_opp_contact_reaction_seen`
+- transition NDJSON briefly wrote routine/contact span aggregate fields with a `span_` prefix.
 - `obs_*` fields remain reserved for decision-time snapshots that the remote policy can actually observe at inference time.
-- `tools/rl_probe_server.py` reads the new span names and keeps compatibility with the previous unprefixed keys for older logs.
+- this intermediate experiment was superseded the same day by removing span probes from new transition exports.
 
 ## 2026-04-26: Add Routine Attack / Contact Reaction Validation Probes
 
@@ -57,17 +77,13 @@ Implementation notes:
   - `obs_opp_routine_attack_state`
   - `obs_self_contact_reaction_state`
   - `obs_opp_contact_reaction_state`
-- Transition NDJSON also exports decision-span flags:
-  - `span_self_routine_attack_seen`
-  - `span_opp_routine_attack_seen`
-  - `span_self_contact_reaction_seen`
-  - `span_opp_contact_reaction_seen`
-- `tools/rl_probe_server.py` parses the schema-v2 OBS payload and imports the new transition fields, but `tabular_state_key()` still ignores them so live policy behavior does not change yet.
+- An intermediate build also exported decision-span flags, but those were removed from new transition rows because they mixed post-observation labels into the learner-visible log.
+- `tools/rl_probe_server.py` parses the schema-v2 OBS payload and imports the new decision-observation transition fields, but `tabular_state_key()` still ignores them so live policy behavior does not change yet.
 
 Validation plan:
 - run the usual Windows probe command with the updated script and redeployed runtime.
 - confirm `obs_opp_routine_attack_state` lines up with overlay `OR*,4,*` on opponent attacks.
-- confirm `span_self_contact_reaction_seen=1` with `delta_self_hp=0` often corresponds to successful guard / block reaction, while `delta_self_hp>0` corresponds to actual damage or chip.
+- infer defensive-success windows offline from consecutive `obs_*` rows plus HP/stun deltas, instead of relying on per-row span labels.
 - do not promote these flags to learner features until live logs show stable semantics across normals, projectiles, throws, and multistage moves.
 
 ## 2026-04-26: Add Transition Reward Attribution Analyzer

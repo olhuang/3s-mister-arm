@@ -1237,17 +1237,17 @@ def fixed_action_wire(policy: str) -> int | None:
 def scripted_sequence(policy: str) -> tuple[int, ...] | None:
     scripts = {
         "fireball": (
+            RL_MOVE_DOWN_BACK,
             RL_MOVE_DOWN,
             RL_MOVE_DOWN_FORWARD,
-            RL_MOVE_FORWARD,
             RL_MOVE_FORWARD | BTN_LP,
             RL_MOVE_NEUTRAL,
             RL_MOVE_NEUTRAL,
         ),
         "ryu-fireball": (
+            RL_MOVE_DOWN_BACK,
             RL_MOVE_DOWN,
             RL_MOVE_DOWN_FORWARD,
-            RL_MOVE_FORWARD,
             RL_MOVE_FORWARD | BTN_LP,
             RL_MOVE_NEUTRAL,
             RL_MOVE_NEUTRAL,

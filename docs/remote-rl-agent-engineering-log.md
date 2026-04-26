@@ -2,6 +2,40 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-26: Add Anti-DP Fireball Macro Variant
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / tabular macro-action execution
+
+Files changed:
+- `tools/rl_probe_server.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- reduce accidental shoryuken parsing from the learned fireball macro so damage credit is less likely to be assigned to `fireball` when the game actually performed a DP
+
+Investigation notes:
+- transition logs contained no direct shoryuken final inputs:
+  - `down-forward + LP` (`0x0018`) count was `0`
+  - `down-forward + HP` (`0x0048`) count was `0`
+- visible accidental shoryukens were most likely caused by command-buffer context, where a previous `forward`-like action plus QCF+LP looked like a DP motion to the game parser.
+- since current learner credit is input-level (`executed_action_wire`) rather than move-code-level, such accidental DPs would be credited as `fireball` if they ended on `forward + LP`.
+
+Implementation notes:
+- `fireball` and `ryu-fireball` scripted sequences now emit:
+  - `down-back -> down -> down-forward -> forward+LP -> neutral -> neutral`
+- the leading `down-back` is intended to clear a prior `forward` from the effective command sequence before the QCF+LP finish.
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py` passed.
+- synthetic sequence smoke passed: both `fireball` and `ryu-fireball` now expand to `0x7,0x2,0x8,0x14,0x0,0x0`.
+- synthetic macro smoke passed: tabular fireball emits the same anti-DP sequence while macro-locked.
+
+Follow-up:
+- rerun live tabular and confirm fireballs still appear while accidental shoryuken frequency drops.
+- long-term fix remains move-level transition labeling so learner credit can distinguish actual fireball from actual shoryuken.
+
 ## 2026-04-26: Lock Tabular Fireball Macro Sequence
 
 Milestone:

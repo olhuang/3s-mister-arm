@@ -2405,6 +2405,7 @@ Tasks:
 - [x] Add same-frame compact spacing payloads to UDP OBS packets for tabular inference
 - [x] Add `fireball` / `throw` to the first tabular action set and log ready action distributions by distance bucket
 - [x] Add tabular macro-action lock so multi-step actions such as `fireball` are not interrupted by the next q-table decision
+- [x] Add an anti-DP fireball macro variant to reduce accidental shoryuken credit pollution
 - [ ] Expand observation features only with schema versioning
 - [ ] Expand reward features only after baseline reward is stable
 - [ ] Review whether `overlay_attack_event_finalized` / `overlay_attack_contact` / `overlay_attack_whiff` have consistent learner semantics across normals, specials, projectiles, throws, and multistage moves before promoting them beyond debug / auxiliary labels
@@ -2443,6 +2444,7 @@ Implementation notes:
   - learner stats print `top_raw=<action>:<score>/<count>` for the highest q-score and `top_ready=<action>:<score>/<count>` for the highest action that satisfies the same minimum-count gate used by greedy inference
   - learner stats also print `ready_actions=...` and `ready_dx=close{...} mid{...} far{...}` so live runs can show whether ready greedy choices are diversifying by spacing bucket
   - tabular inference now locks multi-step scripted actions such as `fireball` until the full input sequence has been emitted, preventing later q-table decisions from interrupting QCF+LP before the projectile can come out
+  - `fireball` / `ryu-fireball` now use `down-back -> down -> down-forward -> forward+LP -> neutral -> neutral` to reduce accidental DP parsing when a previous action left `forward` in the command buffer
   - learner auto-publish skips duplicate tabular actor publication when `tab_updates` has not increased since the previous publish
   - UDP OBS packets now carry a schema-versioned compact spacing payload (`payload_version=1`) with the same bucket inputs used by transition replay: `obs_abs_dx`, `obs_abs_dy`, front/back edge distances, and `obs_opp_in_front`
   - Python-side tabular inference prefers the same-frame OBS spacing bucket and falls back to the latest replay-imported bucket only when an old header-only OBS packet or invalid payload is seen

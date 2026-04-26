@@ -2321,7 +2321,7 @@ Implementation notes:
   - `obs_opp_in_front`
 - The transition row also carries validation-only routine-state probes:
   - decision-observation flags: `obs_self_routine_attack_state`, `obs_opp_routine_attack_state`, `obs_self_contact_reaction_state`, `obs_opp_contact_reaction_state`
-  - decision-span flags: `self_routine_attack_seen`, `opp_routine_attack_seen`, `self_contact_reaction_seen`, `opp_contact_reaction_seen`
+  - decision-span flags: `span_self_routine_attack_seen`, `span_opp_routine_attack_seen`, `span_self_contact_reaction_seen`, `span_opp_contact_reaction_seen`
   - these are for validating `routine_no[1] == 4` as attack state and `routine_no[1] == 1` as contact / defensive reaction before promoting them into learner state or reward shaping
 - These spacing fields intentionally use raw absolute enemy distance plus facing-relative raw front/back edge distances first. Keep signed `dx/dy` and left/right corner ratios as debug/future-schema candidates unless later validation shows the learner needs the extra world-coordinate detail.
 - Treat the current slimmer transition row plus the compact spacing snapshot as the default learner/debug contract unless a later Milestone 6 or validation task explicitly needs one of the removed debug-only fields restored.

@@ -122,10 +122,10 @@ typedef struct RLDecisionLedgerEntry {
     u8 opp_attack_code_changed;
     u8 opp_attack_counter_started;
     u8 opp_attack_routine_started;
-    u8 self_routine_attack_seen;
-    u8 opp_routine_attack_seen;
-    u8 self_contact_reaction_seen;
-    u8 opp_contact_reaction_seen;
+    u8 span_self_routine_attack_seen;
+    u8 span_opp_routine_attack_seen;
+    u8 span_self_contact_reaction_seen;
+    u8 span_opp_contact_reaction_seen;
     u8 self_airborne_seen;
     u8 opp_airborne_seen;
     u8 self_airborne_started;
@@ -790,8 +790,8 @@ static int RLSession_FormatTransitionLogLine(const RLDecisionLedgerEntry* entry,
                         "\"obs_opp_in_front\":%u,"
                         "\"obs_self_routine_attack_state\":%u,\"obs_opp_routine_attack_state\":%u,"
                         "\"obs_self_contact_reaction_state\":%u,\"obs_opp_contact_reaction_state\":%u,"
-                        "\"self_routine_attack_seen\":%u,\"opp_routine_attack_seen\":%u,"
-                        "\"self_contact_reaction_seen\":%u,\"opp_contact_reaction_seen\":%u,"
+                        "\"span_self_routine_attack_seen\":%u,\"span_opp_routine_attack_seen\":%u,"
+                        "\"span_self_contact_reaction_seen\":%u,\"span_opp_contact_reaction_seen\":%u,"
                         "\"final_self_hp\":%d,\"final_opp_hp\":%d,"
                         "\"model_version_executed\":%u,"
                         "\"reward_accum\":%.3f,\"done\":%s,"
@@ -823,10 +823,10 @@ static int RLSession_FormatTransitionLogLine(const RLDecisionLedgerEntry* entry,
                         entry->obs_opp_routine_attack_state,
                         entry->obs_self_contact_reaction_state,
                         entry->obs_opp_contact_reaction_state,
-                        entry->self_routine_attack_seen,
-                        entry->opp_routine_attack_seen,
-                        entry->self_contact_reaction_seen,
-                        entry->opp_contact_reaction_seen,
+                        entry->span_self_routine_attack_seen,
+                        entry->span_opp_routine_attack_seen,
+                        entry->span_self_contact_reaction_seen,
+                        entry->span_opp_contact_reaction_seen,
                         entry->final_self_hp,
                         entry->final_opp_hp,
                         entry->model_version_executed,
@@ -1023,10 +1023,10 @@ static void RLSession_AccumulateAttackSignals(RLDecisionLedgerEntry* entry, cons
     entry->opp_attack_code_changed |= obs->opp_attack_code_changed;
     entry->opp_attack_counter_started |= obs->opp_attack_counter_started;
     entry->opp_attack_routine_started |= obs->opp_attack_routine_started;
-    entry->self_routine_attack_seen |= obs->self_routine_attack_state;
-    entry->opp_routine_attack_seen |= obs->opp_routine_attack_state;
-    entry->self_contact_reaction_seen |= obs->self_contact_reaction_state;
-    entry->opp_contact_reaction_seen |= obs->opp_contact_reaction_state;
+    entry->span_self_routine_attack_seen |= obs->self_routine_attack_state;
+    entry->span_opp_routine_attack_seen |= obs->opp_routine_attack_state;
+    entry->span_self_contact_reaction_seen |= obs->self_contact_reaction_state;
+    entry->span_opp_contact_reaction_seen |= obs->opp_contact_reaction_state;
 }
 
 static void RLSession_AccumulateCombatSpan(RLDecisionLedgerEntry* entry,

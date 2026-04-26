@@ -725,10 +725,18 @@ def learner_replay_row(row: dict[str, object]) -> dict[str, object] | None:
         "obs_opp_routine_attack_state": int(row.get("obs_opp_routine_attack_state", 0) or 0),
         "obs_self_contact_reaction_state": int(row.get("obs_self_contact_reaction_state", 0) or 0),
         "obs_opp_contact_reaction_state": int(row.get("obs_opp_contact_reaction_state", 0) or 0),
-        "self_routine_attack_seen": int(row.get("self_routine_attack_seen", 0) or 0),
-        "opp_routine_attack_seen": int(row.get("opp_routine_attack_seen", 0) or 0),
-        "self_contact_reaction_seen": int(row.get("self_contact_reaction_seen", 0) or 0),
-        "opp_contact_reaction_seen": int(row.get("opp_contact_reaction_seen", 0) or 0),
+        "span_self_routine_attack_seen": int(
+            row.get("span_self_routine_attack_seen", row.get("self_routine_attack_seen", 0)) or 0
+        ),
+        "span_opp_routine_attack_seen": int(
+            row.get("span_opp_routine_attack_seen", row.get("opp_routine_attack_seen", 0)) or 0
+        ),
+        "span_self_contact_reaction_seen": int(
+            row.get("span_self_contact_reaction_seen", row.get("self_contact_reaction_seen", 0)) or 0
+        ),
+        "span_opp_contact_reaction_seen": int(
+            row.get("span_opp_contact_reaction_seen", row.get("opp_contact_reaction_seen", 0)) or 0
+        ),
         "final_self_hp": int(row.get("final_self_hp", 0) or 0),
         "final_opp_hp": int(row.get("final_opp_hp", 0) or 0),
         "model_version_executed": int(row.get("model_version_executed", 0) or 0),

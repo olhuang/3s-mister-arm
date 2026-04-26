@@ -248,6 +248,10 @@ void RLObservation_OnFrameEnd() {
     obs.opp_routine[0] = (u16)plw[opp].wu.routine_no[0];
     obs.opp_routine[1] = (u16)plw[opp].wu.routine_no[1];
     obs.opp_routine[2] = (u16)plw[opp].wu.routine_no[2];
+    obs.self_routine_attack_state = (u8)(obs.self_routine[1] == 4);
+    obs.opp_routine_attack_state = (u8)(obs.opp_routine[1] == 4);
+    obs.self_contact_reaction_state = (u8)(obs.self_routine[1] == 1);
+    obs.opp_contact_reaction_state = (u8)(obs.opp_routine[1] == 1);
     if (prev_frame_valid) {
         const s16 self_hp_delta = clamp_s16_delta((s32)prev_frame_hp[self] - (s32)debug.self_hp);
         const s16 opp_hp_delta = clamp_s16_delta((s32)prev_frame_hp[opp] - (s32)debug.opp_hp);
@@ -282,8 +286,8 @@ void RLObservation_OnFrameEnd() {
             (u8)(prev_frame_current_attack[opp] != obs.opp_current_attack && obs.opp_current_attack != 0);
         obs.self_attack_counter_started = (u8)(Attack_Counter[opp] != prev_frame_attack_counter[opp]);
         obs.opp_attack_counter_started = (u8)(Attack_Counter[self] != prev_frame_attack_counter[self]);
-        obs.self_attack_routine_started = (u8)(prev_frame_routine1[self] != 4 && obs.self_routine[1] == 4);
-        obs.opp_attack_routine_started = (u8)(prev_frame_routine1[opp] != 4 && obs.opp_routine[1] == 4);
+        obs.self_attack_routine_started = (u8)(prev_frame_routine1[self] != 4 && obs.self_routine_attack_state);
+        obs.opp_attack_routine_started = (u8)(prev_frame_routine1[opp] != 4 && obs.opp_routine_attack_state);
         obs.self_caution_started = (u8)(!prev_frame_caution[self] && plw[self].caution_flag);
         obs.opp_caution_started = (u8)(!prev_frame_caution[opp] && plw[opp].caution_flag);
         obs.self_entered_contact_state = (u8)(!prev_frame_contact_state[self] && self_contact_state);

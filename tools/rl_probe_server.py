@@ -28,8 +28,8 @@ TYPE_OBS = 5
 PACKET = struct.Struct("<IHHQIIQ")
 ACTION_PACKET = struct.Struct("<IHHQQIIIHHI")
 OBS_HEADER = struct.Struct("<IHHQQIIIIHHI")
-OBS_SPACING_PAYLOAD = struct.Struct("<HHhhhhhhBB")
-OBS_SPACING_PAYLOAD_VERSION = 1
+OBS_SPACING_PAYLOAD = struct.Struct("<HHhhhhhhBBBBB3x")
+OBS_SPACING_PAYLOAD_VERSION = 2
 TRANSITION_BATCH_HEADER = struct.Struct("<IHHQQIII")
 TRANSITION_BATCH_ACK = struct.Struct("<IHHQQII")
 
@@ -555,7 +555,10 @@ def parse_obs_spacing_payload(payload: bytes) -> dict[str, object] | None:
         obs_opp_front_edge_dist,
         obs_opp_back_edge_dist,
         obs_opp_in_front,
-        _reserved1,
+        obs_self_routine_attack_state,
+        obs_opp_routine_attack_state,
+        obs_self_contact_reaction_state,
+        obs_opp_contact_reaction_state,
     ) = OBS_SPACING_PAYLOAD.unpack(payload)
     if payload_version != OBS_SPACING_PAYLOAD_VERSION:
         return None
@@ -567,6 +570,10 @@ def parse_obs_spacing_payload(payload: bytes) -> dict[str, object] | None:
         "obs_opp_front_edge_dist": obs_opp_front_edge_dist,
         "obs_opp_back_edge_dist": obs_opp_back_edge_dist,
         "obs_opp_in_front": obs_opp_in_front,
+        "obs_self_routine_attack_state": obs_self_routine_attack_state,
+        "obs_opp_routine_attack_state": obs_opp_routine_attack_state,
+        "obs_self_contact_reaction_state": obs_self_contact_reaction_state,
+        "obs_opp_contact_reaction_state": obs_opp_contact_reaction_state,
     }
 
 
@@ -714,6 +721,14 @@ def learner_replay_row(row: dict[str, object]) -> dict[str, object] | None:
         "obs_opp_front_edge_dist": int(row.get("obs_opp_front_edge_dist", 0) or 0),
         "obs_opp_back_edge_dist": int(row.get("obs_opp_back_edge_dist", 0) or 0),
         "obs_opp_in_front": int(row.get("obs_opp_in_front", 0) or 0),
+        "obs_self_routine_attack_state": int(row.get("obs_self_routine_attack_state", 0) or 0),
+        "obs_opp_routine_attack_state": int(row.get("obs_opp_routine_attack_state", 0) or 0),
+        "obs_self_contact_reaction_state": int(row.get("obs_self_contact_reaction_state", 0) or 0),
+        "obs_opp_contact_reaction_state": int(row.get("obs_opp_contact_reaction_state", 0) or 0),
+        "self_routine_attack_seen": int(row.get("self_routine_attack_seen", 0) or 0),
+        "opp_routine_attack_seen": int(row.get("opp_routine_attack_seen", 0) or 0),
+        "self_contact_reaction_seen": int(row.get("self_contact_reaction_seen", 0) or 0),
+        "opp_contact_reaction_seen": int(row.get("opp_contact_reaction_seen", 0) or 0),
         "final_self_hp": int(row.get("final_self_hp", 0) or 0),
         "final_opp_hp": int(row.get("final_opp_hp", 0) or 0),
         "model_version_executed": int(row.get("model_version_executed", 0) or 0),

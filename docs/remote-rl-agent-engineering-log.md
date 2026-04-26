@@ -2,6 +2,50 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-26: Add Routine Attack / Contact Reaction Validation Probes
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / observation quality
+
+Files changed:
+- `src/rl/rl_observation.h`
+- `src/rl/rl_observation.c`
+- `src/rl/rl_protocol.h`
+- `src/rl/rl_session.c`
+- `tools/rl_probe_server.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- validate whether `routine_no[1] == 4` is a trustworthy opponent/self attack-state flag.
+- validate whether `routine_no[1] == 1` can identify contact / defensive reaction windows when paired with subsequent HP delta.
+- keep these fields validation-only before using them in the learner state key or reward shaping.
+
+Implementation notes:
+- `RLObservationV1` now derives:
+  - `self_routine_attack_state`
+  - `opp_routine_attack_state`
+  - `self_contact_reaction_state`
+  - `opp_contact_reaction_state`
+- UDP OBS payload schema advanced to version `2` and now carries those four derived flags alongside the compact spacing fields.
+- Transition NDJSON now exports decision-observation flags:
+  - `obs_self_routine_attack_state`
+  - `obs_opp_routine_attack_state`
+  - `obs_self_contact_reaction_state`
+  - `obs_opp_contact_reaction_state`
+- Transition NDJSON also exports decision-span flags:
+  - `self_routine_attack_seen`
+  - `opp_routine_attack_seen`
+  - `self_contact_reaction_seen`
+  - `opp_contact_reaction_seen`
+- `tools/rl_probe_server.py` parses the schema-v2 OBS payload and imports the new transition fields, but `tabular_state_key()` still ignores them so live policy behavior does not change yet.
+
+Validation plan:
+- run the usual Windows probe command with the updated script and redeployed runtime.
+- confirm `obs_opp_routine_attack_state` lines up with overlay `OR*,4,*` on opponent attacks.
+- confirm `self_contact_reaction_seen=1` with `delta_self_hp=0` often corresponds to successful guard / block reaction, while `delta_self_hp>0` corresponds to actual damage or chip.
+- do not promote these flags to learner features until live logs show stable semantics across normals, projectiles, throws, and multistage moves.
+
 ## 2026-04-26: Add Transition Reward Attribution Analyzer
 
 Milestone:

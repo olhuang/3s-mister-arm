@@ -105,6 +105,10 @@ typedef struct RLDecisionLedgerEntry {
     s16 obs_opp_front_edge_dist;
     s16 obs_opp_back_edge_dist;
     u8 obs_opp_in_front;
+    u8 obs_self_routine_attack_state;
+    u8 obs_opp_routine_attack_state;
+    u8 obs_self_contact_reaction_state;
+    u8 obs_opp_contact_reaction_state;
     u8 executed_move_intent;
     u16 executed_attack_bits;
     u8 execution_source;
@@ -118,6 +122,10 @@ typedef struct RLDecisionLedgerEntry {
     u8 opp_attack_code_changed;
     u8 opp_attack_counter_started;
     u8 opp_attack_routine_started;
+    u8 self_routine_attack_seen;
+    u8 opp_routine_attack_seen;
+    u8 self_contact_reaction_seen;
+    u8 opp_contact_reaction_seen;
     u8 self_airborne_seen;
     u8 opp_airborne_seen;
     u8 self_airborne_started;
@@ -663,7 +671,7 @@ static void RLSession_FillObsSpacingPayload(RLObsSpacingPayloadV1* payload, cons
     opp_x = plw[opp].wu.position_x;
     opp_y = plw[opp].wu.position_y;
     memset(payload, 0, sizeof(*payload));
-    payload->payload_version = 1;
+    payload->payload_version = RL_OBSERVATION_SCHEMA_VERSION;
     payload->obs_abs_dx = RLSession_ClampDistanceS16(opp_x - self_x);
     payload->obs_abs_dy = RLSession_ClampDistanceS16(opp_y - self_y);
     payload->obs_self_front_edge_dist = RLSession_FrontEdgeDistance(obs->self_facing_sign, self_x);
@@ -671,6 +679,10 @@ static void RLSession_FillObsSpacingPayload(RLObsSpacingPayloadV1* payload, cons
     payload->obs_opp_front_edge_dist = RLSession_FrontEdgeDistance(obs->opp_facing_sign, opp_x);
     payload->obs_opp_back_edge_dist = RLSession_BackEdgeDistance(obs->opp_facing_sign, opp_x);
     payload->obs_opp_in_front = obs->opp_in_front ? 1u : 0u;
+    payload->obs_self_routine_attack_state = obs->self_routine_attack_state ? 1u : 0u;
+    payload->obs_opp_routine_attack_state = obs->opp_routine_attack_state ? 1u : 0u;
+    payload->obs_self_contact_reaction_state = obs->self_contact_reaction_state ? 1u : 0u;
+    payload->obs_opp_contact_reaction_state = obs->opp_contact_reaction_state ? 1u : 0u;
 }
 
 static void RLSession_CaptureObservationSpacing(RLDecisionLedgerEntry* entry, const RLObservationV1* obs) {
@@ -687,6 +699,10 @@ static void RLSession_CaptureObservationSpacing(RLDecisionLedgerEntry* entry, co
     entry->obs_opp_front_edge_dist = payload.obs_opp_front_edge_dist;
     entry->obs_opp_back_edge_dist = payload.obs_opp_back_edge_dist;
     entry->obs_opp_in_front = payload.obs_opp_in_front;
+    entry->obs_self_routine_attack_state = payload.obs_self_routine_attack_state;
+    entry->obs_opp_routine_attack_state = payload.obs_opp_routine_attack_state;
+    entry->obs_self_contact_reaction_state = payload.obs_self_contact_reaction_state;
+    entry->obs_opp_contact_reaction_state = payload.obs_opp_contact_reaction_state;
 }
 
 static void RLSession_AccumulateDeltaS16(s16* accum, s32 delta) {
@@ -772,6 +788,10 @@ static int RLSession_FormatTransitionLogLine(const RLDecisionLedgerEntry* entry,
                         "\"obs_self_front_edge_dist\":%d,\"obs_self_back_edge_dist\":%d,"
                         "\"obs_opp_front_edge_dist\":%d,\"obs_opp_back_edge_dist\":%d,"
                         "\"obs_opp_in_front\":%u,"
+                        "\"obs_self_routine_attack_state\":%u,\"obs_opp_routine_attack_state\":%u,"
+                        "\"obs_self_contact_reaction_state\":%u,\"obs_opp_contact_reaction_state\":%u,"
+                        "\"self_routine_attack_seen\":%u,\"opp_routine_attack_seen\":%u,"
+                        "\"self_contact_reaction_seen\":%u,\"opp_contact_reaction_seen\":%u,"
                         "\"final_self_hp\":%d,\"final_opp_hp\":%d,"
                         "\"model_version_executed\":%u,"
                         "\"reward_accum\":%.3f,\"done\":%s,"
@@ -799,6 +819,14 @@ static int RLSession_FormatTransitionLogLine(const RLDecisionLedgerEntry* entry,
                         entry->obs_opp_front_edge_dist,
                         entry->obs_opp_back_edge_dist,
                         entry->obs_opp_in_front,
+                        entry->obs_self_routine_attack_state,
+                        entry->obs_opp_routine_attack_state,
+                        entry->obs_self_contact_reaction_state,
+                        entry->obs_opp_contact_reaction_state,
+                        entry->self_routine_attack_seen,
+                        entry->opp_routine_attack_seen,
+                        entry->self_contact_reaction_seen,
+                        entry->opp_contact_reaction_seen,
                         entry->final_self_hp,
                         entry->final_opp_hp,
                         entry->model_version_executed,
@@ -995,6 +1023,10 @@ static void RLSession_AccumulateAttackSignals(RLDecisionLedgerEntry* entry, cons
     entry->opp_attack_code_changed |= obs->opp_attack_code_changed;
     entry->opp_attack_counter_started |= obs->opp_attack_counter_started;
     entry->opp_attack_routine_started |= obs->opp_attack_routine_started;
+    entry->self_routine_attack_seen |= obs->self_routine_attack_state;
+    entry->opp_routine_attack_seen |= obs->opp_routine_attack_state;
+    entry->self_contact_reaction_seen |= obs->self_contact_reaction_state;
+    entry->opp_contact_reaction_seen |= obs->opp_contact_reaction_state;
 }
 
 static void RLSession_AccumulateCombatSpan(RLDecisionLedgerEntry* entry,

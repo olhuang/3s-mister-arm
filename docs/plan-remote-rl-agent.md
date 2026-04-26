@@ -547,7 +547,7 @@ Recommended fixed logical schema:
 | `opp_routine_1` | `u16` | raw categorical id | `plw[opp].wu.routine_no[1]` | No |
 | `opp_routine_2` | `u16` | raw categorical id | `plw[opp].wu.routine_no[2]` | No |
 | `self_routine_attack_state` | `u8` | derived validation flag: `self_routine_1 == 4` | `plw[self].wu.routine_no[1]` | No |
-| `opp_routine_attack_state` | `u8` | derived validation flag: `opp_routine_1 == 4` | `plw[opp].wu.routine_no[1]` | No |
+| `opp_routine_attack_state` | `u8` | derived strike-warning flag: `opp_routine_1 == 4`; validated as useful for first strike-defense tabular state split, but not a throw detector | `plw[opp].wu.routine_no[1]` | Yes |
 | `self_contact_reaction_state` | `u8` | derived validation flag: `self_routine_1 == 1`; includes hit and guard reaction | `plw[self].wu.routine_no[1]` | No |
 | `opp_contact_reaction_state` | `u8` | derived validation flag: `opp_routine_1 == 1`; includes hit and guard reaction | `plw[opp].wu.routine_no[1]` | No |
 | `round_num` | `u8` | raw categorical round index | `Round_num` | No |
@@ -2319,9 +2319,10 @@ Implementation notes:
   - `obs_opp_front_edge_dist`
   - `obs_opp_back_edge_dist`
   - `obs_opp_in_front`
-- The transition row also carries validation-only routine-state probes:
+- The transition row also carries routine-state probes:
   - decision-observation flags: `obs_self_routine_attack_state`, `obs_opp_routine_attack_state`, `obs_self_contact_reaction_state`, `obs_opp_contact_reaction_state`
-  - these are for validating `routine_no[1] == 4` as attack state and `routine_no[1] == 1` as contact / defensive reaction before promoting them into learner state or reward shaping
+  - `obs_opp_routine_attack_state` is promoted into the tabular learner state as `opp_attack=0/1` for the first strike-defense experiment
+  - `obs_self_contact_reaction_state` remains outcome/debug only because live timing showed it often appears after damage/contact, not before it
 - These spacing fields intentionally use raw absolute enemy distance plus facing-relative raw front/back edge distances first. Keep signed `dx/dy` and left/right corner ratios as debug/future-schema candidates unless later validation shows the learner needs the extra world-coordinate detail.
 - Treat the current slimmer transition row plus the compact spacing snapshot as the default learner/debug contract unless a later Milestone 6 or validation task explicitly needs one of the removed debug-only fields restored.
 - Deferred transition refinement: consider adding learner-safe SA state back into transition/replay rows after the RL loop is running reliably. The live observation already carries `self_super_stock`, `self_super_gauge_ratio`, `opp_super_stock`, and `opp_super_gauge_ratio`, but replay-only learner paths may need those fields, or compact `can_super` / `opp_can_super` derivatives, to learn when supers are available.
@@ -2415,6 +2416,7 @@ Tasks:
 - [x] Add an anti-DP fireball macro variant to reduce accidental shoryuken credit pollution
 - [x] Add an offline transition analyzer for action/distance HP-delta attribution
 - [x] Expand observation features only with schema versioning for the first routine attack/contact-reaction validation probes
+- [x] Promote validated opponent routine attack state into the first tabular strike-defense state split
 - [ ] Expand reward features only after baseline reward is stable
 - [ ] Review whether `overlay_attack_event_finalized` / `overlay_attack_contact` / `overlay_attack_whiff` have consistent learner semantics across normals, specials, projectiles, throws, and multistage moves before promoting them beyond debug / auxiliary labels
 - [x] Run move-family validation passes with scripted policies such as `hp`, `throw`, `ryu-fireball`, `tatsu`, and `shoryuken`, then document which attack-outcome fields are trustworthy enough for learner use versus debug-only analysis
@@ -2441,7 +2443,7 @@ Done when:
 Implementation notes:
 
 - `tools/rl_probe_server.py --policy tabular` now supports a minimal contextual-bandit learner loop:
-  - transition rows are bucketed from the compact spacing snapshot (`obs_abs_dx`, `obs_abs_dy`, front/back edge distances, `obs_opp_in_front`)
+  - transition rows are bucketed from the compact spacing snapshot (`obs_abs_dx`, `obs_abs_dy`, front/back edge distances, `obs_opp_in_front`) plus `obs_opp_routine_attack_state` as `opp_attack=0/1` for strike-defense learning
   - the learner maintains per-state action scores for explicit actions: `forward`, `back`, `hp`, `forward-hp`, `fireball`, and `throw`
   - neutral rows are not learned as greedy actions in the first version, because delayed damage/recovery rewards can otherwise make "do nothing" look falsely good
   - tabular score updates use a learner-local reward of `delta_opp_hp - delta_self_hp`; transition `reward_accum` still keeps full episode reward including terminal win/loss bonuses for future sequential RL learners
@@ -2451,7 +2453,7 @@ Implementation notes:
   - inference uses the active actor q-table only when a positive-scoring action has at least `min_action_count` updates for the latest learned bucket; otherwise it falls back to a scripted policy such as `hp`
   - `--tabular-min-action-count` defaults to `8` to keep sparse lucky hits from immediately becoming greedy actions
   - learner stats print `top_raw=<action>:<score>/<count>` for the highest q-score and `top_ready=<action>:<score>/<count>` for the highest action that satisfies the same minimum-count gate used by greedy inference
-  - learner stats also print `ready_actions=...` and `ready_dx=close{...} mid{...} far{...}` so live runs can show whether ready greedy choices are diversifying by spacing bucket
+  - learner stats also print `ready_actions=...`, `ready_dx=close{...} mid{...} far{...}`, and `ready_opp_attack=0{...} 1{...}` so live runs can show whether ready greedy choices are diversifying by spacing and opponent strike-warning state
   - tabular inference now locks multi-step scripted actions such as `fireball` until the full input sequence has been emitted, preventing later q-table decisions from interrupting QCF+LP before the projectile can come out
   - `fireball` / `ryu-fireball` now use `down-back -> down -> down-forward -> forward+LP -> neutral -> neutral` to reduce accidental DP parsing when a previous action left `forward` in the command buffer
   - MiSTer remote config was checked on `192.168.0.133`; no `perf-*` config keys or recent `PERF capture` logs were present, so the latest long-run restart was not explained by an enabled perf capture
@@ -2459,7 +2461,7 @@ Implementation notes:
   - learner auto-publish skips duplicate tabular actor publication when `tab_updates` has not increased since the previous publish
   - `tools/analyze_rl_transitions.py <transition-log>` summarizes direct and delayed-credited HP-delta reward by action and `obs_abs_dx` bucket; use it before changing action sets or reward rules
   - first full-log analyzer pass on `logs/rl-transitions-tabular-4-3-3.ndjson` (`383918` rows, `448` done rows) showed far fireball as the cleanest positive signal (`direct fireball dx=far reward=+1625`, credited fireball `reward=+2391`) while throw was negative in credited view (`reward=-3435`), so throw should not be treated as learner-safe strength until move-level labels or cleaner credit confirm it
-  - UDP OBS packets now carry a schema-versioned compact spacing/state payload (`payload_version=2`) with the same bucket inputs used by transition replay: `obs_abs_dx`, `obs_abs_dy`, front/back edge distances, `obs_opp_in_front`, plus validation-only routine flags for `routine_no[1] == 4` attack state and `routine_no[1] == 1` contact/defensive reaction state
+  - UDP OBS packets now carry a schema-versioned compact spacing/state payload (`payload_version=2`) with the same bucket inputs used by transition replay: `obs_abs_dx`, `obs_abs_dy`, front/back edge distances, `obs_opp_in_front`, plus routine flags for `routine_no[1] == 4` attack state and `routine_no[1] == 1` contact/defensive reaction state; only opponent attack state is currently promoted to the learner state key
   - Python-side tabular inference prefers the same-frame OBS spacing bucket and falls back to the latest replay-imported bucket only when an old header-only OBS packet or invalid payload is seen
   - learner stats print `obs=<payload>/<header-only>` and `tab_state=obs:<n>/latest:<n>` so live runs can confirm whether tabular inference is using same-frame OBS state
 - Live tabular testing exposed a VS rematch / second-match transition issue:

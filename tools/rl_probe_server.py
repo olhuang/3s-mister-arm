@@ -479,9 +479,11 @@ def tabular_state_key(row: dict[str, object]) -> str:
     opp_front = int(row.get("obs_opp_front_edge_dist", 0) or 0)
     opp_back = int(row.get("obs_opp_back_edge_dist", 0) or 0)
     opp_in_front = 1 if int(row.get("obs_opp_in_front", 0) or 0) else 0
+    opp_attack = 1 if int(row.get("obs_opp_routine_attack_state", 0) or 0) else 0
     return "|".join(
         (
             f"front={opp_in_front}",
+            f"opp_attack={opp_attack}",
             f"dx={bucket_range(abs_dx, (48, 144), ('close', 'mid', 'far'))}",
             f"dy={bucket_range(abs_dy, (16, 64), ('flat', 'offset', 'high'))}",
             f"self_front={bucket_range(self_front, (48, 160), ('corner', 'mid', 'open'))}",
@@ -505,10 +507,13 @@ def summarize_ready_actions(
     q_counts: dict[str, dict[str, int]],
     actions: tuple[str, ...],
     min_action_count: int,
-) -> tuple[dict[str, int], dict[str, dict[str, int]]]:
+) -> tuple[dict[str, int], dict[str, dict[str, int]], dict[str, dict[str, int]]]:
     min_count = max(1, min_action_count)
     ready_actions = {action: 0 for action in actions}
     ready_dx_actions = {bucket: {action: 0 for action in actions} for bucket in ("close", "mid", "far", "unknown")}
+    ready_opp_attack_actions = {
+        bucket: {action: 0 for action in actions} for bucket in ("0", "1", "unknown")
+    }
     for state, scores in q_table.items():
         best_action = ""
         best_score = 0.0
@@ -526,9 +531,13 @@ def summarize_ready_actions(
         dx = tabular_state_part(state, "dx")
         if dx not in ready_dx_actions:
             dx = "unknown"
+        opp_attack = tabular_state_part(state, "opp_attack")
+        if opp_attack not in ready_opp_attack_actions:
+            opp_attack = "unknown"
         ready_actions[best_action] += 1
         ready_dx_actions[dx][best_action] += 1
-    return ready_actions, ready_dx_actions
+        ready_opp_attack_actions[opp_attack][best_action] += 1
+    return ready_actions, ready_dx_actions, ready_opp_attack_actions
 
 
 def format_action_counts(counts: dict[str, int]) -> str:
@@ -540,6 +549,16 @@ def format_dx_action_counts(dx_counts: dict[str, dict[str, int]]) -> str:
     return " ".join(
         f"{bucket}{{{format_action_counts(dx_counts.get(bucket, {}))}}}" for bucket in ("close", "mid", "far")
     )
+
+
+def format_opp_attack_action_counts(opp_attack_counts: dict[str, dict[str, int]]) -> str:
+    parts = [
+        f"{bucket}{{{format_action_counts(opp_attack_counts.get(bucket, {}))}}}" for bucket in ("0", "1")
+    ]
+    unknown = format_action_counts(opp_attack_counts.get("unknown", {}))
+    if unknown != "none":
+        parts.append(f"unknown{{{unknown}}}")
+    return " ".join(parts)
 
 
 def parse_obs_spacing_payload(payload: bytes) -> dict[str, object] | None:
@@ -653,7 +672,9 @@ class TabularPolicyLearner:
             ready_score = 0.0
             ready_count = 0
             min_count = max(1, min_action_count)
-            ready_actions, ready_dx_actions = summarize_ready_actions(q_table, q_counts, self._actions, min_count)
+            ready_actions, ready_dx_actions, ready_opp_attack_actions = summarize_ready_actions(
+                q_table, q_counts, self._actions, min_count
+            )
             for state, scores in q_table.items():
                 if not scores:
                     continue
@@ -693,6 +714,7 @@ class TabularPolicyLearner:
                 "ready_count": ready_count,
                 "ready_actions": ready_actions,
                 "ready_dx_actions": ready_dx_actions,
+                "ready_opp_attack_actions": ready_opp_attack_actions,
             }
 
 
@@ -1060,6 +1082,9 @@ class LearnerLogTailer(threading.Thread):
             top_ready = f"{tabular['ready_action']}:{float(tabular['ready_score']):.2f}/{int(tabular['ready_count'])}"
         ready_actions = format_action_counts(tabular["ready_actions"] if isinstance(tabular["ready_actions"], dict) else {})
         ready_dx = format_dx_action_counts(tabular["ready_dx_actions"] if isinstance(tabular["ready_dx_actions"], dict) else {})
+        ready_opp_attack = format_opp_attack_action_counts(
+            tabular["ready_opp_attack_actions"] if isinstance(tabular["ready_opp_attack_actions"], dict) else {}
+        )
         print(
             "LEARNER "
             f"rows={self._rows} done={self._done} run={self._latest_run_id} ep={self._latest_episode} "
@@ -1075,7 +1100,7 @@ class LearnerLogTailer(threading.Thread):
             f"tab_reward=hp-delta:{float(tabular['training_reward_total']):.1f} "
             f"eps={float(tabular['epsilon']):.2f} min_n={self._tabular_min_action_count} "
             f"top_raw={top_raw} top_ready={top_ready} "
-            f"ready_actions={ready_actions} ready_dx={ready_dx} "
+            f"ready_actions={ready_actions} ready_dx={ready_dx} ready_opp_attack={ready_opp_attack} "
             f"model_exec={self._latest_model_version_executed} "
             f"model_active={model_status.active.version} "
             f"model_pub={model_status.last_published_version} "

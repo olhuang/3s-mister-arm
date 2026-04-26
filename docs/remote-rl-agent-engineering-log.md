@@ -2,6 +2,52 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-26: Promote Opponent Strike Warning Into Tabular State
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / strike-defense learning
+
+Files changed:
+- `tools/rl_probe_server.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- let the tabular learner distinguish normal spacing states from states where the opponent is already in a validated strike-attack routine.
+- keep throw defense as a spacing / close-range risk problem instead of inventing a fake "about to throw" observation.
+- keep contact-reaction fields out of learner state because live samples showed they behave as outcome/debug labels rather than pre-contact warnings.
+
+Live findings before promotion:
+- schema cleanup was confirmed on `logs/rl-transitions-back-4-3-3.ndjson` (`3562` rows) and `logs/rl-transitions-hp-4-3-3.ndjson` (`831` rows): both carried `obs_opp_routine_attack_state` and `obs_self_contact_reaction_state`, and neither carried old `span_*` / `*_seen` fields.
+- fixed `back` reduced observed self damage sharply versus the `hp` control run:
+  - `back`: `self_damage=155`, `self_damage_rows=8`, `self_dmg_per_100=4.35`
+  - `hp` control: `self_damage=320`, `self_damage_rows=25`, about `38.5` self damage per 100 rows overall
+- damage rows were usually preceded by opponent routine attack state:
+  - `back`: `5/8` damage rows had recent `obs_opp_routine_attack_state=1`
+  - `hp` control: `23/25` damage rows had recent `obs_opp_routine_attack_state=1`
+- timing samples showed `obs_opp_routine_attack_state=1` commonly appears one to four decisions before strike damage, making it suitable as a learner-visible strike warning.
+- timing samples also showed `obs_self_contact_reaction_state=1` often appears after damage/contact, making it unsuitable as a first policy state feature.
+- throw samples showed `obs_opp_routine_attack_state=0` with `obs_self_contact_reaction_state=1`, confirming that the routine attack flag is not a throw detector; close-range throw risk should be learned from spacing/action history later.
+
+Implementation notes:
+- `tabular_state_key()` now includes `opp_attack=0/1` from `obs_opp_routine_attack_state`.
+- `obs_self_contact_reaction_state` remains imported for analysis but is not included in the tabular state key.
+- learner stats now print `ready_opp_attack=0{...} 1{...}` so live runs can show whether ready greedy choices under strike-warning states start preferring defensive actions such as `back`.
+- reward remains unchanged as learner-local HP delta: `delta_opp_hp - delta_self_hp`.
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py tools/analyze_rl_transitions.py` passed.
+- state-key smoke passed: otherwise identical rows now produce distinct keys with `opp_attack=0` and `opp_attack=1`.
+- ready-summary smoke passed: `summarize_ready_actions()` and `format_opp_attack_action_counts()` produced `ready_opp_attack=0{back:1} 1{back:1}` for synthetic ready states.
+- replay smoke passed on existing local logs:
+  - `logs/rl-transitions-back-4-3-3.ndjson`: imported `697` rows, produced `18` tabular states, all with `opp_attack=...`
+  - `logs/rl-transitions-hp-4-3-3.ndjson`: imported `831` rows, produced `11` tabular states, all with `opp_attack=...`
+- `git diff --check -- tools/rl_probe_server.py docs/plan-remote-rl-agent.md docs/remote-rl-agent-engineering-log.md` passed.
+
+Follow-up:
+- run a fresh tabular model/log after this change and check whether `ready_opp_attack=1{back:...}` appears as enough strike-warning states become ready.
+- do not promote close-range throw defense until a separate action/feature plan is chosen; throw pressure should initially be treated as spacing risk, not as a visible startup flag.
+
 ## 2026-04-26: Remove Routine Span Probes From Transition Export
 
 Milestone:

@@ -2,6 +2,43 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-26: Fix Transition Sender Running-State Race
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / long-run stability
+
+Files changed:
+- `src/rl/rl_net.c`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- fix the remaining transition sender lifecycle race after ruling out perf-capture config as the latest long-run restart cause
+
+Investigation notes:
+- MiSTer remote config at `/media/fat/games/3s-arm/config` had no `perf-*` keys.
+- recent MiSTer-side logs contained no `PERF capture` entries.
+- `lock-status` reported the remote lock as free before the read-only config check.
+- `busy-status` using the old default host failed, so the follow-up check used explicit `192.168.0.133`.
+- review found `transition_sender_thread_running` was still read/written from both the game thread and sender thread without the queue mutex.
+- there was a missed-wakeup window: the sender could observe an empty queue and be about to exit while a new batch was enqueued; the game thread could still see `running=true` and skip starting a replacement sender.
+
+Implementation notes:
+- `transition_sender_thread_running` is now cleared by `RLNet_PopQueuedTransitionBatch()` while holding `transition_queue_mutex` when the queue is observed empty.
+- `RLNet_MaybeStartTransitionSenderThread()` now checks `transition_sender_thread_running`, reaps completed thread handles, and starts replacement sender threads under the same queue mutex.
+- completed sender threads are still joined outside the mutex to avoid deadlock.
+- `RLNet_Shutdown()` now snapshots and waits the sender thread without clearing the handle while it is still running, then clears handle/state under the mutex after wait.
+- `reset_transition_queue()` now locks the queue mutex when it already exists before freeing queued payloads.
+
+Validation:
+- read-only remote config check confirmed no active perf-capture config keys and no recent `PERF capture` logs.
+- `git diff --check -- src/rl/rl_net.c` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed and produced `build/mister-telemetry-package`.
+
+Follow-up:
+- deploy this telemetry package before the next long RL run.
+- during the next long run, watch transition counters and MiSTer `dmesg`; if the process still restarts without OOM or perf-capture logs, collect uptime plus the last 100 lines of dmesg immediately after restart.
+
 ## 2026-04-26: Add Anti-DP Fireball Macro Variant
 
 Milestone:

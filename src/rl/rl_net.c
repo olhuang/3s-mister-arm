@@ -95,9 +95,17 @@ static u64 make_session_nonce(void) {
 }
 
 static void reset_transition_queue(void) {
+    const bool should_unlock = transition_queue_mutex != NULL;
+
+    if (should_unlock) {
+        SDL_LockMutex(transition_queue_mutex);
+    }
     for (u32 i = 0; i < RL_NET_TRANSITION_QUEUE_CAP; i++) {
         SDL_free(transition_queue[i].payload);
         memset(&transition_queue[i], 0, sizeof(transition_queue[i]));
+    }
+    if (should_unlock) {
+        SDL_UnlockMutex(transition_queue_mutex);
     }
 }
 
@@ -254,6 +262,9 @@ static bool RLNet_PopQueuedTransitionBatch(RLTransitionBatchQueueEntry* out_entr
         found = true;
         break;
     }
+    if (!found) {
+        transition_sender_thread_running = false;
+    }
     SDL_UnlockMutex(transition_queue_mutex);
     return found;
 }
@@ -342,7 +353,6 @@ static int RLNet_TransitionSenderThreadMain(void* userdata) {
 #endif
         RLNet_FreeTransitionQueueEntry(&entry);
     }
-    transition_sender_thread_running = false;
     return 0;
 }
 
@@ -351,17 +361,30 @@ static void RLNet_MaybeStartTransitionSenderThread(void) {
     if (transition_queue_mutex == NULL) {
         return;
     }
-    if (transition_sender_thread != NULL) {
+
+    for (;;) {
+        SDL_Thread* completed_thread = NULL;
+
+        SDL_LockMutex(transition_queue_mutex);
         if (transition_sender_thread_running) {
+            SDL_UnlockMutex(transition_queue_mutex);
             return;
         }
-        SDL_WaitThread(transition_sender_thread, NULL);
-        transition_sender_thread = NULL;
-    }
-    transition_sender_thread_running = true;
-    transition_sender_thread = SDL_CreateThread(RLNet_TransitionSenderThreadMain, "rl-transition-sender", NULL);
-    if (transition_sender_thread == NULL) {
-        transition_sender_thread_running = false;
+        if (transition_sender_thread != NULL) {
+            completed_thread = transition_sender_thread;
+            transition_sender_thread = NULL;
+        } else {
+            transition_sender_thread_running = true;
+            transition_sender_thread = SDL_CreateThread(RLNet_TransitionSenderThreadMain, "rl-transition-sender", NULL);
+            if (transition_sender_thread == NULL) {
+                transition_sender_thread_running = false;
+            }
+            SDL_UnlockMutex(transition_queue_mutex);
+            return;
+        }
+
+        SDL_UnlockMutex(transition_queue_mutex);
+        SDL_WaitThread(completed_thread, NULL);
     }
 }
 
@@ -586,9 +609,22 @@ void RLNet_Shutdown(void) {
         action_socket = -1;
     }
 #endif
-    if (transition_sender_thread != NULL) {
-        SDL_WaitThread(transition_sender_thread, NULL);
-        transition_sender_thread = NULL;
+    if (transition_queue_mutex != NULL) {
+        SDL_Thread* sender_thread = NULL;
+
+        SDL_LockMutex(transition_queue_mutex);
+        sender_thread = transition_sender_thread;
+        SDL_UnlockMutex(transition_queue_mutex);
+
+        if (sender_thread != NULL) {
+            SDL_WaitThread(sender_thread, NULL);
+        }
+        SDL_LockMutex(transition_queue_mutex);
+        if (transition_sender_thread == sender_thread) {
+            transition_sender_thread = NULL;
+        }
+        transition_sender_thread_running = false;
+        SDL_UnlockMutex(transition_queue_mutex);
     }
     rl_net_state.socket_open = false;
     rl_net_state.action_socket_open = false;

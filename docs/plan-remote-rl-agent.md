@@ -2417,6 +2417,7 @@ Tasks:
 - [ ] Add automated reset loops
 - [x] Add a conservative RL auto-rematch path through the existing VS result rematch flow
 - [x] Fix long-run transition sender thread resource leak that could OOM-kill `3s-arm`
+- [x] Fix transition sender running-state race / missed-wakeup after ruling out perf-capture config as the latest restart cause
 - [ ] Evaluate higher control rate after latency p95/p99 is stable
 - [ ] Review derived movement/action-phase candidates from the Human-Fighter Observer Gap Review before changing the observation schema
 
@@ -2445,6 +2446,8 @@ Implementation notes:
   - learner stats also print `ready_actions=...` and `ready_dx=close{...} mid{...} far{...}` so live runs can show whether ready greedy choices are diversifying by spacing bucket
   - tabular inference now locks multi-step scripted actions such as `fireball` until the full input sequence has been emitted, preventing later q-table decisions from interrupting QCF+LP before the projectile can come out
   - `fireball` / `ryu-fireball` now use `down-back -> down -> down-forward -> forward+LP -> neutral -> neutral` to reduce accidental DP parsing when a previous action left `forward` in the command buffer
+  - MiSTer remote config was checked on `192.168.0.133`; no `perf-*` config keys or recent `PERF capture` logs were present, so the latest long-run restart was not explained by an enabled perf capture
+  - `src/rl/rl_net.c` now protects the transition sender running-state with the transition queue mutex, clears it while observing an empty queue, reaps completed thread handles before replacement, and avoids clearing the shutdown handle until after the sender is joined
   - learner auto-publish skips duplicate tabular actor publication when `tab_updates` has not increased since the previous publish
   - UDP OBS packets now carry a schema-versioned compact spacing payload (`payload_version=1`) with the same bucket inputs used by transition replay: `obs_abs_dx`, `obs_abs_dy`, front/back edge distances, and `obs_opp_in_front`
   - Python-side tabular inference prefers the same-frame OBS spacing bucket and falls back to the latest replay-imported bucket only when an old header-only OBS packet or invalid payload is seen

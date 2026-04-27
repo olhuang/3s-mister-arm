@@ -994,7 +994,7 @@ Responsibility boundary:
 
 - remote policy produces semantic actions
 - remote action adapter converts semantic actions and macros into the final executable wire action
-- MiSTer accepts only wire actions on the protocol boundary
+- MiSTer accepts final wire actions on the protocol boundary, plus remote-owned attribution fields for transition credit
 - MiSTer does not own high-level macro expansion
 - MiSTer may remap the relative-direction subfield into raw `SWKey` directions at execution time
 - MiSTer may still apply minimal legality cleanup at the input-buffer edge
@@ -1003,6 +1003,7 @@ Canonical v1 rule:
 
 - the packet received by MiSTer should already contain the final wire action intended for execution
 - semantic-to-wire translation belongs on the remote side, not in the MiSTer runtime
+- high-level policy action ID / sub-action ID / macro step fields are metadata for logging and learner attribution; MiSTer must not reinterpret them into inputs
 - the only intended MiSTer-side interpretation layer is relative-direction to raw `SWKey` remapping at the exact execution frame
 - direction remapping is not macro expansion and must not infer high-level policy intent
 
@@ -1248,7 +1249,7 @@ Recommended v1 target-frame policy:
 - if `ActionPacket.target_frame` does not match the ledger entry for `(run_id, episode_id, decision_id)`, MiSTer treats it as a protocol error
 - if `RLSessionAck.accepted_config_hash` does not match `RLSessionHello.config_hash`, MiSTer treats the session setup as rejected
 
-Protocol v2 identity rules:
+Current protocol identity rules:
 
 - `run_id` is a persisted `u64` RL dataset/run identity allocated by MiSTer when the RL runtime initializes.
 - `episode_id` is unique only within one `run_id` and increments for each round-scoped rollout.
@@ -1286,12 +1287,14 @@ Payload:
 typedef struct RLActionPacket {
     uint32_t magic;
     uint16_t version;
-    uint16_t flags;
+    uint16_t policy_action_id;
     uint64_t run_id;
     uint32_t episode_id;
     uint32_t decision_id;
     uint32_t target_frame;
     uint16_t action_wire;
+    uint16_t policy_sub_action_id;
+    uint16_t policy_action_step;
     uint16_t reserved;
     uint32_t model_version;
 } RLActionPacket;
@@ -1301,8 +1304,14 @@ In v1, `action_wire` means:
 
 - relative movement subfield
 - final attack/button bits
-- no high-level macro payload
+- the already-expanded executable frame of the high-level policy action
 - no implicit absolute `LEFT` / `RIGHT` `SWKey` unless an explicit absolute-action compatibility mode is negotiated
+
+In action schema v2, `policy_action_id`, `policy_sub_action_id`, and
+`policy_action_step` are attribution fields produced by the remote adapter. They
+do not ask MiSTer to expand a macro; they let transition logs distinguish
+semantic actions such as `guard`, `fireball`, `throw`, and `jump-forward-mk`
+after MiSTer executes the final wire input.
 
 Suggested v1 layout:
 
@@ -2423,7 +2432,7 @@ Tasks:
 - [x] Promote validated opponent routine attack state into the first tabular strike-defense state split
 - [x] Draft an all-character policy action ID / sub-action / macro taxonomy from SF3 command source tables
 - [ ] Split `back` and `guard` into separate high-level actions after the DQN pipeline smoke passes
-- [ ] Add high-level action / macro attribution to transition rows so DQN can learn `guard` separately from retreat
+- [x] Add high-level policy action / sub-action / macro-step attribution to transition rows
 - [ ] Expand reward features only after baseline reward is stable
 - [ ] Review whether `overlay_attack_event_finalized` / `overlay_attack_contact` / `overlay_attack_whiff` have consistent learner semantics across normals, specials, projectiles, throws, and multistage moves before promoting them beyond debug / auxiliary labels
 - [x] Run move-family validation passes with scripted policies such as `hp`, `throw`, `ryu-fireball`, `tatsu`, and `shoryuken`, then document which attack-outcome fields are trustworthy enough for learner use versus debug-only analysis
@@ -2463,6 +2472,8 @@ Implementation notes:
   - learner stats also print `ready_actions=...`, `ready_dx=close{...} mid{...} far{...}`, `ready_opp_attack=0{...} 1{...}`, and `ready_threat_dx=atk0_close{...} ... atk1_far{...}` so live runs can show whether ready greedy choices are diversifying by spacing, opponent strike-warning state, and their cross-product
   - tabular `back` now executes through the same macro lock as a `guard` sequence: six consecutive `back` decision replies, which is roughly an 18-frame stand-guard window with the current `decision_interval=3` / `action_hold=3` timing
   - `guard` is also available as a scripted probe policy for fixed long-guard validation, but it is not a separate tabular learner action because transition credit is still wire-level and should continue to train the `back` action bucket
+  - action schema v2 adds `requested_policy_action_id`, `requested_policy_sub_action_id`, `requested_policy_action_step`, `executed_policy_action_id`, `executed_policy_sub_action_id`, and `executed_policy_action_step` to transition rows; current tabular/DQN learners prefer these fields and fall back to old `executed_action_wire` when reading older logs
+  - for compatibility, a model-selected `back` that is expanded into the current stand-guard macro is logged as policy action `guard/stand`, while learner import still maps it back to the old `back` action bucket until `back` and `guard` are split in the action set
   - tabular inference now locks multi-step scripted actions such as `fireball` until the full input sequence has been emitted, preventing later q-table decisions from interrupting QCF+LP before the projectile can come out
   - `jump-forward-mk` is available as both a scripted probe policy and a tabular macro action: `up-forward -> up-forward -> up-forward+MK -> up-forward+MK -> neutral -> neutral`; transition credit maps the `up-forward+MK` wire phase back to the high-level `jump-forward-mk` bucket
   - `fireball` / `ryu-fireball` now use `down-back -> down -> down-forward -> forward+LP -> neutral -> neutral` to reduce accidental DP parsing when a previous action left `forward` in the command buffer

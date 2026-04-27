@@ -75,7 +75,7 @@ def build_experiences(
         last_exp_index: int | None = None
         for index, row in enumerate(episode_rows):
             reward = rl.tabular_training_reward(row) * reward_scale
-            action_name = rl.tabular_action_name(int(row.get("executed_action_wire", 0) or 0))
+            action_name = rl.transition_action_name(row)
             if action_name is None or action_name not in action_to_index:
                 if reward != 0.0 and last_exp_index is not None:
                     experiences[last_exp_index].reward += reward

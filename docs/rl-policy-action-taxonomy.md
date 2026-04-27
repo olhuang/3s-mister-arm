@@ -72,6 +72,7 @@ The source character IDs used by this repo are:
 | 9 | tech_throw | neutral | `LP+LK` |
 | 10 | quick_stand | neutral | `down_on_knockdown` |
 | 11 | taunt | neutral | `HP+HK` |
+| 12 | jump_attack | lp, mp, hp, lk, mk, hk | `up-forward+<button>` |
 
 ## Sub Actions
 
@@ -90,6 +91,13 @@ The source character IDs used by this repo are:
 | 10 | ex_k |
 | 11 | all_p |
 | 12 | all_k |
+| 13 | forward |
+| 14 | back |
+| 15 | neutral_direction |
+| 16 | up_forward |
+| 17 | up_back |
+| 18 | down_forward |
+| 19 | down_back |
 | 20 | stand |
 | 21 | crouch |
 | 22 | air |
@@ -413,9 +421,8 @@ state or strength.
 - Give source-specific handlers official move aliases where useful for analysis.
 - Split grouped `p`/`k` rows into concrete strength rows only when a curriculum
   needs them.
-- Add transition fields:
-  `requested_policy_action_id`, `requested_policy_sub_action_id`,
-  `executed_policy_action_id`, `executed_policy_sub_action_id`, and
-  `executed_policy_action_step`.
+- Add official action-name aliases for transition analysis output; the wire
+  protocol now carries requested/executed policy action ID, sub-action ID, and
+  action step fields.
 - Keep `back` and `guard` as separate universal policy actions before training
   a defensive DQN action head.

@@ -6,9 +6,9 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-#define RL_PROTOCOL_VERSION 2u
+#define RL_PROTOCOL_VERSION 3u
 #define RL_OBSERVATION_SCHEMA_VERSION 2u
-#define RL_ACTION_SCHEMA_VERSION 1u
+#define RL_ACTION_SCHEMA_VERSION 2u
 #define RL_PROTOCOL_MAGIC 0x33524C41u /* 3RLA */
 #define RL_PROTOCOL_FEATURE_RELATIVE_MOVEMENT 0x00000001u
 #define RL_PROTOCOL_FEATURE_FIXED_HOLD 0x00000002u
@@ -75,13 +75,15 @@ typedef struct RLProbeStats {
 typedef struct RL_PROTOCOL_PACKED RLActionPacket {
     u32 magic;
     u16 version;
-    u16 flags;
+    u16 policy_action_id;
     u64 session_nonce;
     u64 run_id;
     u32 episode_id;
     u32 decision_id;
     u32 target_frame;
     u16 action_wire;
+    u16 policy_sub_action_id;
+    u16 policy_action_step;
     u16 reserved0;
     u32 model_version;
 } RLActionPacket;

@@ -11,11 +11,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-from rl_probe_server import bucket_range, tabular_action_name, tabular_training_reward
+from rl_probe_server import bucket_range, transition_action_name, tabular_training_reward
 
 
 DX_BUCKETS = ("close", "mid", "far")
-DEFAULT_ACTIONS = ("forward", "back", "hp", "forward-hp", "fireball", "throw")
+DEFAULT_ACTIONS = ("forward", "back", "hp", "forward-hp", "fireball", "throw", "jump-forward-mk")
 
 
 @dataclass
@@ -204,7 +204,7 @@ def main() -> int:
             first_key = key
         last_key = key
 
-        action = tabular_action_name(int_field(row, "executed_action_wire"))
+        action = transition_action_name(row)
         reward = tabular_training_reward(row)
         opp_hp = int_field(row, "delta_opp_hp")
         self_hp = int_field(row, "delta_self_hp")

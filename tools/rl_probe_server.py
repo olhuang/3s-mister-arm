@@ -19,14 +19,14 @@ from dataclasses import dataclass, field
 
 MAGIC = 0x33524C41
 PACKET_VERSION = 1
-PROTOCOL_VERSION = 2
+PROTOCOL_VERSION = 3
 TYPE_HELLO = 1
 TYPE_ACK = 2
 TYPE_PING = 3
 TYPE_PONG = 4
 TYPE_OBS = 5
 PACKET = struct.Struct("<IHHQIIQ")
-ACTION_PACKET = struct.Struct("<IHHQQIIIHHI")
+ACTION_PACKET = struct.Struct("<IHHQQIIIHHHHI")
 OBS_HEADER = struct.Struct("<IHHQQIIIIHHI")
 OBS_SPACING_PAYLOAD = struct.Struct("<HHhhhhhhBBBBB3x")
 OBS_SPACING_PAYLOAD_VERSION = 2
@@ -45,6 +45,27 @@ BTN_LP = 0x0010
 BTN_HP = 0x0040
 BTN_LK = 0x0100
 BTN_MK = 0x0200
+
+RL_POLICY_ACTION_NEUTRAL = 0
+RL_POLICY_ACTION_WALK = 1
+RL_POLICY_ACTION_JUMP = 3
+RL_POLICY_ACTION_GUARD = 4
+RL_POLICY_ACTION_NORMAL = 6
+RL_POLICY_ACTION_COMMAND_NORMAL = 7
+RL_POLICY_ACTION_THROW = 8
+RL_POLICY_ACTION_JUMP_ATTACK = 12
+RL_POLICY_ACTION_RYU_SHORYUKEN = 1228
+RL_POLICY_ACTION_RYU_FIREBALL = 1229
+RL_POLICY_ACTION_RYU_TATSU = 1230
+
+RL_POLICY_SUB_NONE = 0
+RL_POLICY_SUB_LP = 1
+RL_POLICY_SUB_HP = 3
+RL_POLICY_SUB_LK = 4
+RL_POLICY_SUB_MK = 5
+RL_POLICY_SUB_FORWARD = 13
+RL_POLICY_SUB_BACK = 14
+RL_POLICY_SUB_STAND = 20
 SCRIPTED_POLICY_CHOICES = (
     "forward",
     "back",
@@ -79,6 +100,32 @@ TABULAR_ACTION_NAMES_BY_WIRE = {
 TABULAR_ACTION_NAMES_BY_WIRE[RL_MOVE_FORWARD | BTN_LP] = "fireball"
 TABULAR_ACTION_NAMES_BY_WIRE[RL_MOVE_UP_FORWARD | BTN_MK] = "jump-forward-mk"
 TABULAR_DEFAULT_ACTIONS = TABULAR_ACTION_NAMES
+
+POLICY_ACTION_META_BY_NAME = {
+    "neutral": (RL_POLICY_ACTION_NEUTRAL, RL_POLICY_SUB_NONE),
+    "forward": (RL_POLICY_ACTION_WALK, RL_POLICY_SUB_FORWARD),
+    "back": (RL_POLICY_ACTION_WALK, RL_POLICY_SUB_BACK),
+    "guard": (RL_POLICY_ACTION_GUARD, RL_POLICY_SUB_STAND),
+    "hp": (RL_POLICY_ACTION_NORMAL, RL_POLICY_SUB_HP),
+    "forward-hp": (RL_POLICY_ACTION_COMMAND_NORMAL, RL_POLICY_SUB_HP),
+    "throw": (RL_POLICY_ACTION_THROW, RL_POLICY_SUB_FORWARD),
+    "fireball": (RL_POLICY_ACTION_RYU_FIREBALL, RL_POLICY_SUB_LP),
+    "ryu-fireball": (RL_POLICY_ACTION_RYU_FIREBALL, RL_POLICY_SUB_LP),
+    "tatsu": (RL_POLICY_ACTION_RYU_TATSU, RL_POLICY_SUB_LK),
+    "shoryuken": (RL_POLICY_ACTION_RYU_SHORYUKEN, RL_POLICY_SUB_HP),
+    "jump-forward-mk": (RL_POLICY_ACTION_JUMP_ATTACK, RL_POLICY_SUB_MK),
+}
+
+TABULAR_ACTION_NAMES_BY_POLICY_META = {
+    (RL_POLICY_ACTION_WALK, RL_POLICY_SUB_FORWARD): "forward",
+    (RL_POLICY_ACTION_WALK, RL_POLICY_SUB_BACK): "back",
+    (RL_POLICY_ACTION_GUARD, RL_POLICY_SUB_STAND): "back",
+    (RL_POLICY_ACTION_NORMAL, RL_POLICY_SUB_HP): "hp",
+    (RL_POLICY_ACTION_COMMAND_NORMAL, RL_POLICY_SUB_HP): "forward-hp",
+    (RL_POLICY_ACTION_THROW, RL_POLICY_SUB_FORWARD): "throw",
+    (RL_POLICY_ACTION_RYU_FIREBALL, RL_POLICY_SUB_LP): "fireball",
+    (RL_POLICY_ACTION_JUMP_ATTACK, RL_POLICY_SUB_MK): "jump-forward-mk",
+}
 
 DQN_FEATURE_NAMES = (
     "obs_abs_dx",
@@ -124,6 +171,14 @@ class ActorModelStatus:
     last_loaded_version: int
     publish_count: int
     load_count: int
+
+
+@dataclass(frozen=True)
+class PolicyActionFrame:
+    action_wire: int
+    policy_action_id: int
+    policy_sub_action_id: int
+    policy_action_step: int = 0
 
 
 @dataclass
@@ -748,6 +803,23 @@ def tabular_action_name(action_wire: int) -> str | None:
     return TABULAR_ACTION_NAMES_BY_WIRE.get(action_wire & 0xFFFF)
 
 
+def transition_action_name(row: dict[str, object]) -> str | None:
+    try:
+        action_id = int(row.get("executed_policy_action_id", 0) or 0)
+        sub_action_id = int(row.get("executed_policy_sub_action_id", 0) or 0)
+    except (TypeError, ValueError):
+        action_id = 0
+        sub_action_id = 0
+    action_name = TABULAR_ACTION_NAMES_BY_POLICY_META.get((action_id, sub_action_id))
+    if action_name is not None:
+        return action_name
+    try:
+        action_wire = int(row.get("executed_action_wire", 0) or 0)
+    except (TypeError, ValueError):
+        action_wire = 0
+    return tabular_action_name(action_wire)
+
+
 def tabular_training_reward(row: dict[str, object]) -> float:
     return float(int(row.get("delta_opp_hp", 0) or 0) - int(row.get("delta_self_hp", 0) or 0))
 
@@ -829,7 +901,7 @@ class TabularPolicyLearner:
         return self._fallback_policy
 
     def update(self, row: dict[str, object]) -> str | None:
-        action_name = tabular_action_name(int(row.get("executed_action_wire", 0) or 0))
+        action_name = transition_action_name(row)
         reward = tabular_training_reward(row)
         if action_name is None or action_name not in self._actions:
             with self._lock:
@@ -1425,19 +1497,21 @@ def make_action_packet(
     episode_id: int,
     decision_id: int,
     target_frame: int,
-    action_wire: int,
+    action: PolicyActionFrame,
     model_version: int,
 ) -> bytes:
     return ACTION_PACKET.pack(
         MAGIC,
         PROTOCOL_VERSION,
-        0,
+        action.policy_action_id & 0xFFFF,
         nonce,
         run_id,
         episode_id,
         decision_id,
         target_frame,
-        action_wire,
+        action.action_wire & 0xFFFF,
+        action.policy_sub_action_id & 0xFFFF,
+        action.policy_action_step & 0xFFFF,
         0,
         model_version,
     )
@@ -1460,7 +1534,15 @@ def maybe_send_action(
     if action_mode == "stale":
         send_nonce = (nonce - 1) & 0xFFFFFFFFFFFFFFFF
 
-    payload = make_action_packet(send_nonce, 0, 1, sequence, sequence + 4, 0x0040, model_version)
+    payload = make_action_packet(
+        send_nonce,
+        0,
+        1,
+        sequence,
+        sequence + 4,
+        make_policy_action_frame("hp", BTN_HP),
+        model_version,
+    )
     target = (addr[0], action_port)
     sock.sendto(payload, target)
     if verbose:
@@ -1475,6 +1557,20 @@ def fixed_action_wire(policy: str) -> int | None:
         "forward-hp": RL_MOVE_FORWARD | BTN_HP,
         "throw": RL_MOVE_FORWARD | BTN_LP | BTN_LK,
     }.get(policy)
+
+
+def policy_action_meta(policy: str) -> tuple[int, int]:
+    return POLICY_ACTION_META_BY_NAME.get(policy, POLICY_ACTION_META_BY_NAME["neutral"])
+
+
+def make_policy_action_frame(policy: str, action_wire: int, step: int = 0) -> PolicyActionFrame:
+    action_id, sub_action_id = policy_action_meta(policy)
+    return PolicyActionFrame(
+        action_wire=action_wire & 0xFFFF,
+        policy_action_id=action_id,
+        policy_sub_action_id=sub_action_id,
+        policy_action_step=step,
+    )
 
 
 def scripted_sequence(policy: str) -> tuple[int, ...] | None:
@@ -1530,19 +1626,19 @@ def scripted_sequence(policy: str) -> tuple[int, ...] | None:
     return scripts.get(policy)
 
 
-def scripted_action_wire(
+def scripted_action_frame(
     policy: str,
     policy_states: dict[tuple[int, int, int, str], dict[str, int]],
     nonce: int,
     run_id: int,
     episode_id: int,
     repeat_delay_ms: int,
-) -> int:
+) -> PolicyActionFrame:
     key = (nonce, run_id, episode_id, policy)
     state = policy_states.setdefault(key, {"index": 0, "delay_until_ns": 0})
     now_ns = time.monotonic_ns()
     if state["delay_until_ns"] > now_ns:
-        return RL_MOVE_NEUTRAL
+        return make_policy_action_frame("neutral", RL_MOVE_NEUTRAL)
     if state["delay_until_ns"] != 0:
         state["delay_until_ns"] = 0
         state["index"] = 0
@@ -1551,13 +1647,14 @@ def scripted_action_wire(
     if fixed is not None:
         if repeat_delay_ms > 0:
             state["delay_until_ns"] = now_ns + (repeat_delay_ms * 1_000_000)
-        return fixed
+        return make_policy_action_frame(policy, fixed)
 
     sequence = scripted_sequence(policy)
     if sequence is None:
-        return RL_MOVE_FORWARD
+        return make_policy_action_frame("forward", RL_MOVE_FORWARD)
 
     index = state["index"]
+    step = index
     action_wire = sequence[index]
     index += 1
     if index >= len(sequence):
@@ -1565,7 +1662,18 @@ def scripted_action_wire(
         if repeat_delay_ms > 0:
             state["delay_until_ns"] = now_ns + (repeat_delay_ms * 1_000_000)
     state["index"] = index
-    return action_wire
+    return make_policy_action_frame(policy, action_wire, step=step)
+
+
+def scripted_action_wire(
+    policy: str,
+    policy_states: dict[tuple[int, int, int, str], dict[str, int]],
+    nonce: int,
+    run_id: int,
+    episode_id: int,
+    repeat_delay_ms: int,
+) -> int:
+    return scripted_action_frame(policy, policy_states, nonce, run_id, episode_id, repeat_delay_ms).action_wire
 
 
 def tabular_actor_action_name(actor: ActorModel, state_key: str | None) -> str | None:
@@ -1605,12 +1713,12 @@ def dqn_actor_action_name(actor: ActorModel, obs_row: dict[str, object] | None) 
     return max(scored_actions, key=lambda item: (item[1], item[0]))[0]
 
 
-def active_macro_action_wire(
+def active_macro_action_frame(
     macro_states: dict[tuple[int, int, int], dict[str, int | str]],
     nonce: int,
     run_id: int,
     episode_id: int,
-) -> int | None:
+) -> PolicyActionFrame | None:
     key = (nonce, run_id, episode_id)
     state = macro_states.get(key)
     if not state:
@@ -1621,13 +1729,38 @@ def active_macro_action_wire(
     if sequence is None or index < 0 or index >= len(sequence):
         macro_states.pop(key, None)
         return None
+    step = index
     action_wire = sequence[index]
     index += 1
     if index >= len(sequence):
         macro_states.pop(key, None)
     else:
         state["index"] = index
-    return action_wire
+    return make_policy_action_frame(action, action_wire, step=step)
+
+
+def active_macro_action_wire(
+    macro_states: dict[tuple[int, int, int], dict[str, int | str]],
+    nonce: int,
+    run_id: int,
+    episode_id: int,
+) -> int | None:
+    frame = active_macro_action_frame(macro_states, nonce, run_id, episode_id)
+    return None if frame is None else frame.action_wire
+
+
+def start_macro_action_frame(
+    macro_states: dict[tuple[int, int, int], dict[str, int | str]],
+    nonce: int,
+    run_id: int,
+    episode_id: int,
+    action: str,
+) -> PolicyActionFrame | None:
+    sequence = scripted_sequence(action)
+    if sequence is None:
+        return None
+    macro_states[(nonce, run_id, episode_id)] = {"action": action, "index": 1}
+    return make_policy_action_frame(action, sequence[0], step=0)
 
 
 def start_macro_action_wire(
@@ -1637,11 +1770,45 @@ def start_macro_action_wire(
     episode_id: int,
     action: str,
 ) -> int | None:
-    sequence = scripted_sequence(action)
-    if sequence is None:
-        return None
-    macro_states[(nonce, run_id, episode_id)] = {"action": action, "index": 1}
-    return sequence[0]
+    frame = start_macro_action_frame(macro_states, nonce, run_id, episode_id, action)
+    return None if frame is None else frame.action_wire
+
+
+def policy_action_frame(
+    actor: ActorModel,
+    model_store: ActorModelStore,
+    policy_states: dict[tuple[int, int, int, str], dict[str, int]],
+    macro_states: dict[tuple[int, int, int], dict[str, int | str]],
+    nonce: int,
+    run_id: int,
+    episode_id: int,
+    repeat_delay_ms: int,
+    tabular_state_key_override: str | None = None,
+    obs_row_override: dict[str, object] | None = None,
+) -> PolicyActionFrame:
+    if actor.policy in MODEL_POLICY_CHOICES:
+        macro_frame = active_macro_action_frame(macro_states, nonce, run_id, episode_id)
+        if macro_frame is not None:
+            return macro_frame
+    action_name = None
+    if actor.policy == "tabular":
+        tabular_state = tabular_state_key_override if tabular_state_key_override else model_store.latest_tabular_state()
+        action_name = tabular_actor_action_name(actor, tabular_state)
+    elif actor.policy == "dqn":
+        action_name = dqn_actor_action_name(actor, obs_row_override)
+    if action_name is not None:
+        if action_name == "back":
+            macro_frame = start_macro_action_frame(macro_states, nonce, run_id, episode_id, "guard")
+            if macro_frame is not None:
+                return macro_frame
+        fixed = fixed_action_wire(action_name)
+        if fixed is not None:
+            return make_policy_action_frame(action_name, fixed)
+        macro_frame = start_macro_action_frame(macro_states, nonce, run_id, episode_id, action_name)
+        if macro_frame is not None:
+            return macro_frame
+    fallback_policy = actor.fallback_policy if actor.policy in MODEL_POLICY_CHOICES else actor.policy
+    return scripted_action_frame(fallback_policy, policy_states, nonce, run_id, episode_id, repeat_delay_ms)
 
 
 def policy_action_wire(
@@ -1656,29 +1823,18 @@ def policy_action_wire(
     tabular_state_key_override: str | None = None,
     obs_row_override: dict[str, object] | None = None,
 ) -> int:
-    if actor.policy in MODEL_POLICY_CHOICES:
-        macro_wire = active_macro_action_wire(macro_states, nonce, run_id, episode_id)
-        if macro_wire is not None:
-            return macro_wire
-    action_name = None
-    if actor.policy == "tabular":
-        tabular_state = tabular_state_key_override if tabular_state_key_override else model_store.latest_tabular_state()
-        action_name = tabular_actor_action_name(actor, tabular_state)
-    elif actor.policy == "dqn":
-        action_name = dqn_actor_action_name(actor, obs_row_override)
-    if action_name is not None:
-        if action_name == "back":
-            macro_wire = start_macro_action_wire(macro_states, nonce, run_id, episode_id, "guard")
-            if macro_wire is not None:
-                return macro_wire
-        fixed = fixed_action_wire(action_name)
-        if fixed is not None:
-            return fixed
-        macro_wire = start_macro_action_wire(macro_states, nonce, run_id, episode_id, action_name)
-        if macro_wire is not None:
-            return macro_wire
-    fallback_policy = actor.fallback_policy if actor.policy in MODEL_POLICY_CHOICES else actor.policy
-    return scripted_action_wire(fallback_policy, policy_states, nonce, run_id, episode_id, repeat_delay_ms)
+    return policy_action_frame(
+        actor,
+        model_store,
+        policy_states,
+        macro_states,
+        nonce,
+        run_id,
+        episode_id,
+        repeat_delay_ms,
+        tabular_state_key_override,
+        obs_row_override,
+    ).action_wire
 
 
 def serve(
@@ -1803,7 +1959,7 @@ def serve(
                 elif model_store.latest_tabular_state() is not None:
                     tabular_state_source = "latest"
             if action_port is not None:
-                target_wire = policy_action_wire(
+                target_action = policy_action_frame(
                     active_model,
                     model_store,
                     policy_states,
@@ -1821,7 +1977,7 @@ def serve(
                     episode_id,
                     decision_id,
                     target_frame,
-                    target_wire,
+                    target_action,
                     active_model.version,
                 )
                 target = (addr[0], action_port)
@@ -1835,7 +1991,7 @@ def serve(
                         episode_id,
                         decision_id,
                         target_frame + 1,
-                        target_wire,
+                        target_action,
                         active_model.version,
                     )
                     sock.sendto(wrong_payload, target)
@@ -1846,7 +2002,9 @@ def serve(
                         f"target={target_frame} hold={action_hold_frames}"
                         f" model_expected={model_version_expected} model={active_model.version}"
                         f" obs_payload={'yes' if obs_payload_valid else 'no'} state={tabular_state_source or 'n/a'}"
-                        f" wire=0x{target_wire:04x}"
+                        f" wire=0x{target_action.action_wire:04x}"
+                        f" action={target_action.policy_action_id}/{target_action.policy_sub_action_id}"
+                        f" step={target_action.policy_action_step}"
                     )
             inference_stats.record(
                 time.perf_counter_ns() - inference_start_ns,

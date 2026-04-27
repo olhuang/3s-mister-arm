@@ -36,6 +36,9 @@ typedef struct RLQueuedRemoteAction {
     u32 decision_id;
     u32 target_frame;
     u16 action_wire;
+    u16 policy_action_id;
+    u16 policy_sub_action_id;
+    u16 policy_action_step;
     u32 model_version;
 } RLQueuedRemoteAction;
 
@@ -88,6 +91,12 @@ typedef struct RLDecisionLedgerEntry {
     u32 model_version_executed;
     u16 requested_action_wire;
     u16 executed_action_wire;
+    u16 requested_policy_action_id;
+    u16 requested_policy_sub_action_id;
+    u16 requested_policy_action_step;
+    u16 executed_policy_action_id;
+    u16 executed_policy_sub_action_id;
+    u16 executed_policy_action_step;
     s16 delta_self_hp;
     s16 delta_opp_hp;
     s16 delta_self_stun;
@@ -170,6 +179,8 @@ static const RLLocalFakeAction kLocalFakeAgentSequence[] = {
 #define RL_REMOTE_EXPECTED_CAP 16u
 #define RL_REMOTE_SEEN_CAP 32u
 #define RL_DECISION_LEDGER_CAP 128u
+#define RL_POLICY_ACTION_NEUTRAL 0u
+#define RL_POLICY_SUB_ACTION_NONE 0u
 
 
 static u16 local_fake_action_index;
@@ -189,6 +200,9 @@ static bool overlay_attack_event_contact_seen;
 static u32 overlay_attack_event_seq;
 static u32 overlay_attack_event_logged_seq;
 static u16 last_executed_action_wire;
+static u16 last_executed_policy_action_id;
+static u16 last_executed_policy_sub_action_id;
+static u16 last_executed_policy_action_step;
 static u32 last_executed_model_version;
 static u32 transition_batch_episode_id = UINT32_MAX;
 static char* transition_batch_payload;
@@ -333,6 +347,9 @@ static void RLSession_ClearRemoteQueue() {
     memset(&active_remote_action, 0, sizeof(active_remote_action));
     active_ledger_entry = NULL;
     last_executed_action_wire = 0;
+    last_executed_policy_action_id = RL_POLICY_ACTION_NEUTRAL;
+    last_executed_policy_sub_action_id = RL_POLICY_SUB_ACTION_NONE;
+    last_executed_policy_action_step = 0;
     last_executed_model_version = 0;
     remote_debug.queue_depth = 0;
 }
@@ -775,7 +792,13 @@ static int RLSession_FormatTransitionLogLine(const RLDecisionLedgerEntry* entry,
                         "{\"run_id\":%" PRIu64 ",\"episode_id\":%u,\"decision_id\":%u,"
                         "\"round_num\":%u,\"obs_frame\":%u,"
                         "\"agent_character_id\":%u,\"opponent_character_id\":%u,"
-                        "\"executed_action_wire\":%u,"
+                        "\"requested_action_wire\":%u,\"executed_action_wire\":%u,"
+                        "\"requested_policy_action_id\":%u,"
+                        "\"requested_policy_sub_action_id\":%u,"
+                        "\"requested_policy_action_step\":%u,"
+                        "\"executed_policy_action_id\":%u,"
+                        "\"executed_policy_sub_action_id\":%u,"
+                        "\"executed_policy_action_step\":%u,"
                         "\"delta_self_hp\":%d,\"delta_opp_hp\":%d,"
                         "\"delta_self_stun\":%d,\"delta_opp_stun\":%d,"
                         "\"delta_self_y\":%d,\"delta_opp_y\":%d,"
@@ -797,7 +820,14 @@ static int RLSession_FormatTransitionLogLine(const RLDecisionLedgerEntry* entry,
                         entry->obs_frame,
                         entry->agent_character_id,
                         entry->opponent_character_id,
+                        entry->requested_action_wire,
                         entry->executed_action_wire,
+                        entry->requested_policy_action_id,
+                        entry->requested_policy_sub_action_id,
+                        entry->requested_policy_action_step,
+                        entry->executed_policy_action_id,
+                        entry->executed_policy_sub_action_id,
+                        entry->executed_policy_action_step,
                         entry->delta_self_hp,
                         entry->delta_opp_hp,
                         entry->delta_self_stun,
@@ -1304,6 +1334,9 @@ static void RLSession_StartActiveRemoteAction(u32 episode_id,
                                               u32 decision_id,
                                               u8 move_intent,
                                               u16 attack_bits,
+                                              u16 policy_action_id,
+                                              u16 policy_sub_action_id,
+                                              u16 policy_action_step,
                                               u32 model_version,
                                               RLExecutionSource source) {
     RLDecisionLedgerEntry* ledger = RLSession_FindLedgerEntry(remote_debug.run_id, episode_id, decision_id);
@@ -1317,11 +1350,17 @@ static void RLSession_StartActiveRemoteAction(u32 episode_id,
     action_context.last_executed_move_intent = move_intent;
     action_context.last_executed_attack_bits = attack_bits;
     last_executed_action_wire = executed_action_wire;
+    last_executed_policy_action_id = policy_action_id;
+    last_executed_policy_sub_action_id = policy_sub_action_id;
+    last_executed_policy_action_step = policy_action_step;
     last_executed_model_version = model_version;
     remote_debug.model_version_current = model_version;
     if (ledger != NULL) {
         ledger->was_executed = true;
         ledger->executed_action_wire = executed_action_wire;
+        ledger->executed_policy_action_id = policy_action_id;
+        ledger->executed_policy_sub_action_id = policy_sub_action_id;
+        ledger->executed_policy_action_step = policy_action_step;
         ledger->execution_frame_actual = remote_debug.frame_id;
         ledger->execution_source = (u8)source;
         ledger->executed_move_intent = move_intent;
@@ -1358,6 +1397,9 @@ static bool RLSession_ExecuteDueQueuedAction() {
                                       best->decision_id,
                                       RLSession_DecodeMoveIntent(best->action_wire),
                                       RLSession_DecodeAttackBits(best->action_wire),
+                                      best->policy_action_id,
+                                      best->policy_sub_action_id,
+                                      best->policy_action_step,
                                       best->model_version,
                                       RL_EXECUTION_SOURCE_REMOTE);
     RLSession_RemoveExpectedDecision(RLSession_FindExpectedDecision(best->run_id, best->episode_id, best->decision_id));
@@ -1373,6 +1415,9 @@ static void RLSession_ApplyExpectedFallbackIfDue() {
         RLExpectedRemoteDecision* entry = &expected_decisions[i];
         u8 move_intent = RL_MOVE_NEUTRAL;
         u16 attack_bits = 0;
+        u16 policy_action_id = RL_POLICY_ACTION_NEUTRAL;
+        u16 policy_sub_action_id = RL_POLICY_SUB_ACTION_NONE;
+        u16 policy_action_step = 0;
         RLExecutionSource source = RL_EXECUTION_SOURCE_NEUTRAL_FALLBACK;
         if (!entry->valid || entry->run_id != remote_debug.run_id || entry->episode_id != remote_debug.episode_id ||
             entry->target_frame > remote_debug.frame_id) {
@@ -1383,6 +1428,9 @@ static void RLSession_ApplyExpectedFallbackIfDue() {
             if (last_executed_action_wire != 0) {
                 move_intent = RLSession_DecodeMoveIntent(last_executed_action_wire);
                 attack_bits = RLSession_DecodeAttackBits(last_executed_action_wire);
+                policy_action_id = last_executed_policy_action_id;
+                policy_sub_action_id = last_executed_policy_sub_action_id;
+                policy_action_step = last_executed_policy_action_step;
                 last_executed_model_version = remote_debug.model_version_current;
                 source = RL_EXECUTION_SOURCE_REPEATED_LAST_ACTION;
             }
@@ -1390,6 +1438,9 @@ static void RLSession_ApplyExpectedFallbackIfDue() {
                                               entry->decision_id,
                                               move_intent,
                                               attack_bits,
+                                              policy_action_id,
+                                              policy_sub_action_id,
+                                              policy_action_step,
                                               last_executed_model_version,
                                               source);
         }
@@ -1499,6 +1550,9 @@ RLRemoteActionSubmitResult RLSession_SubmitRemoteAction(const RLActionPacket* pa
     queued->decision_id = packet->decision_id;
     queued->target_frame = packet->target_frame;
     queued->action_wire = packet->action_wire;
+    queued->policy_action_id = packet->policy_action_id;
+    queued->policy_sub_action_id = packet->policy_sub_action_id;
+    queued->policy_action_step = packet->policy_action_step;
     queued->model_version = packet->model_version;
     seen = RLSession_AllocSeenDecision();
     seen->valid = true;
@@ -1510,6 +1564,9 @@ RLRemoteActionSubmitResult RLSession_SubmitRemoteAction(const RLActionPacket* pa
         RLDecisionLedgerEntry* ledger = RLSession_FindLedgerEntry(packet->run_id, packet->episode_id, packet->decision_id);
         if (ledger != NULL) {
             ledger->requested_action_wire = packet->action_wire;
+            ledger->requested_policy_action_id = packet->policy_action_id;
+            ledger->requested_policy_sub_action_id = packet->policy_sub_action_id;
+            ledger->requested_policy_action_step = packet->policy_action_step;
             ledger->model_version_requested = packet->model_version;
         }
     }

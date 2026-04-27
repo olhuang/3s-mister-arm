@@ -2,6 +2,44 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-27: Migrate Live Actions To Policy Action Attribution
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / action namespace implementation
+
+Files changed:
+- `src/rl/rl_protocol.h`
+- `src/rl/rl_session.c`
+- `tools/rl_probe_server.py`
+- `tools/analyze_rl_transitions.py`
+- `tools/train_dqn_learner.py`
+- `docs/rl-policy-action-taxonomy.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- move the current live probe/C action path from wire-only attribution toward the policy action ID / sub-action ID taxonomy.
+- keep existing tabular and DQN behavior compatible while making transition logs ready for the later `back` vs `guard` split.
+
+Implementation notes:
+- bumped the RL protocol to `3` and action schema to `2`; `RLActionPacket` now carries `policy_action_id`, `policy_sub_action_id`, and `policy_action_step` alongside the final executable `action_wire`.
+- C-side queued actions and decision ledger entries now preserve requested and executed policy action attribution and export it in transition NDJSON rows.
+- probe-side action selection now returns a `PolicyActionFrame` instead of only a wire value; fixed actions and macro steps stamp taxonomy IDs for `walk`, `guard`, `normal`, `command_normal`, `throw`, Ryu `fireball` / `tatsu` / `shoryuken`, and `jump-forward-mk`.
+- current model-selected `back` still expands into the guard macro and is stamped as `guard/stand`; learner import maps that metadata back to the old `back` bucket until `back` and `guard` are separate actions.
+- transition analyzers and the offline DQN trainer now prefer `executed_policy_action_id` / `executed_policy_sub_action_id` and fall back to `executed_action_wire` for older logs.
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py tools/analyze_rl_transitions.py tools/train_dqn_learner.py` passed.
+- Python packet smoke passed: action packet size is `48` bytes and `ryu-fireball` stamps `1229/lp` with the expected macro step.
+- Python macro-step smoke passed for `ryu-fireball` and `jump-forward-mk`, producing steps `0..5` without wrapping the last step to `-1`.
+- old-log analyzer smoke passed on `logs/rl-transitions-defense-v1-4-3-3.ndjson` tail `2000` rows using fallback wire decoding.
+- `git diff --check` passed for the touched source/docs.
+- `tools/mister/build-game.sh --flavor telemetry` passed and produced `build/mister-telemetry-package`.
+
+Follow-up:
+- deploy probe server and MiSTer runtime together; protocol `3` action packets are not compatible with the previous runtime.
+- split `back` and `guard` into separate high-level actions after confirming the schema migration is stable in live logs.
+
 ## 2026-04-27: Draft All-Character Policy Action Taxonomy
 
 Milestone:

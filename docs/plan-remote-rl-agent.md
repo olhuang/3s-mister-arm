@@ -2421,6 +2421,7 @@ Tasks:
 - [x] Add an offline transition analyzer for action/distance HP-delta attribution
 - [x] Expand observation features only with schema versioning for the first routine attack/contact-reaction validation probes
 - [x] Promote validated opponent routine attack state into the first tabular strike-defense state split
+- [x] Draft an all-character policy action ID / sub-action / macro taxonomy from SF3 command source tables
 - [ ] Split `back` and `guard` into separate high-level actions after the DQN pipeline smoke passes
 - [ ] Add high-level action / macro attribution to transition rows so DQN can learn `guard` separately from retreat
 - [ ] Expand reward features only after baseline reward is stable
@@ -2479,6 +2480,11 @@ Implementation notes:
   - trains a small stdlib-only MLP with target-network DQN updates, so it does not require `numpy` / `torch` for first smoke tests
   - publishes `policy=dqn` actor manifests with `actions`, `epsilon`, `fallback_policy`, and serialized MLP weights under `dqn`
   - `tools/rl_probe_server.py --policy dqn --model-dir <dir>` can hot-load those manifests and run DQN inference from same-frame OBS payloads, then reuse the existing macro/fixed action adapter for `fireball`, `back` guard macro, and `jump-forward-mk`
+- `docs/rl-policy-action-taxonomy.md` now records the first source-backed action registry:
+  - universal actions use IDs below `1000`
+  - character command actions use `1000 + character_id * 100 + source_command_slot`
+  - sub-actions separate strength / stance / air / hold variants from the policy action ID
+  - command rows carry source command slot, source routine handler, macro template, and validation status
 - Live tabular testing exposed a VS rematch / second-match transition issue:
   - second-match action control could continue, but episode transition batches stopped arriving after a later round ended
   - observed second-match flow could resemble arcade next-opponent selection

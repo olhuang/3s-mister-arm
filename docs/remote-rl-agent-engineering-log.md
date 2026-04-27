@@ -2,6 +2,37 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-27: Draft All-Character Policy Action Taxonomy
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / action namespace design
+
+Files changed:
+- `docs/rl-policy-action-taxonomy.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- define a stable policy action ID / sub-action ID scheme before adding more SF3 moves to tabular or DQN.
+- avoid mixing high-level model choices, concrete strength variants, and probe-side macro expansion in a single flat action string.
+- create a source-backed inventory of command-recognized character actions for later curriculum subsets.
+
+Implementation notes:
+- universal actions use IDs below `1000` for movement, defense, normals, command normals, throws, tech, quick stand, and taunt.
+- character command actions use `1000 + character_id * 100 + source_command_slot`, so IDs stay traceable to `cmd_data.c`.
+- the registry records source command slot, source routine numbers, `plpatXX.c` handler names, macro template, and sub-action group.
+- source handler names remain the first source of truth; official move aliases are intentionally deferred because handlers such as `Att_HADOUKEN` are reused across characters and move families.
+- macros marked `button_or_charge`, `*_raw`, or numeric button groups require manual validation before live learner enablement.
+
+Validation:
+- source inspection matched the registry against `src/sf33rd/Source/Game/engine/cmd_data.c`, `cmd_main.c`, `pls03.c`, `plpat.c`, and `plpatXX.c`.
+- `git diff --check -- docs/rl-policy-action-taxonomy.md docs/plan-remote-rl-agent.md docs/remote-rl-agent-engineering-log.md` passed.
+
+Follow-up:
+- add transition fields for requested/executed policy action ID, sub-action ID, and policy action step.
+- split `back` and `guard` before training defensive DQN action heads.
+- add official move aliases and validate uncertain macro templates only as each character enters the curriculum.
+
 ## 2026-04-27: Add Offline DQN Learner And Probe Inference
 
 Milestone:

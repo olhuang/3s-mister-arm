@@ -2428,6 +2428,7 @@ Tasks:
 - [x] Add `jump-forward-mk` to the tabular action set as a first active approach attack
 - [x] Add a first offline DQN/MLP Q learner tool and `policy=dqn` probe inference path for q-table comparison
 - [x] Add offline DQN A/B/C reward-risk profiles and same-observation model comparison tooling
+- [x] Add DQN action subset training and collapse diagnostics for offline policy debugging
 - [x] Add an offline transition analyzer for action/distance HP-delta attribution
 - [x] Expand observation features only with schema versioning for the first routine attack/contact-reaction validation probes
 - [x] Promote validated opponent routine attack state into the first tabular strike-defense state split
@@ -2511,11 +2512,13 @@ Implementation notes:
     - `--reward-risk-profile shoryuken-only`: applies only Shoryuken no-damage / punished extra costs
     - `--reward-risk-profile all-attacks`: applies generic attack no-damage / punished costs, plus Shoryuken extra costs
   - reward-risk costs use positive `cost` parameters (`--reward-attack-no-damage-cost`, `--reward-attack-punished-cost`, `--reward-shoryuken-no-damage-extra-cost`, `--reward-shoryuken-punished-extra-cost`) and are subtracted before `--reward-scale`, avoiding confusing negative penalty arguments
+  - `--actions` trains and publishes a DQN action subset; excluded explicit actions are counted and reset delayed-credit attribution so their later neutral/recovery reward is not accidentally credited to the previous included action
+  - training diagnostics now print included/excluded action row counts, excluded reward sum, per-action count/reward/mean summaries, greedy top-1/top-2/top-3 summaries, and a collapse warning when one greedy action exceeds the configured threshold
   - uses normalized numeric spacing/threat features: `obs_abs_dx`, `obs_abs_dy`, both fighters' front/back edge distances, `obs_opp_in_front`, and `obs_opp_routine_attack_state`
   - trains a small stdlib-only MLP with target-network DQN updates, so it does not require `numpy` / `torch` for first smoke tests
   - publishes `policy=dqn` actor manifests with `actions`, `epsilon`, `fallback_policy`, and serialized MLP weights under `dqn`
   - `tools/rl_probe_server.py --policy dqn --model-dir <dir>` can hot-load those manifests and run DQN inference from same-frame OBS payloads, then reuse the existing macro/fixed action adapter for `fireball`, `guard-stand`, `guard-crouch`, stand/crouch normals, `jump-forward-mk`, `jump-forward-hk`, `jump-neutral-hk`, `jump-back-hk`, `shoryuken-mp`, and `tatsu-mk`
-  - `tools/compare_dqn_models.py` compares A/B/C DQN manifests on the same transition observations and prints overall, distance/threat-bucketed, attack-rate, and Shoryuken-rate greedy action distributions
+  - `tools/compare_dqn_models.py` compares A/B/C DQN manifests on the same transition observations and prints overall, distance/threat-bucketed, attack-rate, Shoryuken-rate, selected-Q, and collapse-warning greedy action distributions
 - `docs/rl-policy-action-taxonomy.md` now records the first source-backed action registry:
   - universal actions use IDs below `1000`
   - character command actions use `1000 + character_id * 100 + source_command_slot`

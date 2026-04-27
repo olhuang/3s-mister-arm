@@ -123,6 +123,17 @@ def format_counts(counts: collections.Counter[str], total: int, limit: int) -> s
     return ",".join(parts)
 
 
+def format_selected_q(counts: collections.Counter[str], q_sum: collections.Counter[str], limit: int) -> str:
+    if not counts:
+        return "none"
+    parts: list[str] = []
+    for action, count in counts.most_common(limit):
+        if count <= 0:
+            continue
+        parts.append(f"{action}:{q_sum[action] / count:.3f}")
+    return ",".join(parts) if parts else "none"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("transition_logs", nargs="+", help="Transition NDJSON logs used as evaluation observations")
@@ -135,6 +146,12 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=0, help="Maximum rows to evaluate after optional tail filtering")
     parser.add_argument("--tail-rows", type=int, default=0, help="Evaluate only the last N rows across all logs")
     parser.add_argument("--top-n", type=int, default=8, help="Top actions to print per distribution")
+    parser.add_argument(
+        "--collapse-warning-threshold",
+        type=float,
+        default=0.70,
+        help="Print WARN when one greedy action exceeds this fraction of evaluated rows",
+    )
     args = parser.parse_args()
 
     models = [load_model(value) for value in args.model]
@@ -163,12 +180,19 @@ def main() -> int:
             profile = str(metadata.get("reward_risk_profile", "unknown") or "unknown")
         attack_total = sum(count for action, count in counts.items() if action in ATTACK_ACTIONS)
         shoryuken_total = counts.get("shoryuken-mp", 0)
+        top_action, top_count = counts.most_common(1)[0] if counts else ("none", 0)
+        top_rate = top_count / max(1, len(rows))
+        collapse = "WARN" if top_rate >= max(0.0, min(1.0, args.collapse_warning_threshold)) else "ok"
+        actions = model.get("actions")
+        action_count = len(actions) if isinstance(actions, list) else 0
         print(
-            f"\nMODEL {label} version={model.get('version')} profile={profile} rows={len(rows)} "
+            f"\nMODEL {label} version={model.get('version')} profile={profile} actions={action_count} rows={len(rows)} "
             f"attack_rate={100.0 * attack_total / len(rows):.1f}% "
-            f"shoryuken_rate={100.0 * shoryuken_total / len(rows):.1f}%"
+            f"shoryuken_rate={100.0 * shoryuken_total / len(rows):.1f}% "
+            f"top={top_action}:{top_rate * 100.0:.1f}% collapse={collapse}"
         )
         print(f"  overall {format_counts(counts, len(rows), max(1, args.top_n))}")
+        print(f"  selected_q_mean {format_selected_q(counts, q_sum, max(1, args.top_n))}")
         for bucket in ("atk0_close", "atk0_mid", "atk0_far", "atk1_close", "atk1_mid", "atk1_far"):
             bucket_counts = by_threat_dx.get(bucket, collections.Counter())
             print(f"  {bucket:<10} {format_counts(bucket_counts, sum(bucket_counts.values()), max(1, args.top_n))}")

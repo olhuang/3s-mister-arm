@@ -2,6 +2,55 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-27: Add DQN Action Subsets And Collapse Diagnostics
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / first ML baseline
+
+Files changed:
+- `tools/train_dqn_learner.py`
+- `tools/compare_dqn_models.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- allow DQN/MLP Q models to train on a smaller action subset from existing transition logs before collecting more MiSTer data.
+- diagnose the observed greedy-policy collapse toward one normal attack before live DQN testing.
+- avoid reward leakage when an explicit action is excluded from the subset.
+
+Implementation notes:
+- `tools/train_dqn_learner.py` adds `--actions`, a comma-separated DQN action subset that is published into the actor manifest.
+- excluded explicit actions are counted and clear the delayed-credit pointer, so later neutral/recovery HP deltas are not credited to the previous included action.
+- trainer metadata now records:
+  - `actions_subset` and `actions_subset_size`
+  - `build_diagnostics`
+  - observed all-action counts/rewards
+  - greedy top-1/top-2/top-3 counts
+  - greedy mean Q per action
+  - greedy top action and top-action rate
+- trainer stdout now includes included/excluded counts, excluded reward sum, per-action `count/reward/mean`, top-2/top-3 summaries, and a collapse warning controlled by `--collapse-warning-threshold`.
+- `tools/compare_dqn_models.py` now prints model action-count, top greedy action/rate, collapse status, and selected-Q mean for the printed top actions.
+
+Validation:
+- `python3 -m py_compile tools/train_dqn_learner.py tools/compare_dqn_models.py` passed.
+- help smoke confirmed new trainer flags:
+  - `--actions`
+  - `--diagnostic-top-n`
+  - `--collapse-warning-threshold`
+- subset baseline smoke:
+  - `python3 tools/train_dqn_learner.py logs/rl-transitions-actionset-v4-4-3-3.ndjson --model-dir /tmp/rl-dqn-subset-a-smoke --model-version 1 --limit 5000 --steps 5 --batch-size 16 --log-interval 0 --actions forward,back,guard-stand,guard-crouch,stand-hp,crouch-mk,fireball,shoryuken-mp,tatsu-mk,jump-forward-hk --reward-risk-profile none --diagnostic-top-n 6`
+  - published `actions=10`, `included=863`, `excluded=381`, and warned `stand-hp 99.2%`.
+- subset all-attacks smoke:
+  - `python3 tools/train_dqn_learner.py logs/rl-transitions-actionset-v4-4-3-3.ndjson --model-dir /tmp/rl-dqn-subset-c-smoke --model-version 1 --limit 5000 --steps 5 --batch-size 16 --log-interval 0 --actions forward,back,guard-stand,guard-crouch,stand-hp,crouch-mk,fireball,shoryuken-mp,tatsu-mk,jump-forward-hk --reward-risk-profile all-attacks --diagnostic-top-n 6`
+  - published `actions=10`, `risk_cost=357.5`, `included=863`, `excluded=381`, and warned `stand-hp 99.2%`.
+- compare smoke:
+  - `python3 tools/compare_dqn_models.py logs/rl-transitions-actionset-v4-4-3-3.ndjson --tail-rows 1000 --model A=/tmp/rl-dqn-subset-a-smoke --model C=/tmp/rl-dqn-subset-c-smoke --top-n 6`
+  - printed action-count, selected-Q mean, and `collapse=WARN` for both subset smoke models.
+
+Follow-up:
+- run full A/B/C subset models with enough steps to decide whether the collapse is data, reward, or action-space driven.
+- if subset models still collapse, collect targeted curriculum logs instead of taking DQN live.
+
 ## 2026-04-27: Add Offline DQN Reward-Risk A/B/C Profiles
 
 Milestone:

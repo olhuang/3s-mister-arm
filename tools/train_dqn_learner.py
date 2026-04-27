@@ -27,6 +27,48 @@ class Experience:
     done: bool
 
 
+@dataclass
+class BuildDiagnostics:
+    included_action_rows: int = 0
+    excluded_action_rows: int = 0
+    excluded_action_reward_rows: int = 0
+    excluded_action_reward_sum: float = 0.0
+    unrecognized_delayed_rewards: int = 0
+    unrecognized_uncredited_reward_rows: int = 0
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "included_action_rows": self.included_action_rows,
+            "excluded_action_rows": self.excluded_action_rows,
+            "excluded_action_reward_rows": self.excluded_action_reward_rows,
+            "excluded_action_reward_sum": self.excluded_action_reward_sum,
+            "unrecognized_delayed_rewards": self.unrecognized_delayed_rewards,
+            "unrecognized_uncredited_reward_rows": self.unrecognized_uncredited_reward_rows,
+        }
+
+
+@dataclass
+class GreedyDiagnostics:
+    counts: dict[str, int]
+    top2_counts: dict[str, int]
+    top3_counts: dict[str, int]
+    q_mean: dict[str, float]
+    evaluated: int
+    top_action: str
+    top_action_rate: float
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "counts": self.counts,
+            "top2_counts": self.top2_counts,
+            "top3_counts": self.top3_counts,
+            "q_mean": self.q_mean,
+            "evaluated": self.evaluated,
+            "top_action": self.top_action,
+            "top_action_rate": self.top_action_rate,
+        }
+
+
 ATTACK_RISK_ACTIONS = frozenset(
     {
         "stand-lp",
@@ -190,7 +232,15 @@ def build_experiences(
     actions: tuple[str, ...],
     reward_scale: float,
     reward_risk_config: RewardRiskConfig,
-) -> tuple[list[Experience], dict[str, int], dict[str, float], int, RewardRiskStats]:
+) -> tuple[
+    list[Experience],
+    dict[str, int],
+    dict[str, float],
+    dict[str, int],
+    dict[str, float],
+    BuildDiagnostics,
+    RewardRiskStats,
+]:
     action_to_index = {action: index for index, action in enumerate(actions)}
     by_episode: dict[tuple[int, int], list[dict[str, object]]] = collections.defaultdict(list)
     for row in rows:
@@ -199,7 +249,9 @@ def build_experiences(
     experiences: list[Experience] = []
     action_counts = {action: 0 for action in actions}
     action_rewards = {action: 0.0 for action in actions}
-    delayed_rewards = 0
+    observed_action_counts = {action: 0 for action in rl.TABULAR_ACTION_NAMES}
+    observed_action_rewards = {action: 0.0 for action in rl.TABULAR_ACTION_NAMES}
+    build_stats = BuildDiagnostics()
     risk_stats = RewardRiskStats()
 
     for episode_rows in by_episode.values():
@@ -213,11 +265,25 @@ def build_experiences(
                 else 0.0
             )
             reward = (rl.tabular_training_reward(row) - risk_cost) * reward_scale
-            if action_name is None or action_name not in action_to_index:
+            if action_name is None:
                 if reward != 0.0 and last_exp_index is not None:
                     experiences[last_exp_index].reward += reward
                     action_rewards[actions[experiences[last_exp_index].action_index]] += reward
-                    delayed_rewards += 1
+                    build_stats.unrecognized_delayed_rewards += 1
+                elif reward != 0.0:
+                    build_stats.unrecognized_uncredited_reward_rows += 1
+                continue
+
+            if action_name in observed_action_counts:
+                observed_action_counts[action_name] += 1
+                observed_action_rewards[action_name] += reward
+
+            if action_name not in action_to_index:
+                build_stats.excluded_action_rows += 1
+                if reward != 0.0:
+                    build_stats.excluded_action_reward_rows += 1
+                    build_stats.excluded_action_reward_sum += reward
+                last_exp_index = None
                 continue
 
             next_row = episode_rows[index + 1] if index + 1 < len(episode_rows) else row
@@ -231,10 +297,19 @@ def build_experiences(
             )
             experiences.append(exp)
             last_exp_index = len(experiences) - 1
+            build_stats.included_action_rows += 1
             action_counts[action_name] += 1
             action_rewards[action_name] += reward
 
-    return experiences, action_counts, action_rewards, delayed_rewards, risk_stats
+    return (
+        experiences,
+        action_counts,
+        action_rewards,
+        observed_action_counts,
+        observed_action_rewards,
+        build_stats,
+        risk_stats,
+    )
 
 
 def reward_risk_config_from_args(args: argparse.Namespace) -> RewardRiskConfig:
@@ -464,6 +539,105 @@ def parse_hidden_sizes(value: str) -> list[int]:
     return [max(1, size) for size in sizes] or [64, 64]
 
 
+def parse_action_subset(value: str) -> tuple[str, ...]:
+    if not value.strip():
+        return rl.TABULAR_DEFAULT_ACTIONS
+    valid = set(rl.TABULAR_ACTION_NAMES)
+    actions: list[str] = []
+    invalid: list[str] = []
+    for raw_item in value.split(","):
+        action = raw_item.strip()
+        if not action:
+            continue
+        if action not in valid:
+            invalid.append(action)
+            continue
+        if action not in actions:
+            actions.append(action)
+    if invalid:
+        raise SystemExit(f"Unknown DQN action(s): {','.join(invalid)}")
+    if not actions:
+        raise SystemExit("DQN action subset is empty")
+    return tuple(actions)
+
+
+def format_action_scores(counts: dict[str, int], rewards: dict[str, float], actions: tuple[str, ...], limit: int) -> str:
+    rows: list[tuple[str, int, float, float]] = []
+    for action in actions:
+        count = int(counts.get(action, 0))
+        reward = float(rewards.get(action, 0.0))
+        mean = reward / count if count else 0.0
+        rows.append((action, count, reward, mean))
+    rows.sort(key=lambda item: (item[1], abs(item[2]), item[0]), reverse=True)
+    parts = [f"{action}:{count}/{reward:.2f}/{mean:.3f}" for action, count, reward, mean in rows[: max(1, limit)]]
+    if len(rows) > limit:
+        parts.append(f"...+{len(rows) - limit}")
+    return ",".join(parts) if parts else "none"
+
+
+def format_counts(counts: dict[str, int], total: int, limit: int) -> str:
+    ordered = sorted(counts.items(), key=lambda item: (item[1], item[0]), reverse=True)
+    parts: list[str] = []
+    for action, count in ordered[: max(1, limit)]:
+        if count <= 0:
+            continue
+        pct = 100.0 * count / max(1, total)
+        parts.append(f"{action}:{count}/{pct:.1f}%")
+    if len(ordered) > limit:
+        remaining = sum(count for _, count in ordered[max(1, limit) :])
+        if remaining > 0:
+            parts.append(f"...+{remaining}")
+    return ",".join(parts) if parts else "none"
+
+
+def evaluate_greedy_actions(
+    layers: list[dict[str, object]],
+    experiences: list[Experience],
+    actions: tuple[str, ...],
+    limit: int,
+) -> GreedyDiagnostics:
+    eval_experiences = experiences[: max(0, limit)]
+    counts = {action: 0 for action in actions}
+    top2_counts = {action: 0 for action in actions}
+    top3_counts = {action: 0 for action in actions}
+    q_sums = {action: 0.0 for action in actions}
+    q_seen = {action: 0 for action in actions}
+    for exp in eval_experiences:
+        values, _, _ = forward(layers, exp.state)
+        count = min(len(actions), len(values))
+        if count <= 0:
+            continue
+        ranked = sorted(range(count), key=lambda index: (float(values[index]), actions[index]), reverse=True)
+        counts[actions[ranked[0]]] += 1
+        for rank, action_index in enumerate(ranked[:3]):
+            action = actions[action_index]
+            if rank < 2:
+                top2_counts[action] += 1
+            top3_counts[action] += 1
+        for index in range(count):
+            action = actions[index]
+            q_sums[action] += float(values[index])
+            q_seen[action] += 1
+    evaluated = len(eval_experiences)
+    top_action = ""
+    top_count = 0
+    for action, count in counts.items():
+        if count > top_count:
+            top_action = action
+            top_count = count
+    q_mean = {action: q_sums[action] / q_seen[action] for action in actions if q_seen[action] > 0}
+    top_action_rate = top_count / evaluated if evaluated else 0.0
+    return GreedyDiagnostics(
+        counts=counts,
+        top2_counts=top2_counts,
+        top3_counts=top3_counts,
+        q_mean=q_mean,
+        evaluated=evaluated,
+        top_action=top_action,
+        top_action_rate=top_action_rate,
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("transition_logs", nargs="+", help="Transition NDJSON logs used as offline replay data")
@@ -473,6 +647,11 @@ def main() -> None:
     parser.add_argument("--steps", type=int, default=2000, help="Gradient steps")
     parser.add_argument("--batch-size", type=int, default=64, help="Replay batch size")
     parser.add_argument("--hidden-sizes", default="64,64", help="Comma-separated hidden layer sizes")
+    parser.add_argument(
+        "--actions",
+        default=",".join(rl.TABULAR_DEFAULT_ACTIONS),
+        help="Comma-separated DQN action subset; default is the full current action set",
+    )
     parser.add_argument("--learning-rate", type=float, default=0.001, help="MLP learning rate")
     parser.add_argument("--gamma", type=float, default=0.95, help="DQN discounted future reward")
     parser.add_argument("--reward-scale", type=float, default=0.01, help="Scale applied to HP-delta reward during training")
@@ -526,12 +705,27 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=7, help="Random seed")
     parser.add_argument("--log-interval", type=int, default=200, help="Training progress print interval")
     parser.add_argument("--eval-limit", type=int, default=5000, help="Rows used for greedy action distribution summary")
+    parser.add_argument("--diagnostic-top-n", type=int, default=8, help="Top actions printed in DQN diagnostic summaries")
+    parser.add_argument(
+        "--collapse-warning-threshold",
+        type=float,
+        default=0.70,
+        help="Warn when one greedy action exceeds this fraction of evaluated rows",
+    )
     args = parser.parse_args()
 
-    actions = rl.TABULAR_DEFAULT_ACTIONS
+    actions = parse_action_subset(args.actions)
     rows = read_transition_rows(args.transition_logs, args.limit)
     reward_risk_config = reward_risk_config_from_args(args)
-    experiences, action_counts, action_rewards, delayed_rewards, reward_risk_stats = build_experiences(
+    (
+        experiences,
+        action_counts,
+        action_rewards,
+        observed_action_counts,
+        observed_action_rewards,
+        build_stats,
+        reward_risk_stats,
+    ) = build_experiences(
         rows,
         actions,
         args.reward_scale,
@@ -552,13 +746,16 @@ def main() -> None:
         args.seed,
         args.log_interval,
     )
-    greedy_counts = count_greedy_actions(layers, experiences, actions, args.eval_limit)
+    greedy_diag = evaluate_greedy_actions(layers, experiences, actions, args.eval_limit)
     version = next_model_version(args.model_dir, args.model_version)
     metadata = {
         "transition_logs": args.transition_logs,
         "rows_read": len(rows),
         "experiences": len(experiences),
-        "delayed_rewards": delayed_rewards,
+        "actions_subset": list(actions),
+        "actions_subset_size": len(actions),
+        "build_diagnostics": build_stats.as_metadata(),
+        "delayed_rewards": build_stats.unrecognized_delayed_rewards,
         "reward_source": "hp-delta+risk-cost" if reward_risk_config.profile != "none" else "hp-delta",
         "reward_scale": args.reward_scale,
         "reward_scale_applied_after_risk_cost": True,
@@ -575,7 +772,14 @@ def main() -> None:
         "learning_rate": max(1e-8, args.learning_rate),
         "action_counts": action_counts,
         "action_rewards": action_rewards,
-        "greedy_counts": greedy_counts,
+        "observed_action_counts": observed_action_counts,
+        "observed_action_rewards": observed_action_rewards,
+        "greedy_counts": greedy_diag.counts,
+        "greedy_top2_counts": greedy_diag.top2_counts,
+        "greedy_top3_counts": greedy_diag.top3_counts,
+        "greedy_q_mean": greedy_diag.q_mean,
+        "greedy_top_action": greedy_diag.top_action,
+        "greedy_top_action_rate": greedy_diag.top_action_rate,
         **train_stats,
     }
     publish_model(
@@ -591,11 +795,40 @@ def main() -> None:
     print(
         "DQN published "
         f"version={version} model_dir={args.model_dir} rows={len(rows)} experiences={len(experiences)} "
+        f"actions={len(actions)} "
         f"risk={reward_risk_config.profile} risk_cost={reward_risk_stats.total_cost:.1f} "
         f"loss={train_stats['last_loss']:.6f} avg_loss={train_stats['avg_loss']:.6f} "
-        f"greedy={','.join(f'{action}:{count}' for action, count in greedy_counts.items() if count)}",
+        f"included={build_stats.included_action_rows} excluded={build_stats.excluded_action_rows} "
+        f"excluded_rew={build_stats.excluded_action_reward_sum:.3f} "
+        f"top={greedy_diag.top_action}:{greedy_diag.top_action_rate * 100.0:.1f}% "
+        f"greedy={format_counts(greedy_diag.counts, greedy_diag.evaluated, args.diagnostic_top_n)}",
         flush=True,
     )
+    print(
+        "DQN diagnostics "
+        f"action_stats=count/reward/mean {format_action_scores(action_counts, action_rewards, actions, args.diagnostic_top_n)}",
+        flush=True,
+    )
+    print(
+        "DQN diagnostics "
+        f"observed_all=count/reward/mean "
+        f"{format_action_scores(observed_action_counts, observed_action_rewards, rl.TABULAR_ACTION_NAMES, args.diagnostic_top_n)}",
+        flush=True,
+    )
+    print(
+        "DQN diagnostics "
+        f"top2={format_counts(greedy_diag.top2_counts, greedy_diag.evaluated, args.diagnostic_top_n)} "
+        f"top3={format_counts(greedy_diag.top3_counts, greedy_diag.evaluated, args.diagnostic_top_n)}",
+        flush=True,
+    )
+    if greedy_diag.top_action_rate >= max(0.0, min(1.0, args.collapse_warning_threshold)):
+        print(
+            "DQN warning "
+            f"greedy action collapse candidate: {greedy_diag.top_action} "
+            f"{greedy_diag.top_action_rate * 100.0:.1f}% >= "
+            f"{max(0.0, min(1.0, args.collapse_warning_threshold)) * 100.0:.1f}%",
+            flush=True,
+        )
 
 
 if __name__ == "__main__":

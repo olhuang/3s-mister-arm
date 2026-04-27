@@ -2427,6 +2427,7 @@ Tasks:
 - [x] Add cross distance/threat ready-action stats for strike-defense policy diagnosis
 - [x] Add `jump-forward-mk` to the tabular action set as a first active approach attack
 - [x] Add a first offline DQN/MLP Q learner tool and `policy=dqn` probe inference path for q-table comparison
+- [x] Add offline DQN A/B/C reward-risk profiles and same-observation model comparison tooling
 - [x] Add an offline transition analyzer for action/distance HP-delta attribution
 - [x] Expand observation features only with schema versioning for the first routine attack/contact-reaction validation probes
 - [x] Promote validated opponent routine attack state into the first tabular strike-defense state split
@@ -2505,10 +2506,16 @@ Implementation notes:
   - learner stats print `obs=<payload>/<header-only>` and `tab_state=obs:<n>/latest:<n>` so live runs can confirm whether tabular inference is using same-frame OBS state
 - `tools/train_dqn_learner.py` now supports the first offline DQN/MLP Q learner path:
   - reads transition NDJSON logs and converts rows into `(state, action, reward, next_state, done)` experiences using the same learner-safe HP-delta reward as tabular (`delta_opp_hp - delta_self_hp`)
+  - supports offline A/B/C reward-risk profiles without changing transition logs:
+    - `--reward-risk-profile none`: baseline `hp-delta` reward
+    - `--reward-risk-profile shoryuken-only`: applies only Shoryuken no-damage / punished extra costs
+    - `--reward-risk-profile all-attacks`: applies generic attack no-damage / punished costs, plus Shoryuken extra costs
+  - reward-risk costs use positive `cost` parameters (`--reward-attack-no-damage-cost`, `--reward-attack-punished-cost`, `--reward-shoryuken-no-damage-extra-cost`, `--reward-shoryuken-punished-extra-cost`) and are subtracted before `--reward-scale`, avoiding confusing negative penalty arguments
   - uses normalized numeric spacing/threat features: `obs_abs_dx`, `obs_abs_dy`, both fighters' front/back edge distances, `obs_opp_in_front`, and `obs_opp_routine_attack_state`
   - trains a small stdlib-only MLP with target-network DQN updates, so it does not require `numpy` / `torch` for first smoke tests
   - publishes `policy=dqn` actor manifests with `actions`, `epsilon`, `fallback_policy`, and serialized MLP weights under `dqn`
   - `tools/rl_probe_server.py --policy dqn --model-dir <dir>` can hot-load those manifests and run DQN inference from same-frame OBS payloads, then reuse the existing macro/fixed action adapter for `fireball`, `guard-stand`, `guard-crouch`, stand/crouch normals, `jump-forward-mk`, `jump-forward-hk`, `jump-neutral-hk`, `jump-back-hk`, `shoryuken-mp`, and `tatsu-mk`
+  - `tools/compare_dqn_models.py` compares A/B/C DQN manifests on the same transition observations and prints overall, distance/threat-bucketed, attack-rate, and Shoryuken-rate greedy action distributions
 - `docs/rl-policy-action-taxonomy.md` now records the first source-backed action registry:
   - universal actions use IDs below `1000`
   - character command actions use `1000 + character_id * 100 + source_command_slot`

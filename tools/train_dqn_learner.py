@@ -27,6 +27,72 @@ class Experience:
     done: bool
 
 
+ATTACK_RISK_ACTIONS = frozenset(
+    {
+        "stand-lp",
+        "stand-mp",
+        "stand-hp",
+        "stand-lk",
+        "stand-mk",
+        "stand-hk",
+        "forward-hp",
+        "crouch-lk",
+        "crouch-mk",
+        "crouch-hk",
+        "fireball",
+        "throw",
+        "jump-forward-mk",
+        "jump-forward-hk",
+        "jump-neutral-hk",
+        "jump-back-hk",
+        "shoryuken-mp",
+        "tatsu-mk",
+    }
+)
+SHORYUKEN_ACTION = "shoryuken-mp"
+REWARD_RISK_PROFILES = ("none", "shoryuken-only", "all-attacks")
+
+
+@dataclass(frozen=True)
+class RewardRiskConfig:
+    profile: str
+    window_decisions: int
+    attack_no_damage_cost: float
+    attack_punished_cost: float
+    shoryuken_no_damage_extra_cost: float
+    shoryuken_punished_extra_cost: float
+
+
+@dataclass
+class RewardRiskStats:
+    no_damage_cost_events: int = 0
+    punished_cost_events: int = 0
+    attack_no_damage_cost_total: float = 0.0
+    attack_punished_cost_total: float = 0.0
+    shoryuken_no_damage_extra_cost_total: float = 0.0
+    shoryuken_punished_extra_cost_total: float = 0.0
+
+    @property
+    def total_cost(self) -> float:
+        return (
+            self.attack_no_damage_cost_total
+            + self.attack_punished_cost_total
+            + self.shoryuken_no_damage_extra_cost_total
+            + self.shoryuken_punished_extra_cost_total
+        )
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "no_damage_cost_events": self.no_damage_cost_events,
+            "punished_cost_events": self.punished_cost_events,
+            "attack_no_damage_cost_total": self.attack_no_damage_cost_total,
+            "attack_punished_cost_total": self.attack_punished_cost_total,
+            "shoryuken_no_damage_extra_cost_total": self.shoryuken_no_damage_extra_cost_total,
+            "shoryuken_punished_extra_cost_total": self.shoryuken_punished_extra_cost_total,
+            "total_cost": self.total_cost,
+        }
+
+
 def read_transition_rows(paths: list[str], limit: int) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     for path in paths:
@@ -55,11 +121,76 @@ def row_order_key(row: dict[str, object]) -> tuple[int, int]:
     return (int(row.get("decision_id", 0) or 0), int(row.get("obs_frame", 0) or 0))
 
 
+def int_field(row: dict[str, object], name: str) -> int:
+    return int(row.get(name, 0) or 0)
+
+
+def is_action_start(row: dict[str, object]) -> bool:
+    return int_field(row, "executed_policy_action_step") == 0
+
+
+def is_terminal_win(row: dict[str, object]) -> bool:
+    return (
+        bool(row.get("done", False))
+        and int_field(row, "final_opp_hp") <= 0
+        and int_field(row, "final_self_hp") > 0
+    )
+
+
+def reward_risk_cost(
+    episode_rows: list[dict[str, object]],
+    row_index: int,
+    action_name: str,
+    config: RewardRiskConfig,
+    stats: RewardRiskStats,
+) -> float:
+    if config.profile == "none" or not is_action_start(episode_rows[row_index]):
+        return 0.0
+
+    apply_attack_cost = config.profile == "all-attacks" and action_name in ATTACK_RISK_ACTIONS
+    apply_shoryuken_cost = action_name == SHORYUKEN_ACTION and config.profile in {"shoryuken-only", "all-attacks"}
+    if not apply_attack_cost and not apply_shoryuken_cost:
+        return 0.0
+
+    window_end = min(len(episode_rows), row_index + max(0, config.window_decisions) + 1)
+    lookahead = episode_rows[row_index:window_end]
+    if any(is_terminal_win(row) for row in lookahead):
+        return 0.0
+
+    opponent_damage = sum(int_field(row, "delta_opp_hp") for row in lookahead)
+    if opponent_damage > 0:
+        return 0.0
+
+    self_damage = sum(int_field(row, "delta_self_hp") for row in lookahead)
+    punished = self_damage > 0
+    cost = 0.0
+    stats.no_damage_cost_events += 1
+
+    if apply_attack_cost:
+        cost += config.attack_no_damage_cost
+        stats.attack_no_damage_cost_total += config.attack_no_damage_cost
+        if punished:
+            cost += config.attack_punished_cost
+            stats.attack_punished_cost_total += config.attack_punished_cost
+
+    if apply_shoryuken_cost:
+        cost += config.shoryuken_no_damage_extra_cost
+        stats.shoryuken_no_damage_extra_cost_total += config.shoryuken_no_damage_extra_cost
+        if punished:
+            cost += config.shoryuken_punished_extra_cost
+            stats.shoryuken_punished_extra_cost_total += config.shoryuken_punished_extra_cost
+
+    if punished:
+        stats.punished_cost_events += 1
+    return cost
+
+
 def build_experiences(
     rows: list[dict[str, object]],
     actions: tuple[str, ...],
     reward_scale: float,
-) -> tuple[list[Experience], dict[str, int], dict[str, float], int]:
+    reward_risk_config: RewardRiskConfig,
+) -> tuple[list[Experience], dict[str, int], dict[str, float], int, RewardRiskStats]:
     action_to_index = {action: index for index, action in enumerate(actions)}
     by_episode: dict[tuple[int, int], list[dict[str, object]]] = collections.defaultdict(list)
     for row in rows:
@@ -69,13 +200,19 @@ def build_experiences(
     action_counts = {action: 0 for action in actions}
     action_rewards = {action: 0.0 for action in actions}
     delayed_rewards = 0
+    risk_stats = RewardRiskStats()
 
     for episode_rows in by_episode.values():
         episode_rows.sort(key=row_order_key)
         last_exp_index: int | None = None
         for index, row in enumerate(episode_rows):
-            reward = rl.tabular_training_reward(row) * reward_scale
             action_name = rl.transition_action_name(row)
+            risk_cost = (
+                reward_risk_cost(episode_rows, index, action_name, reward_risk_config, risk_stats)
+                if action_name is not None
+                else 0.0
+            )
+            reward = (rl.tabular_training_reward(row) - risk_cost) * reward_scale
             if action_name is None or action_name not in action_to_index:
                 if reward != 0.0 and last_exp_index is not None:
                     experiences[last_exp_index].reward += reward
@@ -97,7 +234,18 @@ def build_experiences(
             action_counts[action_name] += 1
             action_rewards[action_name] += reward
 
-    return experiences, action_counts, action_rewards, delayed_rewards
+    return experiences, action_counts, action_rewards, delayed_rewards, risk_stats
+
+
+def reward_risk_config_from_args(args: argparse.Namespace) -> RewardRiskConfig:
+    return RewardRiskConfig(
+        profile=str(args.reward_risk_profile),
+        window_decisions=max(0, int(args.reward_risk_window_decisions)),
+        attack_no_damage_cost=max(0.0, float(args.reward_attack_no_damage_cost)),
+        attack_punished_cost=max(0.0, float(args.reward_attack_punished_cost)),
+        shoryuken_no_damage_extra_cost=max(0.0, float(args.reward_shoryuken_no_damage_extra_cost)),
+        shoryuken_punished_extra_cost=max(0.0, float(args.reward_shoryuken_punished_extra_cost)),
+    )
 
 
 def init_network(input_dim: int, hidden_sizes: list[int], output_dim: int, rng: random.Random) -> list[dict[str, object]]:
@@ -328,6 +476,45 @@ def main() -> None:
     parser.add_argument("--learning-rate", type=float, default=0.001, help="MLP learning rate")
     parser.add_argument("--gamma", type=float, default=0.95, help="DQN discounted future reward")
     parser.add_argument("--reward-scale", type=float, default=0.01, help="Scale applied to HP-delta reward during training")
+    parser.add_argument(
+        "--reward-risk-profile",
+        choices=REWARD_RISK_PROFILES,
+        default="none",
+        help=(
+            "Optional no-damage action cost profile: none=HP-delta baseline, "
+            "shoryuken-only=only Shoryuken extra costs, all-attacks=generic attack costs plus Shoryuken extra costs"
+        ),
+    )
+    parser.add_argument(
+        "--reward-risk-window-decisions",
+        type=int,
+        default=10,
+        help="Lookahead decisions used to decide whether an action produced no opponent HP damage",
+    )
+    parser.add_argument(
+        "--reward-attack-no-damage-cost",
+        type=float,
+        default=0.5,
+        help="Positive raw reward cost subtracted from all attack actions with no opponent HP damage in all-attacks profile",
+    )
+    parser.add_argument(
+        "--reward-attack-punished-cost",
+        type=float,
+        default=2.0,
+        help="Additional positive raw reward cost when a no-damage attack is followed by self HP damage in all-attacks profile",
+    )
+    parser.add_argument(
+        "--reward-shoryuken-no-damage-extra-cost",
+        type=float,
+        default=1.0,
+        help="Positive raw reward cost subtracted from no-damage shoryuken-mp in shoryuken-only/all-attacks profiles",
+    )
+    parser.add_argument(
+        "--reward-shoryuken-punished-extra-cost",
+        type=float,
+        default=4.0,
+        help="Additional positive raw reward cost when no-damage shoryuken-mp is followed by self HP damage",
+    )
     parser.add_argument("--target-sync-steps", type=int, default=200, help="Steps between target-network syncs")
     parser.add_argument("--epsilon", type=float, default=0.05, help="Exploration probability stamped into the published actor")
     parser.add_argument(
@@ -343,7 +530,13 @@ def main() -> None:
 
     actions = rl.TABULAR_DEFAULT_ACTIONS
     rows = read_transition_rows(args.transition_logs, args.limit)
-    experiences, action_counts, action_rewards, delayed_rewards = build_experiences(rows, actions, args.reward_scale)
+    reward_risk_config = reward_risk_config_from_args(args)
+    experiences, action_counts, action_rewards, delayed_rewards, reward_risk_stats = build_experiences(
+        rows,
+        actions,
+        args.reward_scale,
+        reward_risk_config,
+    )
     if not experiences:
         raise SystemExit("No DQN experiences built from transition logs")
 
@@ -366,8 +559,16 @@ def main() -> None:
         "rows_read": len(rows),
         "experiences": len(experiences),
         "delayed_rewards": delayed_rewards,
-        "reward_source": "hp-delta",
+        "reward_source": "hp-delta+risk-cost" if reward_risk_config.profile != "none" else "hp-delta",
         "reward_scale": args.reward_scale,
+        "reward_scale_applied_after_risk_cost": True,
+        "reward_risk_profile": reward_risk_config.profile,
+        "reward_risk_window_decisions": reward_risk_config.window_decisions,
+        "reward_attack_no_damage_cost": reward_risk_config.attack_no_damage_cost,
+        "reward_attack_punished_cost": reward_risk_config.attack_punished_cost,
+        "reward_shoryuken_no_damage_extra_cost": reward_risk_config.shoryuken_no_damage_extra_cost,
+        "reward_shoryuken_punished_extra_cost": reward_risk_config.shoryuken_punished_extra_cost,
+        "reward_risk_stats": reward_risk_stats.as_metadata(),
         "steps": max(1, args.steps),
         "batch_size": max(1, args.batch_size),
         "gamma": min(0.999, max(0.0, args.gamma)),
@@ -390,6 +591,7 @@ def main() -> None:
     print(
         "DQN published "
         f"version={version} model_dir={args.model_dir} rows={len(rows)} experiences={len(experiences)} "
+        f"risk={reward_risk_config.profile} risk_cost={reward_risk_stats.total_cost:.1f} "
         f"loss={train_stats['last_loss']:.6f} avg_loss={train_stats['avg_loss']:.6f} "
         f"greedy={','.join(f'{action}:{count}' for action, count in greedy_counts.items() if count)}",
         flush=True,

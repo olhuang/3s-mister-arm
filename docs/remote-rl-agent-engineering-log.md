@@ -2,6 +2,62 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-27: Add Offline DQN Reward-Risk A/B/C Profiles
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / first ML baseline
+
+Files changed:
+- `tools/rl_probe_server.py`
+- `tools/train_dqn_learner.py`
+- `tools/compare_dqn_models.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- train baseline and reward-risk DQN/MLP Q models from the same transition log so Shoryuken no-damage costs can be compared without changing the live environment.
+- avoid ambiguous command names by using positive `cost` parameters rather than negative `penalty` arguments.
+- detect whether reducing empty Shoryuken merely shifts the model toward other empty attacks.
+
+Implementation notes:
+- `learner_replay_row()` now preserves requested/executed policy action IDs, sub-action IDs, and macro steps so offline DQN replay can use high-level action attribution instead of falling back to wire-only decoding.
+- `tools/train_dqn_learner.py` adds:
+  - `--reward-risk-profile none`
+  - `--reward-risk-profile shoryuken-only`
+  - `--reward-risk-profile all-attacks`
+  - `--reward-risk-window-decisions`
+  - `--reward-attack-no-damage-cost`
+  - `--reward-attack-punished-cost`
+  - `--reward-shoryuken-no-damage-extra-cost`
+  - `--reward-shoryuken-punished-extra-cost`
+- risk costs are positive raw reward units, subtracted before `--reward-scale`.
+- `shoryuken-only` applies only Shoryuken no-damage / punished extra costs; `all-attacks` applies generic attack no-damage / punished costs to attack actions and adds the Shoryuken extras on top.
+- terminal wins inside the lookahead window suppress risk costs so a harmless post-KO or already-winning action is not punished.
+- `tools/compare_dqn_models.py` compares repeated `--model LABEL=path` DQN manifests against the same transition observations and reports greedy distributions overall plus `atk0/atk1 x close/mid/far`.
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py tools/train_dqn_learner.py tools/compare_dqn_models.py` passed.
+- baseline smoke:
+  - `python3 tools/train_dqn_learner.py logs/rl-transitions-actionset-v3-4-3-3.ndjson --model-dir /tmp/rl-dqn-ab-baseline-smoke --model-version 1 --limit 2000 --steps 5 --batch-size 16 --log-interval 0 --reward-risk-profile none`
+  - published `risk=none risk_cost=0.0`.
+- Shoryuken-only smoke:
+  - `python3 tools/train_dqn_learner.py logs/rl-transitions-actionset-v3-4-3-3.ndjson --model-dir /tmp/rl-dqn-ab-shoryu-smoke --model-version 1 --limit 2000 --steps 5 --batch-size 16 --log-interval 0 --reward-risk-profile shoryuken-only`
+  - published `risk=shoryuken-only risk_cost=2.0`.
+- all-attacks smoke:
+  - `python3 tools/train_dqn_learner.py logs/rl-transitions-actionset-v3-4-3-3.ndjson --model-dir /tmp/rl-dqn-ab-allattacks-smoke --model-version 1 --limit 2000 --steps 5 --batch-size 16 --log-interval 0 --reward-risk-profile all-attacks`
+  - published `risk=all-attacks risk_cost=70.0`.
+- larger 10k one-step smoke produced nonzero and profile-separated risk costs:
+  - Shoryuken-only `risk_cost=31.0`
+  - all-attacks `risk_cost=806.0`
+- compare smoke:
+  - `python3 tools/compare_dqn_models.py logs/rl-transitions-actionset-v3-4-3-3.ndjson --tail-rows 1000 --model A=/tmp/rl-dqn-ab-baseline-smoke --model B=/tmp/rl-dqn-ab-shoryu-smoke --model C=/tmp/rl-dqn-ab-allattacks-smoke --top-n 5`
+  - printed overall and threat/distance greedy action distributions plus pairwise action-change counts.
+
+Follow-up:
+- run full A/B/C DQN training on the frozen actionset-v4 log with enough steps to make the comparison meaningful.
+- compare Shoryuken selection rate and total attack selection rate before choosing any reward-risk profile for live testing.
+- do not treat offline greedy distribution as live winrate; validate the selected DQN live for at least 50-100 rounds.
+
 ## 2026-04-27: Split Normal IDs By Stance And Add Normal Probes
 
 Milestone:

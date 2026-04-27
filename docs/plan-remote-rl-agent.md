@@ -2417,6 +2417,7 @@ Tasks:
 - [x] Add a guard/back-hold macro so tabular `back` can produce a defense window instead of a single short hold
 - [x] Add cross distance/threat ready-action stats for strike-defense policy diagnosis
 - [x] Add `jump-forward-mk` to the tabular action set as a first active approach attack
+- [x] Add a first offline DQN/MLP Q learner tool and `policy=dqn` probe inference path for q-table comparison
 - [x] Add an offline transition analyzer for action/distance HP-delta attribution
 - [x] Expand observation features only with schema versioning for the first routine attack/contact-reaction validation probes
 - [x] Promote validated opponent routine attack state into the first tabular strike-defense state split
@@ -2470,6 +2471,12 @@ Implementation notes:
   - UDP OBS packets now carry a schema-versioned compact spacing/state payload (`payload_version=2`) with the same bucket inputs used by transition replay: `obs_abs_dx`, `obs_abs_dy`, front/back edge distances, `obs_opp_in_front`, plus routine flags for `routine_no[1] == 4` attack state and `routine_no[1] == 1` contact/defensive reaction state; only opponent attack state is currently promoted to the learner state key
   - Python-side tabular inference prefers the same-frame OBS spacing bucket and falls back to the latest replay-imported bucket only when an old header-only OBS packet or invalid payload is seen
   - learner stats print `obs=<payload>/<header-only>` and `tab_state=obs:<n>/latest:<n>` so live runs can confirm whether tabular inference is using same-frame OBS state
+- `tools/train_dqn_learner.py` now supports the first offline DQN/MLP Q learner path:
+  - reads transition NDJSON logs and converts rows into `(state, action, reward, next_state, done)` experiences using the same learner-safe HP-delta reward as tabular (`delta_opp_hp - delta_self_hp`)
+  - uses normalized numeric spacing/threat features: `obs_abs_dx`, `obs_abs_dy`, both fighters' front/back edge distances, `obs_opp_in_front`, and `obs_opp_routine_attack_state`
+  - trains a small stdlib-only MLP with target-network DQN updates, so it does not require `numpy` / `torch` for first smoke tests
+  - publishes `policy=dqn` actor manifests with `actions`, `epsilon`, `fallback_policy`, and serialized MLP weights under `dqn`
+  - `tools/rl_probe_server.py --policy dqn --model-dir <dir>` can hot-load those manifests and run DQN inference from same-frame OBS payloads, then reuse the existing macro/fixed action adapter for `fireball`, `back` guard macro, and `jump-forward-mk`
 - Live tabular testing exposed a VS rematch / second-match transition issue:
   - second-match action control could continue, but episode transition batches stopped arriving after a later round ended
   - observed second-match flow could resemble arcade next-opponent selection

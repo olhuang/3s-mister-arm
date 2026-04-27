@@ -2,6 +2,42 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-27: Add Offline DQN Learner And Probe Inference
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / first ML baseline
+
+Files changed:
+- `tools/rl_probe_server.py`
+- `tools/train_dqn_learner.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- prepare the first q-table-vs-ML comparison while a fresh tabular transition run is still collecting.
+- train a simple DQN/MLP Q actor offline from transition NDJSON before allowing it to control live MiSTer.
+- keep the first ML path independent from MiSTer/C changes and from external Python packages.
+
+Implementation notes:
+- added `policy=dqn` as a probe-side model policy, separate from scripted policies and `tabular`.
+- DQN actors use the same high-level action set as tabular: `forward`, `back`, `hp`, `forward-hp`, `fireball`, `throw`, and `jump-forward-mk`.
+- DQN features are normalized numeric OBS values: absolute spacing, front/back edge distances, `opp_in_front`, and validated opponent routine attack state.
+- `tools/train_dqn_learner.py` reads transition logs, builds `(state, action, reward, next_state, done)` experiences, applies delayed HP-delta reward to the most recent explicit action like the tabular learner, trains a small stdlib-only MLP with target-network DQN updates, and publishes a `policy=dqn` actor manifest.
+- `tools/rl_probe_server.py` can hot-load `policy=dqn` manifests from `--model-dir`, run MLP inference from same-frame OBS payloads, and reuse the existing action adapter / macro lock.
+- `--learner-auto-publish` remains tabular/scripted-only; DQN publication is owned by the offline trainer for this first version.
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py tools/train_dqn_learner.py tools/analyze_rl_transitions.py` passed.
+- `python3 tools/train_dqn_learner.py --help` passed.
+- synthetic offline training smoke passed: `tools/train_dqn_learner.py` trained from a temporary NDJSON replay and published `policy=dqn` `current.json`.
+- synthetic probe inference smoke passed: `ActorModelStore` loaded the generated DQN actor, `dqn_actor_action_name()` returned a valid high-level action, and `policy_action_wire()` returned a valid wire action.
+- real-log smoke was attempted, but the checked local candidate transition logs were empty or missing in this worktree; rerun it after the in-progress live tabular run finishes.
+- `git diff --check -- tools/rl_probe_server.py tools/train_dqn_learner.py docs/plan-remote-rl-agent.md docs/remote-rl-agent-engineering-log.md` passed.
+
+Follow-up:
+- after the current `jump-forward-mk` tabular live run finishes, train DQN offline on that full transition log and inspect loss, greedy action distribution, and reward/action coverage before running `--policy dqn` live.
+- if DQN inference works but action quality is poor, compare against the tabular baseline using the same action set and avoid adding reward shaping until action attribution and replay coverage are understood.
+
 ## 2026-04-27: Add Tabular Jump-Forward MK Macro
 
 Milestone:

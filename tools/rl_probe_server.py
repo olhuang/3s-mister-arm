@@ -45,7 +45,7 @@ BTN_LP = 0x0010
 BTN_HP = 0x0040
 BTN_LK = 0x0100
 BTN_MK = 0x0200
-POLICY_CHOICES = (
+SCRIPTED_POLICY_CHOICES = (
     "forward",
     "back",
     "guard",
@@ -56,8 +56,12 @@ POLICY_CHOICES = (
     "tatsu",
     "shoryuken",
     "jump-forward-mk",
-    "tabular",
 )
+MODEL_POLICY_CHOICES = (
+    "tabular",
+    "dqn",
+)
+POLICY_CHOICES = SCRIPTED_POLICY_CHOICES + MODEL_POLICY_CHOICES
 GUARD_MACRO_DECISION_STEPS = 6
 
 TABULAR_ACTION_NAMES = ("forward", "back", "hp", "forward-hp", "fireball", "throw", "jump-forward-mk")
@@ -76,6 +80,27 @@ TABULAR_ACTION_NAMES_BY_WIRE[RL_MOVE_FORWARD | BTN_LP] = "fireball"
 TABULAR_ACTION_NAMES_BY_WIRE[RL_MOVE_UP_FORWARD | BTN_MK] = "jump-forward-mk"
 TABULAR_DEFAULT_ACTIONS = TABULAR_ACTION_NAMES
 
+DQN_FEATURE_NAMES = (
+    "obs_abs_dx",
+    "obs_abs_dy",
+    "obs_self_front_edge_dist",
+    "obs_self_back_edge_dist",
+    "obs_opp_front_edge_dist",
+    "obs_opp_back_edge_dist",
+    "obs_opp_in_front",
+    "obs_opp_routine_attack_state",
+)
+DQN_FEATURE_SCALES = {
+    "obs_abs_dx": 384.0,
+    "obs_abs_dy": 192.0,
+    "obs_self_front_edge_dist": 384.0,
+    "obs_self_back_edge_dist": 384.0,
+    "obs_opp_front_edge_dist": 384.0,
+    "obs_opp_back_edge_dist": 384.0,
+    "obs_opp_in_front": 1.0,
+    "obs_opp_routine_attack_state": 1.0,
+}
+
 
 @dataclass(frozen=True)
 class ActorModel:
@@ -84,6 +109,7 @@ class ActorModel:
     source: str
     q_table: dict[str, dict[str, float]] = field(default_factory=dict)
     q_counts: dict[str, dict[str, int]] = field(default_factory=dict)
+    dqn_model: dict[str, object] = field(default_factory=dict)
     actions: tuple[str, ...] = TABULAR_DEFAULT_ACTIONS
     epsilon: float = 0.0
     fallback_policy: str = "hp"
@@ -173,6 +199,73 @@ def _coerce_q_counts(value: object) -> dict[str, dict[str, int]]:
     return q_counts
 
 
+def _coerce_dqn_model(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+
+    raw_feature_names = value.get("feature_names")
+    if isinstance(raw_feature_names, list):
+        feature_names = tuple(str(name) for name in raw_feature_names if str(name) in DQN_FEATURE_SCALES)
+    else:
+        feature_names = DQN_FEATURE_NAMES
+    if not feature_names:
+        feature_names = DQN_FEATURE_NAMES
+
+    raw_feature_scales = value.get("feature_scales")
+    feature_scales = dict(DQN_FEATURE_SCALES)
+    if isinstance(raw_feature_scales, dict):
+        for name, scale in raw_feature_scales.items():
+            key = str(name)
+            if key not in DQN_FEATURE_SCALES:
+                continue
+            try:
+                feature_scales[key] = max(1e-6, float(scale))
+            except (TypeError, ValueError):
+                continue
+
+    clean_layers: list[dict[str, object]] = []
+    input_dim = len(feature_names)
+    raw_layers = value.get("layers")
+    if not isinstance(raw_layers, list):
+        return {}
+    for index, raw_layer in enumerate(raw_layers):
+        if not isinstance(raw_layer, dict):
+            return {}
+        raw_weights = raw_layer.get("weights")
+        raw_bias = raw_layer.get("bias")
+        if not isinstance(raw_weights, list) or not isinstance(raw_bias, list):
+            return {}
+        weights: list[list[float]] = []
+        for row in raw_weights:
+            if not isinstance(row, list) or len(row) != input_dim:
+                return {}
+            try:
+                weights.append([float(item) for item in row])
+            except (TypeError, ValueError):
+                return {}
+        try:
+            bias = [float(item) for item in raw_bias]
+        except (TypeError, ValueError):
+            return {}
+        if len(weights) != len(bias) or not weights:
+            return {}
+        activation = str(raw_layer.get("activation", "linear") or "linear")
+        if activation not in {"relu", "linear"}:
+            return {}
+        if index + 1 == len(raw_layers):
+            activation = "linear"
+        clean_layers.append({"weights": weights, "bias": bias, "activation": activation})
+        input_dim = len(bias)
+
+    if not clean_layers or len(clean_layers[-1]["bias"]) < 1:
+        return {}
+    return {
+        "feature_names": list(feature_names),
+        "feature_scales": feature_scales,
+        "layers": clean_layers,
+    }
+
+
 def replace_with_retries(src: str, dst: str, attempts: int = 8, delay_sec: float = 0.025) -> None:
     for attempt in range(max(1, attempts)):
         try:
@@ -224,6 +317,7 @@ class ActorModelStore:
         source = str(data.get("source", "file") or "file")
         q_table = _coerce_q_table(data.get("q"))
         q_counts = _coerce_q_counts(data.get("q_counts"))
+        dqn_model = _coerce_dqn_model(data.get("dqn"))
         actions = _coerce_action_names(data.get("actions"))
         try:
             epsilon = float(data.get("epsilon", 0.0) or 0.0)
@@ -246,6 +340,7 @@ class ActorModelStore:
                     source,
                     q_table=q_table,
                     q_counts=q_counts,
+                    dqn_model=dqn_model,
                     actions=actions,
                     epsilon=epsilon,
                     fallback_policy=fallback_policy,
@@ -319,6 +414,7 @@ class ActorModelStore:
         metadata: dict[str, object] | None = None,
         q_table: dict[str, dict[str, float]] | None = None,
         q_counts: dict[str, dict[str, int]] | None = None,
+        dqn_model: dict[str, object] | None = None,
         actions: tuple[str, ...] = TABULAR_DEFAULT_ACTIONS,
         epsilon: float = 0.0,
         fallback_policy: str = "hp",
@@ -334,6 +430,7 @@ class ActorModelStore:
                     source,
                     q_table=q_table or {},
                     q_counts=q_counts or {},
+                    dqn_model=dqn_model or {},
                     actions=actions,
                     epsilon=epsilon,
                     fallback_policy=fallback_policy,
@@ -355,6 +452,7 @@ class ActorModelStore:
                 source,
                 q_table=q_table or {},
                 q_counts=q_counts or {},
+                dqn_model=dqn_model or {},
                 actions=actions,
                 epsilon=epsilon,
                 fallback_policy=fallback_policy,
@@ -378,6 +476,16 @@ class ActorModelStore:
                         "q_counts": model.q_counts,
                         "updated_rows": model.updated_rows,
                         "min_action_count": model.min_action_count,
+                    }
+                )
+            elif model.policy == "dqn":
+                payload.update(
+                    {
+                        "actions": list(model.actions),
+                        "epsilon": model.epsilon,
+                        "fallback_policy": model.fallback_policy,
+                        "dqn": model.dqn_model,
+                        "updated_rows": model.updated_rows,
                     }
                 )
             version_path = os.path.join(self._model_dir, f"actor-v{model.version}.json")
@@ -642,6 +750,57 @@ def tabular_action_name(action_wire: int) -> str | None:
 
 def tabular_training_reward(row: dict[str, object]) -> float:
     return float(int(row.get("delta_opp_hp", 0) or 0) - int(row.get("delta_self_hp", 0) or 0))
+
+
+def dqn_feature_vector(
+    row: dict[str, object],
+    feature_names: tuple[str, ...] | list[str] = DQN_FEATURE_NAMES,
+    feature_scales: dict[str, float] | None = None,
+) -> list[float]:
+    scales = feature_scales or DQN_FEATURE_SCALES
+    features: list[float] = []
+    for name in feature_names:
+        try:
+            value = float(row.get(str(name), 0.0) or 0.0)
+        except (TypeError, ValueError):
+            value = 0.0
+        scale = max(1e-6, float(scales.get(str(name), 1.0) or 1.0))
+        normalized = value / scale
+        features.append(max(-4.0, min(4.0, normalized)))
+    return features
+
+
+def dqn_predict_values(dqn_model: dict[str, object], row: dict[str, object]) -> list[float]:
+    feature_names = dqn_model.get("feature_names", list(DQN_FEATURE_NAMES))
+    if not isinstance(feature_names, list):
+        feature_names = list(DQN_FEATURE_NAMES)
+    feature_scales = dqn_model.get("feature_scales", dict(DQN_FEATURE_SCALES))
+    if not isinstance(feature_scales, dict):
+        feature_scales = dict(DQN_FEATURE_SCALES)
+    activations = dqn_feature_vector(row, feature_names, feature_scales)  # type: ignore[arg-type]
+    layers = dqn_model.get("layers")
+    if not isinstance(layers, list):
+        return []
+    for layer in layers:
+        if not isinstance(layer, dict):
+            return []
+        weights = layer.get("weights")
+        bias = layer.get("bias")
+        if not isinstance(weights, list) or not isinstance(bias, list):
+            return []
+        next_values: list[float] = []
+        for raw_row, raw_bias in zip(weights, bias):
+            if not isinstance(raw_row, list):
+                return []
+            try:
+                value = float(raw_bias) + sum(float(weight) * input_value for weight, input_value in zip(raw_row, activations))
+            except (TypeError, ValueError):
+                return []
+            next_values.append(value)
+        if str(layer.get("activation", "linear") or "linear") == "relu":
+            next_values = [max(0.0, value) for value in next_values]
+        activations = next_values
+    return activations
 
 
 class TabularPolicyLearner:
@@ -1161,6 +1320,9 @@ class LearnerLogTailer(threading.Thread):
             if now_ns >= self._next_publish_ns:
                 active = self._model_store.current()
                 policy = self._learner_publish_policy or active.policy
+                if policy == "dqn":
+                    self._next_publish_ns = now_ns + self._learner_publish_interval_ns
+                    return
                 tabular_snapshot = self._tabular_learner.snapshot(self._tabular_min_action_count)
                 tabular_updates = int(tabular_snapshot["updates"])
                 if policy == "tabular" and tabular_updates <= self._last_published_tabular_updates:
@@ -1425,6 +1587,24 @@ def tabular_actor_action_name(actor: ActorModel, state_key: str | None) -> str |
     return max(eligible_actions, key=lambda action: (float(scores.get(action, 0.0)), action))
 
 
+def dqn_actor_action_name(actor: ActorModel, obs_row: dict[str, object] | None) -> str | None:
+    if actor.policy != "dqn" or not obs_row or not actor.dqn_model:
+        return None
+    if random.random() < actor.epsilon:
+        return random.choice(actor.actions)
+    values = dqn_predict_values(actor.dqn_model, obs_row)
+    if not values:
+        return None
+    scored_actions = [
+        (action, float(values[index]))
+        for index, action in enumerate(actor.actions)
+        if index < len(values) and action in TABULAR_ACTION_NAMES
+    ]
+    if not scored_actions:
+        return None
+    return max(scored_actions, key=lambda item: (item[1], item[0]))[0]
+
+
 def active_macro_action_wire(
     macro_states: dict[tuple[int, int, int], dict[str, int | str]],
     nonce: int,
@@ -1474,25 +1654,30 @@ def policy_action_wire(
     episode_id: int,
     repeat_delay_ms: int,
     tabular_state_key_override: str | None = None,
+    obs_row_override: dict[str, object] | None = None,
 ) -> int:
-    if actor.policy == "tabular":
+    if actor.policy in MODEL_POLICY_CHOICES:
         macro_wire = active_macro_action_wire(macro_states, nonce, run_id, episode_id)
         if macro_wire is not None:
             return macro_wire
-    tabular_state = tabular_state_key_override if tabular_state_key_override else model_store.latest_tabular_state()
-    tabular_action = tabular_actor_action_name(actor, tabular_state)
-    if tabular_action is not None:
-        if tabular_action == "back":
+    action_name = None
+    if actor.policy == "tabular":
+        tabular_state = tabular_state_key_override if tabular_state_key_override else model_store.latest_tabular_state()
+        action_name = tabular_actor_action_name(actor, tabular_state)
+    elif actor.policy == "dqn":
+        action_name = dqn_actor_action_name(actor, obs_row_override)
+    if action_name is not None:
+        if action_name == "back":
             macro_wire = start_macro_action_wire(macro_states, nonce, run_id, episode_id, "guard")
             if macro_wire is not None:
                 return macro_wire
-        fixed = fixed_action_wire(tabular_action)
+        fixed = fixed_action_wire(action_name)
         if fixed is not None:
             return fixed
-        macro_wire = start_macro_action_wire(macro_states, nonce, run_id, episode_id, tabular_action)
+        macro_wire = start_macro_action_wire(macro_states, nonce, run_id, episode_id, action_name)
         if macro_wire is not None:
             return macro_wire
-    fallback_policy = actor.fallback_policy if actor.policy == "tabular" else actor.policy
+    fallback_policy = actor.fallback_policy if actor.policy in MODEL_POLICY_CHOICES else actor.policy
     return scripted_action_wire(fallback_policy, policy_states, nonce, run_id, episode_id, repeat_delay_ms)
 
 
@@ -1602,6 +1787,7 @@ def serve(
                     print(f"{addr} bad_obs_size size={len(data)} expected={expected_len} obs_len={obs_len}")
                 continue
             obs_state_key: str | None = None
+            obs_row: dict[str, object] | None = None
             obs_payload_valid = False
             if obs_len:
                 obs_row = parse_obs_spacing_payload(data[OBS_HEADER.size:])
@@ -1627,6 +1813,7 @@ def serve(
                     episode_id,
                     policy_repeat_delay_ms,
                     obs_state_key,
+                    obs_row,
                 )
                 payload = make_action_packet(
                     nonce,
@@ -1829,9 +2016,9 @@ def main() -> None:
     )
     parser.add_argument(
         "--learner-publish-policy",
-        choices=POLICY_CHOICES,
+        choices=SCRIPTED_POLICY_CHOICES + ("tabular",),
         default=None,
-        help="Policy stamped into learner-published actor manifests; defaults to the currently active policy",
+        help="Policy stamped into learner-published actor manifests; defaults to the currently active policy; DQN is published by the offline trainer",
     )
     parser.add_argument(
         "--tabular-alpha",
@@ -1847,7 +2034,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--tabular-fallback-policy",
-        choices=POLICY_CHOICES[:-1],
+        choices=SCRIPTED_POLICY_CHOICES,
         default="hp",
         help="Scripted policy used when a tabular actor has no score for the current bucket",
     )

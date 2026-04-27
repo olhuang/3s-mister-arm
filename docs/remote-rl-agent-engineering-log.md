@@ -2,6 +2,35 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-27: Add Threat/Distance Ready-Action Stats
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / strike-defense policy diagnosis
+
+Files changed:
+- `tools/rl_probe_server.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- make live learner output show whether `fireball` and `back` are being selected in reasonable threat/distance regions.
+- distinguish healthy far-range `opp_attack=1` fireball choices from risky close/mid-range fireball choices.
+- diagnose over-defensive policy maps without changing learner updates, rewards, or action execution.
+
+Implementation notes:
+- `summarize_ready_actions()` now also returns `ready_threat_dx_actions`, keyed by `atk0_close`, `atk0_mid`, `atk0_far`, `atk1_close`, `atk1_mid`, and `atk1_far`.
+- learner stats now print `ready_threat_dx=atk0_close{...} atk0_mid{...} atk0_far{...} atk1_close{...} atk1_mid{...} atk1_far{...}`.
+- this is a Q-table readiness summary only: it counts ready greedy actions by state bucket and does not count actual executed actions.
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py tools/analyze_rl_transitions.py` passed.
+- synthetic summary smoke passed: `ready_threat_dx` formatter produced the expected ordered buckets and separated `atk1_close{back:1}` from `atk1_mid{fireball:1}` / `atk1_far{fireball:1}`.
+- replay smoke passed on the first `5000` rows of `logs/rl-transitions-tabular-4-3-3.ndjson`, producing `ready_threat_dx=...` from a real learner snapshot.
+- `git diff --check -- tools/rl_probe_server.py docs/plan-remote-rl-agent.md docs/remote-rl-agent-engineering-log.md` passed.
+
+Follow-up:
+- in live runs, expect `atk1_close` / `atk1_mid` to trend toward `back` if strike defense is learning, while `atk1_far` and `atk0_far` may reasonably keep `fireball`.
+
 ## 2026-04-26: Add Tabular Back Guard Macro
 
 Milestone:

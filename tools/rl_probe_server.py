@@ -508,13 +508,24 @@ def summarize_ready_actions(
     q_counts: dict[str, dict[str, int]],
     actions: tuple[str, ...],
     min_action_count: int,
-) -> tuple[dict[str, int], dict[str, dict[str, int]], dict[str, dict[str, int]]]:
+) -> tuple[
+    dict[str, int],
+    dict[str, dict[str, int]],
+    dict[str, dict[str, int]],
+    dict[str, dict[str, int]],
+]:
     min_count = max(1, min_action_count)
     ready_actions = {action: 0 for action in actions}
     ready_dx_actions = {bucket: {action: 0 for action in actions} for bucket in ("close", "mid", "far", "unknown")}
     ready_opp_attack_actions = {
         bucket: {action: 0 for action in actions} for bucket in ("0", "1", "unknown")
     }
+    ready_threat_dx_actions = {
+        f"atk{opp_attack}_{dx}": {action: 0 for action in actions}
+        for opp_attack in ("0", "1")
+        for dx in ("close", "mid", "far")
+    }
+    ready_threat_dx_actions["unknown"] = {action: 0 for action in actions}
     for state, scores in q_table.items():
         best_action = ""
         best_score = 0.0
@@ -535,10 +546,14 @@ def summarize_ready_actions(
         opp_attack = tabular_state_part(state, "opp_attack")
         if opp_attack not in ready_opp_attack_actions:
             opp_attack = "unknown"
+        threat_dx = f"atk{opp_attack}_{dx}"
+        if threat_dx not in ready_threat_dx_actions:
+            threat_dx = "unknown"
         ready_actions[best_action] += 1
         ready_dx_actions[dx][best_action] += 1
         ready_opp_attack_actions[opp_attack][best_action] += 1
-    return ready_actions, ready_dx_actions, ready_opp_attack_actions
+        ready_threat_dx_actions[threat_dx][best_action] += 1
+    return ready_actions, ready_dx_actions, ready_opp_attack_actions, ready_threat_dx_actions
 
 
 def format_action_counts(counts: dict[str, int]) -> str:
@@ -557,6 +572,15 @@ def format_opp_attack_action_counts(opp_attack_counts: dict[str, dict[str, int]]
         f"{bucket}{{{format_action_counts(opp_attack_counts.get(bucket, {}))}}}" for bucket in ("0", "1")
     ]
     unknown = format_action_counts(opp_attack_counts.get("unknown", {}))
+    if unknown != "none":
+        parts.append(f"unknown{{{unknown}}}")
+    return " ".join(parts)
+
+
+def format_threat_dx_action_counts(threat_dx_counts: dict[str, dict[str, int]]) -> str:
+    keys = [f"atk{opp_attack}_{dx}" for opp_attack in ("0", "1") for dx in ("close", "mid", "far")]
+    parts = [f"{key}{{{format_action_counts(threat_dx_counts.get(key, {}))}}}" for key in keys]
+    unknown = format_action_counts(threat_dx_counts.get("unknown", {}))
     if unknown != "none":
         parts.append(f"unknown{{{unknown}}}")
     return " ".join(parts)
@@ -673,7 +697,7 @@ class TabularPolicyLearner:
             ready_score = 0.0
             ready_count = 0
             min_count = max(1, min_action_count)
-            ready_actions, ready_dx_actions, ready_opp_attack_actions = summarize_ready_actions(
+            ready_actions, ready_dx_actions, ready_opp_attack_actions, ready_threat_dx_actions = summarize_ready_actions(
                 q_table, q_counts, self._actions, min_count
             )
             for state, scores in q_table.items():
@@ -716,6 +740,7 @@ class TabularPolicyLearner:
                 "ready_actions": ready_actions,
                 "ready_dx_actions": ready_dx_actions,
                 "ready_opp_attack_actions": ready_opp_attack_actions,
+                "ready_threat_dx_actions": ready_threat_dx_actions,
             }
 
 
@@ -1086,6 +1111,9 @@ class LearnerLogTailer(threading.Thread):
         ready_opp_attack = format_opp_attack_action_counts(
             tabular["ready_opp_attack_actions"] if isinstance(tabular["ready_opp_attack_actions"], dict) else {}
         )
+        ready_threat_dx = format_threat_dx_action_counts(
+            tabular["ready_threat_dx_actions"] if isinstance(tabular["ready_threat_dx_actions"], dict) else {}
+        )
         print(
             "LEARNER "
             f"rows={self._rows} done={self._done} run={self._latest_run_id} ep={self._latest_episode} "
@@ -1101,7 +1129,8 @@ class LearnerLogTailer(threading.Thread):
             f"tab_reward=hp-delta:{float(tabular['training_reward_total']):.1f} "
             f"eps={float(tabular['epsilon']):.2f} min_n={self._tabular_min_action_count} "
             f"top_raw={top_raw} top_ready={top_ready} "
-            f"ready_actions={ready_actions} ready_dx={ready_dx} ready_opp_attack={ready_opp_attack} "
+            f"ready_actions={ready_actions} ready_dx={ready_dx} "
+            f"ready_opp_attack={ready_opp_attack} ready_threat_dx={ready_threat_dx} "
             f"model_exec={self._latest_model_version_executed} "
             f"model_active={model_status.active.version} "
             f"model_pub={model_status.last_published_version} "

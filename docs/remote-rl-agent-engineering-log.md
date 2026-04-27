@@ -2,6 +2,44 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-27: Split Back/Guard And Add Ryu MK/MP Actions
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / action-set refinement
+
+Files changed:
+- `tools/rl_probe_server.py`
+- `tools/analyze_rl_transitions.py`
+- `tools/train_dqn_learner.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/rl-policy-action-taxonomy.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- make retreat spacing and blocking trainable as different learner choices.
+- add the next Ryu curriculum actions requested for live probe testing: crouching MK, MP Shoryuken, and MK Tatsumaki Senpukyaku.
+
+Implementation notes:
+- `back` is now a plain `walk/back` fixed action again and no longer expands into the stand-guard macro.
+- added separate `guard-stand` and `guard-crouch` actions; they stamp `guard/stand` and `guard/crouch` metadata and expand to six decision replies of `back` or `down-back`.
+- added `crouch-mk` as fixed `down+MK`, stamped as `normal/mk`; this is the first live MK normal, so learner import maps `normal/mk` to `crouch-mk`.
+- added `shoryuken-mp` as `forward -> down -> down-forward -> down-forward+MP -> neutral -> neutral`, stamped as Ryu `Shoryuken` / `mp`.
+- added `tatsu-mk` as `down -> down-back -> back -> back+MK -> neutral -> neutral`, stamped as Ryu `Tatsumaki Senpukyaku` / `mk`.
+- `tools/analyze_rl_transitions.py` default action list now matches the expanded probe action set.
+- tabular and DQN actor manifests now carry `action_set_version=2`; probe-side hot-load ignores older tabular/DQN manifests so stale q-tables do not reinterpret old `back` guard credit as plain retreat.
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py tools/analyze_rl_transitions.py tools/train_dqn_learner.py` passed.
+- synthetic probe smoke confirmed tabular `back` returns wire `0x0003` with policy metadata `walk/back`, not `guard/stand`.
+- synthetic macro smoke confirmed `guard-stand`, `guard-crouch`, `shoryuken-mp`, and `tatsu-mk` emit the expected wires and policy metadata.
+- synthetic transition decode smoke confirmed policy metadata maps back to `guard-stand`, `guard-crouch`, `crouch-mk`, `shoryuken-mp`, and `tatsu-mk`.
+- analyzer tail smoke passed on `logs/rl-transitions-defense-v1-4-3-3.ndjson --tail-rows 1000`; the default action list now includes the split guard and new Ryu actions.
+- one-step offline DQN smoke passed against `logs/rl-transitions-defense-v1-4-3-3.ndjson --limit 2000`; the published manifest carried `action_set_version=2` and the expanded action list.
+
+Follow-up:
+- use a fresh transition log for live evaluation of this action-set version; old transition logs can still be analyzed, but old q-table/DQN model quality is not comparable.
+- watch live `ready_threat_dx` for whether `guard-stand` / `guard-crouch` appear under `atk1_close` or `atk1_mid` while `back` remains usable for spacing.
+
 ## 2026-04-27: Add Readable Move Names To Policy Taxonomy
 
 Milestone:

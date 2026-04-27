@@ -288,6 +288,7 @@ def publish_model(
         "version": version,
         "policy": "dqn",
         "source": "offline-dqn",
+        "action_set_version": rl.ACTION_SET_VERSION,
         "created_at_unix": time.time(),
         "metadata": metadata,
         "actions": list(actions),

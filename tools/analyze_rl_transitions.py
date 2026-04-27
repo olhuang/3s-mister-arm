@@ -15,7 +15,20 @@ from rl_probe_server import bucket_range, transition_action_name, tabular_traini
 
 
 DX_BUCKETS = ("close", "mid", "far")
-DEFAULT_ACTIONS = ("forward", "back", "hp", "forward-hp", "fireball", "throw", "jump-forward-mk")
+DEFAULT_ACTIONS = (
+    "forward",
+    "back",
+    "guard-stand",
+    "guard-crouch",
+    "hp",
+    "forward-hp",
+    "crouch-mk",
+    "fireball",
+    "throw",
+    "jump-forward-mk",
+    "shoryuken-mp",
+    "tatsu-mk",
+)
 
 
 @dataclass

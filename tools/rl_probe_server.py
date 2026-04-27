@@ -32,6 +32,7 @@ OBS_SPACING_PAYLOAD = struct.Struct("<HHhhhhhhBBBBB3x")
 OBS_SPACING_PAYLOAD_VERSION = 2
 TRANSITION_BATCH_HEADER = struct.Struct("<IHHQQIII")
 TRANSITION_BATCH_ACK = struct.Struct("<IHHQQII")
+ACTION_SET_VERSION = 2
 
 RL_MOVE_NEUTRAL = 0x0000
 RL_MOVE_UP_FORWARD = 0x0006
@@ -42,6 +43,7 @@ RL_MOVE_DOWN_BACK = 0x0007
 RL_MOVE_DOWN_FORWARD = 0x0008
 
 BTN_LP = 0x0010
+BTN_MP = 0x0020
 BTN_HP = 0x0040
 BTN_LK = 0x0100
 BTN_MK = 0x0200
@@ -60,22 +62,29 @@ RL_POLICY_ACTION_RYU_TATSU = 1230
 
 RL_POLICY_SUB_NONE = 0
 RL_POLICY_SUB_LP = 1
+RL_POLICY_SUB_MP = 2
 RL_POLICY_SUB_HP = 3
 RL_POLICY_SUB_LK = 4
 RL_POLICY_SUB_MK = 5
 RL_POLICY_SUB_FORWARD = 13
 RL_POLICY_SUB_BACK = 14
 RL_POLICY_SUB_STAND = 20
+RL_POLICY_SUB_CROUCH = 21
 SCRIPTED_POLICY_CHOICES = (
     "forward",
     "back",
     "guard",
+    "guard-stand",
+    "guard-crouch",
     "hp",
     "forward-hp",
+    "crouch-mk",
     "ryu-fireball",
     "throw",
     "tatsu",
+    "tatsu-mk",
     "shoryuken",
+    "shoryuken-mp",
     "jump-forward-mk",
 )
 MODEL_POLICY_CHOICES = (
@@ -85,13 +94,27 @@ MODEL_POLICY_CHOICES = (
 POLICY_CHOICES = SCRIPTED_POLICY_CHOICES + MODEL_POLICY_CHOICES
 GUARD_MACRO_DECISION_STEPS = 6
 
-TABULAR_ACTION_NAMES = ("forward", "back", "hp", "forward-hp", "fireball", "throw", "jump-forward-mk")
+TABULAR_ACTION_NAMES = (
+    "forward",
+    "back",
+    "guard-stand",
+    "guard-crouch",
+    "hp",
+    "forward-hp",
+    "crouch-mk",
+    "fireball",
+    "throw",
+    "jump-forward-mk",
+    "shoryuken-mp",
+    "tatsu-mk",
+)
 TABULAR_ACTION_WIRES = {
     "neutral": RL_MOVE_NEUTRAL,
     "forward": RL_MOVE_FORWARD,
     "back": RL_MOVE_BACK,
     "hp": BTN_HP,
     "forward-hp": RL_MOVE_FORWARD | BTN_HP,
+    "crouch-mk": RL_MOVE_DOWN | BTN_MK,
     "throw": RL_MOVE_FORWARD | BTN_LP | BTN_LK,
 }
 TABULAR_ACTION_NAMES_BY_WIRE = {
@@ -99,6 +122,8 @@ TABULAR_ACTION_NAMES_BY_WIRE = {
 }
 TABULAR_ACTION_NAMES_BY_WIRE[RL_MOVE_FORWARD | BTN_LP] = "fireball"
 TABULAR_ACTION_NAMES_BY_WIRE[RL_MOVE_UP_FORWARD | BTN_MK] = "jump-forward-mk"
+TABULAR_ACTION_NAMES_BY_WIRE[RL_MOVE_DOWN_FORWARD | BTN_MP] = "shoryuken-mp"
+TABULAR_ACTION_NAMES_BY_WIRE[RL_MOVE_BACK | BTN_MK] = "tatsu-mk"
 TABULAR_DEFAULT_ACTIONS = TABULAR_ACTION_NAMES
 
 POLICY_ACTION_META_BY_NAME = {
@@ -106,24 +131,33 @@ POLICY_ACTION_META_BY_NAME = {
     "forward": (RL_POLICY_ACTION_WALK, RL_POLICY_SUB_FORWARD),
     "back": (RL_POLICY_ACTION_WALK, RL_POLICY_SUB_BACK),
     "guard": (RL_POLICY_ACTION_GUARD, RL_POLICY_SUB_STAND),
+    "guard-stand": (RL_POLICY_ACTION_GUARD, RL_POLICY_SUB_STAND),
+    "guard-crouch": (RL_POLICY_ACTION_GUARD, RL_POLICY_SUB_CROUCH),
     "hp": (RL_POLICY_ACTION_NORMAL, RL_POLICY_SUB_HP),
     "forward-hp": (RL_POLICY_ACTION_COMMAND_NORMAL, RL_POLICY_SUB_HP),
+    "crouch-mk": (RL_POLICY_ACTION_NORMAL, RL_POLICY_SUB_MK),
     "throw": (RL_POLICY_ACTION_THROW, RL_POLICY_SUB_FORWARD),
     "fireball": (RL_POLICY_ACTION_RYU_FIREBALL, RL_POLICY_SUB_LP),
     "ryu-fireball": (RL_POLICY_ACTION_RYU_FIREBALL, RL_POLICY_SUB_LP),
     "tatsu": (RL_POLICY_ACTION_RYU_TATSU, RL_POLICY_SUB_LK),
+    "tatsu-mk": (RL_POLICY_ACTION_RYU_TATSU, RL_POLICY_SUB_MK),
     "shoryuken": (RL_POLICY_ACTION_RYU_SHORYUKEN, RL_POLICY_SUB_HP),
+    "shoryuken-mp": (RL_POLICY_ACTION_RYU_SHORYUKEN, RL_POLICY_SUB_MP),
     "jump-forward-mk": (RL_POLICY_ACTION_JUMP_ATTACK, RL_POLICY_SUB_MK),
 }
 
 TABULAR_ACTION_NAMES_BY_POLICY_META = {
     (RL_POLICY_ACTION_WALK, RL_POLICY_SUB_FORWARD): "forward",
     (RL_POLICY_ACTION_WALK, RL_POLICY_SUB_BACK): "back",
-    (RL_POLICY_ACTION_GUARD, RL_POLICY_SUB_STAND): "back",
+    (RL_POLICY_ACTION_GUARD, RL_POLICY_SUB_STAND): "guard-stand",
+    (RL_POLICY_ACTION_GUARD, RL_POLICY_SUB_CROUCH): "guard-crouch",
     (RL_POLICY_ACTION_NORMAL, RL_POLICY_SUB_HP): "hp",
+    (RL_POLICY_ACTION_NORMAL, RL_POLICY_SUB_MK): "crouch-mk",
     (RL_POLICY_ACTION_COMMAND_NORMAL, RL_POLICY_SUB_HP): "forward-hp",
     (RL_POLICY_ACTION_THROW, RL_POLICY_SUB_FORWARD): "throw",
     (RL_POLICY_ACTION_RYU_FIREBALL, RL_POLICY_SUB_LP): "fireball",
+    (RL_POLICY_ACTION_RYU_SHORYUKEN, RL_POLICY_SUB_MP): "shoryuken-mp",
+    (RL_POLICY_ACTION_RYU_TATSU, RL_POLICY_SUB_MK): "tatsu-mk",
     (RL_POLICY_ACTION_JUMP_ATTACK, RL_POLICY_SUB_MK): "jump-forward-mk",
 }
 
@@ -369,6 +403,18 @@ class ActorModelStore:
             return
         version = int(data.get("version", self._active.version) or 0)
         policy = str(data.get("policy", self._active.policy) or self._active.policy)
+        try:
+            action_set_version = int(data.get("action_set_version", 0) or 0)
+        except (TypeError, ValueError):
+            action_set_version = 0
+        if policy in MODEL_POLICY_CHOICES and action_set_version != ACTION_SET_VERSION:
+            print(
+                f"MODEL ignored version={version} policy={policy} "
+                f"action_set={action_set_version} expected={ACTION_SET_VERSION}",
+                flush=True,
+            )
+            self._current_mtime_ns = stat.st_mtime_ns
+            return
         source = str(data.get("source", "file") or "file")
         q_table = _coerce_q_table(data.get("q"))
         q_counts = _coerce_q_counts(data.get("q_counts"))
@@ -518,6 +564,7 @@ class ActorModelStore:
                 "version": model.version,
                 "policy": model.policy,
                 "source": model.source,
+                "action_set_version": ACTION_SET_VERSION,
                 "created_at_unix": time.time(),
                 "metadata": metadata or {},
             }
@@ -1555,6 +1602,7 @@ def fixed_action_wire(policy: str) -> int | None:
         "back": RL_MOVE_BACK,
         "hp": BTN_HP,
         "forward-hp": RL_MOVE_FORWARD | BTN_HP,
+        "crouch-mk": RL_MOVE_DOWN | BTN_MK,
         "throw": RL_MOVE_FORWARD | BTN_LP | BTN_LK,
     }.get(policy)
 
@@ -1576,6 +1624,8 @@ def make_policy_action_frame(policy: str, action_wire: int, step: int = 0) -> Po
 def scripted_sequence(policy: str) -> tuple[int, ...] | None:
     scripts = {
         "guard": (RL_MOVE_BACK,) * GUARD_MACRO_DECISION_STEPS,
+        "guard-stand": (RL_MOVE_BACK,) * GUARD_MACRO_DECISION_STEPS,
+        "guard-crouch": (RL_MOVE_DOWN_BACK,) * GUARD_MACRO_DECISION_STEPS,
         "fireball": (
             RL_MOVE_DOWN_BACK,
             RL_MOVE_DOWN,
@@ -1614,11 +1664,27 @@ def scripted_sequence(policy: str) -> tuple[int, ...] | None:
             RL_MOVE_NEUTRAL,
             RL_MOVE_NEUTRAL,
         ),
+        "tatsu-mk": (
+            RL_MOVE_DOWN,
+            RL_MOVE_DOWN_BACK,
+            RL_MOVE_BACK,
+            RL_MOVE_BACK | BTN_MK,
+            RL_MOVE_NEUTRAL,
+            RL_MOVE_NEUTRAL,
+        ),
         "shoryuken": (
             RL_MOVE_FORWARD,
             RL_MOVE_DOWN,
             RL_MOVE_DOWN_FORWARD,
             RL_MOVE_DOWN_FORWARD | BTN_HP,
+            RL_MOVE_NEUTRAL,
+            RL_MOVE_NEUTRAL,
+        ),
+        "shoryuken-mp": (
+            RL_MOVE_FORWARD,
+            RL_MOVE_DOWN,
+            RL_MOVE_DOWN_FORWARD,
+            RL_MOVE_DOWN_FORWARD | BTN_MP,
             RL_MOVE_NEUTRAL,
             RL_MOVE_NEUTRAL,
         ),
@@ -1797,10 +1863,6 @@ def policy_action_frame(
     elif actor.policy == "dqn":
         action_name = dqn_actor_action_name(actor, obs_row_override)
     if action_name is not None:
-        if action_name == "back":
-            macro_frame = start_macro_action_frame(macro_states, nonce, run_id, episode_id, "guard")
-            if macro_frame is not None:
-                return macro_frame
         fixed = fixed_action_wire(action_name)
         if fixed is not None:
             return make_policy_action_frame(action_name, fixed)

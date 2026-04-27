@@ -430,5 +430,5 @@ until live validation proves a cleaner split.
 - Validate ambiguous readable aliases for source-only variants such as Oro EX
   command rows, Twelve `qcf+k`, and Akuma Hyakkishu / Ashura Senku branches
   before promoting them into a live curriculum.
-- Keep `back` and `guard` as separate universal policy actions before training
-  a defensive DQN action head.
+- Keep live learner action sets using separate `back`, `guard/stand`, and
+  `guard/crouch` actions so retreat spacing is not credited as blocking.

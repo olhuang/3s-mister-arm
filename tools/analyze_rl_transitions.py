@@ -26,6 +26,9 @@ DEFAULT_ACTIONS = (
     "fireball",
     "throw",
     "jump-forward-mk",
+    "jump-forward-hk",
+    "jump-neutral-hk",
+    "jump-back-hk",
     "shoryuken-mp",
     "tatsu-mk",
 )

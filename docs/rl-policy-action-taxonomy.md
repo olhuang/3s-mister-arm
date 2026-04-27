@@ -73,7 +73,9 @@ The source character IDs used by this repo are:
 | 9 | tech_throw | neutral | `LP+LK` |
 | 10 | quick_stand | neutral | `down_on_knockdown` |
 | 11 | taunt | neutral | `HP+HK` |
-| 12 | jump_attack | lp, mp, hp, lk, mk, hk | `up-forward+<button>` |
+| 12 | jump_attack_forward | lp, mp, hp, lk, mk, hk | `up-forward+<button>` |
+| 13 | jump_attack_neutral | lp, mp, hp, lk, mk, hk | `up+<button>` |
+| 14 | jump_attack_back | lp, mp, hp, lk, mk, hk | `up-back+<button>` |
 
 ## Sub Actions
 

@@ -2,6 +2,44 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-27: Split Jump Attack IDs By Direction
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / action namespace refinement
+
+Files changed:
+- `tools/rl_probe_server.py`
+- `tools/analyze_rl_transitions.py`
+- `docs/rl-policy-action-taxonomy.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- make jump attacks distinguishable by jump direction in transition logs and learner action attribution.
+- add the first HK jump-kick probes for forward, neutral, and back jumps.
+
+Implementation notes:
+- split the old universal `jump_attack=12` taxonomy into direction-specific IDs:
+  - `12`: `jump_attack_forward`
+  - `13`: `jump_attack_neutral`
+  - `14`: `jump_attack_back`
+- `jump-forward-mk` now stamps `jump_attack_forward/mk` instead of generic `jump_attack/mk`.
+- added `jump-forward-hk`, `jump-neutral-hk`, and `jump-back-hk`, all using `sub_action_id=6/hk` with their direction-specific action ID.
+- bumped `ACTION_SET_VERSION` from `2` to `3` so old tabular/DQN manifests are ignored instead of mixing generic and direction-specific jump action semantics.
+- `tools/analyze_rl_transitions.py` default action list now includes the three HK jump-kick probes.
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py tools/analyze_rl_transitions.py tools/train_dqn_learner.py` passed.
+- synthetic macro smoke confirmed `jump-forward-hk`, `jump-neutral-hk`, and `jump-back-hk` emit up-forward/up/up-back HK sequences and stamp action IDs `12`, `13`, and `14`.
+- synthetic transition decode smoke confirmed direction-specific jump metadata maps back to `jump-forward-mk`, `jump-forward-hk`, `jump-neutral-hk`, and `jump-back-hk`.
+- `python3 tools/rl_probe_server.py --help` shows the new jump HK scripted policies and fallback-policy choices.
+- analyzer tail smoke passed on `logs/rl-transitions-defense-v1-4-3-3.ndjson --tail-rows 1000`; the default action list now includes the three HK jump-kick probes.
+- one-step offline DQN smoke passed against `logs/rl-transitions-defense-v1-4-3-3.ndjson --limit 2000`; the published manifest carried `action_set_version=3` and all three HK jump-kick actions.
+
+Follow-up:
+- start a fresh model/log for live testing because this is an action-set version bump.
+- after live validation, consider whether other air normals should follow the same direction-specific naming before adding them to curriculum.
+
 ## 2026-04-27: Split Back/Guard And Add Ryu MK/MP Actions
 
 Milestone:

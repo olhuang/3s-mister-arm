@@ -35,6 +35,7 @@ Validation:
 - `git diff --check -- tools/rl_probe_server.py tools/train_dqn_learner.py docs/plan-remote-rl-agent.md docs/remote-rl-agent-engineering-log.md` passed.
 
 Follow-up:
+- next implementation action after DQN pipeline smoke: split `back` and `guard` into separate high-level actions, then carry high-level action / macro attribution into transition rows so DQN can learn `opp_attack=1 + close/mid -> guard` without mixing that credit with retreat/back-spacing behavior.
 - after the current `jump-forward-mk` tabular live run finishes, train DQN offline on that full transition log and inspect loss, greedy action distribution, and reward/action coverage before running `--policy dqn` live.
 - if DQN inference works but action quality is poor, compare against the tabular baseline using the same action set and avoid adding reward shaping until action attribution and replay coverage are understood.
 

@@ -2,6 +2,34 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-27: Add Readable Move Names To Policy Taxonomy
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / action namespace documentation
+
+Files changed:
+- `docs/rl-policy-action-taxonomy.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- make the all-character policy action taxonomy readable by humans instead of relying on generic source handlers such as `Att_HADOUKEN`.
+- keep policy IDs, source command slots, routine numbers, handlers, and macro templates unchanged.
+
+Implementation notes:
+- added a `move_name` column to every character command registry table.
+- mapped command rows to SF3 move-list names such as `Hadouken`, `Shoryuken`, `Genei-jin`, `Aegis Reflector`, and `Light of Virtue`.
+- rows that combine EX, air, or source-only branches keep slash-separated aliases, for example Oro EX command rows and Twelve source kick variant rows.
+- the taxonomy still treats source handlers and command slots as the executable source of truth; move names are display aliases for analysis and curriculum planning.
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py tools/analyze_rl_transitions.py tools/train_dqn_learner.py` passed.
+- markdown table smoke checked that every character registry row has the new `move_name` column.
+- `git diff --check -- docs/rl-policy-action-taxonomy.md docs/plan-remote-rl-agent.md docs/remote-rl-agent-engineering-log.md` passed.
+
+Follow-up:
+- validate ambiguous aliases before live curriculum use, especially Oro EX variants, Twelve `qcf+k`, and Akuma Hyakkishu / Ashura Senku branches.
+
 ## 2026-04-27: Migrate Live Actions To Policy Action Attribution
 
 Milestone:

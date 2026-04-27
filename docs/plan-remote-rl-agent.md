@@ -2431,6 +2431,7 @@ Tasks:
 - [x] Expand observation features only with schema versioning for the first routine attack/contact-reaction validation probes
 - [x] Promote validated opponent routine attack state into the first tabular strike-defense state split
 - [x] Draft an all-character policy action ID / sub-action / macro taxonomy from SF3 command source tables
+- [x] Add readable SF3 move-name aliases to the policy action taxonomy
 - [ ] Split `back` and `guard` into separate high-level actions after the DQN pipeline smoke passes
 - [x] Add high-level policy action / sub-action / macro-step attribution to transition rows
 - [ ] Expand reward features only after baseline reward is stable
@@ -2495,7 +2496,8 @@ Implementation notes:
   - universal actions use IDs below `1000`
   - character command actions use `1000 + character_id * 100 + source_command_slot`
   - sub-actions separate strength / stance / air / hold variants from the policy action ID
-  - command rows carry source command slot, source routine handler, macro template, and validation status
+  - command rows carry source command slot, readable SF3 move-name alias, source routine handler, macro template, and validation status
+  - ambiguous EX, air, or source-only variants keep slash-separated readable names until live validation proves they should be split
 - Live tabular testing exposed a VS rematch / second-match transition issue:
   - second-match action control could continue, but episode transition batches stopped arriving after a later round ended
   - observed second-match flow could resemble arcade next-opponent selection

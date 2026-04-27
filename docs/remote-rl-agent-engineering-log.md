@@ -2,6 +2,44 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-27: Split Normal IDs By Stance And Add Normal Probes
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / action namespace refinement
+
+Files changed:
+- `tools/rl_probe_server.py`
+- `tools/analyze_rl_transitions.py`
+- `docs/rl-policy-action-taxonomy.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- add the requested standing LP/MP/LK/MK/HK and crouching LK/MK/HK probe actions.
+- avoid ambiguity between standing MK and crouching MK by making normal actions stance-specific in policy metadata.
+
+Implementation notes:
+- split universal normal metadata into:
+  - `6`: `stand_normal`
+  - `15`: `crouch_normal`
+- added learner/scripted fixed actions `stand-lp`, `stand-mp`, `stand-hp`, `stand-lk`, `stand-mk`, `stand-hk`, `crouch-lk`, `crouch-mk`, and `crouch-hk`.
+- the legacy scripted `hp` policy remains supported as an alias for `stand-hp`, so existing probe commands using `--tabular-fallback-policy hp` continue to work.
+- bumped `ACTION_SET_VERSION` from `3` to `4` so old tabular/DQN manifests are ignored instead of mixing generic normal metadata with stance-specific normals.
+- `tools/analyze_rl_transitions.py` default action list now includes the stance-specific normals.
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py tools/analyze_rl_transitions.py tools/train_dqn_learner.py` passed.
+- synthetic metadata smoke confirmed standing normals stamp `stand_normal/<button>` and crouching normals stamp `crouch_normal/<button>`.
+- synthetic wire smoke confirmed standing normals use bare button wires and crouching normals use `down+button` wires.
+- synthetic transition decode smoke confirmed policy metadata maps back to `stand-lp`, `stand-mp`, `stand-hp`, `stand-lk`, `stand-mk`, `stand-hk`, `crouch-lk`, `crouch-mk`, and `crouch-hk`.
+- `python3 tools/rl_probe_server.py --help` shows the new stance-specific normal scripted policies and fallback-policy choices.
+- analyzer tail smoke passed on `logs/rl-transitions-defense-v1-4-3-3.ndjson --tail-rows 1000`; old `hp` rows now decode as `stand-hp` through the stance-specific metadata map.
+- one-step offline DQN smoke passed against `logs/rl-transitions-defense-v1-4-3-3.ndjson --limit 2000`; the published manifest carried `action_set_version=4` and all nine stance-specific normal actions.
+
+Follow-up:
+- start a fresh model/log for live testing because this is an action-set version bump.
+- watch whether the larger normal action set makes tabular exploration too sparse; if it does, use DQN/offline pretraining or a smaller curriculum subset before adding more moves.
+
 ## 2026-04-27: Split Jump Attack IDs By Direction
 
 Milestone:

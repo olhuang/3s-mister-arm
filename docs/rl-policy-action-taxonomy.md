@@ -67,7 +67,7 @@ The source character IDs used by this repo are:
 | 3 | jump | neutral, forward, back | `up`, `up-forward`, `up-back` |
 | 4 | guard | stand, crouch | `back_hold`, `down-back_hold` |
 | 5 | parry | high, low, air | `tap_forward`, `tap_down`, `tap_forward_air` |
-| 6 | normal | lp, mp, hp, lk, mk, hk | `<button>` |
+| 6 | stand_normal | lp, mp, hp, lk, mk, hk | `<button>` |
 | 7 | command_normal | direction + button | `<direction>+<button>` |
 | 8 | throw | forward, back | `forward+LP+LK`, `back+LP+LK` |
 | 9 | tech_throw | neutral | `LP+LK` |
@@ -76,6 +76,7 @@ The source character IDs used by this repo are:
 | 12 | jump_attack_forward | lp, mp, hp, lk, mk, hk | `up-forward+<button>` |
 | 13 | jump_attack_neutral | lp, mp, hp, lk, mk, hk | `up+<button>` |
 | 14 | jump_attack_back | lp, mp, hp, lk, mk, hk | `up-back+<button>` |
+| 15 | crouch_normal | lp, mp, hp, lk, mk, hk | `down+<button>` |
 
 ## Sub Actions
 

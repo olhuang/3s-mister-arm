@@ -32,7 +32,7 @@ OBS_SPACING_PAYLOAD = struct.Struct("<HHhhhhhhBBBBB3x")
 OBS_SPACING_PAYLOAD_VERSION = 2
 TRANSITION_BATCH_HEADER = struct.Struct("<IHHQQIII")
 TRANSITION_BATCH_ACK = struct.Struct("<IHHQQII")
-ACTION_SET_VERSION = 3
+ACTION_SET_VERSION = 4
 
 RL_MOVE_NEUTRAL = 0x0000
 RL_MOVE_UP = 0x0001
@@ -55,12 +55,14 @@ RL_POLICY_ACTION_NEUTRAL = 0
 RL_POLICY_ACTION_WALK = 1
 RL_POLICY_ACTION_JUMP = 3
 RL_POLICY_ACTION_GUARD = 4
-RL_POLICY_ACTION_NORMAL = 6
+RL_POLICY_ACTION_STAND_NORMAL = 6
+RL_POLICY_ACTION_NORMAL = RL_POLICY_ACTION_STAND_NORMAL
 RL_POLICY_ACTION_COMMAND_NORMAL = 7
 RL_POLICY_ACTION_THROW = 8
 RL_POLICY_ACTION_JUMP_ATTACK_FORWARD = 12
 RL_POLICY_ACTION_JUMP_ATTACK_NEUTRAL = 13
 RL_POLICY_ACTION_JUMP_ATTACK_BACK = 14
+RL_POLICY_ACTION_CROUCH_NORMAL = 15
 RL_POLICY_ACTION_RYU_SHORYUKEN = 1228
 RL_POLICY_ACTION_RYU_FIREBALL = 1229
 RL_POLICY_ACTION_RYU_TATSU = 1230
@@ -83,8 +85,16 @@ SCRIPTED_POLICY_CHOICES = (
     "guard-stand",
     "guard-crouch",
     "hp",
+    "stand-lp",
+    "stand-mp",
+    "stand-hp",
+    "stand-lk",
+    "stand-mk",
+    "stand-hk",
     "forward-hp",
+    "crouch-lk",
     "crouch-mk",
+    "crouch-hk",
     "ryu-fireball",
     "throw",
     "tatsu",
@@ -108,9 +118,16 @@ TABULAR_ACTION_NAMES = (
     "back",
     "guard-stand",
     "guard-crouch",
-    "hp",
+    "stand-lp",
+    "stand-mp",
+    "stand-hp",
+    "stand-lk",
+    "stand-mk",
+    "stand-hk",
     "forward-hp",
+    "crouch-lk",
     "crouch-mk",
+    "crouch-hk",
     "fireball",
     "throw",
     "jump-forward-mk",
@@ -124,9 +141,16 @@ TABULAR_ACTION_WIRES = {
     "neutral": RL_MOVE_NEUTRAL,
     "forward": RL_MOVE_FORWARD,
     "back": RL_MOVE_BACK,
-    "hp": BTN_HP,
+    "stand-lp": BTN_LP,
+    "stand-mp": BTN_MP,
+    "stand-hp": BTN_HP,
+    "stand-lk": BTN_LK,
+    "stand-mk": BTN_MK,
+    "stand-hk": BTN_HK,
     "forward-hp": RL_MOVE_FORWARD | BTN_HP,
+    "crouch-lk": RL_MOVE_DOWN | BTN_LK,
     "crouch-mk": RL_MOVE_DOWN | BTN_MK,
+    "crouch-hk": RL_MOVE_DOWN | BTN_HK,
     "throw": RL_MOVE_FORWARD | BTN_LP | BTN_LK,
 }
 TABULAR_ACTION_NAMES_BY_WIRE = {
@@ -148,9 +172,17 @@ POLICY_ACTION_META_BY_NAME = {
     "guard": (RL_POLICY_ACTION_GUARD, RL_POLICY_SUB_STAND),
     "guard-stand": (RL_POLICY_ACTION_GUARD, RL_POLICY_SUB_STAND),
     "guard-crouch": (RL_POLICY_ACTION_GUARD, RL_POLICY_SUB_CROUCH),
-    "hp": (RL_POLICY_ACTION_NORMAL, RL_POLICY_SUB_HP),
+    "hp": (RL_POLICY_ACTION_STAND_NORMAL, RL_POLICY_SUB_HP),
+    "stand-lp": (RL_POLICY_ACTION_STAND_NORMAL, RL_POLICY_SUB_LP),
+    "stand-mp": (RL_POLICY_ACTION_STAND_NORMAL, RL_POLICY_SUB_MP),
+    "stand-hp": (RL_POLICY_ACTION_STAND_NORMAL, RL_POLICY_SUB_HP),
+    "stand-lk": (RL_POLICY_ACTION_STAND_NORMAL, RL_POLICY_SUB_LK),
+    "stand-mk": (RL_POLICY_ACTION_STAND_NORMAL, RL_POLICY_SUB_MK),
+    "stand-hk": (RL_POLICY_ACTION_STAND_NORMAL, RL_POLICY_SUB_HK),
     "forward-hp": (RL_POLICY_ACTION_COMMAND_NORMAL, RL_POLICY_SUB_HP),
-    "crouch-mk": (RL_POLICY_ACTION_NORMAL, RL_POLICY_SUB_MK),
+    "crouch-lk": (RL_POLICY_ACTION_CROUCH_NORMAL, RL_POLICY_SUB_LK),
+    "crouch-mk": (RL_POLICY_ACTION_CROUCH_NORMAL, RL_POLICY_SUB_MK),
+    "crouch-hk": (RL_POLICY_ACTION_CROUCH_NORMAL, RL_POLICY_SUB_HK),
     "throw": (RL_POLICY_ACTION_THROW, RL_POLICY_SUB_FORWARD),
     "fireball": (RL_POLICY_ACTION_RYU_FIREBALL, RL_POLICY_SUB_LP),
     "ryu-fireball": (RL_POLICY_ACTION_RYU_FIREBALL, RL_POLICY_SUB_LP),
@@ -169,8 +201,15 @@ TABULAR_ACTION_NAMES_BY_POLICY_META = {
     (RL_POLICY_ACTION_WALK, RL_POLICY_SUB_BACK): "back",
     (RL_POLICY_ACTION_GUARD, RL_POLICY_SUB_STAND): "guard-stand",
     (RL_POLICY_ACTION_GUARD, RL_POLICY_SUB_CROUCH): "guard-crouch",
-    (RL_POLICY_ACTION_NORMAL, RL_POLICY_SUB_HP): "hp",
-    (RL_POLICY_ACTION_NORMAL, RL_POLICY_SUB_MK): "crouch-mk",
+    (RL_POLICY_ACTION_STAND_NORMAL, RL_POLICY_SUB_LP): "stand-lp",
+    (RL_POLICY_ACTION_STAND_NORMAL, RL_POLICY_SUB_MP): "stand-mp",
+    (RL_POLICY_ACTION_STAND_NORMAL, RL_POLICY_SUB_HP): "stand-hp",
+    (RL_POLICY_ACTION_STAND_NORMAL, RL_POLICY_SUB_LK): "stand-lk",
+    (RL_POLICY_ACTION_STAND_NORMAL, RL_POLICY_SUB_MK): "stand-mk",
+    (RL_POLICY_ACTION_STAND_NORMAL, RL_POLICY_SUB_HK): "stand-hk",
+    (RL_POLICY_ACTION_CROUCH_NORMAL, RL_POLICY_SUB_LK): "crouch-lk",
+    (RL_POLICY_ACTION_CROUCH_NORMAL, RL_POLICY_SUB_MK): "crouch-mk",
+    (RL_POLICY_ACTION_CROUCH_NORMAL, RL_POLICY_SUB_HK): "crouch-hk",
     (RL_POLICY_ACTION_COMMAND_NORMAL, RL_POLICY_SUB_HP): "forward-hp",
     (RL_POLICY_ACTION_THROW, RL_POLICY_SUB_FORWARD): "throw",
     (RL_POLICY_ACTION_RYU_FIREBALL, RL_POLICY_SUB_LP): "fireball",
@@ -1621,9 +1660,17 @@ def fixed_action_wire(policy: str) -> int | None:
     return {
         "forward": RL_MOVE_FORWARD,
         "back": RL_MOVE_BACK,
+        "stand-lp": BTN_LP,
+        "stand-mp": BTN_MP,
+        "stand-hp": BTN_HP,
+        "stand-lk": BTN_LK,
+        "stand-mk": BTN_MK,
+        "stand-hk": BTN_HK,
         "hp": BTN_HP,
         "forward-hp": RL_MOVE_FORWARD | BTN_HP,
+        "crouch-lk": RL_MOVE_DOWN | BTN_LK,
         "crouch-mk": RL_MOVE_DOWN | BTN_MK,
+        "crouch-hk": RL_MOVE_DOWN | BTN_HK,
         "throw": RL_MOVE_FORWARD | BTN_LP | BTN_LK,
     }.get(policy)
 

@@ -2436,6 +2436,7 @@ Tasks:
 - [x] Add high-level policy action / sub-action / macro-step attribution to transition rows
 - [x] Add `guard-stand`, `guard-crouch`, `crouch-mk`, `shoryuken-mp`, and `tatsu-mk` to the probe-side action set
 - [x] Split jump attacks into forward / neutral / back policy action IDs and add HK jump-kick probes
+- [x] Split stand/crouch normal policy action IDs and add standing LP/MP/LK/MK/HK plus crouching LK/MK/HK probes
 - [ ] Expand reward features only after baseline reward is stable
 - [ ] Review whether `overlay_attack_event_finalized` / `overlay_attack_contact` / `overlay_attack_whiff` have consistent learner semantics across normals, specials, projectiles, throws, and multistage moves before promoting them beyond debug / auxiliary labels
 - [x] Run move-family validation passes with scripted policies such as `hp`, `throw`, `ryu-fireball`, `tatsu`, and `shoryuken`, then document which attack-outcome fields are trustworthy enough for learner use versus debug-only analysis
@@ -2463,13 +2464,13 @@ Implementation notes:
 
 - `tools/rl_probe_server.py --policy tabular` now supports a minimal contextual-bandit learner loop:
   - transition rows are bucketed from the compact spacing snapshot (`obs_abs_dx`, `obs_abs_dy`, front/back edge distances, `obs_opp_in_front`) plus `obs_opp_routine_attack_state` as `opp_attack=0/1` for strike-defense learning
-  - the learner maintains per-state action scores for explicit actions: `forward`, `back`, `guard-stand`, `guard-crouch`, `hp`, `forward-hp`, `crouch-mk`, `fireball`, `throw`, `jump-forward-mk`, `jump-forward-hk`, `jump-neutral-hk`, `jump-back-hk`, `shoryuken-mp`, and `tatsu-mk`
+  - the learner maintains per-state action scores for explicit actions: `forward`, `back`, `guard-stand`, `guard-crouch`, `stand-lp`, `stand-mp`, `stand-hp`, `stand-lk`, `stand-mk`, `stand-hk`, `forward-hp`, `crouch-lk`, `crouch-mk`, `crouch-hk`, `fireball`, `throw`, `jump-forward-mk`, `jump-forward-hk`, `jump-neutral-hk`, `jump-back-hk`, `shoryuken-mp`, and `tatsu-mk`
   - neutral rows are not learned as greedy actions in the first version, because delayed damage/recovery rewards can otherwise make "do nothing" look falsely good
   - tabular score updates use a learner-local reward of `delta_opp_hp - delta_self_hp`; transition `reward_accum` still keeps full episode reward including terminal win/loss bonuses for future sequential RL learners
   - when a neutral/recovery row carries nonzero HP-delta reward, the learner conservatively credits that reward to the most recent explicit action bucket
   - each imported replay row applies an exponential update toward that tabular HP-delta reward for the executed action
   - learner-published `tabular` actor manifests include `actions`, `epsilon`, `fallback_policy`, `updated_rows`, `q`, `q_counts`, and `min_action_count`
-  - tabular/DQN actor manifests carry `action_set_version=3`; probe hot-load ignores older model manifests so stale q-tables do not reinterpret old `back` guard credit as plain retreat or old generic jump-attack IDs as direction-specific jumps
+  - tabular/DQN actor manifests carry `action_set_version=4`; probe hot-load ignores older model manifests so stale q-tables do not reinterpret old `back` guard credit as plain retreat, old generic jump-attack IDs as direction-specific jumps, or old generic normal IDs as stance-specific normals
   - inference uses the active actor q-table only when a positive-scoring action has at least `min_action_count` updates for the latest learned bucket; otherwise it falls back to a scripted policy such as `hp`
   - `--tabular-min-action-count` defaults to `8` to keep sparse lucky hits from immediately becoming greedy actions
   - learner stats print `top_raw=<action>:<score>/<count>` for the highest q-score and `top_ready=<action>:<score>/<count>` for the highest action that satisfies the same minimum-count gate used by greedy inference
@@ -2487,7 +2488,10 @@ Implementation notes:
     - `jump-back-hk`: `jump_attack_back` / `hk`
   - `jump-forward-mk` remains available as both a scripted probe policy and a tabular macro action: `up-forward -> up-forward -> up-forward+MK -> up-forward+MK -> neutral -> neutral`; transition credit maps the `up-forward+MK` wire phase back to the high-level `jump-forward-mk` bucket
   - the HK jump-kick probes use the same six-step shape with `HK` and their corresponding jump direction
-  - `crouch-mk` is available as a fixed action: `down+MK`, stamped as policy action `normal/mk`; for this first enabled MK normal, learner import maps `normal/mk` to `crouch-mk`
+  - stand and crouch normals now use stance-specific policy action IDs:
+    - `stand-lp`, `stand-mp`, `stand-hp`, `stand-lk`, `stand-mk`, `stand-hk`: `stand_normal` / button strength
+    - `crouch-lk`, `crouch-mk`, `crouch-hk`: `crouch_normal` / button strength
+  - the legacy scripted `hp` policy remains as an alias for `stand-hp`, but learner action attribution should use `stand-hp`
   - `shoryuken-mp` is available as a scripted probe policy and learner macro: `forward -> down -> down-forward -> down-forward+MP -> neutral -> neutral`, stamped as Ryu `Shoryuken` / `mp`
   - `tatsu-mk` is available as a scripted probe policy and learner macro: `down -> down-back -> back -> back+MK -> neutral -> neutral`, stamped as Ryu `Tatsumaki Senpukyaku` / `mk`
   - `fireball` / `ryu-fireball` now use `down-back -> down -> down-forward -> forward+LP -> neutral -> neutral` to reduce accidental DP parsing when a previous action left `forward` in the command buffer
@@ -2504,7 +2508,7 @@ Implementation notes:
   - uses normalized numeric spacing/threat features: `obs_abs_dx`, `obs_abs_dy`, both fighters' front/back edge distances, `obs_opp_in_front`, and `obs_opp_routine_attack_state`
   - trains a small stdlib-only MLP with target-network DQN updates, so it does not require `numpy` / `torch` for first smoke tests
   - publishes `policy=dqn` actor manifests with `actions`, `epsilon`, `fallback_policy`, and serialized MLP weights under `dqn`
-  - `tools/rl_probe_server.py --policy dqn --model-dir <dir>` can hot-load those manifests and run DQN inference from same-frame OBS payloads, then reuse the existing macro/fixed action adapter for `fireball`, `guard-stand`, `guard-crouch`, `jump-forward-mk`, `jump-forward-hk`, `jump-neutral-hk`, `jump-back-hk`, `shoryuken-mp`, `tatsu-mk`, and `crouch-mk`
+  - `tools/rl_probe_server.py --policy dqn --model-dir <dir>` can hot-load those manifests and run DQN inference from same-frame OBS payloads, then reuse the existing macro/fixed action adapter for `fireball`, `guard-stand`, `guard-crouch`, stand/crouch normals, `jump-forward-mk`, `jump-forward-hk`, `jump-neutral-hk`, `jump-back-hk`, `shoryuken-mp`, and `tatsu-mk`
 - `docs/rl-policy-action-taxonomy.md` now records the first source-backed action registry:
   - universal actions use IDs below `1000`
   - character command actions use `1000 + character_id * 100 + source_command_slot`

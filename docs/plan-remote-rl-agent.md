@@ -2416,6 +2416,7 @@ Tasks:
 - [x] Add an anti-DP fireball macro variant to reduce accidental shoryuken credit pollution
 - [x] Add a guard/back-hold macro so tabular `back` can produce a defense window instead of a single short hold
 - [x] Add cross distance/threat ready-action stats for strike-defense policy diagnosis
+- [x] Add `jump-forward-mk` to the tabular action set as a first active approach attack
 - [x] Add an offline transition analyzer for action/distance HP-delta attribution
 - [x] Expand observation features only with schema versioning for the first routine attack/contact-reaction validation probes
 - [x] Promote validated opponent routine attack state into the first tabular strike-defense state split
@@ -2446,7 +2447,7 @@ Implementation notes:
 
 - `tools/rl_probe_server.py --policy tabular` now supports a minimal contextual-bandit learner loop:
   - transition rows are bucketed from the compact spacing snapshot (`obs_abs_dx`, `obs_abs_dy`, front/back edge distances, `obs_opp_in_front`) plus `obs_opp_routine_attack_state` as `opp_attack=0/1` for strike-defense learning
-  - the learner maintains per-state action scores for explicit actions: `forward`, `back`, `hp`, `forward-hp`, `fireball`, and `throw`
+  - the learner maintains per-state action scores for explicit actions: `forward`, `back`, `hp`, `forward-hp`, `fireball`, `throw`, and `jump-forward-mk`
   - neutral rows are not learned as greedy actions in the first version, because delayed damage/recovery rewards can otherwise make "do nothing" look falsely good
   - tabular score updates use a learner-local reward of `delta_opp_hp - delta_self_hp`; transition `reward_accum` still keeps full episode reward including terminal win/loss bonuses for future sequential RL learners
   - when a neutral/recovery row carries nonzero HP-delta reward, the learner conservatively credits that reward to the most recent explicit action bucket
@@ -2459,6 +2460,7 @@ Implementation notes:
   - tabular `back` now executes through the same macro lock as a `guard` sequence: six consecutive `back` decision replies, which is roughly an 18-frame stand-guard window with the current `decision_interval=3` / `action_hold=3` timing
   - `guard` is also available as a scripted probe policy for fixed long-guard validation, but it is not a separate tabular learner action because transition credit is still wire-level and should continue to train the `back` action bucket
   - tabular inference now locks multi-step scripted actions such as `fireball` until the full input sequence has been emitted, preventing later q-table decisions from interrupting QCF+LP before the projectile can come out
+  - `jump-forward-mk` is available as both a scripted probe policy and a tabular macro action: `up-forward -> up-forward -> up-forward+MK -> up-forward+MK -> neutral -> neutral`; transition credit maps the `up-forward+MK` wire phase back to the high-level `jump-forward-mk` bucket
   - `fireball` / `ryu-fireball` now use `down-back -> down -> down-forward -> forward+LP -> neutral -> neutral` to reduce accidental DP parsing when a previous action left `forward` in the command buffer
   - MiSTer remote config was checked on `192.168.0.133`; no `perf-*` config keys or recent `PERF capture` logs were present, so the latest long-run restart was not explained by an enabled perf capture
   - `src/rl/rl_net.c` now protects the transition sender running-state with the transition queue mutex, clears it while observing an empty queue, reaps completed thread handles before replacement, and avoids clearing the shutdown handle until after the sender is joined

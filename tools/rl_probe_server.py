@@ -34,6 +34,7 @@ TRANSITION_BATCH_HEADER = struct.Struct("<IHHQQIII")
 TRANSITION_BATCH_ACK = struct.Struct("<IHHQQII")
 
 RL_MOVE_NEUTRAL = 0x0000
+RL_MOVE_UP_FORWARD = 0x0006
 RL_MOVE_DOWN = 0x0002
 RL_MOVE_BACK = 0x0003
 RL_MOVE_FORWARD = 0x0004
@@ -43,10 +44,23 @@ RL_MOVE_DOWN_FORWARD = 0x0008
 BTN_LP = 0x0010
 BTN_HP = 0x0040
 BTN_LK = 0x0100
-POLICY_CHOICES = ("forward", "back", "guard", "hp", "forward-hp", "ryu-fireball", "throw", "tatsu", "shoryuken", "tabular")
+BTN_MK = 0x0200
+POLICY_CHOICES = (
+    "forward",
+    "back",
+    "guard",
+    "hp",
+    "forward-hp",
+    "ryu-fireball",
+    "throw",
+    "tatsu",
+    "shoryuken",
+    "jump-forward-mk",
+    "tabular",
+)
 GUARD_MACRO_DECISION_STEPS = 6
 
-TABULAR_ACTION_NAMES = ("forward", "back", "hp", "forward-hp", "fireball", "throw")
+TABULAR_ACTION_NAMES = ("forward", "back", "hp", "forward-hp", "fireball", "throw", "jump-forward-mk")
 TABULAR_ACTION_WIRES = {
     "neutral": RL_MOVE_NEUTRAL,
     "forward": RL_MOVE_FORWARD,
@@ -59,6 +73,7 @@ TABULAR_ACTION_NAMES_BY_WIRE = {
     wire: name for name, wire in TABULAR_ACTION_WIRES.items() if name != "neutral"
 }
 TABULAR_ACTION_NAMES_BY_WIRE[RL_MOVE_FORWARD | BTN_LP] = "fireball"
+TABULAR_ACTION_NAMES_BY_WIRE[RL_MOVE_UP_FORWARD | BTN_MK] = "jump-forward-mk"
 TABULAR_DEFAULT_ACTIONS = TABULAR_ACTION_NAMES
 
 
@@ -1322,6 +1337,14 @@ def scripted_sequence(policy: str) -> tuple[int, ...] | None:
         "throw": (
             RL_MOVE_FORWARD | BTN_LP | BTN_LK,
             RL_MOVE_NEUTRAL,
+            RL_MOVE_NEUTRAL,
+            RL_MOVE_NEUTRAL,
+        ),
+        "jump-forward-mk": (
+            RL_MOVE_UP_FORWARD,
+            RL_MOVE_UP_FORWARD,
+            RL_MOVE_UP_FORWARD | BTN_MK,
+            RL_MOVE_UP_FORWARD | BTN_MK,
             RL_MOVE_NEUTRAL,
             RL_MOVE_NEUTRAL,
         ),

@@ -2,6 +2,38 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-27: Add Tabular Jump-Forward MK Macro
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / action-set refinement
+
+Files changed:
+- `tools/rl_probe_server.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- give the current tabular learner one active approach attack that can earn immediate HP-delta reward when it connects.
+- avoid adding pure `advance` yet, because the current contextual-bandit learner cannot reliably assign later attack reward back to spacing-only movement.
+- keep the change scoped to the probe-side action adapter; no guard logic, reward rules, C-side protocol fields, or transition schema were changed.
+
+Implementation notes:
+- added Python-side constants for `RL_MOVE_UP_FORWARD` and `BTN_MK`.
+- added `jump-forward-mk` to `POLICY_CHOICES` so it can be run as a fixed scripted probe policy.
+- added `jump-forward-mk` to `TABULAR_ACTION_NAMES` so the tabular actor can explore and select it.
+- added a macro sequence: `up-forward -> up-forward -> up-forward+MK -> up-forward+MK -> neutral -> neutral`.
+- mapped the `up-forward+MK` wire phase back to the high-level `jump-forward-mk` tabular action bucket for learner credit.
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py tools/analyze_rl_transitions.py` passed.
+- synthetic macro/action smoke passed: `scripted_sequence("jump-forward-mk")` produced `0x0006, 0x0006, 0x0206, 0x0206, 0x0000, 0x0000`.
+- learner credit smoke passed: `tabular_action_name(0x0206)` maps to `jump-forward-mk`, and a synthetic tabular actor selected `jump-forward-mk` when it was the only eligible positive q-score.
+- `git diff --check -- tools/rl_probe_server.py docs/plan-remote-rl-agent.md docs/remote-rl-agent-engineering-log.md` passed.
+
+Follow-up:
+- run a fresh live tabular pass and watch whether `ready_dx` / `ready_threat_dx` start selecting `jump-forward-mk` at close or mid spacing.
+- if the MK timing is too early or too late visually, tune the macro sequence before changing reward or transition schema.
+
 ## 2026-04-27: Add Threat/Distance Ready-Action Stats
 
 Milestone:

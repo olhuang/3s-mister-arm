@@ -11,7 +11,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-from rl_probe_server import bucket_range, transition_action_name, tabular_training_reward
+from rl_probe_server import (
+    TABULAR_ACTION_NAMES_BY_POLICY_META,
+    bucket_range,
+    tabular_training_reward,
+    transition_action_name,
+)
 
 
 DX_BUCKETS = ("close", "mid", "far")
@@ -83,6 +88,56 @@ class ExplicitAction:
     row_index: int
 
 
+@dataclass
+class DemoAttributionStats:
+    events: int = 0
+    hit_events: int = 0
+    punished_events: int = 0
+    trade_events: int = 0
+    whiff_events: int = 0
+    opp_hp_sum: int = 0
+    self_hp_sum: int = 0
+    lag_sum: int = 0
+    lag_max: int = 0
+    window_rows_sum: int = 0
+
+    def add(self, opp_hp: int, self_hp: int, lag_frames: int, window_rows: int) -> None:
+        self.events += 1
+        self.opp_hp_sum += opp_hp
+        self.self_hp_sum += self_hp
+        self.lag_sum += lag_frames
+        self.lag_max = max(self.lag_max, lag_frames)
+        self.window_rows_sum += window_rows
+        if opp_hp > 0:
+            self.hit_events += 1
+        if self_hp > 0:
+            self.punished_events += 1
+        if opp_hp > 0 and self_hp > 0:
+            self.trade_events += 1
+        if opp_hp <= 0 and self_hp <= 0:
+            self.whiff_events += 1
+
+    @property
+    def hit_rate(self) -> float:
+        return self.hit_events / self.events if self.events else 0.0
+
+    @property
+    def punished_rate(self) -> float:
+        return self.punished_events / self.events if self.events else 0.0
+
+    @property
+    def whiff_rate(self) -> float:
+        return self.whiff_events / self.events if self.events else 0.0
+
+    @property
+    def mean_lag(self) -> float:
+        return self.lag_sum / self.events if self.events else 0.0
+
+    @property
+    def mean_window_rows(self) -> float:
+        return self.window_rows_sum / self.events if self.events else 0.0
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -114,6 +169,23 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=64,
         help="Flag rows where either HP delta magnitude is at least this value",
+    )
+    parser.add_argument(
+        "--demo-attribution-window-decisions",
+        type=int,
+        default=10,
+        help=(
+            "For demo_attributed move starts, sum HP deltas over this many following decision rows "
+            "within the same episode; default: %(default)s"
+        ),
+    )
+    parser.add_argument(
+        "--demo-attribution-stop-at-next-event",
+        action="store_true",
+        help=(
+            "Stop each demo-attribution window before the next attributed move event. "
+            "Off by default because projectiles can hit after a later input."
+        ),
     )
     return parser.parse_args()
 
@@ -164,6 +236,60 @@ def format_stats(key: tuple[str, ...], stats: Stats) -> str:
     )
 
 
+def policy_meta_name(action_id: int, sub_action_id: int) -> str:
+    if action_id == 0 and sub_action_id == 0:
+        return "neutral"
+    action_name = TABULAR_ACTION_NAMES_BY_POLICY_META.get((action_id, sub_action_id))
+    if action_name is not None:
+        return action_name
+    return f"policy:{action_id}/{sub_action_id}"
+
+
+def demo_attribution_present(row: dict[str, object]) -> bool:
+    return (
+        int_field(row, "demo_attribution_source") != 0
+        or int_field(row, "demo_attributed_policy_action_id") != 0
+        or int_field(row, "demo_attributed_policy_sub_action_id") != 0
+    )
+
+
+def demo_attributed_action_name(row: dict[str, object]) -> str:
+    return policy_meta_name(
+        int_field(row, "demo_attributed_policy_action_id"),
+        int_field(row, "demo_attributed_policy_sub_action_id"),
+    )
+
+
+def format_demo_stats(key: tuple[str, ...], stats: DemoAttributionStats) -> str:
+    key_text = " ".join(key)
+    return (
+        f"{key_text:<42} events={stats.events:5d} "
+        f"hit={stats.hit_events:5d}/{stats.hit_rate:5.1%} "
+        f"punished={stats.punished_events:5d}/{stats.punished_rate:5.1%} "
+        f"trade={stats.trade_events:4d} whiff={stats.whiff_events:5d}/{stats.whiff_rate:5.1%} "
+        f"opp_hp={stats.opp_hp_sum:6d} self_hp={stats.self_hp_sum:6d} "
+        f"lag_avg/max={stats.mean_lag:4.1f}/{stats.lag_max} "
+        f"win_rows_avg={stats.mean_window_rows:4.1f}"
+    )
+
+
+def print_demo_table(title: str, table: dict[tuple[str, ...], DemoAttributionStats], limit: int) -> None:
+    print(f"\n{title}")
+    if not table:
+        print("  none")
+        return
+    ordered = sorted(
+        table.items(),
+        key=lambda item: (item[1].events, item[1].opp_hp_sum + item[1].self_hp_sum),
+        reverse=True,
+    )
+    for index, (key, stats) in enumerate(ordered):
+        if index >= limit:
+            print(f"  ... {len(ordered) - limit} more")
+            break
+        print(format_demo_stats(key, stats))
+
+
 def print_table(title: str, table: dict[tuple[str, ...], Stats], limit: int) -> None:
     print(f"\n{title}")
     if not table:
@@ -179,6 +305,88 @@ def print_table(title: str, table: dict[tuple[str, ...], Stats], limit: int) -> 
             print(f"  ... {len(ordered) - limit} more")
             break
         print(format_stats(key, stats))
+
+
+def analyze_demo_attribution(rows: list[dict[str, object]], args: argparse.Namespace) -> None:
+    window_decisions = max(0, int(args.demo_attribution_window_decisions))
+    stop_at_next = bool(args.demo_attribution_stop_at_next_event)
+    by_episode: dict[tuple[int, int], list[dict[str, object]]] = collections.defaultdict(list)
+    source_counts: collections.Counter[int] = collections.Counter()
+    lag_counts: collections.Counter[int] = collections.Counter()
+    mismatch_counts: collections.Counter[tuple[str, str]] = collections.Counter()
+    event_rows = 0
+
+    by_action: dict[tuple[str, ...], DemoAttributionStats] = {}
+    by_action_dx: dict[tuple[str, ...], DemoAttributionStats] = {}
+    by_r2_kw: dict[tuple[str, ...], DemoAttributionStats] = {}
+
+    for row in rows:
+        by_episode[episode_key(row)].append(row)
+
+    for episode_rows in by_episode.values():
+        for index, row in enumerate(episode_rows):
+            if not demo_attribution_present(row):
+                continue
+
+            event_rows += 1
+            action = demo_attributed_action_name(row)
+            bucket = dx_bucket(row)
+            r2 = int_field(row, "demo_attributed_routine2")
+            kw = int_field(row, "demo_attributed_kind_of_waza")
+            source = int_field(row, "demo_attribution_source")
+            lag = int_field(row, "demo_attribution_lag_frames")
+            source_counts[source] += 1
+            lag_counts[lag] += 1
+
+            end = min(len(episode_rows), index + window_decisions + 1)
+            if stop_at_next:
+                for next_index in range(index + 1, end):
+                    if demo_attribution_present(episode_rows[next_index]):
+                        end = next_index
+                        break
+            window = episode_rows[index:end]
+            opp_hp = sum(int_field(window_row, "delta_opp_hp") for window_row in window)
+            self_hp = sum(int_field(window_row, "delta_self_hp") for window_row in window)
+            window_rows = len(window)
+
+            for table, key in (
+                (by_action, (action,)),
+                (by_action_dx, (action, f"dx={bucket}")),
+                (by_r2_kw, (f"R2={r2}", f"KW=0x{kw:02X}", action)),
+            ):
+                table.setdefault(key, DemoAttributionStats()).add(opp_hp, self_hp, lag, window_rows)
+
+            input_action = transition_action_name(row)
+            if input_action is None:
+                input_action = policy_meta_name(
+                    int_field(row, "executed_policy_action_id"),
+                    int_field(row, "executed_policy_sub_action_id"),
+                )
+            if input_action != action:
+                mismatch_counts[(input_action, action)] += 1
+
+    print(
+        f"\nDEMO_ATTRIBUTION_SUMMARY window_decisions={window_decisions} "
+        f"stop_at_next_event={str(stop_at_next).lower()} events={event_rows}"
+    )
+    if event_rows == 0:
+        print("  none")
+        return
+    print("  source_counts=" + ",".join(f"{source}:{count}" for source, count in sorted(source_counts.items())))
+    print("  lag_frames=" + ",".join(f"{lag}:{count}" for lag, count in sorted(lag_counts.items())))
+    print_demo_table("DEMO_ATTRIBUTED_BY_ACTION_WINDOW", by_action, args.limit)
+    print_demo_table("DEMO_ATTRIBUTED_BY_ACTION_DX_WINDOW", by_action_dx, args.limit)
+    print_demo_table("DEMO_ATTRIBUTED_BY_R2_KW_WINDOW", by_r2_kw, args.limit)
+
+    print("\nDEMO_ATTRIBUTION_INPUT_TO_ENGINE_MISMATCH")
+    if not mismatch_counts:
+        print("  none")
+    else:
+        for index, ((input_action, engine_action), count) in enumerate(mismatch_counts.most_common(args.limit)):
+            if index >= args.limit:
+                print(f"  ... {len(mismatch_counts) - args.limit} more")
+                break
+            print(f"{input_action:<24} -> {engine_action:<24} rows={count:5d}")
 
 
 def main() -> int:
@@ -207,6 +415,7 @@ def main() -> int:
     credited_by_action: dict[tuple[str, ...], Stats] = {}
     credited_by_action_dx: dict[tuple[str, ...], Stats] = {}
     delayed_shift: dict[tuple[str, ...], Stats] = {}
+    rows: list[dict[str, object]] = []
 
     for row_index, line in enumerate(iter_lines(path, max(0, args.tail_rows)), start=1):
         line = line.strip()
@@ -221,6 +430,7 @@ def main() -> int:
             skipped_json += 1
             continue
 
+        rows.append(row)
         parsed_rows += 1
         key = episode_key(row)
         if first_key is None:
@@ -305,6 +515,7 @@ def main() -> int:
     print_table("CREDITED_BY_ACTION", credited_by_action, args.limit)
     print_table("CREDITED_BY_ACTION_DECISION_DX", credited_by_action_dx, args.limit)
     print_table("DELAYED_CREDIT_DECISION_DX_TO_REWARD_DX", delayed_shift, args.limit)
+    analyze_demo_attribution(rows, args)
     return 0
 
 

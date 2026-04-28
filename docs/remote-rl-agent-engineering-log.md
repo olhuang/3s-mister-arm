@@ -2,6 +2,44 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-28: Add Demo-Attributed Delayed-Credit Analyzer
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / CPU-demo move-outcome analysis before DQN reward integration
+
+Files changed:
+- `tools/analyze_rl_transitions.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- classify engine-attributed demo move starts as hit, whiff/no-damage, punished, or trade using later HP deltas.
+- keep credit assignment in Python analysis/reward-shaping code instead of adding derived outcome guesses to the C-side transition schema.
+
+Implementation notes:
+- `tools/analyze_rl_transitions.py` now retains parsed rows and groups them by `(run_id, episode_id)`.
+- added `--demo-attribution-window-decisions N` to sum `delta_opp_hp` / `delta_self_hp` from each `demo_attributed_*` event row through the next `N` decision rows in the same episode.
+- added `--demo-attribution-stop-at-next-event` for non-overlapping windows; default remains overlapping because projectiles can hit after a later input.
+- new output sections:
+  - `DEMO_ATTRIBUTION_SUMMARY`
+  - `DEMO_ATTRIBUTED_BY_ACTION_WINDOW`
+  - `DEMO_ATTRIBUTED_BY_ACTION_DX_WINDOW`
+  - `DEMO_ATTRIBUTED_BY_R2_KW_WINDOW`
+  - `DEMO_ATTRIBUTION_INPUT_TO_ENGINE_MISMATCH`
+
+Validation:
+- `python3 -m py_compile tools/analyze_rl_transitions.py` passed.
+- `python3 tools/analyze_rl_transitions.py logs/rl-transitions-cpu-demo-v1-4-3-3.ndjson --demo-attribution-window-decisions 10 --limit 20` passed.
+- `git diff --check -- tools/analyze_rl_transitions.py docs/plan-remote-rl-agent.md docs/remote-rl-agent-engineering-log.md` passed.
+
+Smoke result:
+- the short CPU-demo Ryu log produced `19` attributed events.
+- with a 10-decision window, `fireball-hp` showed `6` events, `5` hit events, `1` punished/trade event, and `1` whiff/no-damage event.
+- input-to-engine mismatch output confirmed the analyzer can show cases such as `neutral -> fireball-hp` and `forward -> fireball-hp`, which are exactly why engine attribution is needed for CPU-demo logs.
+
+Follow-up:
+- once the analyzer output looks stable on a longer CPU-demo log, wire the same delayed-credit outcome calculation into `tools/train_dqn_learner.py` reward shaping.
+
 ## 2026-04-28: Document Engine Move Attribution Expansion Method
 
 Milestone:

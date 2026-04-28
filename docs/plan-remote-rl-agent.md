@@ -2532,6 +2532,10 @@ Implementation notes:
       - the original `requested_*` / `executed_*` policy fields remain input-based; `demo_attributed_*` is the engine-observed actual move, useful for CPU-demo/human-demo labels and accidental-command checks
       - first-pass attribution is Ryu-specific: specials/throws use `character_id + routine_no[2] + kind_of_waza`, while normal attacks use `current_attack` / normal `kind_of_waza` with a best-effort action class from the sampled input state
       - the reusable expansion method is documented in `docs/rl-policy-action-taxonomy.md#engine-move-attribution-method`: add another character by matching source command slot -> engine `R2` dispatch -> observed `R2/KW/AK/RS` overlay values before promoting the decoder to runtime
+      - `tools/analyze_rl_transitions.py` can now delayed-credit `demo_attributed_*` move starts over a configurable future decision window:
+        - `--demo-attribution-window-decisions N` sums later `delta_opp_hp` / `delta_self_hp` inside the same episode to classify each attributed move as hit, whiff/no-damage, punished, or trade
+        - `--demo-attribution-stop-at-next-event` optionally prevents overlapping windows, but the default keeps overlap allowed because projectiles can hit after the next input
+        - this is analysis / reward-shaping logic, not C-side transition truth
   - the Fight debug overlay now exposes self-side attack identity probe fields before adding them to transition rows:
     - `SATT R2<routine_no[2]> AK<current_attack> KW<kind_of_waza> RS<attack_routine_started>`
     - these fields are overlay-only until validated against visible normals, specials, throws, and projectiles

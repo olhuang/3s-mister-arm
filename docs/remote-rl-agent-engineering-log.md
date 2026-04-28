@@ -30,6 +30,18 @@ Follow-up:
 - validate the overlay values against visible normals, specials, throws, and projectiles.
 - only after validation, decide which of these fields should be promoted into transition logs and/or learner observations.
 
+Runtime finding:
+- `AK` / `current_attack` is useful for normal attack button identity only:
+  - jump / stand / crouch normals show `010/020/040` for `LP/MP/HP` and `100/200/400` for `LK/MK/HK`.
+  - specials do not currently use `AK` as a stable move identity field.
+- `RS` / `self_attack_routine_started` can become nonzero during attacks, but it is not stable enough to identify which attack was performed.
+- `KW` / `kind_of_waza` appears to encode attack class and strength:
+  - `00/02/04` => `LP/MP/HP`
+  - `01/03/05` => `LK/MK/HK`
+  - `08/0A/0C` => punch-strength specials such as Hadouken and Shoryuken (`LP/MP/HP`)
+  - `09/0B/0D` => kick-strength specials such as Tatsumaki Senpukyaku (`LK/MK/HK`)
+- implication: `KW` is strong for normal/special strength and punch-vs-kick class, but it cannot distinguish Hadouken from Shoryuken by itself. Move identity likely needs `routine_no[2]` (`R2`) plus character id, with `KW` providing strength/category.
+
 ## 2026-04-28: Add CPU-Demo Transition Recording Mode
 
 Milestone:

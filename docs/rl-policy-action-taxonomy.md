@@ -57,6 +57,59 @@ The source character IDs used by this repo are:
 | 18 | Twelve |
 | 19 | Remy |
 
+## Engine Move Attribution Method
+
+The policy namespace and the SF3 engine state are intentionally separate:
+
+- `requested_policy_action_id` / `executed_policy_action_id` are input-based.
+  They describe what the remote policy, human-demo input, or CPU-demo input
+  appeared to request on that decision row.
+- `demo_attributed_policy_action_id` / `demo_attributed_policy_sub_action_id`
+  are engine-attributed. They describe what the game actually entered after
+  command recognition, using runtime attack identity fields. Use these fields
+  for CPU-demo / human-demo move labels and accidental-command diagnosis.
+
+Current runtime identity fields:
+
+| shorthand | source meaning | current use |
+|---|---|---|
+| `R2` | `routine_no[2]` | primary active move / routine id |
+| `KW` | `kind_of_waza` | strength and punch/kick class |
+| `AK` | `current_attack` | normal button identity; not reliable for specials |
+| `RS` | attack routine start event | attribution timing hint; not a move id |
+
+Attribution flow for command moves:
+
+1. Use `character_id` to select the character-specific decoder.
+2. Use `R2` as the primary engine routine key.
+3. Use `KW` to select the sub action / strength:
+   - normal punches: `00/02/04` => `lp/mp/hp`
+   - normal kicks: `01/03/05` => `lk/mk/hk`
+   - punch-special strengths: `08/0A/0C` => `lp/mp/hp`
+   - kick-special strengths: `09/0B/0D` => `lk/mk/hk`
+4. Map `character_id + R2` to the stable taxonomy action. For source-backed
+   command moves, this should agree with:
+   - `policy_action_id = 1000 + character_id * 100 + source_command_slot`
+   - the matching command row in `src/sf33rd/Source/Game/command/cmd_data.c`
+   - the matching dispatch entry in `src/sf33rd/Source/Game/engine/plpatXX.c`
+5. For throws, `R2` may identify the grab / throw routine but not throw
+   direction. Keep `sub_action_id = none` unless the input-based row has a
+   clear forward/back throw direction.
+6. For normals, `AK` / normal `KW` can identify the button, but stance and jump
+   class need more context. Use the sampled input or airborne/crouch state only
+   as a best-effort label until normal stance/jump tables are validated.
+
+How to add another character:
+
+1. Add or verify that character's command rows in this taxonomy.
+2. Find the source command slot and R2/routine value in `cmd_data.c`.
+3. Find the character dispatch table in `plpatXX.c` and confirm which handler
+   is entered for that R2.
+4. Record observed overlay values while performing each move strength:
+   `R2`, `KW`, `AK`, and whether `RS` lines up with the visible attack start.
+5. Add a character-specific overlay identity draft table like the Ryu one below.
+6. Only then promote the mapping into the runtime demo-attribution decoder.
+
 ## Universal Actions
 
 | policy_action_id | policy_action_name | sub_action_group | macro_template |

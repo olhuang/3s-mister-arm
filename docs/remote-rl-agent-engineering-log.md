@@ -2,6 +2,36 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-28: Document Engine Move Attribution Expansion Method
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / move-label validation before extending demo attribution beyond Ryu
+
+Files changed:
+- `docs/rl-policy-action-taxonomy.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- preserve the discovered method for converting SF3 runtime attack identity into stable policy action / sub-action labels.
+- make future non-Ryu expansion repeatable instead of relying on memory from the Ryu investigation.
+
+Implementation notes:
+- added `Engine Move Attribution Method` to the taxonomy document.
+- documented the separation between input-based `requested_*` / `executed_*` fields and engine-observed `demo_attributed_*` fields.
+- recorded the field roles:
+  - `R2` / `routine_no[2]` is the primary active move / routine key.
+  - `KW` / `kind_of_waza` encodes strength and normal/special punch/kick class.
+  - `AK` / `current_attack` is useful for normal button identity.
+  - `RS` / attack routine start is a timing hint, not a move id.
+- documented the future-character workflow: source command slot -> `cmd_data.c` R2 -> `plpatXX.c` dispatch handler -> overlay validation -> runtime decoder promotion.
+
+Validation:
+- `git diff --check -- docs/rl-policy-action-taxonomy.md docs/plan-remote-rl-agent.md docs/remote-rl-agent-engineering-log.md` passed.
+
+Follow-up:
+- use the method to create per-character overlay identity draft tables before adding non-Ryu demo attribution code.
+
 ## 2026-04-28: Add Ryu Engine-Attributed Demo Action Fields
 
 Milestone:

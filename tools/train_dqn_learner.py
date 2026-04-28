@@ -93,6 +93,7 @@ ATTACK_RISK_ACTIONS = frozenset(
 )
 SHORYUKEN_ACTION = "shoryuken-mp"
 REWARD_RISK_PROFILES = ("none", "shoryuken-only", "all-attacks")
+GUARD_ACTIONS = frozenset({"guard-stand", "guard-crouch"})
 
 
 @dataclass(frozen=True)
@@ -132,6 +133,50 @@ class RewardRiskStats:
             "shoryuken_no_damage_extra_cost_total": self.shoryuken_no_damage_extra_cost_total,
             "shoryuken_punished_extra_cost_total": self.shoryuken_punished_extra_cost_total,
             "total_cost": self.total_cost,
+        }
+
+
+@dataclass(frozen=True)
+class RewardGuardConfig:
+    success_bonus: float
+    success_window_decisions: int
+    threat_max_dx: int
+    passive_guard_cost: float
+    far_guard_cost: float
+
+
+@dataclass
+class RewardGuardStats:
+    success_bonus_events: int = 0
+    passive_guard_cost_events: int = 0
+    far_guard_cost_events: int = 0
+    success_bonus_total: float = 0.0
+    passive_guard_cost_total: float = 0.0
+    far_guard_cost_total: float = 0.0
+
+    @property
+    def total_bonus(self) -> float:
+        return self.success_bonus_total
+
+    @property
+    def total_cost(self) -> float:
+        return self.passive_guard_cost_total + self.far_guard_cost_total
+
+    @property
+    def net_adjustment(self) -> float:
+        return self.total_bonus - self.total_cost
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "success_bonus_events": self.success_bonus_events,
+            "passive_guard_cost_events": self.passive_guard_cost_events,
+            "far_guard_cost_events": self.far_guard_cost_events,
+            "success_bonus_total": self.success_bonus_total,
+            "passive_guard_cost_total": self.passive_guard_cost_total,
+            "far_guard_cost_total": self.far_guard_cost_total,
+            "total_bonus": self.total_bonus,
+            "total_cost": self.total_cost,
+            "net_adjustment": self.net_adjustment,
         }
 
 
@@ -227,11 +272,50 @@ def reward_risk_cost(
     return cost
 
 
+def reward_guard_adjustment(
+    episode_rows: list[dict[str, object]],
+    row_index: int,
+    action_name: str,
+    config: RewardGuardConfig,
+    stats: RewardGuardStats,
+) -> float:
+    row = episode_rows[row_index]
+    if action_name not in GUARD_ACTIONS or not is_action_start(row):
+        return 0.0
+
+    opponent_attacking = int_field(row, "obs_opp_routine_attack_state") != 0
+    abs_dx = int_field(row, "obs_abs_dx")
+    in_threat_range = abs_dx <= config.threat_max_dx
+    adjustment = 0.0
+
+    if config.success_bonus > 0.0 and opponent_attacking and in_threat_range:
+        window_end = min(len(episode_rows), row_index + max(0, config.success_window_decisions) + 1)
+        lookahead = episode_rows[row_index:window_end]
+        self_damage = sum(int_field(lookahead_row, "delta_self_hp") for lookahead_row in lookahead)
+        if self_damage == 0:
+            adjustment += config.success_bonus
+            stats.success_bonus_events += 1
+            stats.success_bonus_total += config.success_bonus
+
+    if config.passive_guard_cost > 0.0 and not opponent_attacking:
+        adjustment -= config.passive_guard_cost
+        stats.passive_guard_cost_events += 1
+        stats.passive_guard_cost_total += config.passive_guard_cost
+
+    if config.far_guard_cost > 0.0 and not in_threat_range:
+        adjustment -= config.far_guard_cost
+        stats.far_guard_cost_events += 1
+        stats.far_guard_cost_total += config.far_guard_cost
+
+    return adjustment
+
+
 def build_experiences(
     rows: list[dict[str, object]],
     actions: tuple[str, ...],
     reward_scale: float,
     reward_risk_config: RewardRiskConfig,
+    reward_guard_config: RewardGuardConfig,
 ) -> tuple[
     list[Experience],
     dict[str, int],
@@ -240,6 +324,7 @@ def build_experiences(
     dict[str, float],
     BuildDiagnostics,
     RewardRiskStats,
+    RewardGuardStats,
 ]:
     action_to_index = {action: index for index, action in enumerate(actions)}
     by_episode: dict[tuple[int, int], list[dict[str, object]]] = collections.defaultdict(list)
@@ -253,6 +338,7 @@ def build_experiences(
     observed_action_rewards = {action: 0.0 for action in rl.TABULAR_ACTION_NAMES}
     build_stats = BuildDiagnostics()
     risk_stats = RewardRiskStats()
+    guard_stats = RewardGuardStats()
 
     for episode_rows in by_episode.values():
         episode_rows.sort(key=row_order_key)
@@ -264,7 +350,12 @@ def build_experiences(
                 if action_name is not None
                 else 0.0
             )
-            reward = (rl.tabular_training_reward(row) - risk_cost) * reward_scale
+            guard_adjustment = (
+                reward_guard_adjustment(episode_rows, index, action_name, reward_guard_config, guard_stats)
+                if action_name is not None
+                else 0.0
+            )
+            reward = (rl.tabular_training_reward(row) - risk_cost + guard_adjustment) * reward_scale
             if action_name is None:
                 if reward != 0.0 and last_exp_index is not None:
                     experiences[last_exp_index].reward += reward
@@ -309,6 +400,7 @@ def build_experiences(
         observed_action_rewards,
         build_stats,
         risk_stats,
+        guard_stats,
     )
 
 
@@ -320,6 +412,16 @@ def reward_risk_config_from_args(args: argparse.Namespace) -> RewardRiskConfig:
         attack_punished_cost=max(0.0, float(args.reward_attack_punished_cost)),
         shoryuken_no_damage_extra_cost=max(0.0, float(args.reward_shoryuken_no_damage_extra_cost)),
         shoryuken_punished_extra_cost=max(0.0, float(args.reward_shoryuken_punished_extra_cost)),
+    )
+
+
+def reward_guard_config_from_args(args: argparse.Namespace) -> RewardGuardConfig:
+    return RewardGuardConfig(
+        success_bonus=max(0.0, float(args.reward_guard_success_bonus)),
+        success_window_decisions=max(0, int(args.reward_guard_success_window_decisions)),
+        threat_max_dx=max(0, int(args.reward_guard_threat_max_dx)),
+        passive_guard_cost=max(0.0, float(args.reward_passive_guard_cost)),
+        far_guard_cost=max(0.0, float(args.reward_far_guard_cost)),
     )
 
 
@@ -694,6 +796,39 @@ def main() -> None:
         default=4.0,
         help="Additional positive raw reward cost when no-damage shoryuken-mp is followed by self HP damage",
     )
+    parser.add_argument(
+        "--reward-guard-success-bonus",
+        type=float,
+        default=0.0,
+        help=(
+            "Positive raw reward bonus for guard-stand/guard-crouch starts when the opponent is attacking, "
+            "the spacing is within --reward-guard-threat-max-dx, and no self HP damage occurs in the guard window"
+        ),
+    )
+    parser.add_argument(
+        "--reward-guard-success-window-decisions",
+        type=int,
+        default=15,
+        help="Lookahead decisions used to decide whether a guard action avoided self HP damage",
+    )
+    parser.add_argument(
+        "--reward-guard-threat-max-dx",
+        type=int,
+        default=144,
+        help="Maximum obs_abs_dx treated as close/mid threat range for guard success; farther guard can be penalized",
+    )
+    parser.add_argument(
+        "--reward-passive-guard-cost",
+        type=float,
+        default=0.0,
+        help="Positive raw reward cost subtracted from guard starts when the opponent is not attacking",
+    )
+    parser.add_argument(
+        "--reward-far-guard-cost",
+        type=float,
+        default=0.0,
+        help="Positive raw reward cost subtracted from guard starts with obs_abs_dx above --reward-guard-threat-max-dx",
+    )
     parser.add_argument("--target-sync-steps", type=int, default=200, help="Steps between target-network syncs")
     parser.add_argument("--epsilon", type=float, default=0.05, help="Exploration probability stamped into the published actor")
     parser.add_argument(
@@ -717,6 +852,7 @@ def main() -> None:
     actions = parse_action_subset(args.actions)
     rows = read_transition_rows(args.transition_logs, args.limit)
     reward_risk_config = reward_risk_config_from_args(args)
+    reward_guard_config = reward_guard_config_from_args(args)
     (
         experiences,
         action_counts,
@@ -725,11 +861,13 @@ def main() -> None:
         observed_action_rewards,
         build_stats,
         reward_risk_stats,
+        reward_guard_stats,
     ) = build_experiences(
         rows,
         actions,
         args.reward_scale,
         reward_risk_config,
+        reward_guard_config,
     )
     if not experiences:
         raise SystemExit("No DQN experiences built from transition logs")
@@ -748,6 +886,16 @@ def main() -> None:
     )
     greedy_diag = evaluate_greedy_actions(layers, experiences, actions, args.eval_limit)
     version = next_model_version(args.model_dir, args.model_version)
+    reward_has_risk = reward_risk_config.profile != "none"
+    reward_has_guard = reward_guard_stats.net_adjustment != 0.0
+    if reward_has_risk and reward_has_guard:
+        reward_source = "hp-delta+risk-cost+guard-shaping"
+    elif reward_has_risk:
+        reward_source = "hp-delta+risk-cost"
+    elif reward_has_guard:
+        reward_source = "hp-delta+guard-shaping"
+    else:
+        reward_source = "hp-delta"
     metadata = {
         "transition_logs": args.transition_logs,
         "rows_read": len(rows),
@@ -756,9 +904,10 @@ def main() -> None:
         "actions_subset_size": len(actions),
         "build_diagnostics": build_stats.as_metadata(),
         "delayed_rewards": build_stats.unrecognized_delayed_rewards,
-        "reward_source": "hp-delta+risk-cost" if reward_risk_config.profile != "none" else "hp-delta",
+        "reward_source": reward_source,
         "reward_scale": args.reward_scale,
         "reward_scale_applied_after_risk_cost": True,
+        "reward_scale_applied_after_raw_adjustments": True,
         "reward_risk_profile": reward_risk_config.profile,
         "reward_risk_window_decisions": reward_risk_config.window_decisions,
         "reward_attack_no_damage_cost": reward_risk_config.attack_no_damage_cost,
@@ -766,6 +915,12 @@ def main() -> None:
         "reward_shoryuken_no_damage_extra_cost": reward_risk_config.shoryuken_no_damage_extra_cost,
         "reward_shoryuken_punished_extra_cost": reward_risk_config.shoryuken_punished_extra_cost,
         "reward_risk_stats": reward_risk_stats.as_metadata(),
+        "reward_guard_success_bonus": reward_guard_config.success_bonus,
+        "reward_guard_success_window_decisions": reward_guard_config.success_window_decisions,
+        "reward_guard_threat_max_dx": reward_guard_config.threat_max_dx,
+        "reward_passive_guard_cost": reward_guard_config.passive_guard_cost,
+        "reward_far_guard_cost": reward_guard_config.far_guard_cost,
+        "reward_guard_stats": reward_guard_stats.as_metadata(),
         "steps": max(1, args.steps),
         "batch_size": max(1, args.batch_size),
         "gamma": min(0.999, max(0.0, args.gamma)),
@@ -797,6 +952,9 @@ def main() -> None:
         f"version={version} model_dir={args.model_dir} rows={len(rows)} experiences={len(experiences)} "
         f"actions={len(actions)} "
         f"risk={reward_risk_config.profile} risk_cost={reward_risk_stats.total_cost:.1f} "
+        f"guard_bonus={reward_guard_stats.total_bonus:.1f} "
+        f"guard_cost={reward_guard_stats.total_cost:.1f} "
+        f"guard_net={reward_guard_stats.net_adjustment:.1f} "
         f"loss={train_stats['last_loss']:.6f} avg_loss={train_stats['avg_loss']:.6f} "
         f"included={build_stats.included_action_rows} excluded={build_stats.excluded_action_rows} "
         f"excluded_rew={build_stats.excluded_action_reward_sum:.3f} "
@@ -813,6 +971,14 @@ def main() -> None:
         "DQN diagnostics "
         f"observed_all=count/reward/mean "
         f"{format_action_scores(observed_action_counts, observed_action_rewards, rl.TABULAR_ACTION_NAMES, args.diagnostic_top_n)}",
+        flush=True,
+    )
+    print(
+        "DQN diagnostics "
+        f"guard_shape=success:{reward_guard_stats.success_bonus_events}/{reward_guard_stats.success_bonus_total:.1f} "
+        f"passive:{reward_guard_stats.passive_guard_cost_events}/{reward_guard_stats.passive_guard_cost_total:.1f} "
+        f"far:{reward_guard_stats.far_guard_cost_events}/{reward_guard_stats.far_guard_cost_total:.1f} "
+        f"net:{reward_guard_stats.net_adjustment:.1f}",
         flush=True,
     )
     print(

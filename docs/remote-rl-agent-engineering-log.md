@@ -2,6 +2,48 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-28: Add Offline DQN Guard Reward Shaping
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / Phase 1 defense curriculum
+
+Files changed:
+- `tools/train_dqn_learner.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- give offline DQN training a positive signal for successful `guard-stand` / `guard-crouch` decisions under opponent strike threat.
+- add small costs for passive or far guard so Phase 1 models do not learn to hold guard as a universal idle/default action.
+- keep the experiment local to the offline trainer; no C-side transition schema or MiSTer runtime behavior changed.
+
+Implementation notes:
+- added guard shaping config:
+  - `--reward-guard-success-bonus`
+  - `--reward-guard-success-window-decisions`
+  - `--reward-guard-threat-max-dx`
+  - `--reward-passive-guard-cost`
+  - `--reward-far-guard-cost`
+- guard success bonus applies only to `guard-stand` / `guard-crouch` action starts when:
+  - `executed_policy_action_step == 0`
+  - `obs_opp_routine_attack_state != 0`
+  - `obs_abs_dx <= reward_guard_threat_max_dx`
+  - the guard-success lookahead window has no `delta_self_hp`
+- passive/far guard costs also apply only on guard action starts, avoiding repeated macro-step reward/cost for the six-step guard macros.
+- trainer metadata now records guard shaping config and `reward_guard_stats`.
+- trainer stdout now prints `guard_bonus`, `guard_cost`, `guard_net`, and a `DQN diagnostics guard_shape=...` summary.
+
+Validation:
+- `python3 -m py_compile tools/train_dqn_learner.py` passed.
+- guard-shaping smoke:
+  - `python3 tools/train_dqn_learner.py logs/rl-transitions-actionset-v4-hardcpu-v1-4-3-3.ndjson --model-dir /tmp/rl-dqn-guard-shaping-smoke --model-version 1 --limit 5000 --steps 5 --batch-size 16 --hidden-sizes 16 --log-interval 0 --eval-limit 500 --actions forward,back,guard-stand,guard-crouch,stand-hp,crouch-mk --reward-risk-profile all-attacks --reward-risk-window-decisions 15 --reward-attack-no-damage-cost 0.5 --reward-attack-punished-cost 2.0 --reward-guard-success-bonus 2.0 --reward-guard-success-window-decisions 15 --reward-guard-threat-max-dx 144 --reward-passive-guard-cost 0.2 --reward-far-guard-cost 0.5`
+  - published `actions=6`, `risk_cost=406.0`, `guard_bonus=20.0`, `guard_cost=8.2`, `guard_net=11.8`, and printed `guard_shape=success:10/20.0 passive:16/3.2 far:10/5.0 net:11.8`.
+
+Follow-up:
+- run the full Phase 1 guard-shaping command on mixed old-v4 + hardcpu-v1 logs.
+- compare against `model/dqn-phase1-basic-c15` and check whether `atk1_close` / `atk1_mid` shift from `stand-hp` to guard while `atk0_far` stops selecting guard as the dominant default.
+- if guard shaping works offline, collect a fresh Phase 1 live log before considering a broader action set.
+
 ## 2026-04-27: Add DQN Action Subsets And Collapse Diagnostics
 
 Milestone:

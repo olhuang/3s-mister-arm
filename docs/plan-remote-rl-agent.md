@@ -2429,6 +2429,7 @@ Tasks:
 - [x] Add a first offline DQN/MLP Q learner tool and `policy=dqn` probe inference path for q-table comparison
 - [x] Add offline DQN A/B/C reward-risk profiles and same-observation model comparison tooling
 - [x] Add DQN action subset training and collapse diagnostics for offline policy debugging
+- [x] Add offline DQN guard success / passive guard reward shaping knobs for Phase 1 defense curriculum smoke tests
 - [x] Add an offline transition analyzer for action/distance HP-delta attribution
 - [x] Expand observation features only with schema versioning for the first routine attack/contact-reaction validation probes
 - [x] Promote validated opponent routine attack state into the first tabular strike-defense state split
@@ -2512,6 +2513,12 @@ Implementation notes:
     - `--reward-risk-profile shoryuken-only`: applies only Shoryuken no-damage / punished extra costs
     - `--reward-risk-profile all-attacks`: applies generic attack no-damage / punished costs, plus Shoryuken extra costs
   - reward-risk costs use positive `cost` parameters (`--reward-attack-no-damage-cost`, `--reward-attack-punished-cost`, `--reward-shoryuken-no-damage-extra-cost`, `--reward-shoryuken-punished-extra-cost`) and are subtracted before `--reward-scale`, avoiding confusing negative penalty arguments
+  - guard reward shaping is available for offline Phase 1 DQN experiments without changing transition schema:
+    - `--reward-guard-success-bonus` adds raw reward to `guard-stand` / `guard-crouch` starts when `obs_opp_routine_attack_state=1`, `obs_abs_dx <= --reward-guard-threat-max-dx`, and the guard-success lookahead window has no self HP damage
+    - `--reward-passive-guard-cost` subtracts raw reward from guard starts when the opponent is not attacking
+    - `--reward-far-guard-cost` subtracts raw reward from guard starts outside the configured threat distance
+    - guard shaping applies only on `executed_policy_action_step == 0` so multi-step guard macros do not receive repeated bonus/cost on every macro frame
+    - diagnostics print `guard_shape=success:<events>/<bonus> passive:<events>/<cost> far:<events>/<cost> net:<raw_adjustment>` and metadata records the guard-shaping config/stat payload
   - `--actions` trains and publishes a DQN action subset; excluded explicit actions are counted and reset delayed-credit attribution so their later neutral/recovery reward is not accidentally credited to the previous included action
   - training diagnostics now print included/excluded action row counts, excluded reward sum, per-action count/reward/mean summaries, greedy top-1/top-2/top-3 summaries, and a collapse warning when one greedy action exceeds the configured threshold
   - uses normalized numeric spacing/threat features: `obs_abs_dx`, `obs_abs_dy`, both fighters' front/back edge distances, `obs_opp_in_front`, and `obs_opp_routine_attack_state`

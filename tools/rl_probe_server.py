@@ -83,6 +83,45 @@ RL_POLICY_SUB_FORWARD = 13
 RL_POLICY_SUB_BACK = 14
 RL_POLICY_SUB_STAND = 20
 RL_POLICY_SUB_CROUCH = 21
+
+RL_POLICY_BUTTONS = (
+    ("lp", BTN_LP, RL_POLICY_SUB_LP),
+    ("mp", BTN_MP, RL_POLICY_SUB_MP),
+    ("hp", BTN_HP, RL_POLICY_SUB_HP),
+    ("lk", BTN_LK, RL_POLICY_SUB_LK),
+    ("mk", BTN_MK, RL_POLICY_SUB_MK),
+    ("hk", BTN_HK, RL_POLICY_SUB_HK),
+)
+RL_POLICY_JUMP_DIRECTIONS = (
+    ("forward", RL_MOVE_UP_FORWARD, RL_POLICY_ACTION_JUMP_ATTACK_FORWARD),
+    ("neutral", RL_MOVE_UP, RL_POLICY_ACTION_JUMP_ATTACK_NEUTRAL),
+    ("back", RL_MOVE_UP_BACK, RL_POLICY_ACTION_JUMP_ATTACK_BACK),
+)
+STAND_NORMAL_ACTION_NAMES = tuple(f"stand-{button}" for button, _, _ in RL_POLICY_BUTTONS)
+CROUCH_NORMAL_ACTION_NAMES = tuple(f"crouch-{button}" for button, _, _ in RL_POLICY_BUTTONS)
+JUMP_NORMAL_ACTION_NAMES = tuple(
+    f"jump-{direction}-{button}"
+    for direction, _, _ in RL_POLICY_JUMP_DIRECTIONS
+    for button, _, _ in RL_POLICY_BUTTONS
+)
+JUMP_NORMAL_ACTION_WIRES = {
+    f"jump-{direction}-{button}": move | button_wire
+    for direction, move, _ in RL_POLICY_JUMP_DIRECTIONS
+    for button, button_wire, _ in RL_POLICY_BUTTONS
+}
+JUMP_NORMAL_ACTION_SEQUENCES = {
+    action: (
+        move,
+        move,
+        wire,
+        wire,
+        RL_MOVE_NEUTRAL,
+        RL_MOVE_NEUTRAL,
+    )
+    for action, wire in JUMP_NORMAL_ACTION_WIRES.items()
+    for direction, move, _action_id in RL_POLICY_JUMP_DIRECTIONS
+    if action.startswith(f"jump-{direction}-")
+}
 SCRIPTED_POLICY_CHOICES = (
     "forward",
     "back",
@@ -90,26 +129,17 @@ SCRIPTED_POLICY_CHOICES = (
     "guard-stand",
     "guard-crouch",
     "hp",
-    "stand-lp",
-    "stand-mp",
-    "stand-hp",
-    "stand-lk",
-    "stand-mk",
-    "stand-hk",
+    *STAND_NORMAL_ACTION_NAMES,
     "forward-hp",
-    "crouch-lk",
-    "crouch-mk",
-    "crouch-hk",
+    *CROUCH_NORMAL_ACTION_NAMES,
+    "fireball",
     "ryu-fireball",
     "throw",
     "tatsu",
     "tatsu-mk",
     "shoryuken",
     "shoryuken-mp",
-    "jump-forward-mk",
-    "jump-forward-hk",
-    "jump-neutral-hk",
-    "jump-back-hk",
+    *JUMP_NORMAL_ACTION_NAMES,
 )
 MODEL_POLICY_CHOICES = (
     "tabular",
@@ -123,22 +153,12 @@ TABULAR_ACTION_NAMES = (
     "back",
     "guard-stand",
     "guard-crouch",
-    "stand-lp",
-    "stand-mp",
-    "stand-hp",
-    "stand-lk",
-    "stand-mk",
-    "stand-hk",
+    *STAND_NORMAL_ACTION_NAMES,
     "forward-hp",
-    "crouch-lk",
-    "crouch-mk",
-    "crouch-hk",
+    *CROUCH_NORMAL_ACTION_NAMES,
     "fireball",
     "throw",
-    "jump-forward-mk",
-    "jump-forward-hk",
-    "jump-neutral-hk",
-    "jump-back-hk",
+    *JUMP_NORMAL_ACTION_NAMES,
     "shoryuken-mp",
     "tatsu-mk",
 )
@@ -146,26 +166,16 @@ TABULAR_ACTION_WIRES = {
     "neutral": RL_MOVE_NEUTRAL,
     "forward": RL_MOVE_FORWARD,
     "back": RL_MOVE_BACK,
-    "stand-lp": BTN_LP,
-    "stand-mp": BTN_MP,
-    "stand-hp": BTN_HP,
-    "stand-lk": BTN_LK,
-    "stand-mk": BTN_MK,
-    "stand-hk": BTN_HK,
     "forward-hp": RL_MOVE_FORWARD | BTN_HP,
-    "crouch-lk": RL_MOVE_DOWN | BTN_LK,
-    "crouch-mk": RL_MOVE_DOWN | BTN_MK,
-    "crouch-hk": RL_MOVE_DOWN | BTN_HK,
     "throw": RL_MOVE_FORWARD | BTN_LP | BTN_LK,
 }
+TABULAR_ACTION_WIRES.update({f"stand-{name}": wire for name, wire, _ in RL_POLICY_BUTTONS})
+TABULAR_ACTION_WIRES.update({f"crouch-{name}": RL_MOVE_DOWN | wire for name, wire, _ in RL_POLICY_BUTTONS})
 TABULAR_ACTION_NAMES_BY_WIRE = {
     wire: name for name, wire in TABULAR_ACTION_WIRES.items() if name != "neutral"
 }
 TABULAR_ACTION_NAMES_BY_WIRE[RL_MOVE_FORWARD | BTN_LP] = "fireball"
-TABULAR_ACTION_NAMES_BY_WIRE[RL_MOVE_UP_FORWARD | BTN_MK] = "jump-forward-mk"
-TABULAR_ACTION_NAMES_BY_WIRE[RL_MOVE_UP_FORWARD | BTN_HK] = "jump-forward-hk"
-TABULAR_ACTION_NAMES_BY_WIRE[RL_MOVE_UP | BTN_HK] = "jump-neutral-hk"
-TABULAR_ACTION_NAMES_BY_WIRE[RL_MOVE_UP_BACK | BTN_HK] = "jump-back-hk"
+TABULAR_ACTION_NAMES_BY_WIRE.update({wire: action for action, wire in JUMP_NORMAL_ACTION_WIRES.items()})
 TABULAR_ACTION_NAMES_BY_WIRE[RL_MOVE_DOWN_FORWARD | BTN_MP] = "shoryuken-mp"
 TABULAR_ACTION_NAMES_BY_WIRE[RL_MOVE_BACK | BTN_MK] = "tatsu-mk"
 TABULAR_DEFAULT_ACTIONS = TABULAR_ACTION_NAMES
@@ -178,16 +188,7 @@ POLICY_ACTION_META_BY_NAME = {
     "guard-stand": (RL_POLICY_ACTION_GUARD, RL_POLICY_SUB_STAND),
     "guard-crouch": (RL_POLICY_ACTION_GUARD, RL_POLICY_SUB_CROUCH),
     "hp": (RL_POLICY_ACTION_STAND_NORMAL, RL_POLICY_SUB_HP),
-    "stand-lp": (RL_POLICY_ACTION_STAND_NORMAL, RL_POLICY_SUB_LP),
-    "stand-mp": (RL_POLICY_ACTION_STAND_NORMAL, RL_POLICY_SUB_MP),
-    "stand-hp": (RL_POLICY_ACTION_STAND_NORMAL, RL_POLICY_SUB_HP),
-    "stand-lk": (RL_POLICY_ACTION_STAND_NORMAL, RL_POLICY_SUB_LK),
-    "stand-mk": (RL_POLICY_ACTION_STAND_NORMAL, RL_POLICY_SUB_MK),
-    "stand-hk": (RL_POLICY_ACTION_STAND_NORMAL, RL_POLICY_SUB_HK),
     "forward-hp": (RL_POLICY_ACTION_COMMAND_NORMAL, RL_POLICY_SUB_HP),
-    "crouch-lk": (RL_POLICY_ACTION_CROUCH_NORMAL, RL_POLICY_SUB_LK),
-    "crouch-mk": (RL_POLICY_ACTION_CROUCH_NORMAL, RL_POLICY_SUB_MK),
-    "crouch-hk": (RL_POLICY_ACTION_CROUCH_NORMAL, RL_POLICY_SUB_HK),
     "throw": (RL_POLICY_ACTION_THROW, RL_POLICY_SUB_FORWARD),
     "fireball": (RL_POLICY_ACTION_RYU_FIREBALL, RL_POLICY_SUB_LP),
     "ryu-fireball": (RL_POLICY_ACTION_RYU_FIREBALL, RL_POLICY_SUB_LP),
@@ -195,26 +196,26 @@ POLICY_ACTION_META_BY_NAME = {
     "tatsu-mk": (RL_POLICY_ACTION_RYU_TATSU, RL_POLICY_SUB_MK),
     "shoryuken": (RL_POLICY_ACTION_RYU_SHORYUKEN, RL_POLICY_SUB_HP),
     "shoryuken-mp": (RL_POLICY_ACTION_RYU_SHORYUKEN, RL_POLICY_SUB_MP),
-    "jump-forward-mk": (RL_POLICY_ACTION_JUMP_ATTACK_FORWARD, RL_POLICY_SUB_MK),
-    "jump-forward-hk": (RL_POLICY_ACTION_JUMP_ATTACK_FORWARD, RL_POLICY_SUB_HK),
-    "jump-neutral-hk": (RL_POLICY_ACTION_JUMP_ATTACK_NEUTRAL, RL_POLICY_SUB_HK),
-    "jump-back-hk": (RL_POLICY_ACTION_JUMP_ATTACK_BACK, RL_POLICY_SUB_HK),
 }
+POLICY_ACTION_META_BY_NAME.update(
+    {f"stand-{name}": (RL_POLICY_ACTION_STAND_NORMAL, sub_action) for name, _, sub_action in RL_POLICY_BUTTONS}
+)
+POLICY_ACTION_META_BY_NAME.update(
+    {f"crouch-{name}": (RL_POLICY_ACTION_CROUCH_NORMAL, sub_action) for name, _, sub_action in RL_POLICY_BUTTONS}
+)
+POLICY_ACTION_META_BY_NAME.update(
+    {
+        f"jump-{direction}-{name}": (action_id, sub_action)
+        for direction, _, action_id in RL_POLICY_JUMP_DIRECTIONS
+        for name, _, sub_action in RL_POLICY_BUTTONS
+    }
+)
 
 TABULAR_ACTION_NAMES_BY_POLICY_META = {
     (RL_POLICY_ACTION_WALK, RL_POLICY_SUB_FORWARD): "forward",
     (RL_POLICY_ACTION_WALK, RL_POLICY_SUB_BACK): "back",
     (RL_POLICY_ACTION_GUARD, RL_POLICY_SUB_STAND): "guard-stand",
     (RL_POLICY_ACTION_GUARD, RL_POLICY_SUB_CROUCH): "guard-crouch",
-    (RL_POLICY_ACTION_STAND_NORMAL, RL_POLICY_SUB_LP): "stand-lp",
-    (RL_POLICY_ACTION_STAND_NORMAL, RL_POLICY_SUB_MP): "stand-mp",
-    (RL_POLICY_ACTION_STAND_NORMAL, RL_POLICY_SUB_HP): "stand-hp",
-    (RL_POLICY_ACTION_STAND_NORMAL, RL_POLICY_SUB_LK): "stand-lk",
-    (RL_POLICY_ACTION_STAND_NORMAL, RL_POLICY_SUB_MK): "stand-mk",
-    (RL_POLICY_ACTION_STAND_NORMAL, RL_POLICY_SUB_HK): "stand-hk",
-    (RL_POLICY_ACTION_CROUCH_NORMAL, RL_POLICY_SUB_LK): "crouch-lk",
-    (RL_POLICY_ACTION_CROUCH_NORMAL, RL_POLICY_SUB_MK): "crouch-mk",
-    (RL_POLICY_ACTION_CROUCH_NORMAL, RL_POLICY_SUB_HK): "crouch-hk",
     (RL_POLICY_ACTION_COMMAND_NORMAL, RL_POLICY_SUB_HP): "forward-hp",
     (RL_POLICY_ACTION_THROW, RL_POLICY_SUB_FORWARD): "throw",
     (RL_POLICY_ACTION_THROW, RL_POLICY_SUB_NONE): "throw",
@@ -236,11 +237,20 @@ TABULAR_ACTION_NAMES_BY_POLICY_META = {
     (RL_POLICY_ACTION_RYU_AIR_TATSU, RL_POLICY_SUB_LK): "air-tatsu-lk",
     (RL_POLICY_ACTION_RYU_AIR_TATSU, RL_POLICY_SUB_MK): "air-tatsu-mk",
     (RL_POLICY_ACTION_RYU_AIR_TATSU, RL_POLICY_SUB_HK): "air-tatsu-hk",
-    (RL_POLICY_ACTION_JUMP_ATTACK_FORWARD, RL_POLICY_SUB_MK): "jump-forward-mk",
-    (RL_POLICY_ACTION_JUMP_ATTACK_FORWARD, RL_POLICY_SUB_HK): "jump-forward-hk",
-    (RL_POLICY_ACTION_JUMP_ATTACK_NEUTRAL, RL_POLICY_SUB_HK): "jump-neutral-hk",
-    (RL_POLICY_ACTION_JUMP_ATTACK_BACK, RL_POLICY_SUB_HK): "jump-back-hk",
 }
+TABULAR_ACTION_NAMES_BY_POLICY_META.update(
+    {(RL_POLICY_ACTION_STAND_NORMAL, sub_action): f"stand-{name}" for name, _, sub_action in RL_POLICY_BUTTONS}
+)
+TABULAR_ACTION_NAMES_BY_POLICY_META.update(
+    {(RL_POLICY_ACTION_CROUCH_NORMAL, sub_action): f"crouch-{name}" for name, _, sub_action in RL_POLICY_BUTTONS}
+)
+TABULAR_ACTION_NAMES_BY_POLICY_META.update(
+    {
+        (action_id, sub_action): f"jump-{direction}-{name}"
+        for direction, _, action_id in RL_POLICY_JUMP_DIRECTIONS
+        for name, _, sub_action in RL_POLICY_BUTTONS
+    }
+)
 
 DQN_FEATURE_NAMES = (
     "obs_abs_dx",
@@ -1756,22 +1766,9 @@ def maybe_send_action(
 
 
 def fixed_action_wire(policy: str) -> int | None:
-    return {
-        "forward": RL_MOVE_FORWARD,
-        "back": RL_MOVE_BACK,
-        "stand-lp": BTN_LP,
-        "stand-mp": BTN_MP,
-        "stand-hp": BTN_HP,
-        "stand-lk": BTN_LK,
-        "stand-mk": BTN_MK,
-        "stand-hk": BTN_HK,
-        "hp": BTN_HP,
-        "forward-hp": RL_MOVE_FORWARD | BTN_HP,
-        "crouch-lk": RL_MOVE_DOWN | BTN_LK,
-        "crouch-mk": RL_MOVE_DOWN | BTN_MK,
-        "crouch-hk": RL_MOVE_DOWN | BTN_HK,
-        "throw": RL_MOVE_FORWARD | BTN_LP | BTN_LK,
-    }.get(policy)
+    if policy == "hp":
+        return BTN_HP
+    return TABULAR_ACTION_WIRES.get(policy)
 
 
 def policy_action_meta(policy: str) -> tuple[int, int]:
@@ -1789,6 +1786,10 @@ def make_policy_action_frame(policy: str, action_wire: int, step: int = 0) -> Po
 
 
 def scripted_sequence(policy: str) -> tuple[int, ...] | None:
+    jump_sequence = JUMP_NORMAL_ACTION_SEQUENCES.get(policy)
+    if jump_sequence is not None:
+        return jump_sequence
+
     scripts = {
         "guard": (RL_MOVE_BACK,) * GUARD_MACRO_DECISION_STEPS,
         "guard-stand": (RL_MOVE_BACK,) * GUARD_MACRO_DECISION_STEPS,

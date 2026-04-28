@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Iterable
 
 from rl_probe_server import (
+    TABULAR_ACTION_NAMES,
     TABULAR_ACTION_NAMES_BY_POLICY_META,
     bucket_range,
     tabular_training_reward,
@@ -20,30 +21,7 @@ from rl_probe_server import (
 
 
 DX_BUCKETS = ("close", "mid", "far")
-DEFAULT_ACTIONS = (
-    "forward",
-    "back",
-    "guard-stand",
-    "guard-crouch",
-    "stand-lp",
-    "stand-mp",
-    "stand-hp",
-    "stand-lk",
-    "stand-mk",
-    "stand-hk",
-    "forward-hp",
-    "crouch-lk",
-    "crouch-mk",
-    "crouch-hk",
-    "fireball",
-    "throw",
-    "jump-forward-mk",
-    "jump-forward-hk",
-    "jump-neutral-hk",
-    "jump-back-hk",
-    "shoryuken-mp",
-    "tatsu-mk",
-)
+DEFAULT_ACTIONS = TABULAR_ACTION_NAMES
 RYU_CHARACTER_ID = 2
 ROUTINE_UNKNOWN = -1
 

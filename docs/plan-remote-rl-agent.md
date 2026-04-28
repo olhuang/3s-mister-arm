@@ -2451,6 +2451,7 @@ Tasks:
 - [x] Add `guard-stand`, `guard-crouch`, `crouch-mk`, `shoryuken-mp`, and `tatsu-mk` to the probe-side action set
 - [x] Split jump attacks into forward / neutral / back policy action IDs and add HK jump-kick probes
 - [x] Split stand/crouch normal policy action IDs and add standing LP/MP/LK/MK/HK plus crouching LK/MK/HK probes
+- [x] Expand probe/DQN action support to all standing, crouching, forward-jump, neutral-jump, and back-jump LP/MP/HP/LK/MK/HK basic normals
 - [ ] Expand reward features only after baseline reward is stable
 - [ ] Review whether `overlay_attack_event_finalized` / `overlay_attack_contact` / `overlay_attack_whiff` have consistent learner semantics across normals, specials, projectiles, throws, and multistage moves before promoting them beyond debug / auxiliary labels
 - [x] Run move-family validation passes with scripted policies such as `hp`, `throw`, `ryu-fireball`, `tatsu`, and `shoryuken`, then document which attack-outcome fields are trustworthy enough for learner use versus debug-only analysis
@@ -2499,14 +2500,14 @@ Implementation notes:
   - action schema v2 adds `requested_policy_action_id`, `requested_policy_sub_action_id`, `requested_policy_action_step`, `executed_policy_action_id`, `executed_policy_sub_action_id`, and `executed_policy_action_step` to transition rows; current tabular/DQN learners prefer these fields and fall back to old `executed_action_wire` when reading older logs
   - tabular inference now locks multi-step scripted actions such as `fireball` until the full input sequence has been emitted, preventing later q-table decisions from interrupting QCF+LP before the projectile can come out
   - jump attacks now use direction-specific policy action IDs:
-    - `jump-forward-mk` and `jump-forward-hk`: `jump_attack_forward` / `mk|hk`
-    - `jump-neutral-hk`: `jump_attack_neutral` / `hk`
-    - `jump-back-hk`: `jump_attack_back` / `hk`
+    - `jump-forward-lp`, `jump-forward-mp`, `jump-forward-hp`, `jump-forward-lk`, `jump-forward-mk`, and `jump-forward-hk`: `jump_attack_forward` / button strength
+    - `jump-neutral-lp`, `jump-neutral-mp`, `jump-neutral-hp`, `jump-neutral-lk`, `jump-neutral-mk`, and `jump-neutral-hk`: `jump_attack_neutral` / button strength
+    - `jump-back-lp`, `jump-back-mp`, `jump-back-hp`, `jump-back-lk`, `jump-back-mk`, and `jump-back-hk`: `jump_attack_back` / button strength
   - `jump-forward-mk` remains available as both a scripted probe policy and a tabular macro action: `up-forward -> up-forward -> up-forward+MK -> up-forward+MK -> neutral -> neutral`; transition credit maps the `up-forward+MK` wire phase back to the high-level `jump-forward-mk` bucket
   - the HK jump-kick probes use the same six-step shape with `HK` and their corresponding jump direction
   - stand and crouch normals now use stance-specific policy action IDs:
     - `stand-lp`, `stand-mp`, `stand-hp`, `stand-lk`, `stand-mk`, `stand-hk`: `stand_normal` / button strength
-    - `crouch-lk`, `crouch-mk`, `crouch-hk`: `crouch_normal` / button strength
+    - `crouch-lp`, `crouch-mp`, `crouch-hp`, `crouch-lk`, `crouch-mk`, `crouch-hk`: `crouch_normal` / button strength
   - the legacy scripted `hp` policy remains as an alias for `stand-hp`, but learner action attribution should use `stand-hp`
   - `shoryuken-mp` is available as a scripted probe policy and learner macro: `forward -> down -> down-forward -> down-forward+MP -> neutral -> neutral`, stamped as Ryu `Shoryuken` / `mp`
   - `tatsu-mk` is available as a scripted probe policy and learner macro: `down -> down-back -> back -> back+MK -> neutral -> neutral`, stamped as Ryu `Tatsumaki Senpukyaku` / `mk`
@@ -2599,7 +2600,7 @@ Implementation notes:
   - uses normalized numeric spacing/threat features: `obs_abs_dx`, `obs_abs_dy`, both fighters' front/back edge distances, `obs_opp_in_front`, and `obs_opp_routine_attack_state`
   - trains a small stdlib-only MLP with target-network DQN updates, so it does not require `numpy` / `torch` for first smoke tests
   - publishes `policy=dqn` actor manifests with `actions`, `epsilon`, `fallback_policy`, and serialized MLP weights under `dqn`
-  - `tools/rl_probe_server.py --policy dqn --model-dir <dir>` can hot-load those manifests and run DQN inference from same-frame OBS payloads, then reuse the existing macro/fixed action adapter for `fireball`, `guard-stand`, `guard-crouch`, stand/crouch normals, `jump-forward-mk`, `jump-forward-hk`, `jump-neutral-hk`, `jump-back-hk`, `shoryuken-mp`, and `tatsu-mk`
+  - `tools/rl_probe_server.py --policy dqn --model-dir <dir>` can hot-load those manifests and run DQN inference from same-frame OBS payloads, then reuse the existing macro/fixed action adapter for `fireball`, `guard-stand`, `guard-crouch`, all standing/crouching LP/MP/HP/LK/MK/HK normals, all forward/neutral/back jump LP/MP/HP/LK/MK/HK normals, `shoryuken-mp`, and `tatsu-mk`
   - `tools/compare_dqn_models.py` compares A/B/C DQN manifests on the same transition observations and prints overall, distance/threat-bucketed, attack-rate, Shoryuken-rate, selected-Q, and collapse-warning greedy action distributions
 - `docs/rl-policy-action-taxonomy.md` now records the first source-backed action registry:
   - universal actions use IDs below `1000`

@@ -2,6 +2,55 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-28: Expand Basic Normal Action Support And Train CPU-Demo DQN
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / all-normals CPU-demo DQN bootstrap
+
+Files changed:
+- `tools/rl_probe_server.py`
+- `tools/train_dqn_learner.py`
+- `tools/analyze_rl_transitions.py`
+- `tools/compare_dqn_models.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- support all standing, crouching, forward-jump, neutral-jump, and back-jump LP/MP/HP/LK/MK/HK basic normals in the probe-side action registry.
+- train a first CPU-demo DQN model that can choose defense, movement, throw, and all basic normals without enabling fireball / Shoryuken / Tatsumaki shortcuts.
+
+Implementation notes:
+- `tools/rl_probe_server.py` now generates normal action names from shared button and jump-direction tables.
+- direct fixed-wire support covers all standing and crouching normals; jump normals use the existing six-step macro shape: jump direction, jump direction, jump direction + button, jump direction + button, neutral, neutral.
+- policy metadata now maps all new crouch and jump normals to stance/direction-specific policy action IDs and button sub-actions.
+- `tools/train_dqn_learner.py` now derives generic attack-risk and jump-risk sets from `rl.TABULAR_ACTION_NAMES`, so newly registered normals automatically participate in `--reward-risk-profile all-attacks`.
+- `tools/analyze_rl_transitions.py` and `tools/compare_dqn_models.py` now consume the expanded registry instead of carrying stale hard-coded action lists.
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py tools/train_dqn_learner.py tools/analyze_rl_transitions.py tools/compare_dqn_models.py` passed.
+- action registry smoke printed `actions 39` and `missing_exec []`, confirming every registered action has either a fixed wire or scripted macro path.
+- one-step DQN smoke passed with the 35-action all-basic-normal subset against `logs/rl-transitions-cpu-demo-v1-4-3-3.ndjson`, publishing `/tmp/dqn-allnormals-smoke`.
+- full training command published `model/dqn-cpudemo-allnormals-v1` with:
+  - `experiences=89426`
+  - `actions=35`
+  - `guard_net=9737.6`
+  - `spacing_net=5623.4`
+  - `demo_attr=augment:533/3779`
+  - greedy top actions: `guard-stand 33.8%`, `stand-mk 20.6%`, `guard-crouch 19.7%`, `throw 13.0%`, `forward 12.5%`, `back 0.3%`
+- comparison on the CPU-demo tail showed `model/dqn-cpudemo-allnormals-v1` reduced attack rate from `37.7%` in `model/dqn-cpudemo-basic-defense-throw-v2` to `27.9%`, while adding `throw 16.3%` to the greedy tail distribution and keeping jump greed very low.
+
+Findings:
+- normal coverage from the existing CPU-demo log is good for standing normals and crouching normals, but sparse for jump normals.
+- normal actions with zero trainable samples in this log: `jump-forward-lp`, all neutral-jump normals, and all back-jump normals.
+- tiny jump coverage exists for `jump-forward-mp` (`3`), `jump-forward-hp` (`5`), `jump-forward-lk` (`1`), `jump-forward-mk` (`51`), and `jump-forward-hk` (`1`).
+- greedy evaluation selected jump normals only `12/5000` rows (`jump-neutral-mp`), so the all-normal model did not collapse into jump spam.
+- throw entered the greedy tail distribution (`814/5000`, `16.3%`), mostly at close/mid range, which is stronger than the prior basic-defense-throw v2 model where throw did not appear in greedy top actions.
+
+Follow-up:
+- live-test `model/dqn-cpudemo-allnormals-v1` before changing reward shaping again.
+- collect more CPU-demo or human-demo coverage if neutral/back jump normals should become real learner options; the existing CPU-demo log is not sufficient for those moves.
+- review whether `back` remains under-selected because far/passive guard shaping still makes guard safer than retreat.
+
 ## 2026-04-28: Document Ryu R1/R2 Mapping Source Trace
 
 Milestone:

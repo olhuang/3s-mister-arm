@@ -79,37 +79,10 @@ class GreedyDiagnostics:
         }
 
 
-ATTACK_RISK_ACTIONS = frozenset(
-    {
-        "stand-lp",
-        "stand-mp",
-        "stand-hp",
-        "stand-lk",
-        "stand-mk",
-        "stand-hk",
-        "forward-hp",
-        "crouch-lk",
-        "crouch-mk",
-        "crouch-hk",
-        "fireball",
-        "throw",
-        "jump-forward-mk",
-        "jump-forward-hk",
-        "jump-neutral-hk",
-        "jump-back-hk",
-        "shoryuken-mp",
-        "tatsu-mk",
-    }
-)
+NON_ATTACK_ACTIONS = frozenset({"forward", "back", "guard-stand", "guard-crouch"})
+ATTACK_RISK_ACTIONS = frozenset(action for action in rl.TABULAR_ACTION_NAMES if action not in NON_ATTACK_ACTIONS)
 SHORYUKEN_ACTION = "shoryuken-mp"
-JUMP_ATTACK_RISK_ACTIONS = frozenset(
-    {
-        "jump-forward-mk",
-        "jump-forward-hk",
-        "jump-neutral-hk",
-        "jump-back-hk",
-    }
-)
+JUMP_ATTACK_RISK_ACTIONS = frozenset(action for action in rl.TABULAR_ACTION_NAMES if action.startswith("jump-"))
 REWARD_RISK_PROFILES = ("none", "shoryuken-only", "all-attacks")
 DEMO_ATTRIBUTION_TRAINING_MODES = ("off", "augment", "replace-demo")
 GUARD_ACTIONS = frozenset({"guard-stand", "guard-crouch"})

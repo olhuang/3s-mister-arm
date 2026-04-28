@@ -12,28 +12,8 @@ import rl_probe_server as rl
 
 
 DX_BUCKETS = ("close", "mid", "far")
-ATTACK_ACTIONS = frozenset(
-    {
-        "stand-lp",
-        "stand-mp",
-        "stand-hp",
-        "stand-lk",
-        "stand-mk",
-        "stand-hk",
-        "forward-hp",
-        "crouch-lk",
-        "crouch-mk",
-        "crouch-hk",
-        "fireball",
-        "throw",
-        "jump-forward-mk",
-        "jump-forward-hk",
-        "jump-neutral-hk",
-        "jump-back-hk",
-        "shoryuken-mp",
-        "tatsu-mk",
-    }
-)
+NON_ATTACK_ACTIONS = frozenset({"forward", "back", "guard-stand", "guard-crouch"})
+ATTACK_ACTIONS = frozenset(action for action in rl.TABULAR_ACTION_NAMES if action not in NON_ATTACK_ACTIONS)
 
 
 def model_path(value: str) -> Path:

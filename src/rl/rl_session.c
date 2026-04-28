@@ -180,7 +180,33 @@ static const RLLocalFakeAction kLocalFakeAgentSequence[] = {
 #define RL_REMOTE_SEEN_CAP 32u
 #define RL_DECISION_LEDGER_CAP 128u
 #define RL_POLICY_ACTION_NEUTRAL 0u
+#define RL_POLICY_ACTION_WALK 1u
+#define RL_POLICY_ACTION_JUMP 3u
+#define RL_POLICY_ACTION_GUARD 4u
+#define RL_POLICY_ACTION_STAND_NORMAL 6u
+#define RL_POLICY_ACTION_COMMAND_NORMAL 7u
+#define RL_POLICY_ACTION_THROW 8u
+#define RL_POLICY_ACTION_JUMP_ATTACK_FORWARD 12u
+#define RL_POLICY_ACTION_JUMP_ATTACK_NEUTRAL 13u
+#define RL_POLICY_ACTION_JUMP_ATTACK_BACK 14u
+#define RL_POLICY_ACTION_CROUCH_NORMAL 15u
 #define RL_POLICY_SUB_ACTION_NONE 0u
+#define RL_POLICY_SUB_ACTION_LP 1u
+#define RL_POLICY_SUB_ACTION_MP 2u
+#define RL_POLICY_SUB_ACTION_HP 3u
+#define RL_POLICY_SUB_ACTION_LK 4u
+#define RL_POLICY_SUB_ACTION_MK 5u
+#define RL_POLICY_SUB_ACTION_HK 6u
+#define RL_POLICY_SUB_ACTION_FORWARD 13u
+#define RL_POLICY_SUB_ACTION_BACK 14u
+#define RL_POLICY_SUB_ACTION_NEUTRAL_DIRECTION 15u
+#define RL_POLICY_SUB_ACTION_UP_FORWARD 16u
+#define RL_POLICY_SUB_ACTION_UP_BACK 17u
+#define RL_POLICY_SUB_ACTION_DOWN_FORWARD 18u
+#define RL_POLICY_SUB_ACTION_DOWN_BACK 19u
+#define RL_POLICY_SUB_ACTION_STAND 20u
+#define RL_POLICY_SUB_ACTION_CROUCH 21u
+#define RL_HUMAN_DEMO_GUARD_THREAT_DX 144
 
 
 static u16 local_fake_action_index;
@@ -334,9 +360,14 @@ static bool RLSession_CanOverrideGameplayInput() {
            RLSession_IsRoundBattleActive();
 }
 
+static bool RLSession_HumanDemoEnabled() {
+    return RLSession_IsActive() && configuration.remote_rl_agent.control_source != NULL &&
+           SDL_strcmp(configuration.remote_rl_agent.control_source, "human-demo") == 0;
+}
+
 static bool RLSession_RemoteControlEnabled() {
     const RLNetState* net = RLNet_GetState();
-    return RLSession_IsActive() && net->enabled;
+    return RLSession_IsActive() && !RLSession_HumanDemoEnabled() && net->enabled;
 }
 
 static void RLSession_ClearRemoteQueue() {
@@ -509,6 +540,156 @@ static u16 RLSession_DecodeAttackBits(u16 action_wire) {
 
 static u16 RLSession_EncodeActionWire(u8 move_intent, u16 attack_bits) {
     return (u16)((move_intent & 0x000Fu) | (attack_bits & 0xFFF0u));
+}
+
+static u8 RLSession_DecodeMoveIntentFromSWKey(s16 player, u16 sw) {
+    const bool up = (sw & SWK_UP) != 0;
+    const bool down = (sw & SWK_DOWN) != 0;
+    const bool forward = (sw & RLSession_ForwardDirectionForPlayer(player)) != 0;
+    const bool back = (sw & RLSession_BackDirectionForPlayer(player)) != 0;
+
+    if (forward && back) {
+        if (up) {
+            return RL_MOVE_UP;
+        }
+        if (down) {
+            return RL_MOVE_DOWN;
+        }
+        return RL_MOVE_NEUTRAL;
+    }
+    if (up && forward) {
+        return RL_MOVE_UP_FORWARD;
+    }
+    if (up && back) {
+        return RL_MOVE_UP_BACK;
+    }
+    if (down && forward) {
+        return RL_MOVE_DOWN_FORWARD;
+    }
+    if (down && back) {
+        return RL_MOVE_DOWN_BACK;
+    }
+    if (up) {
+        return RL_MOVE_UP;
+    }
+    if (down) {
+        return RL_MOVE_DOWN;
+    }
+    if (forward) {
+        return RL_MOVE_FORWARD;
+    }
+    if (back) {
+        return RL_MOVE_BACK;
+    }
+    return RL_MOVE_NEUTRAL;
+}
+
+static u16 RLSession_FirstAttackSubAction(u16 attacks) {
+    if (attacks & SWK_WEST) {
+        return RL_POLICY_SUB_ACTION_LP;
+    }
+    if (attacks & SWK_NORTH) {
+        return RL_POLICY_SUB_ACTION_MP;
+    }
+    if (attacks & SWK_RIGHT_SHOULDER) {
+        return RL_POLICY_SUB_ACTION_HP;
+    }
+    if (attacks & SWK_SOUTH) {
+        return RL_POLICY_SUB_ACTION_LK;
+    }
+    if (attacks & SWK_EAST) {
+        return RL_POLICY_SUB_ACTION_MK;
+    }
+    if (attacks & SWK_RIGHT_TRIGGER) {
+        return RL_POLICY_SUB_ACTION_HK;
+    }
+    return RL_POLICY_SUB_ACTION_NONE;
+}
+
+static bool RLSession_MoveIntentIsCrouch(u8 move_intent) {
+    return move_intent == RL_MOVE_DOWN || move_intent == RL_MOVE_DOWN_BACK || move_intent == RL_MOVE_DOWN_FORWARD;
+}
+
+static void RLSession_DeriveHumanPolicyMeta(u8 move_intent,
+                                            u16 attack_bits,
+                                            const RLObservationV1* obs,
+                                            u16* policy_action_id,
+                                            u16* policy_sub_action_id) {
+    s32 abs_dx = plw[RLSession_OpponentPlayerIndex()].wu.position_x - plw[RLSession_AgentPlayerIndex()].wu.position_x;
+    const bool threat_guard =
+        obs != NULL && obs->valid && obs->opp_routine_attack_state &&
+        ((abs_dx < 0 ? -abs_dx : abs_dx) <= RL_HUMAN_DEMO_GUARD_THREAT_DX);
+    const u16 first_attack = RLSession_FirstAttackSubAction(attack_bits);
+
+    *policy_action_id = RL_POLICY_ACTION_NEUTRAL;
+    *policy_sub_action_id = RL_POLICY_SUB_ACTION_NONE;
+
+    if (attack_bits != 0) {
+        if ((attack_bits & SWK_WEST) && (attack_bits & SWK_SOUTH) &&
+            (move_intent == RL_MOVE_FORWARD || move_intent == RL_MOVE_BACK)) {
+            *policy_action_id = RL_POLICY_ACTION_THROW;
+            *policy_sub_action_id =
+                (move_intent == RL_MOVE_BACK) ? RL_POLICY_SUB_ACTION_BACK : RL_POLICY_SUB_ACTION_FORWARD;
+            return;
+        }
+        if (move_intent == RL_MOVE_UP_FORWARD || move_intent == RL_MOVE_UP || move_intent == RL_MOVE_UP_BACK) {
+            if (move_intent == RL_MOVE_UP_FORWARD) {
+                *policy_action_id = RL_POLICY_ACTION_JUMP_ATTACK_FORWARD;
+            } else if (move_intent == RL_MOVE_UP_BACK) {
+                *policy_action_id = RL_POLICY_ACTION_JUMP_ATTACK_BACK;
+            } else {
+                *policy_action_id = RL_POLICY_ACTION_JUMP_ATTACK_NEUTRAL;
+            }
+            *policy_sub_action_id = first_attack;
+            return;
+        }
+        if (RLSession_MoveIntentIsCrouch(move_intent)) {
+            *policy_action_id = RL_POLICY_ACTION_CROUCH_NORMAL;
+            *policy_sub_action_id = first_attack;
+            return;
+        }
+        if (move_intent == RL_MOVE_FORWARD && (attack_bits & SWK_RIGHT_SHOULDER)) {
+            *policy_action_id = RL_POLICY_ACTION_COMMAND_NORMAL;
+            *policy_sub_action_id = RL_POLICY_SUB_ACTION_HP;
+            return;
+        }
+        *policy_action_id = RL_POLICY_ACTION_STAND_NORMAL;
+        *policy_sub_action_id = first_attack;
+        return;
+    }
+
+    switch (move_intent) {
+    case RL_MOVE_FORWARD:
+        *policy_action_id = RL_POLICY_ACTION_WALK;
+        *policy_sub_action_id = RL_POLICY_SUB_ACTION_FORWARD;
+        break;
+    case RL_MOVE_BACK:
+        *policy_action_id = threat_guard ? RL_POLICY_ACTION_GUARD : RL_POLICY_ACTION_WALK;
+        *policy_sub_action_id = threat_guard ? RL_POLICY_SUB_ACTION_STAND : RL_POLICY_SUB_ACTION_BACK;
+        break;
+    case RL_MOVE_DOWN_BACK:
+        *policy_action_id = RL_POLICY_ACTION_GUARD;
+        *policy_sub_action_id = RL_POLICY_SUB_ACTION_CROUCH;
+        break;
+    case RL_MOVE_UP_FORWARD:
+        *policy_action_id = RL_POLICY_ACTION_JUMP;
+        *policy_sub_action_id = RL_POLICY_SUB_ACTION_UP_FORWARD;
+        break;
+    case RL_MOVE_UP_BACK:
+        *policy_action_id = RL_POLICY_ACTION_JUMP;
+        *policy_sub_action_id = RL_POLICY_SUB_ACTION_UP_BACK;
+        break;
+    case RL_MOVE_UP:
+        *policy_action_id = RL_POLICY_ACTION_JUMP;
+        *policy_sub_action_id = RL_POLICY_SUB_ACTION_NEUTRAL_DIRECTION;
+        break;
+    case RL_MOVE_DOWN_FORWARD:
+        *policy_action_id = RL_POLICY_ACTION_WALK;
+        *policy_sub_action_id = RL_POLICY_SUB_ACTION_FORWARD;
+        break;
+    default:
+        break;
+    }
 }
 
 
@@ -811,6 +992,7 @@ static int RLSession_FormatTransitionLogLine(const RLDecisionLedgerEntry* entry,
                         "\"obs_self_contact_reaction_state\":%u,\"obs_opp_contact_reaction_state\":%u,"
                         "\"final_self_hp\":%d,\"final_opp_hp\":%d,"
                         "\"model_version_executed\":%u,"
+                        "\"execution_source\":%u,"
                         "\"reward_accum\":%.3f,\"done\":%s,"
                         "\"terminal_reason\":\"%s\"}\n",
                         entry->run_id,
@@ -850,6 +1032,7 @@ static int RLSession_FormatTransitionLogLine(const RLDecisionLedgerEntry* entry,
                         entry->final_self_hp,
                         entry->final_opp_hp,
                         entry->model_version_executed,
+                        entry->execution_source,
                         (double)entry->reward_accum,
                         entry->done ? "true" : "false",
                         RLSession_TerminalReasonLabel(entry->terminal_reason));
@@ -1492,6 +1675,89 @@ static void RLSession_ApplyRemoteActionToBuffers() {
     remote_debug.frame_id++;
 }
 
+static void RLSession_RecordHumanDemoInputFromBuffers() {
+    RLDecisionLedgerEntry* ledger = NULL;
+    const RLObservationV1* obs = NULL;
+    const s16 agent = RLSession_AgentPlayerIndex();
+    const u16 sw = (agent == 0) ? p1sw_buff : p2sw_buff;
+    const u8 move_intent = RLSession_DecodeMoveIntentFromSWKey(agent, sw);
+    const u16 attack_bits = (u16)(sw & (u16)SWK_ATTACKS & 0xFFF0u);
+    const u16 action_wire = RLSession_EncodeActionWire(move_intent, attack_bits);
+    u16 policy_action_id = RL_POLICY_ACTION_NEUTRAL;
+    u16 policy_sub_action_id = RL_POLICY_SUB_ACTION_NONE;
+
+    if (!RLSession_CanOverrideGameplayInput()) {
+        RLSession_FinalizeRuntimeBeforeReset();
+        RLSession_ResetRemoteRuntime(false);
+        return;
+    }
+
+    RLSession_MaybeInitRemoteRuntime();
+    RLSession_ClearScheduledActionContext();
+    active_remote_action.valid = false;
+    obs = RLObservation_GetLatest();
+
+    RLSession_DeriveHumanPolicyMeta(move_intent, attack_bits, obs, &policy_action_id, &policy_sub_action_id);
+    action_context.last_executed_move_intent = move_intent;
+    action_context.last_executed_attack_bits = attack_bits;
+    action_context.next_scheduled_move_intent = RL_MOVE_NEUTRAL;
+    action_context.next_scheduled_attack_bits = 0;
+    action_context.frames_until_next_action = 255;
+    last_executed_action_wire = action_wire;
+    last_executed_policy_action_id = policy_action_id;
+    last_executed_policy_sub_action_id = policy_sub_action_id;
+    last_executed_policy_action_step = 0;
+    last_executed_model_version = remote_debug.model_version_current;
+
+    if (obs == NULL || !obs->valid || RLSession_IsTerminalObservation(obs) ||
+        (remote_debug.frame_id % RLSession_DecisionIntervalFrames()) != 0) {
+        remote_debug.frame_id++;
+        return;
+    }
+
+    ledger = RLSession_AllocLedgerEntry();
+    if (ledger == NULL) {
+        remote_debug.frame_id++;
+        return;
+    }
+
+    memset(ledger, 0, sizeof(*ledger));
+    ledger->valid = true;
+    ledger->was_executed = true;
+    ledger->run_id = remote_debug.run_id;
+    ledger->episode_id = remote_debug.episode_id;
+    ledger->decision_id = remote_debug.next_decision_id++;
+    ledger->round_num = Round_num;
+    ledger->start_self_hp = obs->self_hp;
+    ledger->start_opp_hp = obs->opp_hp;
+    ledger->final_self_hp = obs->self_hp;
+    ledger->final_opp_hp = obs->opp_hp;
+    ledger->agent_character_id = My_char[agent];
+    ledger->opponent_character_id = My_char[RLSession_OpponentPlayerIndex()];
+    ledger->obs_frame = remote_debug.frame_id;
+    ledger->target_frame = remote_debug.frame_id;
+    ledger->execution_frame_actual = remote_debug.frame_id;
+    ledger->requested_action_wire = action_wire;
+    ledger->executed_action_wire = action_wire;
+    ledger->requested_policy_action_id = policy_action_id;
+    ledger->requested_policy_sub_action_id = policy_sub_action_id;
+    ledger->requested_policy_action_step = 0;
+    ledger->executed_policy_action_id = policy_action_id;
+    ledger->executed_policy_sub_action_id = policy_sub_action_id;
+    ledger->executed_policy_action_step = 0;
+    ledger->executed_move_intent = move_intent;
+    ledger->executed_attack_bits = attack_bits;
+    ledger->execution_source = RL_EXECUTION_SOURCE_HUMAN_DEMO;
+    ledger->model_version_expected = remote_debug.model_version_current;
+    ledger->model_version_requested = remote_debug.model_version_current;
+    ledger->model_version_executed = remote_debug.model_version_current;
+    ledger->terminal_reason = 3;
+    RLSession_CaptureObservationSpacing(ledger, obs);
+    RLSession_SetActiveLedgerEntry(ledger);
+    remote_debug.executed_count++;
+    remote_debug.frame_id++;
+}
+
 RLRemoteActionSubmitResult RLSession_SubmitRemoteAction(const RLActionPacket* packet) {
     RLExpectedRemoteDecision* expected = NULL;
     RLQueuedRemoteAction* queued = NULL;
@@ -1650,6 +1916,10 @@ bool RLSession_SendRemoteObservationIfDue() {
 }
 
 void RLSession_ApplyInputOverrideToBuffers() {
+    if (RLSession_HumanDemoEnabled()) {
+        RLSession_RecordHumanDemoInputFromBuffers();
+        return;
+    }
     RLSession_ApplyScriptedMovementToBuffers();
     if (RLSession_RemoteControlEnabled()) {
         RLSession_ApplyRemoteActionToBuffers();

@@ -118,6 +118,7 @@ Notes:
 - `P0` means RL agent is disabled.
 - `P1C` / `P2C` mean RL routing is active for player 1 / player 2 and the opponent side is still CPU-controlled.
 - `P1H` / `P2H` mean RL routing is active for player 1 / player 2 and the opponent side is routed through human input.
+- `P1D` / `P2D` mean human-demo recording is active for player 1 / player 2. The player input is not overwritten; it is logged as RL transition data.
 - When `rl-opponent-mode = human` and `rl-network = on`, `P1H` / `P2H` use the same remote-policy path as `P1C` / `P2C`.
 - When `rl-opponent-mode = human` and `rl-network = off`, the current scripted validation movement is appended as `F`, `B`, `JF`, or `DB`.
 
@@ -127,6 +128,8 @@ Quick mode matrix:
 - `P2C`: RL controls player 2, opponent is CPU, remote policy path if `rl-network = on`, local fake-agent fallback if `rl-network = off`
 - `P1H`: RL controls player 1, opponent is human, remote policy path if `rl-network = on`, scripted movement helper if `rl-network = off`
 - `P2H`: RL controls player 2, opponent is human, remote policy path if `rl-network = on`, scripted movement helper if `rl-network = off`
+- `P1D`: player 1 is human-controlled and recorded as RL demonstration data; the opponent routing still follows `rl-opponent-mode`
+- `P2D`: player 2 is human-controlled and recorded as RL demonstration data; the opponent routing still follows `rl-opponent-mode`
 
 Recommended spot checks:
 
@@ -145,6 +148,11 @@ Recommended spot checks:
    - `rl-network = off`
    - use `P1H:F/B/JF/DB` or `P2H:F/B/JF/DB`
    - confirm the relative movement label matches the actual remapped direction after side switches
+4. Human-demo collection:
+   - `rl-control-source = human-demo`
+   - `rl-opponent-mode = cpu`
+   - use `P1D` or `P2D`
+   - confirm the human-controlled side accepts local input, `EX`/transition counters rise, and the log includes `execution_source = 4`
 
 ### `rl-debug-view`
 
@@ -223,6 +231,26 @@ Notes:
 - `human` keeps the non-agent side on player-input routing.
 - With `rl-network = on`, the RL-controlled side still uses remote policy inference.
 - With `rl-network = off`, the RL-controlled side falls back to the older scripted-movement validation helper.
+- Changes take effect on the next wrapper `Restart`; they do not hot-switch the currently running match.
+
+### `rl-control-source`
+
+Controls whether the RL side is driven by the remote policy path or by local human input recorded as demonstration data.
+
+Possible values:
+- `remote`
+- `human-demo`
+
+Default:
+- `remote`
+
+Notes:
+- `remote` preserves the existing behavior: `rl-network = on` uses remote policy inference, and `rl-network = off` uses the local fake-agent validation fallback.
+- `human-demo` does not override `p1sw_buff` / `p2sw_buff`. The selected `rl-player` side remains human-controlled and its input is converted into transition metadata.
+- In `human-demo`, transition rows are tagged with `execution_source = 4`. `requested_*` and `executed_*` action fields are identical because the action was performed directly by the player.
+- With `rl-network = on`, the MiSTer still handshakes with the probe server and can upload transition batches, but it does not send OBS/action requests for remote inference.
+- With `rl-network = off`, transitions are still written to the local MiSTer `logs/rl-transitions.ndjson` file.
+- The first high-level action mapper is heuristic: down-back without attack is `guard-crouch`; back without attack becomes `guard-stand` only when the latest observation sees opponent attack state at short/mid distance, otherwise it is `back`.
 - Changes take effect on the next wrapper `Restart`; they do not hot-switch the currently running match.
 
 ### `rl-movement`

@@ -135,6 +135,7 @@ static const ConfigEntry default_entries[] = {
     { .key = CFG_KEY_AI_ADAPT_BAIT_TRIGGER_LOW, .type = CFG_STRING, .value.s = DEFAULT_AI_ADAPT_BAIT_TRIGGER_LOW },
     { .key = CFG_KEY_AI_ADAPT_BAIT_TRIGGER_REPEAT, .type = CFG_STRING, .value.s = DEFAULT_AI_ADAPT_BAIT_TRIGGER_REPEAT },
     { .key = CFG_KEY_RL_NETWORK, .type = CFG_STRING, .value.s = "off" },
+    { .key = CFG_KEY_RL_CONTROL_SOURCE, .type = CFG_STRING, .value.s = "remote" },
     { .key = CFG_KEY_RL_AGENT_OBS_PORT, .type = CFG_INT, .value.i = DEFAULT_RL_AGENT_OBS_PORT },
     { .key = CFG_KEY_RL_AGENT_ACTION_PORT, .type = CFG_INT, .value.i = DEFAULT_RL_AGENT_ACTION_PORT },
     { .key = CFG_KEY_RL_AGENT_DELAY_FRAMES, .type = CFG_INT, .value.i = DEFAULT_RL_AGENT_DELAY_FRAMES },

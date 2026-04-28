@@ -41,6 +41,7 @@ typedef enum RLExecutionSource {
     RL_EXECUTION_SOURCE_REMOTE = 1,
     RL_EXECUTION_SOURCE_REPEATED_LAST_ACTION = 2,
     RL_EXECUTION_SOURCE_NEUTRAL_FALLBACK = 3,
+    RL_EXECUTION_SOURCE_HUMAN_DEMO = 4,
 } RLExecutionSource;
 
 typedef struct RLRemoteDebugState {

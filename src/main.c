@@ -91,6 +91,7 @@ Configuration configuration = {
             .network_enabled = false,
             .player = 1,
             .human_opponent = false,
+            .control_source = "remote",
             .test_movement = 0,
             .remote_ip = NULL,
             .obs_port = 37330,
@@ -215,6 +216,9 @@ static void apply_remote_rl_config_file_values() {
         rl->network_enabled = value != NULL &&
                               (SDL_strcmp(value, "on") == 0 || SDL_strcmp(value, "true") == 0 ||
                                SDL_strcmp(value, "1") == 0);
+    }
+    if (Config_HasExplicitKey(CFG_KEY_RL_CONTROL_SOURCE)) {
+        rl->control_source = Config_GetString(CFG_KEY_RL_CONTROL_SOURCE);
     }
     if (rl->remote_ip == NULL && Config_HasExplicitKey(CFG_KEY_RL_AGENT_REMOTE_IP)) {
         rl->remote_ip = Config_GetString(CFG_KEY_RL_AGENT_REMOTE_IP);

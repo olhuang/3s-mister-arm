@@ -29,6 +29,7 @@ typedef struct RemoteRLAgentConfiguration {
     bool network_enabled;
     int player;
     bool human_opponent;
+    const char* control_source;
     int test_movement;
     const char* remote_ip;
     int obs_port;

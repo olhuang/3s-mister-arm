@@ -82,6 +82,10 @@ static void load_remote_rl_agent_config(Configuration* configuration) {
                                SDL_strcmp(value, "1") == 0);
     }
 
+    if (Config_HasExplicitKey(CFG_KEY_RL_CONTROL_SOURCE)) {
+        rl->control_source = Config_GetString(CFG_KEY_RL_CONTROL_SOURCE);
+    }
+
     if (Config_HasExplicitKey(CFG_KEY_RL_AGENT_REMOTE_IP)) {
         rl->remote_ip = Config_GetString(CFG_KEY_RL_AGENT_REMOTE_IP);
     }
@@ -181,6 +185,11 @@ static void verify_configuration(Configuration* configuration) {
     }
     if (configuration->remote_rl_agent.player != 1 && configuration->remote_rl_agent.player != 2) {
         error_out_with_code("--rl-player must be 1 or 2.", EXIT_CODE_RUNTIME_ERROR);
+    }
+    if (configuration->remote_rl_agent.control_source != NULL &&
+        SDL_strcmp(configuration->remote_rl_agent.control_source, "remote") != 0 &&
+        SDL_strcmp(configuration->remote_rl_agent.control_source, "human-demo") != 0) {
+        error_out_with_code("--rl-control-source must be remote or human-demo.", EXIT_CODE_RUNTIME_ERROR);
     }
     if (configuration->remote_rl_agent.test_movement < 0 || configuration->remote_rl_agent.test_movement > 3) {
         error_out_with_code("--rl-movement must be between 0 and 3.", EXIT_CODE_RUNTIME_ERROR);
@@ -291,6 +300,13 @@ void read_args(int argc, const char* argv[], Configuration* configuration) {
                     NULL,
                     0,
                     0),
+        OPT_STRING(0,
+                   "rl-control-source",
+                   &configuration->remote_rl_agent.control_source,
+                   "RL control source: remote or human-demo.",
+                   NULL,
+                   0,
+                   0),
         OPT_BOOLEAN(0,
                     "rl-opponent-human",
                     &configuration->remote_rl_agent.human_opponent,

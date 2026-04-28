@@ -2,6 +2,53 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-28: Add Human-Demo Transition Recording Mode
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / human-demo bootstrapping data collection
+
+Files changed:
+- `src/configuration.h`
+- `src/args.c`
+- `src/main.c`
+- `src/port/config/config.h`
+- `src/port/config/config.c`
+- `src/port/sdl/sdl_app.c`
+- `src/rl/rl_session.h`
+- `src/rl/rl_session.c`
+- `tools/rl_probe_server.py`
+- `docs/config.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- allow a human to control the RL-selected side against CPU while exporting learner-ingestible transition rows.
+- collect cleaner examples of guard/back/forward/spacing behavior than the current tabular/DQN policies produce.
+- keep the existing remote policy path unchanged for normal `remote` control-source runs.
+
+Implementation notes:
+- added `rl-control-source = remote|human-demo` and `--rl-control-source`.
+- `remote` is the default and preserves current remote/tabular/DQN behavior.
+- `human-demo` skips all RL input overrides and records the selected `rl-player` side's actual `p1sw_buff` / `p2sw_buff` input at the usual decision cadence.
+- human-demo rows set `execution_source = 4`, with requested and executed policy metadata equal because the player action is already local.
+- the first human input mapper converts raw inputs into the current high-level action taxonomy:
+  - `forward` / `back` for plain walk inputs
+  - `guard-stand` for back-only input when latest opponent routine attack state is active within short/mid range
+  - `guard-crouch` for down-back without attack
+  - stand/crouch normals, jump attacks, throws, and forward+HP command-normal from button/direction combinations
+- with `rl-network = on`, the UDP hello/transition-batch path can still upload completed episodes, but human-demo does not send OBS/action inference packets.
+- overlay labels show `P1D` / `P2D` for human-demo mode.
+- `learner_replay_row()` now preserves `requested_action_wire` and `execution_source` so later tools can filter human-demo versus remote-agent rows.
+
+Validation:
+- `git diff --check` passed.
+- `python3 -m py_compile tools/rl_probe_server.py` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed and created `build/mister-telemetry-package`.
+
+Follow-up:
+- define replay-buffer mixing rules for human-demo episodes versus remote-agent episodes.
+- validate the first back-vs-guard heuristic against a short human-vs-CPU collection log and adjust labels if it over-tags retreat as guard.
+
 ## 2026-04-28: Add DQN Spacing Reward Shaping
 
 Milestone:

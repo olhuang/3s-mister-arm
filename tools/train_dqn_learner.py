@@ -112,6 +112,7 @@ JUMP_ATTACK_RISK_ACTIONS = frozenset(
 )
 REWARD_RISK_PROFILES = ("none", "shoryuken-only", "all-attacks")
 GUARD_ACTIONS = frozenset({"guard-stand", "guard-crouch"})
+MOVEMENT_SPACING_ACTIONS = frozenset({"forward", "back"})
 
 
 @dataclass(frozen=True)
@@ -206,6 +207,55 @@ class RewardGuardStats:
         }
 
 
+@dataclass(frozen=True)
+class RewardSpacingConfig:
+    target_min_dx: int
+    target_max_dx: int
+    improve_bonus: float
+    worsen_cost: float
+    maintain_bonus: float
+    threat_back_bonus: float
+
+
+@dataclass
+class RewardSpacingStats:
+    improve_events: int = 0
+    worsen_events: int = 0
+    maintain_events: int = 0
+    threat_back_events: int = 0
+    improve_bonus_total: float = 0.0
+    worsen_cost_total: float = 0.0
+    maintain_bonus_total: float = 0.0
+    threat_back_bonus_total: float = 0.0
+
+    @property
+    def total_bonus(self) -> float:
+        return self.improve_bonus_total + self.maintain_bonus_total + self.threat_back_bonus_total
+
+    @property
+    def total_cost(self) -> float:
+        return self.worsen_cost_total
+
+    @property
+    def net_adjustment(self) -> float:
+        return self.total_bonus - self.total_cost
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "improve_events": self.improve_events,
+            "worsen_events": self.worsen_events,
+            "maintain_events": self.maintain_events,
+            "threat_back_events": self.threat_back_events,
+            "improve_bonus_total": self.improve_bonus_total,
+            "worsen_cost_total": self.worsen_cost_total,
+            "maintain_bonus_total": self.maintain_bonus_total,
+            "threat_back_bonus_total": self.threat_back_bonus_total,
+            "total_bonus": self.total_bonus,
+            "total_cost": self.total_cost,
+            "net_adjustment": self.net_adjustment,
+        }
+
+
 def read_transition_rows(paths: list[str], limit: int) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     for path in paths:
@@ -270,6 +320,24 @@ def is_terminal_win(row: dict[str, object]) -> bool:
         and int_field(row, "final_opp_hp") <= 0
         and int_field(row, "final_self_hp") > 0
     )
+
+
+def dx_distance_to_target_band(dx: int, min_dx: int, max_dx: int) -> int:
+    if dx < min_dx:
+        return min_dx - dx
+    if dx > max_dx:
+        return dx - max_dx
+    return 0
+
+
+def next_decision_boundary_row(
+    episode_rows: list[dict[str, object]],
+    row_index: int,
+) -> tuple[int, dict[str, object]] | None:
+    for next_index, lookahead_row in enumerate(episode_rows[row_index + 1 :], start=row_index + 1):
+        if is_action_start(lookahead_row) or bool(lookahead_row.get("done", False)):
+            return next_index, lookahead_row
+    return None
 
 
 def reward_risk_cost(
@@ -366,6 +434,69 @@ def reward_guard_adjustment(
     return adjustment
 
 
+def reward_spacing_adjustment(
+    episode_rows: list[dict[str, object]],
+    row_index: int,
+    action_name: str,
+    config: RewardSpacingConfig,
+    stats: RewardSpacingStats,
+) -> float:
+    row = episode_rows[row_index]
+    if action_name not in MOVEMENT_SPACING_ACTIONS or not is_action_start(row):
+        return 0.0
+    if (
+        config.improve_bonus <= 0.0
+        and config.worsen_cost <= 0.0
+        and config.maintain_bonus <= 0.0
+        and config.threat_back_bonus <= 0.0
+    ):
+        return 0.0
+
+    next_boundary = next_decision_boundary_row(episode_rows, row_index)
+    if next_boundary is None:
+        return 0.0
+    next_index, next_row = next_boundary
+
+    current_dx = int_field(row, "obs_abs_dx")
+    next_dx = int_field(next_row, "obs_abs_dx")
+    current_distance = dx_distance_to_target_band(current_dx, config.target_min_dx, config.target_max_dx)
+    next_distance = dx_distance_to_target_band(next_dx, config.target_min_dx, config.target_max_dx)
+    current_in_target = current_distance == 0
+    next_in_target = next_distance == 0
+    window_rows = episode_rows[row_index : next_index + 1]
+    self_damage = sum(int_field(lookahead_row, "delta_self_hp") for lookahead_row in window_rows)
+    clean_spacing_window = self_damage == 0
+    adjustment = 0.0
+
+    if clean_spacing_window and config.improve_bonus > 0.0 and next_distance < current_distance:
+        adjustment += config.improve_bonus
+        stats.improve_events += 1
+        stats.improve_bonus_total += config.improve_bonus
+    elif clean_spacing_window and config.maintain_bonus > 0.0 and current_in_target and next_in_target:
+        adjustment += config.maintain_bonus
+        stats.maintain_events += 1
+        stats.maintain_bonus_total += config.maintain_bonus
+    elif clean_spacing_window and config.worsen_cost > 0.0 and next_distance > current_distance:
+        adjustment -= config.worsen_cost
+        stats.worsen_events += 1
+        stats.worsen_cost_total += config.worsen_cost
+
+    opponent_attacking = int_field(row, "obs_opp_routine_attack_state") != 0
+    if (
+        clean_spacing_window
+        and config.threat_back_bonus > 0.0
+        and action_name == "back"
+        and opponent_attacking
+        and current_dx < config.target_min_dx
+        and next_dx > current_dx
+    ):
+        adjustment += config.threat_back_bonus
+        stats.threat_back_events += 1
+        stats.threat_back_bonus_total += config.threat_back_bonus
+
+    return adjustment
+
+
 def add_delayed_reward(
     experiences: list[Experience],
     exp_index: int | None,
@@ -398,6 +529,7 @@ def build_experiences(
     reward_scale: float,
     reward_risk_config: RewardRiskConfig,
     reward_guard_config: RewardGuardConfig,
+    reward_spacing_config: RewardSpacingConfig,
 ) -> tuple[
     list[Experience],
     dict[str, int],
@@ -407,6 +539,7 @@ def build_experiences(
     BuildDiagnostics,
     RewardRiskStats,
     RewardGuardStats,
+    RewardSpacingStats,
 ]:
     action_to_index = {action: index for index, action in enumerate(actions)}
     by_episode: dict[tuple[int, int], list[dict[str, object]]] = collections.defaultdict(list)
@@ -421,6 +554,7 @@ def build_experiences(
     build_stats = BuildDiagnostics()
     risk_stats = RewardRiskStats()
     guard_stats = RewardGuardStats()
+    spacing_stats = RewardSpacingStats()
 
     for episode_rows in by_episode.values():
         episode_rows.sort(key=row_order_key)
@@ -438,7 +572,12 @@ def build_experiences(
                 if action_name is not None
                 else 0.0
             )
-            reward = (rl.tabular_training_reward(row) - risk_cost + guard_adjustment) * reward_scale
+            spacing_adjustment = (
+                reward_spacing_adjustment(episode_rows, index, action_name, reward_spacing_config, spacing_stats)
+                if action_name is not None
+                else 0.0
+            )
+            reward = (rl.tabular_training_reward(row) - risk_cost + guard_adjustment + spacing_adjustment) * reward_scale
             if action_name is None:
                 if reward != 0.0:
                     if add_delayed_reward(experiences, last_exp_index, reward, actions, action_rewards):
@@ -498,6 +637,7 @@ def build_experiences(
         build_stats,
         risk_stats,
         guard_stats,
+        spacing_stats,
     )
 
 
@@ -521,6 +661,19 @@ def reward_guard_config_from_args(args: argparse.Namespace) -> RewardGuardConfig
         threat_max_dx=max(0, int(args.reward_guard_threat_max_dx)),
         passive_guard_cost=max(0.0, float(args.reward_passive_guard_cost)),
         far_guard_cost=max(0.0, float(args.reward_far_guard_cost)),
+    )
+
+
+def reward_spacing_config_from_args(args: argparse.Namespace) -> RewardSpacingConfig:
+    target_min_dx = max(0, int(args.reward_spacing_target_min_dx))
+    target_max_dx = max(target_min_dx, int(args.reward_spacing_target_max_dx))
+    return RewardSpacingConfig(
+        target_min_dx=target_min_dx,
+        target_max_dx=target_max_dx,
+        improve_bonus=max(0.0, float(args.reward_spacing_improve_bonus)),
+        worsen_cost=max(0.0, float(args.reward_spacing_worsen_cost)),
+        maintain_bonus=max(0.0, float(args.reward_spacing_maintain_bonus)),
+        threat_back_bonus=max(0.0, float(args.reward_spacing_threat_back_bonus)),
     )
 
 
@@ -946,6 +1099,42 @@ def main() -> None:
         default=0.0,
         help="Positive raw reward cost subtracted from guard starts with obs_abs_dx above --reward-guard-threat-max-dx",
     )
+    parser.add_argument(
+        "--reward-spacing-target-min-dx",
+        type=int,
+        default=50,
+        help="Minimum obs_abs_dx for the preferred spacing band used by movement reward shaping",
+    )
+    parser.add_argument(
+        "--reward-spacing-target-max-dx",
+        type=int,
+        default=120,
+        help="Maximum obs_abs_dx for the preferred spacing band used by movement reward shaping",
+    )
+    parser.add_argument(
+        "--reward-spacing-improve-bonus",
+        type=float,
+        default=0.0,
+        help="Positive raw reward bonus when forward/back moves obs_abs_dx closer to the preferred spacing band",
+    )
+    parser.add_argument(
+        "--reward-spacing-worsen-cost",
+        type=float,
+        default=0.0,
+        help="Positive raw reward cost when forward/back moves obs_abs_dx farther from the preferred spacing band",
+    )
+    parser.add_argument(
+        "--reward-spacing-maintain-bonus",
+        type=float,
+        default=0.0,
+        help="Positive raw reward bonus when forward/back keeps obs_abs_dx inside the preferred spacing band",
+    )
+    parser.add_argument(
+        "--reward-spacing-threat-back-bonus",
+        type=float,
+        default=0.0,
+        help="Additional positive raw reward bonus when back increases close spacing while the opponent is attacking",
+    )
     parser.add_argument("--target-sync-steps", type=int, default=200, help="Steps between target-network syncs")
     parser.add_argument("--epsilon", type=float, default=0.05, help="Exploration probability stamped into the published actor")
     parser.add_argument(
@@ -975,6 +1164,7 @@ def main() -> None:
     )
     reward_risk_config = reward_risk_config_from_args(args)
     reward_guard_config = reward_guard_config_from_args(args)
+    reward_spacing_config = reward_spacing_config_from_args(args)
     (
         experiences,
         action_counts,
@@ -984,12 +1174,14 @@ def main() -> None:
         build_stats,
         reward_risk_stats,
         reward_guard_stats,
+        reward_spacing_stats,
     ) = build_experiences(
         rows,
         actions,
         args.reward_scale,
         reward_risk_config,
         reward_guard_config,
+        reward_spacing_config,
     )
     if not experiences:
         raise SystemExit("No DQN experiences built from transition logs")
@@ -1008,16 +1200,14 @@ def main() -> None:
     )
     greedy_diag = evaluate_greedy_actions(layers, experiences, actions, args.eval_limit)
     version = next_model_version(args.model_dir, args.model_version)
-    reward_has_risk = reward_risk_config.profile != "none"
-    reward_has_guard = reward_guard_stats.net_adjustment != 0.0
-    if reward_has_risk and reward_has_guard:
-        reward_source = "hp-delta+risk-cost+guard-shaping"
-    elif reward_has_risk:
-        reward_source = "hp-delta+risk-cost"
-    elif reward_has_guard:
-        reward_source = "hp-delta+guard-shaping"
-    else:
-        reward_source = "hp-delta"
+    reward_sources = ["hp-delta"]
+    if reward_risk_config.profile != "none":
+        reward_sources.append("risk-cost")
+    if reward_guard_stats.net_adjustment != 0.0:
+        reward_sources.append("guard-shaping")
+    if reward_spacing_stats.net_adjustment != 0.0:
+        reward_sources.append("spacing-shaping")
+    reward_source = "+".join(reward_sources)
     metadata = {
         "transition_logs": args.transition_logs,
         "rows_read": len(rows),
@@ -1049,6 +1239,13 @@ def main() -> None:
         "reward_passive_guard_cost": reward_guard_config.passive_guard_cost,
         "reward_far_guard_cost": reward_guard_config.far_guard_cost,
         "reward_guard_stats": reward_guard_stats.as_metadata(),
+        "reward_spacing_target_min_dx": reward_spacing_config.target_min_dx,
+        "reward_spacing_target_max_dx": reward_spacing_config.target_max_dx,
+        "reward_spacing_improve_bonus": reward_spacing_config.improve_bonus,
+        "reward_spacing_worsen_cost": reward_spacing_config.worsen_cost,
+        "reward_spacing_maintain_bonus": reward_spacing_config.maintain_bonus,
+        "reward_spacing_threat_back_bonus": reward_spacing_config.threat_back_bonus,
+        "reward_spacing_stats": reward_spacing_stats.as_metadata(),
         "steps": max(1, args.steps),
         "batch_size": max(1, args.batch_size),
         "gamma": min(0.999, max(0.0, args.gamma)),
@@ -1086,6 +1283,9 @@ def main() -> None:
         f"guard_bonus={reward_guard_stats.total_bonus:.1f} "
         f"guard_cost={reward_guard_stats.total_cost:.1f} "
         f"guard_net={reward_guard_stats.net_adjustment:.1f} "
+        f"spacing_bonus={reward_spacing_stats.total_bonus:.1f} "
+        f"spacing_cost={reward_spacing_stats.total_cost:.1f} "
+        f"spacing_net={reward_spacing_stats.net_adjustment:.1f} "
         f"loss={train_stats['last_loss']:.6f} avg_loss={train_stats['avg_loss']:.6f} "
         f"included={build_stats.included_action_rows} excluded={build_stats.excluded_action_rows} "
         f"cont={build_stats.macro_continuation_rows} "
@@ -1123,6 +1323,16 @@ def main() -> None:
         f"passive:{reward_guard_stats.passive_guard_cost_events}/{reward_guard_stats.passive_guard_cost_total:.1f} "
         f"far:{reward_guard_stats.far_guard_cost_events}/{reward_guard_stats.far_guard_cost_total:.1f} "
         f"net:{reward_guard_stats.net_adjustment:.1f}",
+        flush=True,
+    )
+    print(
+        "DQN diagnostics "
+        f"spacing_shape=target:{reward_spacing_config.target_min_dx}-{reward_spacing_config.target_max_dx} "
+        f"improve:{reward_spacing_stats.improve_events}/{reward_spacing_stats.improve_bonus_total:.1f} "
+        f"maintain:{reward_spacing_stats.maintain_events}/{reward_spacing_stats.maintain_bonus_total:.1f} "
+        f"worsen:{reward_spacing_stats.worsen_events}/{reward_spacing_stats.worsen_cost_total:.1f} "
+        f"threat_back:{reward_spacing_stats.threat_back_events}/{reward_spacing_stats.threat_back_bonus_total:.1f} "
+        f"net:{reward_spacing_stats.net_adjustment:.1f}",
         flush=True,
     )
     print(

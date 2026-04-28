@@ -2,6 +2,51 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-28: Add DQN Spacing Reward Shaping
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / Phase 1 basic-action DQN reward shaping
+
+Files changed:
+- `tools/train_dqn_learner.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- give `forward` and `back` immediate offline DQN reward signal when they improve spacing toward a configured target band.
+- keep the change local to offline DQN reward shaping so live tabular/DQN action execution, C-side transition schema, and current probe-server macros do not change.
+- defer walk macros and finer distance buckets until the spacing-shaping A/B result shows whether movement credit alone helps.
+
+Implementation notes:
+- added spacing-shaping CLI knobs:
+  - `--reward-spacing-target-min-dx`
+  - `--reward-spacing-target-max-dx`
+  - `--reward-spacing-improve-bonus`
+  - `--reward-spacing-worsen-cost`
+  - `--reward-spacing-maintain-bonus`
+  - `--reward-spacing-threat-back-bonus`
+- spacing shaping applies only to `forward` / `back` action starts (`executed_policy_action_step == 0`).
+- the trainer compares the action-start `obs_abs_dx` against the next decision boundary row and measures distance to the configured target band.
+- clean movement that moves closer to the target band can receive an improve bonus; clean movement that moves farther away can receive a worsen cost; clean movement that stays inside the band can receive a maintain bonus.
+- `back` can receive an extra close-range threat bonus when the opponent is already in the validated attack routine and the next decision boundary increases `obs_abs_dx`.
+- all spacing adjustments require a no-self-damage movement window; if movement gets punished, natural HP-delta loss remains the primary signal.
+- trainer metadata records spacing config and `reward_spacing_stats`; stdout prints `spacing_bonus`, `spacing_cost`, `spacing_net`, and `DQN diagnostics spacing_shape=...`.
+
+Validation:
+- `python3 -m py_compile tools/train_dqn_learner.py` passed.
+- `python3 tools/train_dqn_learner.py --help | rg "reward-spacing"` showed all six new spacing-shaping CLI flags.
+- spacing-shaping smoke passed:
+  - `python3 tools/train_dqn_learner.py logs/rl-transitions-basic-v1-cpu-lv4-4-3-3.ndjson --model-dir /tmp/rl-dqn-spacing-smoke --model-version 1 --limit 7000 --drop-initial-episodes-per-run 3 --steps 5 --batch-size 16 --hidden-sizes 16 --log-interval 0 --eval-limit 500 --actions forward,back,guard-stand,guard-crouch,stand-mk,crouch-mk,jump-forward-mk --reward-risk-profile all-attacks --reward-risk-window-decisions 15 --reward-attack-no-damage-cost 1.0 --reward-attack-punished-cost 2.0 --reward-jump-attack-no-damage-extra-cost 2.0 --reward-jump-attack-punished-extra-cost 2.0 --reward-guard-success-bonus 2.0 --reward-guard-success-window-decisions 15 --reward-guard-threat-max-dx 144 --reward-passive-guard-cost 0.5 --reward-far-guard-cost 0.5 --reward-spacing-target-min-dx 50 --reward-spacing-target-max-dx 120 --reward-spacing-improve-bonus 0.5 --reward-spacing-worsen-cost 0.3 --reward-spacing-maintain-bonus 0.2 --reward-spacing-threat-back-bonus 0.3`
+  - published `rows=5061 raw_rows=7000 drop_ep=3/1939`, `experiences=599`, `spacing_bonus=21.6`, `spacing_cost=5.7`, `spacing_net=15.9`.
+  - printed `DQN diagnostics spacing_shape=target:50-120 improve:27/13.5 maintain:36/7.2 worsen:19/5.7 threat_back:3/0.9 net:15.9`, confirming the spacing reward fired and was accounted separately from guard/risk shaping.
+  - the five-step smoke still collapsed to `crouch-mk`; this is only a wiring smoke, not an offline quality comparison.
+
+Follow-up:
+- compare basic-only DQN with and without spacing shaping on `logs/rl-transitions-basic-v1-cpu-lv4-4-3-3.ndjson`.
+- review walk-forward/back macro actions only after the P0 spacing-shaping comparison shows whether movement credit shifts greedy policy away from passive guard/attack-only choices.
+- review 5-level distance buckets after checking whether current DQN features and sample count are enough for the Phase 1 basic-only action set.
+- review live data collection settings, especially repeat-delay neutral pollution, before collecting a new long-run basic-only dataset.
+
 ## 2026-04-28: Refine DQN Guard Cost And Episode Drop
 
 Milestone:

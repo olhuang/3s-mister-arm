@@ -2434,6 +2434,10 @@ Tasks:
 - [x] Add live tabular action-subset support for Phase 1 basic-action data collection
 - [x] Add jump-attack-specific DQN risk costs for high-commitment jump-in whiffs
 - [x] Add DQN replay filtering for initial repeat-delay-polluted episodes and clean-window guard costs
+- [x] Add offline DQN spacing reward shaping for Phase 1 movement credit
+- [ ] Review walk-forward/back macro actions after spacing-shaping A/B results
+- [ ] Review finer distance buckets after spacing-shaping sample-volume checks
+- [ ] Review live basic-only collection with lower/no repeat-delay pollution after the next DQN comparison
 - [x] Add an offline transition analyzer for action/distance HP-delta attribution
 - [x] Expand observation features only with schema versioning for the first routine attack/contact-reaction validation probes
 - [x] Promote validated opponent routine attack state into the first tabular strike-defense state split
@@ -2526,6 +2530,14 @@ Implementation notes:
     - passive/far guard costs apply only when the same guard lookahead window has no self HP damage, so a wrong guard that gets hit is punished by the natural HP-delta loss rather than double-counted as empty guard
     - guard shaping applies only on `executed_policy_action_step == 0` so multi-step guard macros do not receive repeated bonus/cost on every macro frame
     - diagnostics print `guard_shape=success:<events>/<bonus> passive:<events>/<cost> far:<events>/<cost> net:<raw_adjustment>` and metadata records the guard-shaping config/stat payload
+  - spacing reward shaping is available for offline Phase 1 DQN experiments without changing live policy behavior:
+    - `--reward-spacing-target-min-dx` / `--reward-spacing-target-max-dx` define the preferred `obs_abs_dx` band for basic MK-range movement experiments
+    - `--reward-spacing-improve-bonus` rewards `forward` / `back` starts that move the next decision boundary closer to that target band
+    - `--reward-spacing-worsen-cost` charges clean movement starts that move farther away from the target band
+    - `--reward-spacing-maintain-bonus` can reward clean movement starts that keep both current and next decision boundary inside the target band
+    - `--reward-spacing-threat-back-bonus` can add a small extra bonus when `back` increases too-close spacing while `obs_opp_routine_attack_state=1`
+    - spacing shaping applies only on `executed_policy_action_step == 0` and only when the movement window has no self HP damage, so getting hit remains governed by natural HP-delta loss
+    - diagnostics print `spacing_shape=target:<min>-<max> improve:<events>/<bonus> maintain:<events>/<bonus> worsen:<events>/<cost> threat_back:<events>/<bonus> net:<raw_adjustment>` and metadata records the spacing-shaping config/stat payload
   - `--actions` trains and publishes a DQN action subset; excluded explicit actions are counted and reset delayed-credit attribution so their later neutral/recovery reward is not accidentally credited to the previous included action
   - DQN replay now treats high-level macro action starts as the training decision boundary:
     - only rows with `executed_policy_action_step == 0` create DQN experiences

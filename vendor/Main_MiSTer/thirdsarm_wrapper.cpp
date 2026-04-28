@@ -157,6 +157,7 @@ enum RuntimeRLControlSourceMenu
 {
 	kRLControlSourceRemote = 0,
 	kRLControlSourceHumanDemo,
+	kRLControlSourceCpuDemo,
 	kRLControlSourceMenuCount
 };
 
@@ -2405,6 +2406,8 @@ int read_runtime_rl_control_source_default()
 
 	if (!strcasecmp(value, "human-demo") || !strcasecmp(value, "human_demo") || !strcasecmp(value, "demo"))
 		return kRLControlSourceHumanDemo;
+	if (!strcasecmp(value, "cpu-demo") || !strcasecmp(value, "cpu_demo") || !strcasecmp(value, "cpu"))
+		return kRLControlSourceCpuDemo;
 	return kRLControlSourceRemote;
 }
 
@@ -2413,6 +2416,7 @@ static const char *runtime_rl_control_source_config_value(int mode)
 	switch (mode)
 	{
 	case kRLControlSourceHumanDemo: return "human-demo";
+	case kRLControlSourceCpuDemo: return "cpu-demo";
 	default: return "remote";
 	}
 }
@@ -2812,7 +2816,7 @@ void poll_status_changes(pid_t child)
 		}
 	}
 
-	uint32_t rl_control_source = user_io_status_get("[53]");
+	uint32_t rl_control_source = user_io_status_get("[54:53]");
 	if (rl_control_source != prev_rl_control_source) {
 		prev_rl_control_source = rl_control_source;
 		int target = (int)rl_control_source;
@@ -2820,7 +2824,7 @@ void poll_status_changes(pid_t child)
 		if (target != g_wrapper_rl_control_source_mode) {
 			write_runtime_rl_control_source_default(target);
 			g_wrapper_rl_control_source_mode = target;
-			// Control source is launch-time; restart to switch remote policy vs human-demo recording.
+			// Control source is launch-time; restart to switch remote policy vs demo recording.
 		}
 	}
 
@@ -2934,7 +2938,7 @@ void poll_status_changes(pid_t child)
 		user_io_status_set("[29]", 0);    // RL Opponent = CPU
 		user_io_status_set("[31:30]", 0); // RL Movement = Forward
 		user_io_status_set("[49]", 0);    // RL Network = Off
-		user_io_status_set("[53]", 0);    // RL Control Source = Remote
+		user_io_status_set("[54:53]", 0); // RL Control Source = Remote
 		user_io_status_set("[52:50]", kRLDebugViewAll); // RL Debug View = All
 		user_io_status_set("[28:25]", 0); // H Position = 0
 		user_io_status_set("[46:43]", 0); // V Position = 0
@@ -3367,7 +3371,7 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 		user_io_status_set("[29]", (uint32_t)g_wrapper_rl_opponent_mode);
 		user_io_status_set("[31:30]", (uint32_t)g_wrapper_rl_movement_mode);
 		user_io_status_set("[49]", (uint32_t)g_wrapper_rl_network_mode);
-		user_io_status_set("[53]", (uint32_t)g_wrapper_rl_control_source_mode);
+		user_io_status_set("[54:53]", (uint32_t)g_wrapper_rl_control_source_mode);
 		user_io_status_set("[52:50]", (uint32_t)g_wrapper_rl_debug_view_mode);
 		user_io_status_set("[28:25]", (uint32_t)g_wrapper_h_position);
 		user_io_status_set("[46:43]", (uint32_t)g_wrapper_v_position);
@@ -3689,7 +3693,7 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 			user_io_status_set("[29]", (uint32_t)g_wrapper_rl_opponent_mode);
 			user_io_status_set("[31:30]", (uint32_t)g_wrapper_rl_movement_mode);
 			user_io_status_set("[49]", (uint32_t)g_wrapper_rl_network_mode);
-			user_io_status_set("[53]", (uint32_t)g_wrapper_rl_control_source_mode);
+			user_io_status_set("[54:53]", (uint32_t)g_wrapper_rl_control_source_mode);
 			user_io_status_set("[52:50]", (uint32_t)g_wrapper_rl_debug_view_mode);
 			user_io_status_set("[28:25]", (uint32_t)g_wrapper_h_position);
 			user_io_status_set("[46:43]", (uint32_t)g_wrapper_v_position);

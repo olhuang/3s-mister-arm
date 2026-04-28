@@ -42,6 +42,7 @@ typedef enum RLExecutionSource {
     RL_EXECUTION_SOURCE_REPEATED_LAST_ACTION = 2,
     RL_EXECUTION_SOURCE_NEUTRAL_FALLBACK = 3,
     RL_EXECUTION_SOURCE_HUMAN_DEMO = 4,
+    RL_EXECUTION_SOURCE_CPU_DEMO = 5,
 } RLExecutionSource;
 
 typedef struct RLRemoteDebugState {
@@ -92,5 +93,6 @@ void RLSession_OnObservationFrameEnd(const RLObservationV1* obs);
 void RLSession_ApplyVersusOperatorSetup();
 void RLSession_ApplyScriptedMovementToBuffers();
 void RLSession_ApplyInputOverrideToBuffers();
+void RLSession_RecordCpuDemoInput(s16 player, u16 sw);
 
 #endif

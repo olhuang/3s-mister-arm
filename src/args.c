@@ -188,8 +188,9 @@ static void verify_configuration(Configuration* configuration) {
     }
     if (configuration->remote_rl_agent.control_source != NULL &&
         SDL_strcmp(configuration->remote_rl_agent.control_source, "remote") != 0 &&
-        SDL_strcmp(configuration->remote_rl_agent.control_source, "human-demo") != 0) {
-        error_out_with_code("--rl-control-source must be remote or human-demo.", EXIT_CODE_RUNTIME_ERROR);
+        SDL_strcmp(configuration->remote_rl_agent.control_source, "human-demo") != 0 &&
+        SDL_strcmp(configuration->remote_rl_agent.control_source, "cpu-demo") != 0) {
+        error_out_with_code("--rl-control-source must be remote, human-demo, or cpu-demo.", EXIT_CODE_RUNTIME_ERROR);
     }
     if (configuration->remote_rl_agent.test_movement < 0 || configuration->remote_rl_agent.test_movement > 3) {
         error_out_with_code("--rl-movement must be between 0 and 3.", EXIT_CODE_RUNTIME_ERROR);
@@ -303,7 +304,7 @@ void read_args(int argc, const char* argv[], Configuration* configuration) {
         OPT_STRING(0,
                    "rl-control-source",
                    &configuration->remote_rl_agent.control_source,
-                   "RL control source: remote or human-demo.",
+                   "RL control source: remote, human-demo, or cpu-demo.",
                    NULL,
                    0,
                    0),

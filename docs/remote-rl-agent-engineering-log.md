@@ -2,6 +2,48 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-28: Add CPU-Demo Transition Recording Mode
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / demo bootstrapping data collection
+
+Files changed:
+- `src/args.c`
+- `src/port/sdl/sdl_app.c`
+- `src/rl/rl_session.h`
+- `src/rl/rl_session.c`
+- `src/sf33rd/Source/Game/engine/plmain.c`
+- `vendor/Menu_MiSTer/menu.sv`
+- `vendor/Main_MiSTer/thirdsarm_wrapper.cpp`
+- `docs/config.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- allow the selected RL side to be driven by the built-in game CPU while exporting learner-ingestible transition rows.
+- provide an automatic high-volume demo source for movement, guard, and punish samples without requiring manual human input.
+- keep the existing `remote` and `human-demo` control-source behavior unchanged.
+
+Implementation notes:
+- extended `rl-control-source` / `--rl-control-source` from `remote|human-demo` to `remote|human-demo|cpu-demo`.
+- `cpu-demo` routes the selected `rl-player` side as CPU-controlled in the VS operator setup.
+- CPU-demo transition recording happens from `Player_move()` after the CPU/player pipeline has resolved `wk->cp->sw_lvbt`, so the logged action reflects the input actually used by the game for that player.
+- CPU-demo rows set `execution_source = 5`; requested/executed policy metadata is identical because the action was local to the game.
+- the demo policy mapper is shared with human-demo and labels walk, guard, stand/crouch normals, jump attacks, throws, and forward+HP command-normal from the resolved input.
+- OSD `RL Control (Restart)` now uses status bits `[54:53]` and exposes `Remote, Human Demo, CPU Demo`.
+- overlay labels show `P1CD` / `P2CD` for CPU-demo mode.
+
+Validation:
+- `git diff --check` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed and produced `build/mister-telemetry-package`.
+- `tools/mister-wrapper/build-hps.sh` passed and produced `build/mister-wrapper-hps/MiSTer_3S-ARM`.
+- wrapper-core Quartus rebuild was not run in this pass; the `vendor/Menu_MiSTer/menu.sv` OSD row needs wrapper core/package/deploy before the three-value `RL Control` menu appears on hardware.
+
+Follow-up:
+- build/package wrapper core before expecting the three-value OSD row on hardware.
+- collect a short `cpu-demo` log and confirm rows contain `execution_source = 5` and useful guard/back/forward samples before using it for DQN pretraining.
+- define replay-buffer mixing rules for remote, human-demo, and CPU-demo rows.
+
 ## 2026-04-28: Add Human-Demo Transition Recording Mode
 
 Milestone:

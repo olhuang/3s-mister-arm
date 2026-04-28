@@ -2452,6 +2452,7 @@ Tasks:
 - [ ] Review whether `overlay_attack_event_finalized` / `overlay_attack_contact` / `overlay_attack_whiff` have consistent learner semantics across normals, specials, projectiles, throws, and multistage moves before promoting them beyond debug / auxiliary labels
 - [x] Run move-family validation passes with scripted policies such as `hp`, `throw`, `ryu-fireball`, `tatsu`, and `shoryuken`, then document which attack-outcome fields are trustworthy enough for learner use versus debug-only analysis
 - [x] Add a human-demo recording path so human-vs-CPU play can export learner-ingestible episodes for bootstrapping / behavior-cloning experiments
+- [x] Add a CPU-demo recording path so built-in CPU-vs-CPU play can export learner-ingestible bootstrap episodes
 - [ ] Define how replay-buffer import mixes human-demo episodes with remote-agent episodes, including metadata such as data source, control mode, and player side
 - [ ] Add character curriculum
 - [ ] Add stage curriculum
@@ -2513,7 +2514,13 @@ Implementation notes:
     - requested/executed action metadata is identical because the human action is already executed locally
     - with `rl-network = on`, the UDP handshake and transition-batch upload path remain available, but OBS/action request packets are not emitted
     - the first mapper labels down-back as `guard-crouch`, labels back as `guard-stand` only when the latest compact observation sees opponent routine attack state at short/mid distance, and otherwise keeps back as `walk/back`
-    - the wrapper OSD exposes this as `RL Settings -> RL Control (Restart), Remote / Human Demo`, persisted as `rl-control-source`
+    - the wrapper OSD exposes this as `RL Settings -> RL Control (Restart), Remote / Human Demo / CPU Demo`, persisted as `rl-control-source`
+  - `rl-control-source = cpu-demo` records built-in CPU-controlled agent-side input as transition rows:
+    - the selected `rl-player` side is routed as CPU-controlled while the opponent routing still follows `rl-opponent-mode`
+    - transition rows are tagged with `execution_source = 5`
+    - requested/executed action metadata is identical because the game CPU action is already executed locally
+    - with `rl-network = on`, the UDP handshake and transition-batch upload path remain available, but OBS/action request packets are not emitted
+    - the same demo mapper labels walk/guard/stand-normal/crouch-normal/jump-attack/throw metadata from the CPU-resolved input
   - MiSTer remote config was checked on `192.168.0.133`; no `perf-*` config keys or recent `PERF capture` logs were present, so the latest long-run restart was not explained by an enabled perf capture
   - `src/rl/rl_net.c` now protects the transition sender running-state with the transition queue mutex, clears it while observing an empty queue, reaps completed thread handles before replacement, and avoids clearing the shutdown handle until after the sender is joined
   - learner auto-publish skips duplicate tabular actor publication when `tab_updates` has not increased since the previous publish

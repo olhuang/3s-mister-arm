@@ -119,6 +119,7 @@ Notes:
 - `P1C` / `P2C` mean RL routing is active for player 1 / player 2 and the opponent side is still CPU-controlled.
 - `P1H` / `P2H` mean RL routing is active for player 1 / player 2 and the opponent side is routed through human input.
 - `P1D` / `P2D` mean human-demo recording is active for player 1 / player 2. The player input is not overwritten; it is logged as RL transition data.
+- `P1CD` / `P2CD` mean CPU-demo recording is active for player 1 / player 2. The selected RL side is routed through the built-in CPU and logged as RL transition data.
 - When `rl-opponent-mode = human` and `rl-network = on`, `P1H` / `P2H` use the same remote-policy path as `P1C` / `P2C`.
 - When `rl-opponent-mode = human` and `rl-network = off`, the current scripted validation movement is appended as `F`, `B`, `JF`, or `DB`.
 
@@ -130,6 +131,8 @@ Quick mode matrix:
 - `P2H`: RL controls player 2, opponent is human, remote policy path if `rl-network = on`, scripted movement helper if `rl-network = off`
 - `P1D`: player 1 is human-controlled and recorded as RL demonstration data; the opponent routing still follows `rl-opponent-mode`
 - `P2D`: player 2 is human-controlled and recorded as RL demonstration data; the opponent routing still follows `rl-opponent-mode`
+- `P1CD`: player 1 is CPU-controlled and recorded as RL demonstration data; the opponent routing still follows `rl-opponent-mode`
+- `P2CD`: player 2 is CPU-controlled and recorded as RL demonstration data; the opponent routing still follows `rl-opponent-mode`
 
 Recommended spot checks:
 
@@ -153,6 +156,11 @@ Recommended spot checks:
    - `rl-opponent-mode = cpu`
    - use `P1D` or `P2D`
    - confirm the human-controlled side accepts local input, `EX`/transition counters rise, and the log includes `execution_source = 4`
+5. CPU-demo collection:
+   - `rl-control-source = cpu-demo`
+   - `rl-opponent-mode = cpu`
+   - use `P1CD` or `P2CD`
+   - confirm both sides are CPU-routed, `EX`/transition counters rise, and the log includes `execution_source = 5`
 
 ### `rl-debug-view`
 
@@ -235,11 +243,12 @@ Notes:
 
 ### `rl-control-source`
 
-Controls whether the RL side is driven by the remote policy path or by local human input recorded as demonstration data.
+Controls whether the RL side is driven by the remote policy path or by local demonstration input recorded as transition data.
 
 Possible values:
 - `remote`
 - `human-demo`
+- `cpu-demo`
 
 Default:
 - `remote`
@@ -248,7 +257,9 @@ Notes:
 - This key is primarily written by the MiSTer OSD menu entry `RL Control (Restart)`.
 - `remote` preserves the existing behavior: `rl-network = on` uses remote policy inference, and `rl-network = off` uses the local fake-agent validation fallback.
 - `human-demo` does not override `p1sw_buff` / `p2sw_buff`. The selected `rl-player` side remains human-controlled and its input is converted into transition metadata.
+- `cpu-demo` routes the selected `rl-player` side through the built-in CPU and records the CPU-resolved input from that side as transition metadata.
 - In `human-demo`, transition rows are tagged with `execution_source = 4`. `requested_*` and `executed_*` action fields are identical because the action was performed directly by the player.
+- In `cpu-demo`, transition rows are tagged with `execution_source = 5`. `requested_*` and `executed_*` action fields are identical because the action was performed directly by the game CPU.
 - With `rl-network = on`, the MiSTer still handshakes with the probe server and can upload transition batches, but it does not send OBS/action requests for remote inference.
 - With `rl-network = off`, transitions are still written to the local MiSTer `logs/rl-transitions.ndjson` file.
 - The first high-level action mapper is heuristic: down-back without attack is `guard-crouch`; back without attack becomes `guard-stand` only when the latest observation sees opponent attack state at short/mid distance, otherwise it is `back`.

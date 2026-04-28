@@ -206,7 +206,7 @@ static const RLLocalFakeAction kLocalFakeAgentSequence[] = {
 #define RL_POLICY_SUB_ACTION_DOWN_BACK 19u
 #define RL_POLICY_SUB_ACTION_STAND 20u
 #define RL_POLICY_SUB_ACTION_CROUCH 21u
-#define RL_HUMAN_DEMO_GUARD_THREAT_DX 144
+#define RL_DEMO_GUARD_THREAT_DX 144
 
 
 static u16 local_fake_action_index;
@@ -365,9 +365,18 @@ static bool RLSession_HumanDemoEnabled() {
            SDL_strcmp(configuration.remote_rl_agent.control_source, "human-demo") == 0;
 }
 
+static bool RLSession_CpuDemoEnabled() {
+    return RLSession_IsActive() && configuration.remote_rl_agent.control_source != NULL &&
+           SDL_strcmp(configuration.remote_rl_agent.control_source, "cpu-demo") == 0;
+}
+
+static bool RLSession_LocalDemoEnabled() {
+    return RLSession_HumanDemoEnabled() || RLSession_CpuDemoEnabled();
+}
+
 static bool RLSession_RemoteControlEnabled() {
     const RLNetState* net = RLNet_GetState();
-    return RLSession_IsActive() && !RLSession_HumanDemoEnabled() && net->enabled;
+    return RLSession_IsActive() && !RLSession_LocalDemoEnabled() && net->enabled;
 }
 
 static void RLSession_ClearRemoteQueue() {
@@ -610,15 +619,15 @@ static bool RLSession_MoveIntentIsCrouch(u8 move_intent) {
     return move_intent == RL_MOVE_DOWN || move_intent == RL_MOVE_DOWN_BACK || move_intent == RL_MOVE_DOWN_FORWARD;
 }
 
-static void RLSession_DeriveHumanPolicyMeta(u8 move_intent,
-                                            u16 attack_bits,
-                                            const RLObservationV1* obs,
-                                            u16* policy_action_id,
-                                            u16* policy_sub_action_id) {
+static void RLSession_DeriveDemoPolicyMeta(u8 move_intent,
+                                           u16 attack_bits,
+                                           const RLObservationV1* obs,
+                                           u16* policy_action_id,
+                                           u16* policy_sub_action_id) {
     s32 abs_dx = plw[RLSession_OpponentPlayerIndex()].wu.position_x - plw[RLSession_AgentPlayerIndex()].wu.position_x;
     const bool threat_guard =
         obs != NULL && obs->valid && obs->opp_routine_attack_state &&
-        ((abs_dx < 0 ? -abs_dx : abs_dx) <= RL_HUMAN_DEMO_GUARD_THREAT_DX);
+        ((abs_dx < 0 ? -abs_dx : abs_dx) <= RL_DEMO_GUARD_THREAT_DX);
     const u16 first_attack = RLSession_FirstAttackSubAction(attack_bits);
 
     *policy_action_id = RL_POLICY_ACTION_NEUTRAL;
@@ -1435,10 +1444,11 @@ void RLSession_ApplyVersusOperatorSetup() {
 
     const s16 agent = RLSession_AgentPlayerIndex();
     const s16 opponent = RLSession_OpponentPlayerIndex();
+    const s16 agent_operator = RLSession_CpuDemoEnabled() ? 0 : 1;
     const s16 opponent_operator = RLSession_OpponentUsesHumanInput() ? 1 : 0;
 
-    plw[agent].wu.operator = 1;
-    Operator_Status[agent] = 1;
+    plw[agent].wu.operator = agent_operator;
+    Operator_Status[agent] = agent_operator;
     plw[opponent].wu.operator = opponent_operator;
     Operator_Status[opponent] = opponent_operator;
 }
@@ -1675,11 +1685,9 @@ static void RLSession_ApplyRemoteActionToBuffers() {
     remote_debug.frame_id++;
 }
 
-static void RLSession_RecordHumanDemoInputFromBuffers() {
+static void RLSession_RecordDemoInput(s16 agent, u16 sw, RLExecutionSource source) {
     RLDecisionLedgerEntry* ledger = NULL;
     const RLObservationV1* obs = NULL;
-    const s16 agent = RLSession_AgentPlayerIndex();
-    const u16 sw = (agent == 0) ? p1sw_buff : p2sw_buff;
     const u8 move_intent = RLSession_DecodeMoveIntentFromSWKey(agent, sw);
     const u16 attack_bits = (u16)(sw & (u16)SWK_ATTACKS & 0xFFF0u);
     const u16 action_wire = RLSession_EncodeActionWire(move_intent, attack_bits);
@@ -1697,7 +1705,7 @@ static void RLSession_RecordHumanDemoInputFromBuffers() {
     active_remote_action.valid = false;
     obs = RLObservation_GetLatest();
 
-    RLSession_DeriveHumanPolicyMeta(move_intent, attack_bits, obs, &policy_action_id, &policy_sub_action_id);
+    RLSession_DeriveDemoPolicyMeta(move_intent, attack_bits, obs, &policy_action_id, &policy_sub_action_id);
     action_context.last_executed_move_intent = move_intent;
     action_context.last_executed_attack_bits = attack_bits;
     action_context.next_scheduled_move_intent = RL_MOVE_NEUTRAL;
@@ -1747,7 +1755,7 @@ static void RLSession_RecordHumanDemoInputFromBuffers() {
     ledger->executed_policy_action_step = 0;
     ledger->executed_move_intent = move_intent;
     ledger->executed_attack_bits = attack_bits;
-    ledger->execution_source = RL_EXECUTION_SOURCE_HUMAN_DEMO;
+    ledger->execution_source = (u8)source;
     ledger->model_version_expected = remote_debug.model_version_current;
     ledger->model_version_requested = remote_debug.model_version_current;
     ledger->model_version_executed = remote_debug.model_version_current;
@@ -1756,6 +1764,19 @@ static void RLSession_RecordHumanDemoInputFromBuffers() {
     RLSession_SetActiveLedgerEntry(ledger);
     remote_debug.executed_count++;
     remote_debug.frame_id++;
+}
+
+static void RLSession_RecordHumanDemoInputFromBuffers() {
+    const s16 agent = RLSession_AgentPlayerIndex();
+    const u16 sw = (agent == 0) ? p1sw_buff : p2sw_buff;
+    RLSession_RecordDemoInput(agent, sw, RL_EXECUTION_SOURCE_HUMAN_DEMO);
+}
+
+void RLSession_RecordCpuDemoInput(s16 player, u16 sw) {
+    if (!RLSession_CpuDemoEnabled() || player != RLSession_AgentPlayerIndex()) {
+        return;
+    }
+    RLSession_RecordDemoInput(player, sw, RL_EXECUTION_SOURCE_CPU_DEMO);
 }
 
 RLRemoteActionSubmitResult RLSession_SubmitRemoteAction(const RLActionPacket* packet) {
@@ -1918,6 +1939,13 @@ bool RLSession_SendRemoteObservationIfDue() {
 void RLSession_ApplyInputOverrideToBuffers() {
     if (RLSession_HumanDemoEnabled()) {
         RLSession_RecordHumanDemoInputFromBuffers();
+        return;
+    }
+    if (RLSession_CpuDemoEnabled()) {
+        if (!RLSession_CanOverrideGameplayInput()) {
+            RLSession_FinalizeRuntimeBeforeReset();
+            RLSession_ResetRemoteRuntime(false);
+        }
         return;
     }
     RLSession_ApplyScriptedMovementToBuffers();

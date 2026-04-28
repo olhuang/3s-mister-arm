@@ -6,6 +6,7 @@
 #include "sf33rd/Source/Game/engine/plmain.h"
 #include "common.h"
 #include "constants.h"
+#include "rl/rl_session.h"
 #include "sf33rd/Source/Game/animation/appear.h"
 #include "sf33rd/Source/Game/com/com_pl.h"
 #include "sf33rd/Source/Game/debug/Debug.h"
@@ -84,6 +85,8 @@ void Player_move(PLW* wk, u16 lv_data) { // 🟡
     if ((wk->dead_flag + wk->wkey_flag) == 0) {
         wk->hurimukenai_flag = 0;
     }
+
+    RLSession_RecordCpuDemoInput(wk->wu.id, wk->cp->sw_lvbt);
 
     for (i = 0; i < 8; i++) {
         wk->wu.old_rno[i] = wk->wu.routine_no[i];

@@ -9179,17 +9179,20 @@ static void publish_fps_overlay_label(void) {
     if (configuration.remote_rl_agent.enabled) {
         const bool human_demo = configuration.remote_rl_agent.control_source != NULL &&
                                 SDL_strcmp(configuration.remote_rl_agent.control_source, "human-demo") == 0;
+        const bool cpu_demo = configuration.remote_rl_agent.control_source != NULL &&
+                              SDL_strcmp(configuration.remote_rl_agent.control_source, "cpu-demo") == 0;
         if (configuration.remote_rl_agent.player == 2) {
-            rl_agent_label = human_demo ? "P2D" : (configuration.remote_rl_agent.human_opponent ? "P2H" : "P2C");
+            rl_agent_label = human_demo ? "P2D" : (cpu_demo ? "P2CD" : (configuration.remote_rl_agent.human_opponent ? "P2H" : "P2C"));
         } else {
-            rl_agent_label = human_demo ? "P1D" : (configuration.remote_rl_agent.human_opponent ? "P1H" : "P1C");
+            rl_agent_label = human_demo ? "P1D" : (cpu_demo ? "P1CD" : (configuration.remote_rl_agent.human_opponent ? "P1H" : "P1C"));
         }
     }
 
     if (fps_overlay_mode == FPS_OVERLAY_RL_DEBUG) {
         if (configuration.remote_rl_agent.enabled && configuration.remote_rl_agent.human_opponent &&
             (configuration.remote_rl_agent.control_source == NULL ||
-             SDL_strcmp(configuration.remote_rl_agent.control_source, "human-demo") != 0)) {
+             (SDL_strcmp(configuration.remote_rl_agent.control_source, "human-demo") != 0 &&
+              SDL_strcmp(configuration.remote_rl_agent.control_source, "cpu-demo") != 0))) {
             SDL_snprintf(rl_label, sizeof(rl_label), "%s:%s", rl_agent_label, RLSession_TestMovementLabel());
         } else {
             SDL_snprintf(rl_label, sizeof(rl_label), "%s", rl_agent_label);

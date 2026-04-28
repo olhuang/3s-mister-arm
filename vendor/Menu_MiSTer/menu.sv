@@ -301,6 +301,7 @@ localparam CONF_STR = {
 	"P2O[31:30],RL Movement,Forward,Back,Jump Forward,Down Back;",
 	"P2O[49],RL Network (Restart),Off,On;",
 	"P2O[52:50],RL Debug View,Off,All,Net,Input,Fight,Outcome;",
+	"P2O[53],RL Control (Restart),Remote,Human Demo;",
 	"-;",
 	"T[21],Reset to Default;",
 	"T[22],Restart;",

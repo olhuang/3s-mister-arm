@@ -2513,6 +2513,7 @@ Implementation notes:
     - requested/executed action metadata is identical because the human action is already executed locally
     - with `rl-network = on`, the UDP handshake and transition-batch upload path remain available, but OBS/action request packets are not emitted
     - the first mapper labels down-back as `guard-crouch`, labels back as `guard-stand` only when the latest compact observation sees opponent routine attack state at short/mid distance, and otherwise keeps back as `walk/back`
+    - the wrapper OSD exposes this as `RL Settings -> RL Control (Restart), Remote / Human Demo`, persisted as `rl-control-source`
   - MiSTer remote config was checked on `192.168.0.133`; no `perf-*` config keys or recent `PERF capture` logs were present, so the latest long-run restart was not explained by an enabled perf capture
   - `src/rl/rl_net.c` now protects the transition sender running-state with the transition queue mutex, clears it while observing an empty queue, reaps completed thread handles before replacement, and avoids clearing the shutdown handle until after the sender is joined
   - learner auto-publish skips duplicate tabular actor publication when `tab_updates` has not increased since the previous publish

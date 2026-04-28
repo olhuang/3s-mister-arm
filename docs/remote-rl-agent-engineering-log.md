@@ -49,6 +49,38 @@ Follow-up:
 - define replay-buffer mixing rules for human-demo episodes versus remote-agent episodes.
 - validate the first back-vs-guard heuristic against a short human-vs-CPU collection log and adjust labels if it over-tags retreat as guard.
 
+## 2026-04-28: Add MiSTer OSD Control For RL Control Source
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / human-demo bootstrapping data collection
+
+Files changed:
+- `vendor/Menu_MiSTer/menu.sv`
+- `vendor/Main_MiSTer/thirdsarm_wrapper.cpp`
+- `docs/config.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- make `rl-control-source = remote|human-demo` switchable from the MiSTer OSD instead of requiring manual config edits.
+
+Implementation notes:
+- added `RL Settings -> RL Control (Restart), Remote, Human Demo` on status bit `[53]`.
+- wrapper defaults generated configs to `rl-control-source = remote`.
+- wrapper reads/writes `rl-control-source`, seeds the OSD status bit at launch/restart, and logs the selected mode.
+- wrapper strips incoming `--rl-control-source` and injects the persisted OSD/config value into the child runtime when RL agent mode is enabled.
+- the setting remains launch-time and requires the existing `Restart` action.
+
+Validation:
+- `git diff --check` passed.
+- `tools/mister-wrapper/build-hps.sh` first failed under sandboxed network with `Could not resolve host: github.com`.
+- reran `tools/mister-wrapper/build-hps.sh` with approved network access; HPS wrapper build passed and produced `build/mister-wrapper-hps/MiSTer_3S-ARM`.
+- wrapper-core Quartus build was not run in this pass; `vendor/Menu_MiSTer/menu.sv` changes still require a wrapper core rebuild/package before the new OSD row appears on hardware.
+
+Follow-up:
+- rebuild/package wrapper HPS and wrapper core before expecting the new OSD row on hardware.
+- hardware-test that `RL Control (Restart)` writes `rl-control-source = remote|human-demo` and that runtime overlay switches between `P1C/P2C` and `P1D/P2D` after Restart.
+
 ## 2026-04-28: Add DQN Spacing Reward Shaping
 
 Milestone:

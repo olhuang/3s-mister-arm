@@ -153,6 +153,13 @@ enum RuntimeRLNetworkMenu
 	kRLNetworkMenuCount
 };
 
+enum RuntimeRLControlSourceMenu
+{
+	kRLControlSourceRemote = 0,
+	kRLControlSourceHumanDemo,
+	kRLControlSourceMenuCount
+};
+
 enum RuntimeRLDebugViewMenu
 {
 	kRLDebugViewOff = 0,
@@ -193,6 +200,7 @@ int g_wrapper_rl_agent_mode = kRLAgentOff;
 int g_wrapper_rl_opponent_mode = kRLOpponentCPU;
 int g_wrapper_rl_movement_mode = kRLMovementForward;
 int g_wrapper_rl_network_mode = kRLNetworkOff;
+int g_wrapper_rl_control_source_mode = kRLControlSourceRemote;
 int g_wrapper_rl_debug_view_mode = kRLDebugViewAll;
 int g_wrapper_aspect_ratio = kAspectRatio4x3;
 int g_wrapper_h_position = 0;
@@ -234,6 +242,7 @@ static const RuntimeConfigDefaultEntry kRuntimeGeneratedDefaults[] = {
 	{ "show-fps", "false" },
 	{ "rl-debug-view", "all" },
 	{ "rl-network", "off" },
+	{ "rl-control-source", "remote" },
 	{ "rl-opponent-mode", "cpu" },
 	{ "rl-movement", "forward" },
 	{ "video-driver-order", "dummy" },
@@ -2389,6 +2398,96 @@ bool write_runtime_rl_network_default(int mode)
 	return true;
 }
 
+int read_runtime_rl_control_source_default()
+{
+	char value[64] = {};
+	if (!read_runtime_config_value("rl-control-source", value, sizeof(value))) return kRLControlSourceRemote;
+
+	if (!strcasecmp(value, "human-demo") || !strcasecmp(value, "human_demo") || !strcasecmp(value, "demo"))
+		return kRLControlSourceHumanDemo;
+	return kRLControlSourceRemote;
+}
+
+static const char *runtime_rl_control_source_config_value(int mode)
+{
+	switch (mode)
+	{
+	case kRLControlSourceHumanDemo: return "human-demo";
+	default: return "remote";
+	}
+}
+
+static const char *runtime_rl_control_source_mode_name(int mode)
+{
+	return runtime_rl_control_source_config_value(mode);
+}
+
+bool write_runtime_rl_control_source_default(int mode)
+{
+	char path[PATH_MAX] = {};
+	char temp_path[PATH_MAX] = {};
+	snprintf(path, sizeof(path), "%s/config", kRuntimeHome);
+	snprintf(temp_path, sizeof(temp_path), "%s/config.tmp", kRuntimeHome);
+
+	FILE *in = fopen(path, "r");
+	FILE *out = fopen(temp_path, "w");
+	if (!out)
+	{
+		if (in) fclose(in);
+		return false;
+	}
+
+	bool wrote_value = false;
+	char line[256] = {};
+	if (in)
+	{
+		while (fgets(line, sizeof(line), in))
+		{
+			char inspect[256] = {};
+			snprintf(inspect, sizeof(inspect), "%s", line);
+
+			char *cursor = inspect;
+			while (*cursor && isspace((unsigned char)*cursor)) cursor++;
+			if (*cursor == '#')
+			{
+				fputs(line, out);
+				continue;
+			}
+
+			char *equals = strchr(cursor, '=');
+			if (equals)
+			{
+				*equals = 0;
+				trim_in_place(cursor);
+				if (!strcasecmp(cursor, "rl-control-source"))
+				{
+					fprintf(out, "rl-control-source = %s\n", runtime_rl_control_source_config_value(mode));
+					wrote_value = true;
+					continue;
+				}
+			}
+
+			fputs(line, out);
+		}
+
+		fclose(in);
+	}
+
+	if (!wrote_value)
+	{
+		fprintf(out, "\nrl-control-source = %s\n", runtime_rl_control_source_config_value(mode));
+	}
+
+	if (fclose(out) != 0) return false;
+	if (rename(temp_path, path) != 0)
+	{
+		remove(temp_path);
+		return false;
+	}
+
+	return true;
+}
+
 int read_runtime_rl_debug_view_default()
 {
 	char value[64] = {};
@@ -2490,6 +2589,11 @@ void append_runtime_launch_args(std::vector<char *> &child_argv, int argc, char 
 		if (!argv[i]) continue;
 		if (!strcmp(argv[i], "--rl-agent")) continue;
 		if (!strcmp(argv[i], "--rl-network")) continue;
+		if (!strcmp(argv[i], "--rl-control-source"))
+		{
+			if (i + 1 < argc) i++;
+			continue;
+		}
 		if (!strcmp(argv[i], "--rl-remote-ip") || !strcmp(argv[i], "--rl-obs-port") ||
 		    !strcmp(argv[i], "--rl-action-port") || !strcmp(argv[i], "--rl-delay") ||
 		    !strcmp(argv[i], "--rl-decision-interval") || !strcmp(argv[i], "--rl-action-hold"))
@@ -2517,6 +2621,8 @@ void append_runtime_launch_args(std::vector<char *> &child_argv, int argc, char 
 		child_argv.push_back(const_cast<char *>("--rl-agent"));
 		child_argv.push_back(const_cast<char *>("--rl-player"));
 		child_argv.push_back(const_cast<char *>(g_wrapper_rl_agent_mode == kRLAgentPlayer1 ? "1" : "2"));
+		child_argv.push_back(const_cast<char *>("--rl-control-source"));
+		child_argv.push_back(const_cast<char *>(runtime_rl_control_source_config_value(g_wrapper_rl_control_source_mode)));
 		if (g_wrapper_rl_opponent_mode == kRLOpponentHuman)
 		{
 			child_argv.push_back(const_cast<char *>("--rl-opponent-human"));
@@ -2548,6 +2654,7 @@ void poll_status_changes(pid_t child)
 	static uint32_t prev_rl_opponent = 0xFFFFFFFF;
 	static uint32_t prev_rl_movement = 0xFFFFFFFF;
 	static uint32_t prev_rl_network = 0xFFFFFFFF;
+	static uint32_t prev_rl_control_source = 0xFFFFFFFF;
 	static uint32_t prev_rl_debug_view = 0xFFFFFFFF;
 	static uint32_t prev_aspect_ratio = 0xFFFFFFFF;
 	static uint32_t prev_h_position = 0xFFFFFFFF;
@@ -2705,6 +2812,18 @@ void poll_status_changes(pid_t child)
 		}
 	}
 
+	uint32_t rl_control_source = user_io_status_get("[53]");
+	if (rl_control_source != prev_rl_control_source) {
+		prev_rl_control_source = rl_control_source;
+		int target = (int)rl_control_source;
+		if (target >= kRLControlSourceMenuCount) target = kRLControlSourceRemote;
+		if (target != g_wrapper_rl_control_source_mode) {
+			write_runtime_rl_control_source_default(target);
+			g_wrapper_rl_control_source_mode = target;
+			// Control source is launch-time; restart to switch remote policy vs human-demo recording.
+		}
+	}
+
 	uint32_t rl_debug_view = user_io_status_get("[52:50]");
 	if (rl_debug_view != prev_rl_debug_view) {
 		prev_rl_debug_view = rl_debug_view;
@@ -2815,6 +2934,7 @@ void poll_status_changes(pid_t child)
 		user_io_status_set("[29]", 0);    // RL Opponent = CPU
 		user_io_status_set("[31:30]", 0); // RL Movement = Forward
 		user_io_status_set("[49]", 0);    // RL Network = Off
+		user_io_status_set("[53]", 0);    // RL Control Source = Remote
 		user_io_status_set("[52:50]", kRLDebugViewAll); // RL Debug View = All
 		user_io_status_set("[28:25]", 0); // H Position = 0
 		user_io_status_set("[46:43]", 0); // V Position = 0
@@ -2833,6 +2953,7 @@ void poll_status_changes(pid_t child)
 		prev_rl_opponent = 0xFFFFFFFF;
 		prev_rl_movement = 0xFFFFFFFF;
 		prev_rl_network = 0xFFFFFFFF;
+		prev_rl_control_source = 0xFFFFFFFF;
 		prev_rl_debug_view = 0xFFFFFFFF;
 		prev_aspect_ratio = 0xFFFFFFFF;
 		prev_h_position = 0xFFFFFFFF;
@@ -3176,6 +3297,7 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 	g_wrapper_rl_opponent_mode = read_runtime_rl_opponent_default();
 	g_wrapper_rl_movement_mode = read_runtime_rl_movement_default();
 	g_wrapper_rl_network_mode = read_runtime_rl_network_default();
+	g_wrapper_rl_control_source_mode = read_runtime_rl_control_source_default();
 	g_wrapper_rl_debug_view_mode = read_runtime_rl_debug_view_default();
 	g_wrapper_aspect_ratio = read_runtime_aspect_ratio_default();
 	g_wrapper_h_position = read_runtime_h_position_default();
@@ -3245,6 +3367,7 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 		user_io_status_set("[29]", (uint32_t)g_wrapper_rl_opponent_mode);
 		user_io_status_set("[31:30]", (uint32_t)g_wrapper_rl_movement_mode);
 		user_io_status_set("[49]", (uint32_t)g_wrapper_rl_network_mode);
+		user_io_status_set("[53]", (uint32_t)g_wrapper_rl_control_source_mode);
 		user_io_status_set("[52:50]", (uint32_t)g_wrapper_rl_debug_view_mode);
 		user_io_status_set("[28:25]", (uint32_t)g_wrapper_h_position);
 		user_io_status_set("[46:43]", (uint32_t)g_wrapper_v_position);
@@ -3267,6 +3390,7 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 	write_log_line(wrapper_log, "rl_opponent_mode=%s", runtime_rl_opponent_mode_name(g_wrapper_rl_opponent_mode));
 	write_log_line(wrapper_log, "rl_movement_mode=%s", runtime_rl_movement_mode_name(g_wrapper_rl_movement_mode));
 	write_log_line(wrapper_log, "rl_network_mode=%s", runtime_rl_network_mode_name(g_wrapper_rl_network_mode));
+	write_log_line(wrapper_log, "rl_control_source_mode=%s", runtime_rl_control_source_mode_name(g_wrapper_rl_control_source_mode));
 	write_log_line(wrapper_log, "volume_init global=%d core=%d filter=%d", get_volume(), get_core_volume(), audio_filter_en());
 
 	int validation_rc = validate_runtime_paths(wrapper_log, active_vt, saved_stdout, saved_stderr);
@@ -3460,6 +3584,7 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 		write_log_line(wrapper_log, "runtime_rl_opponent_mode=%s", runtime_rl_opponent_mode_name(g_wrapper_rl_opponent_mode));
 		write_log_line(wrapper_log, "runtime_rl_movement_mode=%s", runtime_rl_movement_mode_name(g_wrapper_rl_movement_mode));
 		write_log_line(wrapper_log, "runtime_rl_network_mode=%s", runtime_rl_network_mode_name(g_wrapper_rl_network_mode));
+		write_log_line(wrapper_log, "runtime_rl_control_source_mode=%s", runtime_rl_control_source_mode_name(g_wrapper_rl_control_source_mode));
 
 		if (!forced)
 		{
@@ -3564,6 +3689,7 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 			user_io_status_set("[29]", (uint32_t)g_wrapper_rl_opponent_mode);
 			user_io_status_set("[31:30]", (uint32_t)g_wrapper_rl_movement_mode);
 			user_io_status_set("[49]", (uint32_t)g_wrapper_rl_network_mode);
+			user_io_status_set("[53]", (uint32_t)g_wrapper_rl_control_source_mode);
 			user_io_status_set("[52:50]", (uint32_t)g_wrapper_rl_debug_view_mode);
 			user_io_status_set("[28:25]", (uint32_t)g_wrapper_h_position);
 			user_io_status_set("[46:43]", (uint32_t)g_wrapper_v_position);

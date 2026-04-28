@@ -245,6 +245,7 @@ Default:
 - `remote`
 
 Notes:
+- This key is primarily written by the MiSTer OSD menu entry `RL Control (Restart)`.
 - `remote` preserves the existing behavior: `rl-network = on` uses remote policy inference, and `rl-network = off` uses the local fake-agent validation fallback.
 - `human-demo` does not override `p1sw_buff` / `p2sw_buff`. The selected `rl-player` side remains human-controlled and its input is converted into transition metadata.
 - In `human-demo`, transition rows are tagged with `execution_source = 4`. `requested_*` and `executed_*` action fields are identical because the action was performed directly by the player.

@@ -2,6 +2,35 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-28: Document Ryu R1/R2 Mapping Source Trace
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / R1/R2 ordinary-state validation
+
+Files changed:
+- `docs/rl-policy-action-taxonomy.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- preserve the SF3 source-code path used to interpret raw `routine_no[1]` / `routine_no[2]` values, with Ryu as the first worked example.
+- make future all-character move mapping repeatable: trace `R1/R2` through engine dispatch tables, then validate with overlay/log values before promoting runtime decoders.
+
+Implementation notes:
+- documented `plmain.c::plmain_lv_02` as the `R1` high-level state dispatcher.
+- documented `plpnm.c::Player_normal` / `plpnm_lv_00[R2]` as the shared ordinary-state path for walk, crouch, jump, guard, and related normal states.
+- documented `plpat.c::Player_attack`, `plpat_lv_00[R2]`, and `plxx_extra_attack_table[player_number]` as the attack path split for common versus character-specific routines.
+- documented `pls03.c::hissatsu_setup_union` and `set_attack_routine_number` as the paths that set `R1=4` and assign attack `R2`.
+- documented Ryu's `plpat02.c::pl02_extra_attack` / `pl02_exatt_table[R2 - 16]` source trace for Hadouken, Shoryuken, Tatsumaki Senpukyaku, super-art paths, Air Tatsumaki, and Joudan Sokutou Geri.
+- recorded provisional `R1=0` ordinary-state labels and marked guard/jump/block labels as validation aids until fresh raw-R1/R2 logs confirm them.
+
+Validation:
+- doc references were checked against the SF3 source files listed above.
+- `git diff --check -- docs/rl-policy-action-taxonomy.md docs/remote-rl-agent-engineering-log.md` passed.
+
+Follow-up:
+- use a fresh raw-R1/R2 transition log to confirm `normal.walk-*`, `normal.guard-*`, `normal.crouch`, and `normal.jump-*` before training from those ordinary-state labels.
+- repeat the same source trace for Ken/Akuma next because they share some Ryu-like handlers but have character-specific routine meanings.
+
 ## 2026-04-28: Add Raw Routine Transition Diagnostics
 
 Milestone:

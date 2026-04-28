@@ -2441,6 +2441,7 @@ Tasks:
 - [x] Add an offline transition analyzer for action/distance HP-delta attribution
 - [x] Add analyzer-only `(routine_no[1], routine_no[2])` engine-state action mapping for ordinary-state validation
 - [x] Add raw `routine_no[1]/[2]` transition diagnostics for self/opponent engine-state analyzer input
+- [x] Document the Ryu `R1/R2` engine dispatch trace for future all-character move mapping
 - [x] Expand observation features only with schema versioning for the first routine attack/contact-reaction validation probes
 - [x] Promote validated opponent routine attack state into the first tabular strike-defense state split
 - [x] Draft an all-character policy action ID / sub-action / macro taxonomy from SF3 command source tables

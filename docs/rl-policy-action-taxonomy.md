@@ -78,6 +78,109 @@ Current runtime identity fields:
 | `AK` | `current_attack` | normal button identity; not reliable for specials |
 | `RS` | attack routine start event | attribution timing hint; not a move id |
 
+### Routine Number Dispatch Source Map
+
+Do not interpret `R2` without `R1`. The stable engine-state key is at least
+`routine_no[1] + routine_no[2]`; attack extras also need `character_id`.
+
+Primary dispatch path:
+
+| source file / symbol | role |
+|---|---|
+| `src/sf33rd/Source/Game/engine/plmain.c::plmain_lv_02` | `routine_no[1]` high-level player state dispatch |
+| `src/sf33rd/Source/Game/engine/plpnm.c::Player_normal` | `R1=0`; dispatches `plpnm_lv_00[routine_no[2]]` for ordinary movement / guard / jump / crouch states |
+| `src/sf33rd/Source/Game/engine/plpat.c::Player_attack` | `R1=4`; if `R2 > 15`, dispatches the character extra table; otherwise dispatches common `plpat_lv_00[R2]` |
+| `src/sf33rd/Source/Game/engine/pls03.c::hissatsu_setup_union` | command/special setup path; writes `routine_no[1]=4`, `routine_no[2]=rno` |
+| `src/sf33rd/Source/Game/engine/pls03.c::set_attack_routine_number` | normal/attack setup path; writes `routine_no[1]=4`, `routine_no[2]=wk->as->r_no` |
+
+Known `R1` categories from `plmain_lv_02`:
+
+| R1 | engine dispatcher | current analyzer meaning |
+|---:|---|---|
+| 0 | `Player_normal` | ordinary states: stand, walk, dash, crouch, jump, guard, landing / misc normal motions |
+| 1 | `Player_damage` | damage / contact reaction; includes hit and block/guard reaction states |
+| 2 | `Player_catch` | active catch / grab-side state |
+| 3 | `Player_caught` | caught / grabbed-side state |
+| 4 | `Player_attack` | normal/common attacks plus character-specific specials, throws, supers, and extra actions |
+
+For `R1=4`, `R2` is split by `Player_attack`:
+
+| R2 range | source dispatch | mapping rule |
+|---|---|---|
+| `0..15` | `plpat.c::plpat_lv_00[R2]` | common attack routines; combine with `KW` / `AK` and visible validation |
+| `>=16` | `plpat.c::plxx_extra_attack_table[player_number]` | character-specific extra table; combine `character_id + R2 + KW` |
+
+For `R1=0`, ordinary state mapping currently comes from `pls01.c` setters plus
+`plpnm.c::plpnm_lv_00`. These labels are analyzer aids and must be validated
+with fresh logs before they become learner targets:
+
+| R1 | R2 | provisional analyzer label | source evidence |
+|---:|---:|---|---|
+| 0 | 1 | `normal.stand` | `check_walking_lv_dir` falls back to `R2=1` when standing |
+| 0 | 2 | `normal.turn-stand` | `check_turn_to_back` sets `R2=2` when not crouching |
+| 0 | 3 | `normal.walk-forward` | `check_F_R_walk`, `lever_dir=1` |
+| 0 | 4 | `normal.walk-back` | `check_F_R_walk`, `lever_dir=2` |
+| 0 | 5 | `normal.dash-forward` | `check_F_R_dash`, forward dash branch |
+| 0 | 6 | `normal.dash-back` | `check_F_R_dash`, back dash branch |
+| 0 | 7 | `normal.stand-up` | `check_stand_up` |
+| 0 | 8 | `normal.crouch-start` | `check_bend_myself` |
+| 0 | 9 | `normal.crouch` | `check_walking_lv_dir` falls back to `R2=9` when crouched |
+| 0 | 10 | `normal.turn-crouch` | `check_turn_to_back` sets `R2=10` while crouching |
+| 0 | 11 | `normal.walk-forward-arcade` | `check_arcade_walk_start`, forward branch |
+| 0 | 12 | `normal.walk-back-arcade` | `check_arcade_walk_start`, back branch |
+| 0 | 16 | `normal.jump-ready` | `check_jump_ready` regular jump branch |
+| 0 | 17 | `normal.high-jump-ready` | `check_jump_ready` / `check_hijump_only` high-jump branch |
+| 0 | 18..26 | `normal.jump-air` | `plpnm_lv_00` routes these entries through `Normal_18000` jump-air handling |
+| 0 | 27 | `normal.guard-stand-provisional` | `check_defense_lever`; non-crouch guard branch when `check_attbox_dir` is false |
+| 0 | 28 | `normal.guard-stand-provisional` | `check_defense_lever`; non-crouch guard branch when `check_attbox_dir` is true |
+| 0 | 29 | `normal.guard-crouch-provisional` | `check_defense_lever`; down input branch |
+| 0 | 31..33 | `normal.guard-block-provisional` | `plpnm_lv_00` routes these entries through `Normal_31000`; validate exact block types |
+
+### Ryu R1/R2 Decoder Source Trace
+
+Ryu's character id is `2`. Under `R1=4`, `Player_attack` calls
+`plxx_extra_attack_table[player_number]` when `R2 > 15`; for Ryu this reaches
+`src/sf33rd/Source/Game/engine/plpat02.c::pl02_extra_attack`, which dispatches
+`pl02_exatt_table[R2 - 16]`.
+
+Ryu source-backed attack mapping:
+
+| R1 | R2 | source handler | policy action | KW/sub-action logic | status |
+|---:|---:|---|---|---|---|
+| 4 | 16 | `Att_HADOUKEN` | 1229 Hadouken | `08/0A/0C` => `lp/mp/hp` | overlay-confirmed for regular Hadouken |
+| 4 | 17 | `Att_SHOURYUUKEN` | 1228 Shoryuken | `08/0A/0C` => `lp/mp/hp` | overlay-confirmed for regular Shoryuken |
+| 4 | 18 | `Att_SENPUUKYAKU` | 1230 Tatsumaki Senpukyaku | `09/0B/0D` => `lk/mk/hk` | overlay-confirmed for regular Tatsumaki |
+| 4 | 19 | `Att_HADOUKEN` | 1220 Shinkuu Hadouken | super-art `KW` still TBD | source-backed, overlay not fully validated |
+| 4 | 20 | `Att_SHINSHOURYUUKEN` | 1222 Shin Shoryuken | super-art `KW` still TBD | source-backed, overlay not fully validated |
+| 4 | 21 | `Att_DENJINHADOUKEN` | 1221 Denjin Hadouken | super-art `KW` still TBD | source-backed, overlay not fully validated |
+| 4 | 22 | `Att_KUUCHUUNICHIRINSHOU` | 1246 Air Tatsumaki Senpukyaku | likely `09/0B/0D`, verify | source-backed, overlay not fully validated |
+| 4 | 23 | `Att_SLIDE_and_JUMP` | 1231 Joudan Sokutou Geri | likely kick-special `KW`, verify | source-backed, overlay not fully validated |
+| 4 | 2 | common `plpat_lv_00[2]` / throw path | universal throw | direction from input row only | overlay-observed as completed throw routine |
+| 4 | 14 | common `plpat_lv_00[14]` / catch path | universal throw | direction from input row only | overlay-observed as grab/catch startup path |
+
+Runtime decoder implementation:
+
+- `src/rl/rl_session.c::RLSession_RyuSpecialPolicyMetaFromRoutine2`
+  implements the first Ryu-specific `R2 + KW -> policy action/sub-action`
+  mapping.
+- `src/rl/rl_session.c::RLSession_SubActionFromRyuKindOfWaza` maps `KW` to
+  button strength.
+- `src/rl/rl_session.c::RLSession_RyuNormalPolicyMetaFromIdentity` uses
+  `current_attack` / normal `KW` for normals, with stance/jump class inferred
+  from sampled input or airborne/crouch context.
+- `tools/analyze_rl_transitions.py::engine_state_action_name` implements the
+  analyzer-only ordinary-state and Ryu attack labels from raw `obs_*_routine_1`
+  / `obs_*_routine_2`.
+
+Future-character expansion rule:
+
+- For another character, do not copy Ryu's `R2` labels blindly. Use the same
+  dispatch chain: `R1=4` -> `Player_attack` -> `plxx_extra_attack_table` ->
+  that character's `plXX_exatt_table[R2 - 16]` -> taxonomy command row.
+- Reuse common `R1=0` ordinary-state labels across characters only after a
+  short overlay/log validation pass, because animation timing differs even
+  when the normal-state dispatcher is shared.
+
 Attribution flow for command moves:
 
 1. Use `character_id` to select the character-specific decoder.

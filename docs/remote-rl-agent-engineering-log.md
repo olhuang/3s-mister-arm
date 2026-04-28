@@ -2,6 +2,39 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-28: Add Engine State Action Analyzer Mapping
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / R1/R2 ordinary-state validation
+
+Files changed:
+- `tools/analyze_rl_transitions.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- add an analyzer-only `engine_state_action` view keyed by `(routine_no[1], routine_no[2])` so ordinary engine states such as walk, crouch, jump, guard, damage/contact, catch/caught, and attack routines can be counted before promoting more raw routine fields into the transition schema.
+- keep the mapping diagnostic/provisional: raw `R1/R2` fields are required for precise ordinary-state labels, while older logs with only derived routine flags fall back to coarse `attack.r2-unknown` / `damage-contact.r2-unknown`.
+
+Implementation notes:
+- `tools/analyze_rl_transitions.py` now recognizes common future raw field spellings such as `self_routine_1`, `self_routine_2`, `obs_self_routine1`, and opponent equivalents.
+- `R1=0` maps selected normal-state `R2` values to provisional labels such as `normal.walk-forward`, `normal.walk-back`, `normal.crouch`, `normal.jump-air`, and `normal.guard-*`.
+- `R1=4` maps Ryu attack `R2` values to known engine move labels (`hadouken`, `shoryuken`, `tatsumaki-senpukyaku`, throw/catch, and provisional super/special paths); non-Ryu or unvalidated entries stay as routine IDs.
+- new output sections:
+  - `ENGINE_STATE_ACTION_SUMMARY`
+  - `ENGINE_STATE_ACTION_BY_SIDE`
+  - `ENGINE_STATE_ACTION_BY_SIDE_DX`
+  - `ENGINE_STATE_ACTION_BY_ROUTINE`
+
+Validation:
+- `python3 -m py_compile tools/analyze_rl_transitions.py` passed.
+- `python3 tools/analyze_rl_transitions.py --help` passed.
+- `python3 tools/analyze_rl_transitions.py logs/rl-transitions-cpu-demo-v1-4-3-3.ndjson --tail-rows 200 --limit 8` passed; as expected for the current schema, it reported derived coarse states rather than raw ordinary walk/guard labels.
+
+Follow-up:
+- add raw `self_routine_1/self_routine_2` and `opp_routine_1/opp_routine_2` to a diagnostic transition-log schema only after confirming logging overhead and compatibility.
+- validate `R1=0` guard/walk/jump/crouch labels with short human-demo and CPU-demo clips before using them as learner targets.
+
 ## 2026-04-28: Add Demo-Attributed DQN Reward Shaping
 
 Milestone:

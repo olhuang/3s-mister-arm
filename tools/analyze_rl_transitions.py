@@ -44,6 +44,91 @@ DEFAULT_ACTIONS = (
     "shoryuken-mp",
     "tatsu-mk",
 )
+RYU_CHARACTER_ID = 2
+ROUTINE_UNKNOWN = -1
+
+SELF_R1_FIELD_NAMES = (
+    "obs_self_routine_1",
+    "obs_self_routine1",
+    "self_routine_1",
+    "self_routine1",
+    "obs_self_routine_no_1",
+    "self_routine_no_1",
+)
+SELF_R2_FIELD_NAMES = (
+    "obs_self_routine_2",
+    "obs_self_routine2",
+    "self_routine_2",
+    "self_routine2",
+    "obs_self_routine_no_2",
+    "self_routine_no_2",
+)
+OPP_R1_FIELD_NAMES = (
+    "obs_opp_routine_1",
+    "obs_opp_routine1",
+    "opp_routine_1",
+    "opp_routine1",
+    "obs_opp_routine_no_1",
+    "opp_routine_no_1",
+)
+OPP_R2_FIELD_NAMES = (
+    "obs_opp_routine_2",
+    "obs_opp_routine2",
+    "opp_routine_2",
+    "opp_routine2",
+    "obs_opp_routine_no_2",
+    "opp_routine_no_2",
+)
+
+NORMAL_ROUTINE2_ACTIONS = {
+    0: "appear",
+    1: "stand",
+    2: "turn-stand",
+    3: "walk-forward",
+    4: "walk-back",
+    5: "dash-forward",
+    6: "dash-back",
+    7: "stand-up",
+    8: "crouch-start",
+    9: "crouch",
+    10: "turn-crouch",
+    11: "walk-forward-arcade",
+    12: "walk-back-arcade",
+    13: "walk-forward-alt",
+    14: "walk-forward-alt",
+    15: "walk-forward-alt",
+    16: "jump-ready",
+    17: "high-jump-ready",
+    18: "jump-air",
+    19: "jump-air",
+    20: "jump-air",
+    21: "jump-air",
+    22: "jump-air",
+    23: "jump-air",
+    24: "jump-air",
+    25: "jump-air",
+    26: "jump-air",
+    27: "guard-stand-provisional",
+    28: "guard-stand-provisional",
+    29: "guard-crouch-provisional",
+    30: "guard-provisional",
+    31: "guard-block-provisional",
+    32: "guard-block-provisional",
+    33: "guard-block-provisional",
+}
+
+RYU_ATTACK_ROUTINE2_ACTIONS = {
+    2: "throw",
+    14: "throw-catch-start",
+    16: "hadouken",
+    17: "shoryuken",
+    18: "tatsumaki-senpukyaku",
+    19: "shinkuu-hadouken",
+    20: "shin-shoryuken",
+    21: "denjin-hadouken",
+    22: "air-tatsumaki-senpukyaku",
+    23: "joudan-sokutou-geri",
+}
 
 
 @dataclass
@@ -86,6 +171,15 @@ class ExplicitAction:
     action: str
     dx_bucket: str
     row_index: int
+
+
+@dataclass(frozen=True)
+class EngineStateAction:
+    side: str
+    source: str
+    routine1: int
+    routine2: int
+    action: str
 
 
 @dataclass
@@ -210,6 +304,17 @@ def int_field(row: dict[str, object], name: str) -> int:
     return int(row.get(name, 0) or 0)
 
 
+def optional_int_field(row: dict[str, object], names: tuple[str, ...]) -> int | None:
+    for name in names:
+        if name not in row:
+            continue
+        try:
+            return int(row.get(name, 0) or 0)
+        except (TypeError, ValueError):
+            return 0
+    return None
+
+
 def episode_key(row: dict[str, object]) -> tuple[int, int]:
     return (int_field(row, "run_id"), int_field(row, "episode_id"))
 
@@ -243,6 +348,83 @@ def policy_meta_name(action_id: int, sub_action_id: int) -> str:
     if action_name is not None:
         return action_name
     return f"policy:{action_id}/{sub_action_id}"
+
+
+def engine_state_action_name(routine1: int, routine2: int | None, character_id: int | None) -> str:
+    if routine1 == 0:
+        if routine2 is None:
+            return "normal.r2-unknown"
+        action = NORMAL_ROUTINE2_ACTIONS.get(routine2)
+        if action is not None:
+            return f"normal.{action}"
+        return f"normal.r2-{routine2}"
+
+    if routine1 == 1:
+        if routine2 is None:
+            return "damage-contact.r2-unknown"
+        return f"damage-contact.r2-{routine2}"
+
+    if routine1 == 2:
+        if routine2 is None:
+            return "catch.r2-unknown"
+        return f"catch.r2-{routine2}"
+
+    if routine1 == 3:
+        if routine2 is None:
+            return "caught.r2-unknown"
+        return f"caught.r2-{routine2}"
+
+    if routine1 == 4:
+        if routine2 is None:
+            return "attack.r2-unknown"
+        if character_id == RYU_CHARACTER_ID:
+            action = RYU_ATTACK_ROUTINE2_ACTIONS.get(routine2)
+            if action is not None:
+                return f"attack.ryu-{action}"
+        if routine2 < 16:
+            return f"attack.common-r2-{routine2}"
+        return f"attack.char-extra-r2-{routine2}"
+
+    return f"routine1-{routine1}.r2-{routine2 if routine2 is not None else 'unknown'}"
+
+
+def engine_state_action_from_row(row: dict[str, object], side: str) -> EngineStateAction | None:
+    if side == "self":
+        r1_fields = SELF_R1_FIELD_NAMES
+        r2_fields = SELF_R2_FIELD_NAMES
+        attack_flag = "obs_self_routine_attack_state"
+        contact_flag = "obs_self_contact_reaction_state"
+        character_id = int_field(row, "agent_character_id")
+    elif side == "opp":
+        r1_fields = OPP_R1_FIELD_NAMES
+        r2_fields = OPP_R2_FIELD_NAMES
+        attack_flag = "obs_opp_routine_attack_state"
+        contact_flag = "obs_opp_contact_reaction_state"
+        character_id = int_field(row, "opponent_character_id")
+    else:
+        raise ValueError(f"unknown engine state side: {side}")
+
+    routine1 = optional_int_field(row, r1_fields)
+    routine2 = optional_int_field(row, r2_fields)
+    source = "raw"
+    if routine1 is None:
+        if int_field(row, attack_flag):
+            routine1 = 4
+            source = "derived"
+        elif int_field(row, contact_flag):
+            routine1 = 1
+            source = "derived"
+        else:
+            return None
+
+    action = engine_state_action_name(routine1, routine2, character_id)
+    return EngineStateAction(
+        side=side,
+        source=source,
+        routine1=routine1,
+        routine2=routine2 if routine2 is not None else ROUTINE_UNKNOWN,
+        action=action,
+    )
 
 
 def demo_attribution_present(row: dict[str, object]) -> bool:
@@ -298,6 +480,23 @@ def print_table(title: str, table: dict[tuple[str, ...], Stats], limit: int) -> 
     ordered = sorted(
         table.items(),
         key=lambda item: (abs(item[1].reward_sum), item[1].rows),
+        reverse=True,
+    )
+    for index, (key, stats) in enumerate(ordered):
+        if index >= limit:
+            print(f"  ... {len(ordered) - limit} more")
+            break
+        print(format_stats(key, stats))
+
+
+def print_count_table(title: str, table: dict[tuple[str, ...], Stats], limit: int) -> None:
+    print(f"\n{title}")
+    if not table:
+        print("  none")
+        return
+    ordered = sorted(
+        table.items(),
+        key=lambda item: (item[1].rows, abs(item[1].reward_sum)),
         reverse=True,
     )
     for index, (key, stats) in enumerate(ordered):
@@ -415,6 +614,10 @@ def main() -> int:
     credited_by_action: dict[tuple[str, ...], Stats] = {}
     credited_by_action_dx: dict[tuple[str, ...], Stats] = {}
     delayed_shift: dict[tuple[str, ...], Stats] = {}
+    engine_state_by_side: dict[tuple[str, ...], Stats] = {}
+    engine_state_by_side_dx: dict[tuple[str, ...], Stats] = {}
+    engine_state_by_routine: dict[tuple[str, ...], Stats] = {}
+    engine_state_source_counts: collections.Counter[tuple[str, str]] = collections.Counter()
     rows: list[dict[str, object]] = []
 
     for row_index, line in enumerate(iter_lines(path, max(0, args.tail_rows)), start=1):
@@ -447,6 +650,40 @@ def main() -> int:
             done_rows += 1
         if reward != 0.0:
             reward_rows += 1
+
+        for side in ("self", "opp"):
+            engine_state = engine_state_action_from_row(row, side)
+            if engine_state is None:
+                continue
+            engine_state_source_counts[(side, engine_state.source)] += 1
+            routine2_text = "unknown" if engine_state.routine2 == ROUTINE_UNKNOWN else str(engine_state.routine2)
+            add_stat(
+                engine_state_by_side,
+                (side, engine_state.action, f"src={engine_state.source}"),
+                reward,
+                opp_hp,
+                self_hp,
+                False,
+                args.large_delta_threshold,
+            )
+            add_stat(
+                engine_state_by_side_dx,
+                (side, engine_state.action, f"dx={bucket}", f"src={engine_state.source}"),
+                reward,
+                opp_hp,
+                self_hp,
+                False,
+                args.large_delta_threshold,
+            )
+            add_stat(
+                engine_state_by_routine,
+                (side, f"R1={engine_state.routine1}", f"R2={routine2_text}", engine_state.action),
+                reward,
+                opp_hp,
+                self_hp,
+                False,
+                args.large_delta_threshold,
+            )
 
         if action in action_set:
             explicit_rows += 1
@@ -515,6 +752,19 @@ def main() -> int:
     print_table("CREDITED_BY_ACTION", credited_by_action, args.limit)
     print_table("CREDITED_BY_ACTION_DECISION_DX", credited_by_action_dx, args.limit)
     print_table("DELAYED_CREDIT_DECISION_DX_TO_REWARD_DX", delayed_shift, args.limit)
+    print(
+        "\nENGINE_STATE_ACTION_SUMMARY "
+        + " ".join(
+            f"{side}_{source}={count}"
+            for (side, source), count in sorted(engine_state_source_counts.items())
+        )
+    )
+    if not engine_state_source_counts:
+        print("  none")
+    else:
+        print_count_table("ENGINE_STATE_ACTION_BY_SIDE", engine_state_by_side, args.limit)
+        print_count_table("ENGINE_STATE_ACTION_BY_SIDE_DX", engine_state_by_side_dx, args.limit)
+        print_count_table("ENGINE_STATE_ACTION_BY_ROUTINE", engine_state_by_routine, args.limit)
     analyze_demo_attribution(rows, args)
     return 0
 

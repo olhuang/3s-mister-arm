@@ -2439,6 +2439,7 @@ Tasks:
 - [ ] Review finer distance buckets after spacing-shaping sample-volume checks
 - [ ] Review live basic-only collection with lower/no repeat-delay pollution after the next DQN comparison
 - [x] Add an offline transition analyzer for action/distance HP-delta attribution
+- [x] Add analyzer-only `(routine_no[1], routine_no[2])` engine-state action mapping for ordinary-state validation
 - [x] Expand observation features only with schema versioning for the first routine attack/contact-reaction validation probes
 - [x] Promote validated opponent routine attack state into the first tabular strike-defense state split
 - [x] Draft an all-character policy action ID / sub-action / macro taxonomy from SF3 command source tables

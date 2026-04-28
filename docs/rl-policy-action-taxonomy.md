@@ -189,6 +189,45 @@ until live validation proves a cleaner split.
 | 1231 | 31 | Joudan Sokutou Geri | 23 | `Att_SLIDE_and_JUMP` | `hcf+k` | `k` |
 | 1246 | 46 | Air Tatsumaki Senpukyaku | 22 | `Att_KUUCHUUNICHIRINSHOU` | `qcb+k` | `k` |
 
+#### Ryu Overlay Identity Draft
+
+This table is a provisional overlay-derived decoder for Ryu move labeling. It
+should be treated as a validation aid until the fields are promoted into
+transition logs. `R2` is `routine_no[2]`, `KW` is `kind_of_waza`, and `AK` is
+`current_attack`.
+
+Observed field behavior:
+
+- `R2` is the primary active move / routine code.
+- `KW` encodes strength and normal/special punch/kick class.
+- `AK` is reliable for normal button identity, but not for specials.
+- `RS` (`attack_routine_started`) is an event hint only and is not stable enough
+  to identify the move.
+
+| move family | policy_action_id | sub_action | R2 | KW | AK | status / notes |
+|---|---:|---|---:|---|---|---|
+| normal punch | `stand_normal` / `crouch_normal` / `jump_attack_*` | `lp` | TBD | `00` | `010` | AK/KW observed; R2 still needs stance/jump validation |
+| normal punch | `stand_normal` / `crouch_normal` / `jump_attack_*` | `mp` | TBD | `02` | `020` | AK/KW observed; R2 still needs stance/jump validation |
+| normal punch | `stand_normal` / `crouch_normal` / `jump_attack_*` | `hp` | TBD | `04` | `040` | AK/KW observed; R2 still needs stance/jump validation |
+| normal kick | `stand_normal` / `crouch_normal` / `jump_attack_*` | `lk` | TBD | `01` | `100` | AK/KW observed; R2 still needs stance/jump validation |
+| normal kick | `stand_normal` / `crouch_normal` / `jump_attack_*` | `mk` | TBD | `03` | `200` | AK/KW observed; R2 still needs stance/jump validation |
+| normal kick | `stand_normal` / `crouch_normal` / `jump_attack_*` | `hk` | TBD | `05` | `400` | AK/KW observed; R2 still needs stance/jump validation |
+| Hadouken | 1229 | `lp` / `mp` / `hp` | 16 | `08` / `0A` / `0C` | not stable | overlay observed |
+| Shoryuken | 1228 | `lp` / `mp` / `hp` | 17 | `08` / `0A` / `0C` | not stable | overlay observed |
+| Tatsumaki Senpukyaku | 1230 | `lk` / `mk` / `hk` | 18 | `09` / `0B` / `0D` | not stable | overlay observed |
+| throw / completed throw | 8 | `forward` / `back` | 2 | TBD | not stable | overlay observed as throw result routine |
+| grab / catch startup path | 8 | `forward` / `back` | 14 | TBD | not stable | overlay observed as grab/catch path |
+
+Source-known Ryu command routines that still need overlay confirmation:
+
+| move family | policy_action_id | source slot | source R2 | expected KW / AK | validation note |
+|---|---:|---:|---:|---|---|
+| Shinkuu Hadouken | 1220 | 20 | 19 | TBD | super-art KW not validated |
+| Denjin Hadouken | 1221 | 21 | 21 | TBD | super-art KW not validated |
+| Shin Shoryuken | 1222 | 22 | 20 | TBD | super-art KW not validated |
+| Joudan Sokutou Geri | 1231 | 31 | 23 | likely kick-special KW, verify | command kick not validated |
+| Air Tatsumaki Senpukyaku | 1246 | 46 | 22 | likely `09` / `0B` / `0D`, verify | air-special KW not validated |
+
 ### Yun
 
 | policy_action_id | slot | move_name | routines | handlers | macro_template | sub_action_group |

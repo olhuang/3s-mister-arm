@@ -48,6 +48,11 @@ Runtime finding:
   - `14` => grab / catch startup path
   - `2` => throw
 - updated implication: move labeling should treat `R2` as the primary move/routine id and `KW` as the strength/category modifier. The candidate transition identity tuple is now `character_id + R2 + KW`, with `AK` used mainly to label normals when helpful.
+- added a provisional Ryu `R2/KW/AK` overlay identity table to `docs/rl-policy-action-taxonomy.md`:
+  - confirmed normals use `AK` for button identity and `KW=00/02/04` for punches, `KW=01/03/05` for kicks.
+  - confirmed Ryu specials use `R2=16/17/18` for Hadouken/Shoryuken/Tatsumaki and `KW=08/0A/0C` or `09/0B/0D` for strength/category.
+  - recorded `R2=2` for completed throw and `R2=14` for grab/catch path.
+  - left normal stance/jump `R2`, super-art `KW`, Joudan Sokutou Geri, and Air Tatsumaki as validation TODOs.
 
 ## 2026-04-28: Add CPU-Demo Transition Recording Mode
 

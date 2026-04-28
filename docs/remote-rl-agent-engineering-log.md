@@ -41,6 +41,13 @@ Runtime finding:
   - `08/0A/0C` => punch-strength specials such as Hadouken and Shoryuken (`LP/MP/HP`)
   - `09/0B/0D` => kick-strength specials such as Tatsumaki Senpukyaku (`LK/MK/HK`)
 - implication: `KW` is strong for normal/special strength and punch-vs-kick class, but it cannot distinguish Hadouken from Shoryuken by itself. Move identity likely needs `routine_no[2]` (`R2`) plus character id, with `KW` providing strength/category.
+- `R2` / `routine_no[2]` appears to identify the active attack or motion routine, not only named special moves:
+  - `16` => Hadouken
+  - `17` => Shoryuken
+  - `18` => Tatsumaki Senpukyaku
+  - `14` => grab / catch startup path
+  - `2` => throw
+- updated implication: move labeling should treat `R2` as the primary move/routine id and `KW` as the strength/category modifier. The candidate transition identity tuple is now `character_id + R2 + KW`, with `AK` used mainly to label normals when helpful.
 
 ## 2026-04-28: Add CPU-Demo Transition Recording Mode
 

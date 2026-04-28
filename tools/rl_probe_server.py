@@ -99,6 +99,7 @@ RL_POLICY_JUMP_DIRECTIONS = (
 )
 STAND_NORMAL_ACTION_NAMES = tuple(f"stand-{button}" for button, _, _ in RL_POLICY_BUTTONS)
 CROUCH_NORMAL_ACTION_NAMES = tuple(f"crouch-{button}" for button, _, _ in RL_POLICY_BUTTONS)
+FIREBALL_ACTION_NAMES = ("fireball", "fireball-mp", "fireball-hp")
 JUMP_NORMAL_ACTION_NAMES = tuple(
     f"jump-{direction}-{button}"
     for direction, _, _ in RL_POLICY_JUMP_DIRECTIONS
@@ -132,7 +133,7 @@ SCRIPTED_POLICY_CHOICES = (
     *STAND_NORMAL_ACTION_NAMES,
     "forward-hp",
     *CROUCH_NORMAL_ACTION_NAMES,
-    "fireball",
+    *FIREBALL_ACTION_NAMES,
     "ryu-fireball",
     "throw",
     "tatsu",
@@ -156,7 +157,7 @@ TABULAR_ACTION_NAMES = (
     *STAND_NORMAL_ACTION_NAMES,
     "forward-hp",
     *CROUCH_NORMAL_ACTION_NAMES,
-    "fireball",
+    *FIREBALL_ACTION_NAMES,
     "throw",
     *JUMP_NORMAL_ACTION_NAMES,
     "shoryuken-mp",
@@ -191,6 +192,8 @@ POLICY_ACTION_META_BY_NAME = {
     "forward-hp": (RL_POLICY_ACTION_COMMAND_NORMAL, RL_POLICY_SUB_HP),
     "throw": (RL_POLICY_ACTION_THROW, RL_POLICY_SUB_FORWARD),
     "fireball": (RL_POLICY_ACTION_RYU_FIREBALL, RL_POLICY_SUB_LP),
+    "fireball-mp": (RL_POLICY_ACTION_RYU_FIREBALL, RL_POLICY_SUB_MP),
+    "fireball-hp": (RL_POLICY_ACTION_RYU_FIREBALL, RL_POLICY_SUB_HP),
     "ryu-fireball": (RL_POLICY_ACTION_RYU_FIREBALL, RL_POLICY_SUB_LP),
     "tatsu": (RL_POLICY_ACTION_RYU_TATSU, RL_POLICY_SUB_LK),
     "tatsu-mk": (RL_POLICY_ACTION_RYU_TATSU, RL_POLICY_SUB_MK),
@@ -1799,6 +1802,22 @@ def scripted_sequence(policy: str) -> tuple[int, ...] | None:
             RL_MOVE_DOWN,
             RL_MOVE_DOWN_FORWARD,
             RL_MOVE_FORWARD | BTN_LP,
+            RL_MOVE_NEUTRAL,
+            RL_MOVE_NEUTRAL,
+        ),
+        "fireball-mp": (
+            RL_MOVE_DOWN_BACK,
+            RL_MOVE_DOWN,
+            RL_MOVE_DOWN_FORWARD,
+            RL_MOVE_FORWARD | BTN_MP,
+            RL_MOVE_NEUTRAL,
+            RL_MOVE_NEUTRAL,
+        ),
+        "fireball-hp": (
+            RL_MOVE_DOWN_BACK,
+            RL_MOVE_DOWN,
+            RL_MOVE_DOWN_FORWARD,
+            RL_MOVE_FORWARD | BTN_HP,
             RL_MOVE_NEUTRAL,
             RL_MOVE_NEUTRAL,
         ),

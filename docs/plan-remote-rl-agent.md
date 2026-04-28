@@ -2451,6 +2451,7 @@ Tasks:
 - [x] Split `back` and `guard` into separate high-level actions after the DQN pipeline smoke passes
 - [x] Add high-level policy action / sub-action / macro-step attribution to transition rows
 - [x] Add `guard-stand`, `guard-crouch`, `crouch-mk`, `shoryuken-mp`, and `tatsu-mk` to the probe-side action set
+- [x] Split Ryu Hadouken into LP / MP / HP learner actions instead of collapsing CPU-demo variants into LP fireball
 - [x] Split jump attacks into forward / neutral / back policy action IDs and add HK jump-kick probes
 - [x] Split stand/crouch normal policy action IDs and add standing LP/MP/LK/MK/HK plus crouching LK/MK/HK probes
 - [x] Expand probe/DQN action support to all standing, crouching, forward-jump, neutral-jump, and back-jump LP/MP/HP/LK/MK/HK basic normals
@@ -2513,7 +2514,12 @@ Implementation notes:
   - the legacy scripted `hp` policy remains as an alias for `stand-hp`, but learner action attribution should use `stand-hp`
   - `shoryuken-mp` is available as a scripted probe policy and learner macro: `forward -> down -> down-forward -> down-forward+MP -> neutral -> neutral`, stamped as Ryu `Shoryuken` / `mp`
   - `tatsu-mk` is available as a scripted probe policy and learner macro: `down -> down-back -> back -> back+MK -> neutral -> neutral`, stamped as Ryu `Tatsumaki Senpukyaku` / `mk`
-  - `fireball` / `ryu-fireball` now use `down-back -> down -> down-forward -> forward+LP -> neutral -> neutral` to reduce accidental DP parsing when a previous action left `forward` in the command buffer
+  - Ryu Hadouken learner actions use strength-specific macros and taxonomy sub-actions:
+    - `fireball` / `ryu-fireball`: `down-back -> down -> down-forward -> forward+LP -> neutral -> neutral`
+    - `fireball-mp`: `down-back -> down -> down-forward -> forward+MP -> neutral -> neutral`
+    - `fireball-hp`: `down-back -> down -> down-forward -> forward+HP -> neutral -> neutral`
+    - CPU-demo `demo_attributed_*` rows now keep `fireball`, `fireball-mp`, and `fireball-hp` as distinct DQN actions when those names are present in the training action set
+    - the LP sequence remains the anti-DP default for the legacy `fireball` / `ryu-fireball` aliases
   - `rl-control-source = human-demo` records human-controlled agent-side input as transition rows without overwriting `p1sw_buff` / `p2sw_buff`:
     - the selected `rl-player` side stays human-controlled while the opponent routing still follows `rl-opponent-mode`
     - transition rows are tagged with `execution_source = 4`
@@ -2610,7 +2616,7 @@ Implementation notes:
   - uses normalized numeric spacing/threat features: `obs_abs_dx`, `obs_abs_dy`, both fighters' front/back edge distances, `obs_opp_in_front`, and `obs_opp_routine_attack_state`
   - trains a small stdlib-only MLP with target-network DQN updates, so it does not require `numpy` / `torch` for first smoke tests
   - publishes `policy=dqn` actor manifests with `actions`, `epsilon`, `fallback_policy`, and serialized MLP weights under `dqn`
-  - `tools/rl_probe_server.py --policy dqn --model-dir <dir>` can hot-load those manifests and run DQN inference from same-frame OBS payloads, then reuse the existing macro/fixed action adapter for `fireball`, `guard-stand`, `guard-crouch`, all standing/crouching LP/MP/HP/LK/MK/HK normals, all forward/neutral/back jump LP/MP/HP/LK/MK/HK normals, `shoryuken-mp`, and `tatsu-mk`
+  - `tools/rl_probe_server.py --policy dqn --model-dir <dir>` can hot-load those manifests and run DQN inference from same-frame OBS payloads, then reuse the existing macro/fixed action adapter for `fireball`, `fireball-mp`, `fireball-hp`, `guard-stand`, `guard-crouch`, all standing/crouching LP/MP/HP/LK/MK/HK normals, all forward/neutral/back jump LP/MP/HP/LK/MK/HK normals, `shoryuken-mp`, and `tatsu-mk`
   - `tools/compare_dqn_models.py` compares A/B/C DQN manifests on the same transition observations and prints overall, distance/threat-bucketed, attack-rate, Shoryuken-rate, selected-Q, and collapse-warning greedy action distributions
 - `docs/rl-policy-action-taxonomy.md` now records the first source-backed action registry:
   - universal actions use IDs below `1000`

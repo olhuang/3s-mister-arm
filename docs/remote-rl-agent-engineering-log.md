@@ -2,6 +2,64 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-28: Split Ryu Fireball Strength Variants
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / special-move action refinement
+
+Files changed:
+- `tools/rl_probe_server.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- stop collapsing CPU-demo Hadouken MP/HP engine-attributed move labels into the LP `fireball` learner action.
+- allow DQN/tabular actors to explicitly choose `fireball`, `fireball-mp`, or `fireball-hp`.
+
+Implementation notes:
+- `TABULAR_ACTION_NAMES` now includes `fireball-mp` and `fireball-hp` alongside the legacy LP `fireball` action.
+- `SCRIPTED_POLICY_CHOICES` now exposes `--policy fireball-mp` and `--policy fireball-hp` for fixed-policy probes.
+- `POLICY_ACTION_META_BY_NAME` maps:
+  - `fireball` -> Ryu Hadouken / `lp`
+  - `fireball-mp` -> Ryu Hadouken / `mp`
+  - `fireball-hp` -> Ryu Hadouken / `hp`
+- scripted macros now emit strength-specific QCF endings:
+  - `fireball`: `down-back, down, down-forward, forward+LP, neutral, neutral`
+  - `fireball-mp`: `down-back, down, down-forward, forward+MP, neutral, neutral`
+  - `fireball-hp`: `down-back, down, down-forward, forward+HP, neutral, neutral`
+- `demo_attributed_*` replay now keeps `fireball-mp` / `fireball-hp` as distinct action names because those names are live learner actions.
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py tools/train_dqn_learner.py tools/analyze_rl_transitions.py tools/compare_dqn_models.py` passed.
+- action registry smoke printed:
+  - `fireball ... meta=(1229, 1) seq=['0x7', '0x2', '0x8', '0x14', '0x0', '0x0']`
+  - `fireball-mp ... meta=(1229, 2) seq=['0x7', '0x2', '0x8', '0x24', '0x0', '0x0']`
+  - `fireball-hp ... meta=(1229, 3) seq=['0x7', '0x2', '0x8', '0x44', '0x0', '0x0']`
+  - `tabular_actions 41`
+  - `missing_exec []`
+- CPU-demo attribution check on `logs/rl-transitions-cpu-demo-v1-4-3-3.ndjson` now reports:
+  - `fireball 640`
+  - `fireball-mp 391`
+  - `fireball-hp 1320`
+  - `shoryuken-mp 326`
+  - `tatsu-mk 488`
+- full training published `model/dqn-cpudemo-allnormals-fireballvariants-corner-v1` with:
+  - `experiences=92487`
+  - `actions=40`
+  - `demo_attr=augment:3594/3779`
+  - action stats: `fireball-hp:1275/17.23/0.014`, `fireball:611/4.22/0.007`, `fireball-mp:381/4.92/0.013`
+  - greedy top actions: `throw 30.7%`, `guard-stand 22.2%`, `stand-mk 20.1%`, `forward 14.5%`, `guard-crouch 12.4%`, `fireball 0.0%`
+- comparing the previous collapsed-specials model against the variants model on the same 5000-row CPU-demo tail changed `297/5000` greedy choices.
+
+Findings:
+- the previous lack of Hadouken in greedy policy was not only caused by MP/HP being collapsed into LP; after splitting variants, `fireball-mp` and `fireball-hp` still did not become top-1 greedy actions.
+- in the current feature/reward setup, far no-threat observations still rank guard/forward/throw above Hadouken variants, so the next bottleneck is state/reward/data quality rather than action-label availability.
+
+Follow-up:
+- collect or synthesize targeted Hadouken data where far-range fireball leads to positive outcomes and unsafe close/mid fireball is punished.
+- consider fireball-specific reward shaping or richer projectile/opponent-airborne observations before trying to force more Hadouken through scalar rewards alone.
+- keep `fireball-mp` / `fireball-hp` in future DQN action sets so CPU-demo labels remain semantically clean.
+
 ## 2026-04-28: Add DQN Corner Position Reward Shaping
 
 Milestone:

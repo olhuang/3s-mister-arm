@@ -2433,6 +2433,7 @@ Tasks:
 - [x] Make offline DQN replay decision-level by training only on macro step-0 action starts and delayed-crediting macro continuation rewards
 - [x] Add live tabular action-subset support for Phase 1 basic-action data collection
 - [x] Add jump-attack-specific DQN risk costs for high-commitment jump-in whiffs
+- [x] Add DQN replay filtering for initial repeat-delay-polluted episodes and clean-window guard costs
 - [x] Add an offline transition analyzer for action/distance HP-delta attribution
 - [x] Expand observation features only with schema versioning for the first routine attack/contact-reaction validation probes
 - [x] Promote validated opponent routine attack state into the first tabular strike-defense state split
@@ -2520,8 +2521,9 @@ Implementation notes:
   - jump attacks can receive additional high-commitment risk cost on top of generic attack cost through `--reward-jump-attack-no-damage-extra-cost` and `--reward-jump-attack-punished-extra-cost`; Phase 1 uses this to make `jump-forward-mk` whiffs costlier than ground `stand-mk` / `crouch-mk` whiffs without banning useful jump-ins outright
   - guard reward shaping is available for offline Phase 1 DQN experiments without changing transition schema:
     - `--reward-guard-success-bonus` adds raw reward to `guard-stand` / `guard-crouch` starts when `obs_opp_routine_attack_state=1`, `obs_abs_dx <= --reward-guard-threat-max-dx`, and the guard-success lookahead window has no self HP damage
-    - `--reward-passive-guard-cost` subtracts raw reward from guard starts when the opponent is not attacking
-    - `--reward-far-guard-cost` subtracts raw reward from guard starts outside the configured threat distance
+    - `--reward-passive-guard-cost` subtracts raw reward from clean guard starts when the opponent is not attacking
+    - `--reward-far-guard-cost` subtracts raw reward from clean guard starts outside the configured threat distance
+    - passive/far guard costs apply only when the same guard lookahead window has no self HP damage, so a wrong guard that gets hit is punished by the natural HP-delta loss rather than double-counted as empty guard
     - guard shaping applies only on `executed_policy_action_step == 0` so multi-step guard macros do not receive repeated bonus/cost on every macro frame
     - diagnostics print `guard_shape=success:<events>/<bonus> passive:<events>/<cost> far:<events>/<cost> net:<raw_adjustment>` and metadata records the guard-shaping config/stat payload
   - `--actions` trains and publishes a DQN action subset; excluded explicit actions are counted and reset delayed-credit attribution so their later neutral/recovery reward is not accidentally credited to the previous included action
@@ -2531,6 +2533,7 @@ Implementation notes:
     - nonzero HP-delta on continuation rows is delayed-credited back to the most recent included step-0 experience
     - step-0 experience `next_state` is updated to the next step-0 action boundary, or the episode terminal row at episode end
     - stdout now prints `cont=<rows>` and `cont_rew=<scaled_reward>` so smoke runs can confirm continuation rows are no longer training decisions
+  - `--drop-initial-episodes-per-run N` drops the first `N` `(run_id, episode_id)` episodes from each run before building experiences; use this for basic-only logs where early fallback/repeat-delay behavior creates heavy neutral pollution before the learner publishes useful actors
   - training diagnostics now print included/excluded action row counts, excluded reward sum, per-action count/reward/mean summaries, greedy top-1/top-2/top-3 summaries, and a collapse warning when one greedy action exceeds the configured threshold
   - uses normalized numeric spacing/threat features: `obs_abs_dx`, `obs_abs_dy`, both fighters' front/back edge distances, `obs_opp_in_front`, and `obs_opp_routine_attack_state`
   - trains a small stdlib-only MLP with target-network DQN updates, so it does not require `numpy` / `torch` for first smoke tests

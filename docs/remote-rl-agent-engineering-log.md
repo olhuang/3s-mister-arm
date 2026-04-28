@@ -2,6 +2,39 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-28: Refine DQN Guard Cost And Episode Drop
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / Phase 1 basic-action DQN reward shaping
+
+Files changed:
+- `tools/train_dqn_learner.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- avoid double-punishing wrong guard decisions that already took natural HP-delta damage.
+- make passive/far guard costs represent empty guard only, not failed guard.
+- allow DQN training to drop the first few episodes from each run when early live collection is polluted by fallback repeat-delay neutral behavior.
+
+Implementation notes:
+- `reward_guard_adjustment()` now computes the guard lookahead window once and applies passive/far guard costs only when that window has no self HP damage.
+- successful guard bonus still requires opponent attack state, close/mid threat range, and the same no-self-damage window.
+- added `--drop-initial-episodes-per-run`; it drops the first `N` unique `(run_id, episode_id)` episodes encountered for each run before building DQN experiences, stats, metadata, and greedy diagnostics.
+- trainer metadata records `rows_read_before_episode_drop`, `drop_initial_episodes_per_run`, `dropped_initial_episode_rows`, and `dropped_initial_episodes`.
+- trainer stdout now prints filtered rows, raw rows, and dropped episode/row counts as `rows=<filtered> raw_rows=<raw> drop_ep=<episodes>/<rows>`.
+
+Validation:
+- `python3 -m py_compile tools/train_dqn_learner.py` passed.
+- guard/drop smoke passed:
+  - `python3 tools/train_dqn_learner.py logs/rl-transitions-basic-v1-cpu-lv4-4-3-3.ndjson --model-dir /tmp/rl-dqn-guard-drop-smoke.<tmp> --model-version 1 --limit 7000 --drop-initial-episodes-per-run 3 --steps 5 --batch-size 16 --hidden-sizes 16 --log-interval 0 --eval-limit 500 --actions forward,back,guard-stand,guard-crouch,stand-mk,crouch-mk,jump-forward-mk --reward-risk-profile all-attacks --reward-risk-window-decisions 15 --reward-attack-no-damage-cost 1.0 --reward-attack-punished-cost 2.0 --reward-jump-attack-no-damage-extra-cost 2.0 --reward-jump-attack-punished-extra-cost 2.0 --reward-guard-success-bonus 2.0 --reward-guard-success-window-decisions 15 --reward-guard-threat-max-dx 144 --reward-passive-guard-cost 0.5 --reward-far-guard-cost 0.5`
+  - published `rows=5061 raw_rows=7000 drop_ep=3/1939`, confirming the first three episodes in the run were dropped before experience building.
+  - guard/risk diagnostics still fired: `risk_shape=... jump:196.0/56.0` and `guard_shape=success:16/32.0 passive:43/21.5 far:36/18.0 net:-7.5`.
+
+Follow-up:
+- use `--drop-initial-episodes-per-run 3` in the next A/B/C comparison on `rl-transitions-basic-v1-cpu-lv4-4-3-3.ndjson`.
+- if later collection removes or lowers `--policy-repeat-delay-ms`, rerun the same comparison with and without episode dropping to confirm whether the filter is still needed.
+
 ## 2026-04-28: Add DQN Jump-Attack Risk Extras
 
 Milestone:

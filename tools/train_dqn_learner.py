@@ -226,6 +226,28 @@ def read_transition_rows(paths: list[str], limit: int) -> list[dict[str, object]
     return rows
 
 
+def drop_initial_episodes_per_run(rows: list[dict[str, object]], drop_count: int) -> tuple[list[dict[str, object]], int, int]:
+    if drop_count <= 0:
+        return rows, 0, 0
+    seen: set[tuple[int, int]] = set()
+    episodes_by_run: dict[int, list[int]] = collections.defaultdict(list)
+    for row in rows:
+        run_id, episode_id = episode_key(row)
+        key = (run_id, episode_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        episodes_by_run[run_id].append(episode_id)
+
+    dropped_keys: set[tuple[int, int]] = set()
+    for run_id, episode_ids in episodes_by_run.items():
+        for episode_id in episode_ids[:drop_count]:
+            dropped_keys.add((run_id, episode_id))
+
+    filtered = [row for row in rows if episode_key(row) not in dropped_keys]
+    return filtered, len(rows) - len(filtered), len(dropped_keys)
+
+
 def episode_key(row: dict[str, object]) -> tuple[int, int]:
     return (int(row.get("run_id", 0) or 0), int(row.get("episode_id", 0) or 0))
 
@@ -320,23 +342,23 @@ def reward_guard_adjustment(
     opponent_attacking = int_field(row, "obs_opp_routine_attack_state") != 0
     abs_dx = int_field(row, "obs_abs_dx")
     in_threat_range = abs_dx <= config.threat_max_dx
+    window_end = min(len(episode_rows), row_index + max(0, config.success_window_decisions) + 1)
+    lookahead = episode_rows[row_index:window_end]
+    self_damage = sum(int_field(lookahead_row, "delta_self_hp") for lookahead_row in lookahead)
+    clean_guard_window = self_damage == 0
     adjustment = 0.0
 
-    if config.success_bonus > 0.0 and opponent_attacking and in_threat_range:
-        window_end = min(len(episode_rows), row_index + max(0, config.success_window_decisions) + 1)
-        lookahead = episode_rows[row_index:window_end]
-        self_damage = sum(int_field(lookahead_row, "delta_self_hp") for lookahead_row in lookahead)
-        if self_damage == 0:
-            adjustment += config.success_bonus
-            stats.success_bonus_events += 1
-            stats.success_bonus_total += config.success_bonus
+    if config.success_bonus > 0.0 and opponent_attacking and in_threat_range and clean_guard_window:
+        adjustment += config.success_bonus
+        stats.success_bonus_events += 1
+        stats.success_bonus_total += config.success_bonus
 
-    if config.passive_guard_cost > 0.0 and not opponent_attacking:
+    if config.passive_guard_cost > 0.0 and clean_guard_window and not opponent_attacking:
         adjustment -= config.passive_guard_cost
         stats.passive_guard_cost_events += 1
         stats.passive_guard_cost_total += config.passive_guard_cost
 
-    if config.far_guard_cost > 0.0 and not in_threat_range:
+    if config.far_guard_cost > 0.0 and clean_guard_window and not in_threat_range:
         adjustment -= config.far_guard_cost
         stats.far_guard_cost_events += 1
         stats.far_guard_cost_total += config.far_guard_cost
@@ -823,6 +845,12 @@ def main() -> None:
     parser.add_argument("--model-dir", required=True, help="Directory where DQN actor manifests will be published")
     parser.add_argument("--model-version", type=int, default=None, help="Explicit model version; defaults to current+1")
     parser.add_argument("--limit", type=int, default=0, help="Maximum rows to read across all transition logs; 0 means all")
+    parser.add_argument(
+        "--drop-initial-episodes-per-run",
+        type=int,
+        default=0,
+        help="Drop the first N episodes from each run before building DQN experiences",
+    )
     parser.add_argument("--steps", type=int, default=2000, help="Gradient steps")
     parser.add_argument("--batch-size", type=int, default=64, help="Replay batch size")
     parser.add_argument("--hidden-sizes", default="64,64", help="Comma-separated hidden layer sizes")
@@ -940,6 +968,11 @@ def main() -> None:
 
     actions = parse_action_subset(args.actions)
     rows = read_transition_rows(args.transition_logs, args.limit)
+    rows_read_before_episode_drop = len(rows)
+    rows, dropped_initial_episode_rows, dropped_initial_episodes = drop_initial_episodes_per_run(
+        rows,
+        max(0, int(args.drop_initial_episodes_per_run)),
+    )
     reward_risk_config = reward_risk_config_from_args(args)
     reward_guard_config = reward_guard_config_from_args(args)
     (
@@ -988,6 +1021,10 @@ def main() -> None:
     metadata = {
         "transition_logs": args.transition_logs,
         "rows_read": len(rows),
+        "rows_read_before_episode_drop": rows_read_before_episode_drop,
+        "drop_initial_episodes_per_run": max(0, int(args.drop_initial_episodes_per_run)),
+        "dropped_initial_episode_rows": dropped_initial_episode_rows,
+        "dropped_initial_episodes": dropped_initial_episodes,
         "experiences": len(experiences),
         "actions_subset": list(actions),
         "actions_subset_size": len(actions),
@@ -1040,7 +1077,10 @@ def main() -> None:
     )
     print(
         "DQN published "
-        f"version={version} model_dir={args.model_dir} rows={len(rows)} experiences={len(experiences)} "
+        f"version={version} model_dir={args.model_dir} rows={len(rows)} "
+        f"raw_rows={rows_read_before_episode_drop} "
+        f"drop_ep={dropped_initial_episodes}/{dropped_initial_episode_rows} "
+        f"experiences={len(experiences)} "
         f"actions={len(actions)} "
         f"risk={reward_risk_config.profile} risk_cost={reward_risk_stats.total_cost:.1f} "
         f"guard_bonus={reward_guard_stats.total_bonus:.1f} "

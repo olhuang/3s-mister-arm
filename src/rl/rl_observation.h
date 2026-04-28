@@ -43,6 +43,8 @@ typedef struct RLObservationV1 {
     u8 opp_guard_flag;
     u16 self_current_attack;
     u16 opp_current_attack;
+    u8 self_kind_of_waza;
+    u8 opp_kind_of_waza;
     u8 self_do_not_move;
     u8 opp_do_not_move;
     u8 self_hit_stop;

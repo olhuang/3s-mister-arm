@@ -2521,6 +2521,9 @@ Implementation notes:
     - requested/executed action metadata is identical because the game CPU action is already executed locally
     - with `rl-network = on`, the UDP handshake and transition-batch upload path remain available, but OBS/action request packets are not emitted
     - the same demo mapper labels walk/guard/stand-normal/crouch-normal/jump-attack/throw metadata from the CPU-resolved input
+  - the Fight debug overlay now exposes self-side attack identity probe fields before adding them to transition rows:
+    - `SATT R2<routine_no[2]> AK<current_attack> KW<kind_of_waza> RS<attack_routine_started>`
+    - these fields are overlay-only until validated against visible normals, specials, throws, and projectiles
   - MiSTer remote config was checked on `192.168.0.133`; no `perf-*` config keys or recent `PERF capture` logs were present, so the latest long-run restart was not explained by an enabled perf capture
   - `src/rl/rl_net.c` now protects the transition sender running-state with the transition queue mutex, clears it while observing an empty queue, reaps completed thread handles before replacement, and avoids clearing the shutdown handle until after the sender is joined
   - learner auto-publish skips duplicate tabular actor publication when `tab_updates` has not increased since the previous publish

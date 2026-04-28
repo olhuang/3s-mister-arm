@@ -236,6 +236,8 @@ void RLObservation_OnFrameEnd() {
     obs.opp_guard_flag = plw[opp].guard_flag;
     obs.self_current_attack = (u16)plw[self].current_attack;
     obs.opp_current_attack = (u16)plw[opp].current_attack;
+    obs.self_kind_of_waza = plw[self].wu.kind_of_waza;
+    obs.opp_kind_of_waza = plw[opp].wu.kind_of_waza;
     obs.self_do_not_move = plw[self].do_not_move;
     obs.opp_do_not_move = plw[opp].do_not_move;
     obs.self_hit_stop = plw[self].wu.hit_stop != 0;
@@ -478,6 +480,14 @@ void RLObservation_FormatDebugOverlay(char* out, size_t out_size, const char* se
                             latest_obs.opp_guard_flag,
                             latest_obs.self_current_attack,
                             latest_obs.opp_current_attack);
+        append_overlay_line(out,
+                            out_size,
+                            &used,
+                            "SATT R2%u AK%03X KW%02X RS%d",
+                            latest_obs.self_routine[2],
+                            latest_obs.self_current_attack,
+                            latest_obs.self_kind_of_waza,
+                            latest_obs.self_attack_routine_started);
         append_overlay_line(out,
                             out_size,
                             &used,

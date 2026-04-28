@@ -2,6 +2,34 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-28: Add Fight Overlay Attack Identity Probe Fields
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / move-label validation before transition schema expansion
+
+Files changed:
+- `src/rl/rl_observation.h`
+- `src/rl/rl_observation.c`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- expose self-side SF3 attack identity candidate fields on the Fight debug overlay before adding them to transition logs.
+- support visual validation that `routine_no[2]`, `current_attack`, and `kind_of_waza` correlate with real moves during CPU-demo / human-demo tests.
+
+Implementation notes:
+- `RLObservationV1` now captures `self_kind_of_waza` and `opp_kind_of_waza` from `plw[*].wu.kind_of_waza`.
+- the Fight overlay adds `SATT R2<routine2> AK<current_attack> KW<kind_of_waza> RS<attack_routine_started>`.
+- no UDP observation payload, transition row, learner state, or replay schema was changed.
+
+Validation:
+- `git diff --check` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed and produced `build/mister-telemetry-package`.
+
+Follow-up:
+- validate the overlay values against visible normals, specials, throws, and projectiles.
+- only after validation, decide which of these fields should be promoted into transition logs and/or learner observations.
+
 ## 2026-04-28: Add CPU-Demo Transition Recording Mode
 
 Milestone:

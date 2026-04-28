@@ -2549,6 +2549,16 @@ Implementation notes:
   - learner stats print `obs=<payload>/<header-only>` and `tab_state=obs:<n>/latest:<n>` so live runs can confirm whether tabular inference is using same-frame OBS state
 - `tools/train_dqn_learner.py` now supports the first offline DQN/MLP Q learner path:
   - reads transition NDJSON logs and converts rows into `(state, action, reward, next_state, done)` experiences using the same learner-safe HP-delta reward as tabular (`delta_opp_hp - delta_self_hp`)
+  - can optionally train from engine-attributed demo move starts instead of input-only demo labels:
+    - `--demo-attribution-training-mode off|augment|replace-demo`
+    - `off` is the default and keeps the existing DQN replay behavior unchanged
+    - `augment` adds extra `demo_attributed_*` experiences while retaining the normal input-based row experiences
+    - `replace-demo` uses `demo_attributed_*` event rows in place of normal input-based experiences for `human-demo` / `cpu-demo` sources, while non-demo rows still use the normal path
+    - `--demo-attribution-window-decisions N` sums later `delta_opp_hp` / `delta_self_hp` in the same episode to give each attributed move a delayed outcome reward
+    - `--demo-attribution-action-windows action=N,...` reserves per-action delayed-credit tuning while preserving a global default window
+    - `--demo-attribution-stop-at-next-event` can prevent overlapping windows when projectile-delayed credit is not desired
+    - `--demo-attribution-hit-bonus`, `--demo-attribution-no-damage-cost`, and `--demo-attribution-punished-cost` are raw reward adjustments applied before `--reward-scale`
+    - stdout and model metadata record `demo_attr=...` / `demo_attribution_stats` so CPU-demo training can be audited for included/excluded events, hit/no-damage/punished/trade counts, HP sums, and reward adjustment totals
   - supports offline A/B/C reward-risk profiles without changing transition logs:
     - `--reward-risk-profile none`: baseline `hp-delta` reward
     - `--reward-risk-profile shoryuken-only`: applies only Shoryuken no-damage / punished extra costs

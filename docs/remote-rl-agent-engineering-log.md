@@ -2,6 +2,48 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-28: Add Demo-Attributed DQN Reward Shaping
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / CPU-demo move-outcome training
+
+Files changed:
+- `tools/train_dqn_learner.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- let offline DQN training optionally consume engine-attributed demo move starts instead of relying only on input-based `requested_*` / `executed_*` labels.
+- use the same delayed-credit outcome idea as `tools/analyze_rl_transitions.py` so CPU-demo rows can train from actual Ryu move identity (`fireball`, `shoryuken`, `tatsu`, `throw`, normals) when the exact input pulse is not visible at the decision boundary.
+
+Implementation notes:
+- `tools/train_dqn_learner.py` now has `--demo-attribution-training-mode off|augment|replace-demo`.
+  - `off` is the default and preserves the old input-based DQN training path.
+  - `augment` keeps normal input-based experiences and adds extra experiences from `demo_attributed_*` event rows.
+  - `replace-demo` skips normal input-based experiences for `execution_source = 4/5` rows and uses only `demo_attributed_*` events for demo-sourced experience creation.
+- delayed-credit shaping uses `--demo-attribution-window-decisions N` to sum future `delta_opp_hp` / `delta_self_hp` within the same episode.
+- `--demo-attribution-action-windows action=N,...` is reserved for per-action window tuning; omitted actions use the global window.
+- `--demo-attribution-stop-at-next-event` can make windows non-overlapping when needed, but overlapping remains available for projectile-style delayed hits.
+- optional raw reward adjustments:
+  - `--demo-attribution-hit-bonus`
+  - `--demo-attribution-no-damage-cost`
+  - `--demo-attribution-punished-cost`
+- DQN metadata and stdout now record `demo_attribution_*` config and stats, including event counts, hit/no-damage/punished/trade counts, HP sums, bonus/cost totals, and scaled reward sum.
+
+Validation:
+- `python3 -m py_compile tools/train_dqn_learner.py` passed.
+- `python3 tools/train_dqn_learner.py --help` shows the new demo-attribution flags.
+- smoke training passed:
+  ```sh
+  python3 tools/train_dqn_learner.py logs/rl-transitions-cpu-demo-v1-4-3-3.ndjson --model-dir /tmp/rl-dqn-demoattr-smoke --model-version 1 --steps 10 --batch-size 8 --hidden-sizes 16 --actions fireball,shoryuken-mp,tatsu-mk,throw,jump-forward-mk,stand-mk,crouch-hk --demo-attribution-training-mode replace-demo --demo-attribution-window-decisions 10 --demo-attribution-no-damage-cost 0.5 --demo-attribution-punished-cost 2.0 --log-interval 5
+  ```
+- smoke result: `events=621`, `included=580`, `excluded=41`, `hit=303`, `no_damage=277`, `punished=60`, `trade=20`, `hp=1902/675`.
+
+Follow-up:
+- compare `replace-demo` versus `augment` on CPU-demo + human-demo mixes.
+- tune per-action windows after fireball / throw / jump outcomes show consistent delayed-credit timing.
+- decide whether demo-attributed outcomes should also drive imitation-style sampling weights instead of only Q-reward shaping.
+
 ## 2026-04-28: Add Demo-Attributed Delayed-Credit Analyzer
 
 Milestone:

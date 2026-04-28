@@ -111,8 +111,10 @@ JUMP_ATTACK_RISK_ACTIONS = frozenset(
     }
 )
 REWARD_RISK_PROFILES = ("none", "shoryuken-only", "all-attacks")
+DEMO_ATTRIBUTION_TRAINING_MODES = ("off", "augment", "replace-demo")
 GUARD_ACTIONS = frozenset({"guard-stand", "guard-crouch"})
 MOVEMENT_SPACING_ACTIONS = frozenset({"forward", "back"})
+DEMO_EXECUTION_SOURCES = frozenset({4, 5})
 
 
 @dataclass(frozen=True)
@@ -256,6 +258,68 @@ class RewardSpacingStats:
         }
 
 
+@dataclass(frozen=True)
+class DemoAttributionConfig:
+    training_mode: str
+    window_decisions: int
+    action_windows: dict[str, int]
+    stop_at_next_event: bool
+    hit_bonus: float
+    no_damage_cost: float
+    punished_cost: float
+
+
+@dataclass
+class DemoAttributionStats:
+    event_rows: int = 0
+    included_events: int = 0
+    excluded_events: int = 0
+    hit_events: int = 0
+    no_damage_events: int = 0
+    punished_events: int = 0
+    trade_events: int = 0
+    opp_hp_sum: int = 0
+    self_hp_sum: int = 0
+    base_reward_sum: float = 0.0
+    hit_bonus_total: float = 0.0
+    no_damage_cost_total: float = 0.0
+    punished_cost_total: float = 0.0
+    scaled_reward_sum: float = 0.0
+
+    @property
+    def total_bonus(self) -> float:
+        return self.hit_bonus_total
+
+    @property
+    def total_cost(self) -> float:
+        return self.no_damage_cost_total + self.punished_cost_total
+
+    @property
+    def net_adjustment(self) -> float:
+        return self.total_bonus - self.total_cost
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "event_rows": self.event_rows,
+            "included_events": self.included_events,
+            "excluded_events": self.excluded_events,
+            "hit_events": self.hit_events,
+            "no_damage_events": self.no_damage_events,
+            "punished_events": self.punished_events,
+            "trade_events": self.trade_events,
+            "opp_hp_sum": self.opp_hp_sum,
+            "self_hp_sum": self.self_hp_sum,
+            "base_reward_sum": self.base_reward_sum,
+            "hit_bonus_total": self.hit_bonus_total,
+            "no_damage_cost_total": self.no_damage_cost_total,
+            "punished_cost_total": self.punished_cost_total,
+            "total_bonus": self.total_bonus,
+            "total_cost": self.total_cost,
+            "net_adjustment": self.net_adjustment,
+            "scaled_reward_sum": self.scaled_reward_sum,
+        }
+
+
 def read_transition_rows(paths: list[str], limit: int) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     for path in paths:
@@ -312,6 +376,64 @@ def int_field(row: dict[str, object], name: str) -> int:
 
 def is_action_start(row: dict[str, object]) -> bool:
     return int_field(row, "executed_policy_action_step") == 0
+
+
+def is_demo_row(row: dict[str, object]) -> bool:
+    return int_field(row, "execution_source") in DEMO_EXECUTION_SOURCES
+
+
+def demo_attribution_present(row: dict[str, object]) -> bool:
+    return (
+        int_field(row, "demo_attribution_source") != 0
+        or int_field(row, "demo_attributed_policy_action_id") != 0
+        or int_field(row, "demo_attributed_policy_sub_action_id") != 0
+    )
+
+
+def policy_meta_action_name(action_id: int, sub_action_id: int) -> str | None:
+    return rl.TABULAR_ACTION_NAMES_BY_POLICY_META.get((action_id, sub_action_id))
+
+
+def demo_attributed_action_name(row: dict[str, object]) -> str | None:
+    action_id = int_field(row, "demo_attributed_policy_action_id")
+    sub_action_id = int_field(row, "demo_attributed_policy_sub_action_id")
+    action_name = policy_meta_action_name(action_id, sub_action_id)
+    if action_name is not None and action_name in rl.TABULAR_ACTION_NAMES:
+        return action_name
+
+    # The runtime can observe strength variants that are not separate live DQN
+    # macro actions yet. Collapse those families onto the current learner action.
+    if action_id == rl.RL_POLICY_ACTION_RYU_FIREBALL:
+        return "fireball"
+    if action_id == rl.RL_POLICY_ACTION_RYU_SHORYUKEN:
+        return "shoryuken-mp"
+    if action_id == rl.RL_POLICY_ACTION_RYU_TATSU:
+        return "tatsu-mk"
+    if action_id == rl.RL_POLICY_ACTION_THROW:
+        return "throw"
+    return action_name
+
+
+def parse_demo_attribution_action_windows(value: str) -> dict[str, int]:
+    windows: dict[str, int] = {}
+    if not value.strip():
+        return windows
+    valid = set(rl.TABULAR_ACTION_NAMES)
+    for raw_item in value.split(","):
+        item = raw_item.strip()
+        if not item:
+            continue
+        if "=" not in item:
+            raise SystemExit(f"Invalid --demo-attribution-action-windows item: {item!r}; expected action=N")
+        action, raw_window = (part.strip() for part in item.split("=", 1))
+        if action not in valid:
+            raise SystemExit(f"Unknown action in --demo-attribution-action-windows: {action}")
+        try:
+            window = int(raw_window)
+        except ValueError as exc:
+            raise SystemExit(f"Invalid window for {action}: {raw_window}") from exc
+        windows[action] = max(0, window)
+    return windows
 
 
 def is_terminal_win(row: dict[str, object]) -> bool:
@@ -523,6 +645,87 @@ def set_experience_next_state(
     experiences[exp_index].done = done
 
 
+def demo_attribution_window_for_action(action_name: str, config: DemoAttributionConfig) -> int:
+    return max(0, int(config.action_windows.get(action_name, config.window_decisions)))
+
+
+def add_demo_attribution_experience(
+    episode_rows: list[dict[str, object]],
+    row_index: int,
+    actions: tuple[str, ...],
+    action_to_index: dict[str, int],
+    reward_scale: float,
+    config: DemoAttributionConfig,
+    stats: DemoAttributionStats,
+    experiences: list[Experience],
+    action_counts: dict[str, int],
+    action_rewards: dict[str, float],
+) -> bool:
+    if config.training_mode == "off":
+        return False
+    row = episode_rows[row_index]
+    if not is_demo_row(row) or not demo_attribution_present(row):
+        return False
+
+    stats.event_rows += 1
+    action_name = demo_attributed_action_name(row)
+    if action_name is None or action_name not in action_to_index:
+        stats.excluded_events += 1
+        return False
+
+    window_end = min(len(episode_rows), row_index + demo_attribution_window_for_action(action_name, config) + 1)
+    if config.stop_at_next_event:
+        for next_index in range(row_index + 1, window_end):
+            if demo_attribution_present(episode_rows[next_index]):
+                window_end = next_index
+                break
+    window_rows = episode_rows[row_index:window_end]
+    if not window_rows:
+        window_rows = [row]
+
+    opponent_damage = sum(int_field(window_row, "delta_opp_hp") for window_row in window_rows)
+    self_damage = sum(int_field(window_row, "delta_self_hp") for window_row in window_rows)
+    base_reward = float(opponent_damage - self_damage)
+    adjustment = 0.0
+
+    if opponent_damage > 0:
+        stats.hit_events += 1
+        adjustment += config.hit_bonus
+        stats.hit_bonus_total += config.hit_bonus
+    else:
+        stats.no_damage_events += 1
+        adjustment -= config.no_damage_cost
+        stats.no_damage_cost_total += config.no_damage_cost
+
+    if self_damage > 0:
+        stats.punished_events += 1
+        adjustment -= config.punished_cost
+        stats.punished_cost_total += config.punished_cost
+    if opponent_damage > 0 and self_damage > 0:
+        stats.trade_events += 1
+
+    reward = (base_reward + adjustment) * reward_scale
+    next_row = window_rows[-1]
+    done = any(bool(window_row.get("done", False)) for window_row in window_rows)
+    experiences.append(
+        Experience(
+            state=rl.dqn_feature_vector(row),
+            action_index=action_to_index[action_name],
+            reward=reward,
+            next_state=rl.dqn_feature_vector(next_row),
+            done=done,
+        )
+    )
+    stats.included_events += 1
+    stats.opp_hp_sum += opponent_damage
+    stats.self_hp_sum += self_damage
+    stats.base_reward_sum += base_reward
+    stats.scaled_reward_sum += reward
+    action_counts[action_name] += 1
+    action_rewards[action_name] += reward
+    return True
+
+
 def build_experiences(
     rows: list[dict[str, object]],
     actions: tuple[str, ...],
@@ -530,6 +733,7 @@ def build_experiences(
     reward_risk_config: RewardRiskConfig,
     reward_guard_config: RewardGuardConfig,
     reward_spacing_config: RewardSpacingConfig,
+    demo_attribution_config: DemoAttributionConfig,
 ) -> tuple[
     list[Experience],
     dict[str, int],
@@ -540,6 +744,7 @@ def build_experiences(
     RewardRiskStats,
     RewardGuardStats,
     RewardSpacingStats,
+    DemoAttributionStats,
 ]:
     action_to_index = {action: index for index, action in enumerate(actions)}
     by_episode: dict[tuple[int, int], list[dict[str, object]]] = collections.defaultdict(list)
@@ -555,11 +760,42 @@ def build_experiences(
     risk_stats = RewardRiskStats()
     guard_stats = RewardGuardStats()
     spacing_stats = RewardSpacingStats()
+    demo_attribution_stats = DemoAttributionStats()
 
     for episode_rows in by_episode.values():
         episode_rows.sort(key=row_order_key)
         last_exp_index: int | None = None
         for index, row in enumerate(episode_rows):
+            if demo_attribution_config.training_mode != "off":
+                if demo_attribution_config.training_mode == "replace-demo" and is_demo_row(row):
+                    set_experience_next_state(experiences, last_exp_index, row, bool(row.get("done", False)))
+                    last_exp_index = None
+                    add_demo_attribution_experience(
+                        episode_rows,
+                        index,
+                        actions,
+                        action_to_index,
+                        reward_scale,
+                        demo_attribution_config,
+                        demo_attribution_stats,
+                        experiences,
+                        action_counts,
+                        action_rewards,
+                    )
+                    continue
+                add_demo_attribution_experience(
+                    episode_rows,
+                    index,
+                    actions,
+                    action_to_index,
+                    reward_scale,
+                    demo_attribution_config,
+                    demo_attribution_stats,
+                    experiences,
+                    action_counts,
+                    action_rewards,
+                )
+
             action_name = rl.transition_action_name(row)
             action_start = is_action_start(row)
             risk_cost = (
@@ -638,6 +874,7 @@ def build_experiences(
         risk_stats,
         guard_stats,
         spacing_stats,
+        demo_attribution_stats,
     )
 
 
@@ -674,6 +911,18 @@ def reward_spacing_config_from_args(args: argparse.Namespace) -> RewardSpacingCo
         worsen_cost=max(0.0, float(args.reward_spacing_worsen_cost)),
         maintain_bonus=max(0.0, float(args.reward_spacing_maintain_bonus)),
         threat_back_bonus=max(0.0, float(args.reward_spacing_threat_back_bonus)),
+    )
+
+
+def demo_attribution_config_from_args(args: argparse.Namespace) -> DemoAttributionConfig:
+    return DemoAttributionConfig(
+        training_mode=str(args.demo_attribution_training_mode),
+        window_decisions=max(0, int(args.demo_attribution_window_decisions)),
+        action_windows=parse_demo_attribution_action_windows(str(args.demo_attribution_action_windows)),
+        stop_at_next_event=bool(args.demo_attribution_stop_at_next_event),
+        hit_bonus=max(0.0, float(args.demo_attribution_hit_bonus)),
+        no_damage_cost=max(0.0, float(args.demo_attribution_no_damage_cost)),
+        punished_cost=max(0.0, float(args.demo_attribution_punished_cost)),
     )
 
 
@@ -1135,6 +1384,53 @@ def main() -> None:
         default=0.0,
         help="Additional positive raw reward bonus when back increases close spacing while the opponent is attacking",
     )
+    parser.add_argument(
+        "--demo-attribution-training-mode",
+        choices=DEMO_ATTRIBUTION_TRAINING_MODES,
+        default="off",
+        help=(
+            "Optional engine-attributed demo training: off=use input/executed action rows, "
+            "augment=add extra demo_attributed_* experiences, replace-demo=use demo_attributed_* "
+            "instead of input/executed rows for demo sources"
+        ),
+    )
+    parser.add_argument(
+        "--demo-attribution-window-decisions",
+        type=int,
+        default=10,
+        help="Global lookahead decisions used to credit delayed HP deltas to demo-attributed move events",
+    )
+    parser.add_argument(
+        "--demo-attribution-action-windows",
+        default="",
+        help=(
+            "Optional comma-separated per-action delayed-credit windows, e.g. "
+            "fireball=15,throw=8; omitted actions use --demo-attribution-window-decisions"
+        ),
+    )
+    parser.add_argument(
+        "--demo-attribution-stop-at-next-event",
+        action="store_true",
+        help="Stop a demo-attribution delayed-credit window at the next demo-attributed move event in the same episode",
+    )
+    parser.add_argument(
+        "--demo-attribution-hit-bonus",
+        type=float,
+        default=0.0,
+        help="Additional positive raw reward added when a demo-attributed move causes opponent HP damage in its window",
+    )
+    parser.add_argument(
+        "--demo-attribution-no-damage-cost",
+        type=float,
+        default=0.0,
+        help="Positive raw reward cost subtracted when a demo-attributed move causes no opponent HP damage in its window",
+    )
+    parser.add_argument(
+        "--demo-attribution-punished-cost",
+        type=float,
+        default=0.0,
+        help="Positive raw reward cost subtracted when a demo-attributed move window includes self HP damage",
+    )
     parser.add_argument("--target-sync-steps", type=int, default=200, help="Steps between target-network syncs")
     parser.add_argument("--epsilon", type=float, default=0.05, help="Exploration probability stamped into the published actor")
     parser.add_argument(
@@ -1165,6 +1461,7 @@ def main() -> None:
     reward_risk_config = reward_risk_config_from_args(args)
     reward_guard_config = reward_guard_config_from_args(args)
     reward_spacing_config = reward_spacing_config_from_args(args)
+    demo_attribution_config = demo_attribution_config_from_args(args)
     (
         experiences,
         action_counts,
@@ -1175,6 +1472,7 @@ def main() -> None:
         reward_risk_stats,
         reward_guard_stats,
         reward_spacing_stats,
+        demo_attribution_stats,
     ) = build_experiences(
         rows,
         actions,
@@ -1182,6 +1480,7 @@ def main() -> None:
         reward_risk_config,
         reward_guard_config,
         reward_spacing_config,
+        demo_attribution_config,
     )
     if not experiences:
         raise SystemExit("No DQN experiences built from transition logs")
@@ -1207,6 +1506,8 @@ def main() -> None:
         reward_sources.append("guard-shaping")
     if reward_spacing_stats.net_adjustment != 0.0:
         reward_sources.append("spacing-shaping")
+    if demo_attribution_config.training_mode != "off":
+        reward_sources.append("demo-attribution")
     reward_source = "+".join(reward_sources)
     metadata = {
         "transition_logs": args.transition_logs,
@@ -1246,6 +1547,14 @@ def main() -> None:
         "reward_spacing_maintain_bonus": reward_spacing_config.maintain_bonus,
         "reward_spacing_threat_back_bonus": reward_spacing_config.threat_back_bonus,
         "reward_spacing_stats": reward_spacing_stats.as_metadata(),
+        "demo_attribution_training_mode": demo_attribution_config.training_mode,
+        "demo_attribution_window_decisions": demo_attribution_config.window_decisions,
+        "demo_attribution_action_windows": demo_attribution_config.action_windows,
+        "demo_attribution_stop_at_next_event": demo_attribution_config.stop_at_next_event,
+        "demo_attribution_hit_bonus": demo_attribution_config.hit_bonus,
+        "demo_attribution_no_damage_cost": demo_attribution_config.no_damage_cost,
+        "demo_attribution_punished_cost": demo_attribution_config.punished_cost,
+        "demo_attribution_stats": demo_attribution_stats.as_metadata(),
         "steps": max(1, args.steps),
         "batch_size": max(1, args.batch_size),
         "gamma": min(0.999, max(0.0, args.gamma)),
@@ -1286,6 +1595,9 @@ def main() -> None:
         f"spacing_bonus={reward_spacing_stats.total_bonus:.1f} "
         f"spacing_cost={reward_spacing_stats.total_cost:.1f} "
         f"spacing_net={reward_spacing_stats.net_adjustment:.1f} "
+        f"demo_attr={demo_attribution_config.training_mode}:{demo_attribution_stats.included_events}/"
+        f"{demo_attribution_stats.event_rows} "
+        f"demo_attr_net={demo_attribution_stats.net_adjustment:.1f} "
         f"loss={train_stats['last_loss']:.6f} avg_loss={train_stats['avg_loss']:.6f} "
         f"included={build_stats.included_action_rows} excluded={build_stats.excluded_action_rows} "
         f"cont={build_stats.macro_continuation_rows} "
@@ -1333,6 +1645,25 @@ def main() -> None:
         f"worsen:{reward_spacing_stats.worsen_events}/{reward_spacing_stats.worsen_cost_total:.1f} "
         f"threat_back:{reward_spacing_stats.threat_back_events}/{reward_spacing_stats.threat_back_bonus_total:.1f} "
         f"net:{reward_spacing_stats.net_adjustment:.1f}",
+        flush=True,
+    )
+    print(
+        "DQN diagnostics "
+        f"demo_attr=mode:{demo_attribution_config.training_mode} "
+        f"events:{demo_attribution_stats.event_rows} "
+        f"included:{demo_attribution_stats.included_events} "
+        f"excluded:{demo_attribution_stats.excluded_events} "
+        f"window:{demo_attribution_config.window_decisions} "
+        f"stop_next:{int(demo_attribution_config.stop_at_next_event)} "
+        f"hit:{demo_attribution_stats.hit_events} "
+        f"no_damage:{demo_attribution_stats.no_damage_events} "
+        f"punished:{demo_attribution_stats.punished_events} "
+        f"trade:{demo_attribution_stats.trade_events} "
+        f"hp:{demo_attribution_stats.opp_hp_sum}/{demo_attribution_stats.self_hp_sum} "
+        f"bonus:{demo_attribution_stats.total_bonus:.1f} "
+        f"cost:{demo_attribution_stats.total_cost:.1f} "
+        f"net:{demo_attribution_stats.net_adjustment:.1f} "
+        f"scaled_reward:{demo_attribution_stats.scaled_reward_sum:.3f}",
         flush=True,
     )
     print(

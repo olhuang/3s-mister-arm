@@ -2430,6 +2430,7 @@ Tasks:
 - [x] Add offline DQN A/B/C reward-risk profiles and same-observation model comparison tooling
 - [x] Add DQN action subset training and collapse diagnostics for offline policy debugging
 - [x] Add offline DQN guard success / passive guard reward shaping knobs for Phase 1 defense curriculum smoke tests
+- [x] Make offline DQN replay decision-level by training only on macro step-0 action starts and delayed-crediting macro continuation rewards
 - [x] Add an offline transition analyzer for action/distance HP-delta attribution
 - [x] Expand observation features only with schema versioning for the first routine attack/contact-reaction validation probes
 - [x] Promote validated opponent routine attack state into the first tabular strike-defense state split
@@ -2520,6 +2521,12 @@ Implementation notes:
     - guard shaping applies only on `executed_policy_action_step == 0` so multi-step guard macros do not receive repeated bonus/cost on every macro frame
     - diagnostics print `guard_shape=success:<events>/<bonus> passive:<events>/<cost> far:<events>/<cost> net:<raw_adjustment>` and metadata records the guard-shaping config/stat payload
   - `--actions` trains and publishes a DQN action subset; excluded explicit actions are counted and reset delayed-credit attribution so their later neutral/recovery reward is not accidentally credited to the previous included action
+  - DQN replay now treats high-level macro action starts as the training decision boundary:
+    - only rows with `executed_policy_action_step == 0` create DQN experiences
+    - recognized included macro continuation rows (`step > 0`) do not create new experiences
+    - nonzero HP-delta on continuation rows is delayed-credited back to the most recent included step-0 experience
+    - step-0 experience `next_state` is updated to the next step-0 action boundary, or the episode terminal row at episode end
+    - stdout now prints `cont=<rows>` and `cont_rew=<scaled_reward>` so smoke runs can confirm continuation rows are no longer training decisions
   - training diagnostics now print included/excluded action row counts, excluded reward sum, per-action count/reward/mean summaries, greedy top-1/top-2/top-3 summaries, and a collapse warning when one greedy action exceeds the configured threshold
   - uses normalized numeric spacing/threat features: `obs_abs_dx`, `obs_abs_dy`, both fighters' front/back edge distances, `obs_opp_in_front`, and `obs_opp_routine_attack_state`
   - trains a small stdlib-only MLP with target-network DQN updates, so it does not require `numpy` / `torch` for first smoke tests

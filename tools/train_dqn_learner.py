@@ -33,6 +33,11 @@ class BuildDiagnostics:
     excluded_action_rows: int = 0
     excluded_action_reward_rows: int = 0
     excluded_action_reward_sum: float = 0.0
+    macro_continuation_rows: int = 0
+    macro_continuation_reward_rows: int = 0
+    macro_continuation_reward_sum: float = 0.0
+    macro_continuation_delayed_rewards: int = 0
+    macro_continuation_uncredited_reward_rows: int = 0
     unrecognized_delayed_rewards: int = 0
     unrecognized_uncredited_reward_rows: int = 0
 
@@ -42,6 +47,11 @@ class BuildDiagnostics:
             "excluded_action_rows": self.excluded_action_rows,
             "excluded_action_reward_rows": self.excluded_action_reward_rows,
             "excluded_action_reward_sum": self.excluded_action_reward_sum,
+            "macro_continuation_rows": self.macro_continuation_rows,
+            "macro_continuation_reward_rows": self.macro_continuation_reward_rows,
+            "macro_continuation_reward_sum": self.macro_continuation_reward_sum,
+            "macro_continuation_delayed_rewards": self.macro_continuation_delayed_rewards,
+            "macro_continuation_uncredited_reward_rows": self.macro_continuation_uncredited_reward_rows,
             "unrecognized_delayed_rewards": self.unrecognized_delayed_rewards,
             "unrecognized_uncredited_reward_rows": self.unrecognized_uncredited_reward_rows,
         }
@@ -310,6 +320,32 @@ def reward_guard_adjustment(
     return adjustment
 
 
+def add_delayed_reward(
+    experiences: list[Experience],
+    exp_index: int | None,
+    reward: float,
+    actions: tuple[str, ...],
+    action_rewards: dict[str, float],
+) -> bool:
+    if exp_index is None:
+        return False
+    experiences[exp_index].reward += reward
+    action_rewards[actions[experiences[exp_index].action_index]] += reward
+    return True
+
+
+def set_experience_next_state(
+    experiences: list[Experience],
+    exp_index: int | None,
+    row: dict[str, object],
+    done: bool,
+) -> None:
+    if exp_index is None:
+        return
+    experiences[exp_index].next_state = rl.dqn_feature_vector(row)
+    experiences[exp_index].done = done
+
+
 def build_experiences(
     rows: list[dict[str, object]],
     actions: tuple[str, ...],
@@ -345,6 +381,7 @@ def build_experiences(
         last_exp_index: int | None = None
         for index, row in enumerate(episode_rows):
             action_name = rl.transition_action_name(row)
+            action_start = is_action_start(row)
             risk_cost = (
                 reward_risk_cost(episode_rows, index, action_name, reward_risk_config, risk_stats)
                 if action_name is not None
@@ -357,17 +394,19 @@ def build_experiences(
             )
             reward = (rl.tabular_training_reward(row) - risk_cost + guard_adjustment) * reward_scale
             if action_name is None:
-                if reward != 0.0 and last_exp_index is not None:
-                    experiences[last_exp_index].reward += reward
-                    action_rewards[actions[experiences[last_exp_index].action_index]] += reward
-                    build_stats.unrecognized_delayed_rewards += 1
-                elif reward != 0.0:
-                    build_stats.unrecognized_uncredited_reward_rows += 1
+                if reward != 0.0:
+                    if add_delayed_reward(experiences, last_exp_index, reward, actions, action_rewards):
+                        build_stats.unrecognized_delayed_rewards += 1
+                    else:
+                        build_stats.unrecognized_uncredited_reward_rows += 1
                 continue
 
             if action_name in observed_action_counts:
                 observed_action_counts[action_name] += 1
                 observed_action_rewards[action_name] += reward
+
+            if action_start:
+                set_experience_next_state(experiences, last_exp_index, row, bool(row.get("done", False)))
 
             if action_name not in action_to_index:
                 build_stats.excluded_action_rows += 1
@@ -377,20 +416,32 @@ def build_experiences(
                 last_exp_index = None
                 continue
 
-            next_row = episode_rows[index + 1] if index + 1 < len(episode_rows) else row
-            done = bool(row.get("done", False)) or index + 1 >= len(episode_rows)
+            if not action_start:
+                build_stats.macro_continuation_rows += 1
+                if reward != 0.0:
+                    build_stats.macro_continuation_reward_rows += 1
+                    build_stats.macro_continuation_reward_sum += reward
+                    if add_delayed_reward(experiences, last_exp_index, reward, actions, action_rewards):
+                        build_stats.macro_continuation_delayed_rewards += 1
+                    else:
+                        build_stats.macro_continuation_uncredited_reward_rows += 1
+                continue
+
             exp = Experience(
                 state=rl.dqn_feature_vector(row),
                 action_index=action_to_index[action_name],
                 reward=reward,
-                next_state=rl.dqn_feature_vector(next_row),
-                done=done,
+                next_state=rl.dqn_feature_vector(row),
+                done=bool(row.get("done", False)),
             )
             experiences.append(exp)
             last_exp_index = len(experiences) - 1
             build_stats.included_action_rows += 1
             action_counts[action_name] += 1
             action_rewards[action_name] += reward
+
+        if episode_rows:
+            set_experience_next_state(experiences, last_exp_index, episode_rows[-1], True)
 
     return (
         experiences,
@@ -903,7 +954,7 @@ def main() -> None:
         "actions_subset": list(actions),
         "actions_subset_size": len(actions),
         "build_diagnostics": build_stats.as_metadata(),
-        "delayed_rewards": build_stats.unrecognized_delayed_rewards,
+        "delayed_rewards": build_stats.unrecognized_delayed_rewards + build_stats.macro_continuation_delayed_rewards,
         "reward_source": reward_source,
         "reward_scale": args.reward_scale,
         "reward_scale_applied_after_risk_cost": True,
@@ -957,6 +1008,8 @@ def main() -> None:
         f"guard_net={reward_guard_stats.net_adjustment:.1f} "
         f"loss={train_stats['last_loss']:.6f} avg_loss={train_stats['avg_loss']:.6f} "
         f"included={build_stats.included_action_rows} excluded={build_stats.excluded_action_rows} "
+        f"cont={build_stats.macro_continuation_rows} "
+        f"cont_rew={build_stats.macro_continuation_reward_sum:.3f} "
         f"excluded_rew={build_stats.excluded_action_reward_sum:.3f} "
         f"top={greedy_diag.top_action}:{greedy_diag.top_action_rate * 100.0:.1f}% "
         f"greedy={format_counts(greedy_diag.counts, greedy_diag.evaluated, args.diagnostic_top_n)}",

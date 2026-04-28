@@ -2,6 +2,41 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-28: Make Offline DQN Replay Decision-Level
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / Phase 1 defense curriculum
+
+Files changed:
+- `tools/train_dqn_learner.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- stop treating macro continuation rows (`executed_policy_action_step > 0`) as independent DQN decisions.
+- credit HP-delta reward from guard/fireball/shoryuken/tatsu/jump macro continuation rows back to the originating step-0 decision.
+- make guard reward shaping visible to the model instead of diluting it across forced guard continuation frames.
+
+Implementation notes:
+- `build_experiences()` now creates DQN experiences only for recognized included action rows with `executed_policy_action_step == 0`.
+- included macro continuation rows no longer create experiences; nonzero reward on those rows is added to the most recent included step-0 experience.
+- step-0 experience `next_state` is updated when the next step-0 action boundary is reached, and the final included experience in each episode is closed with the episode's last row as terminal next state.
+- excluded explicit actions still reset delayed-credit attribution so their later reward is not credited to a previous included action.
+- `BuildDiagnostics` now records macro continuation rows, continuation reward rows/sum, continuation delayed credits, and uncredited continuation rewards.
+- trainer stdout now prints `cont=<rows>` and `cont_rew=<scaled_reward>` beside included/excluded counts.
+
+Validation:
+- `python3 -m py_compile tools/train_dqn_learner.py` passed.
+- decision-level replay smoke:
+  - `python3 tools/train_dqn_learner.py logs/rl-transitions-actionset-v4-hardcpu-v1-4-3-3.ndjson --model-dir /tmp/rl-dqn-decision-replay-smoke --model-version 1 --limit 5000 --steps 5 --batch-size 16 --hidden-sizes 16 --log-interval 0 --eval-limit 500 --actions forward,back,guard-stand,guard-crouch,stand-hp,crouch-mk --reward-risk-profile all-attacks --reward-risk-window-decisions 15 --reward-attack-no-damage-cost 0.5 --reward-attack-punished-cost 2.0 --reward-guard-success-bonus 2.0 --reward-guard-success-window-decisions 15 --reward-guard-threat-max-dx 144 --reward-passive-guard-cost 0.2 --reward-far-guard-cost 0.5`
+  - published `experiences=184`, `included=184`, `cont=195`, `cont_rew=-0.380`, compared with the previous row-level smoke that produced `experiences=379`; this confirms guard macro continuation rows are no longer independent DQN decisions.
+  - guard-shaping diagnostics still fired: `guard_shape=success:10/20.0 passive:16/3.2 far:10/5.0 net:11.8`.
+
+Follow-up:
+- rerun full Phase 1 guard-shaping training because the previous `model/dqn-phase1-basic-c15-guard-shaping` was produced by the older row-level replay builder.
+- compare the rebuilt model against `model/dqn-phase1-basic-c15`; this is the first comparison where guard shaping should have a fair signal-to-noise ratio.
+- if the rebuilt model still keeps `atk1_close` on `stand-hp`, increase guard success bonus or collect scripted guard success data before broadening the action set.
+
 ## 2026-04-28: Add Offline DQN Guard Reward Shaping
 
 Milestone:

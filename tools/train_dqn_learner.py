@@ -232,6 +232,50 @@ class RewardSpacingStats:
 
 
 @dataclass(frozen=True)
+class RewardPositionConfig:
+    corner_back_edge_threshold: int
+    corner_guard_cost: float
+    corner_back_cost: float
+    corner_escape_bonus: float
+    corner_escape_min_delta: int
+
+
+@dataclass
+class RewardPositionStats:
+    corner_guard_cost_events: int = 0
+    corner_back_cost_events: int = 0
+    corner_escape_bonus_events: int = 0
+    corner_guard_cost_total: float = 0.0
+    corner_back_cost_total: float = 0.0
+    corner_escape_bonus_total: float = 0.0
+
+    @property
+    def total_bonus(self) -> float:
+        return self.corner_escape_bonus_total
+
+    @property
+    def total_cost(self) -> float:
+        return self.corner_guard_cost_total + self.corner_back_cost_total
+
+    @property
+    def net_adjustment(self) -> float:
+        return self.total_bonus - self.total_cost
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "corner_guard_cost_events": self.corner_guard_cost_events,
+            "corner_back_cost_events": self.corner_back_cost_events,
+            "corner_escape_bonus_events": self.corner_escape_bonus_events,
+            "corner_guard_cost_total": self.corner_guard_cost_total,
+            "corner_back_cost_total": self.corner_back_cost_total,
+            "corner_escape_bonus_total": self.corner_escape_bonus_total,
+            "total_bonus": self.total_bonus,
+            "total_cost": self.total_cost,
+            "net_adjustment": self.net_adjustment,
+        }
+
+
+@dataclass(frozen=True)
 class DemoAttributionConfig:
     training_mode: str
     window_decisions: int
@@ -592,6 +636,64 @@ def reward_spacing_adjustment(
     return adjustment
 
 
+def reward_position_adjustment(
+    episode_rows: list[dict[str, object]],
+    row_index: int,
+    action_name: str,
+    config: RewardPositionConfig,
+    stats: RewardPositionStats,
+) -> float:
+    row = episode_rows[row_index]
+    if not is_action_start(row) or "obs_self_back_edge_dist" not in row:
+        return 0.0
+    if (
+        config.corner_guard_cost <= 0.0
+        and config.corner_back_cost <= 0.0
+        and config.corner_escape_bonus <= 0.0
+    ):
+        return 0.0
+
+    current_back_edge = int_field(row, "obs_self_back_edge_dist")
+    if current_back_edge > config.corner_back_edge_threshold:
+        return 0.0
+
+    next_boundary = next_decision_boundary_row(episode_rows, row_index)
+    if next_boundary is None:
+        next_index = row_index
+        next_row = row
+    else:
+        next_index, next_row = next_boundary
+
+    window_rows = episode_rows[row_index : next_index + 1]
+    self_damage = sum(int_field(lookahead_row, "delta_self_hp") for lookahead_row in window_rows)
+    clean_position_window = self_damage == 0
+    if not clean_position_window:
+        return 0.0
+
+    adjustment = 0.0
+    if action_name in GUARD_ACTIONS and config.corner_guard_cost > 0.0:
+        adjustment -= config.corner_guard_cost
+        stats.corner_guard_cost_events += 1
+        stats.corner_guard_cost_total += config.corner_guard_cost
+
+    if action_name == "back" and config.corner_back_cost > 0.0:
+        adjustment -= config.corner_back_cost
+        stats.corner_back_cost_events += 1
+        stats.corner_back_cost_total += config.corner_back_cost
+
+    next_back_edge = int_field(next_row, "obs_self_back_edge_dist")
+    if (
+        action_name == "forward"
+        and config.corner_escape_bonus > 0.0
+        and next_back_edge >= current_back_edge + config.corner_escape_min_delta
+    ):
+        adjustment += config.corner_escape_bonus
+        stats.corner_escape_bonus_events += 1
+        stats.corner_escape_bonus_total += config.corner_escape_bonus
+
+    return adjustment
+
+
 def add_delayed_reward(
     experiences: list[Experience],
     exp_index: int | None,
@@ -706,6 +808,7 @@ def build_experiences(
     reward_risk_config: RewardRiskConfig,
     reward_guard_config: RewardGuardConfig,
     reward_spacing_config: RewardSpacingConfig,
+    reward_position_config: RewardPositionConfig,
     demo_attribution_config: DemoAttributionConfig,
 ) -> tuple[
     list[Experience],
@@ -717,6 +820,7 @@ def build_experiences(
     RewardRiskStats,
     RewardGuardStats,
     RewardSpacingStats,
+    RewardPositionStats,
     DemoAttributionStats,
 ]:
     action_to_index = {action: index for index, action in enumerate(actions)}
@@ -733,6 +837,7 @@ def build_experiences(
     risk_stats = RewardRiskStats()
     guard_stats = RewardGuardStats()
     spacing_stats = RewardSpacingStats()
+    position_stats = RewardPositionStats()
     demo_attribution_stats = DemoAttributionStats()
 
     for episode_rows in by_episode.values():
@@ -786,7 +891,18 @@ def build_experiences(
                 if action_name is not None
                 else 0.0
             )
-            reward = (rl.tabular_training_reward(row) - risk_cost + guard_adjustment + spacing_adjustment) * reward_scale
+            position_adjustment = (
+                reward_position_adjustment(episode_rows, index, action_name, reward_position_config, position_stats)
+                if action_name is not None
+                else 0.0
+            )
+            reward = (
+                rl.tabular_training_reward(row)
+                - risk_cost
+                + guard_adjustment
+                + spacing_adjustment
+                + position_adjustment
+            ) * reward_scale
             if action_name is None:
                 if reward != 0.0:
                     if add_delayed_reward(experiences, last_exp_index, reward, actions, action_rewards):
@@ -847,6 +963,7 @@ def build_experiences(
         risk_stats,
         guard_stats,
         spacing_stats,
+        position_stats,
         demo_attribution_stats,
     )
 
@@ -884,6 +1001,16 @@ def reward_spacing_config_from_args(args: argparse.Namespace) -> RewardSpacingCo
         worsen_cost=max(0.0, float(args.reward_spacing_worsen_cost)),
         maintain_bonus=max(0.0, float(args.reward_spacing_maintain_bonus)),
         threat_back_bonus=max(0.0, float(args.reward_spacing_threat_back_bonus)),
+    )
+
+
+def reward_position_config_from_args(args: argparse.Namespace) -> RewardPositionConfig:
+    return RewardPositionConfig(
+        corner_back_edge_threshold=max(0, int(args.reward_corner_back_edge_threshold)),
+        corner_guard_cost=max(0.0, float(args.reward_corner_guard_cost)),
+        corner_back_cost=max(0.0, float(args.reward_corner_back_cost)),
+        corner_escape_bonus=max(0.0, float(args.reward_corner_escape_bonus)),
+        corner_escape_min_delta=max(0, int(args.reward_corner_escape_min_delta)),
     )
 
 
@@ -1358,6 +1485,36 @@ def main() -> None:
         help="Additional positive raw reward bonus when back increases close spacing while the opponent is attacking",
     )
     parser.add_argument(
+        "--reward-corner-back-edge-threshold",
+        type=int,
+        default=60,
+        help="obs_self_back_edge_dist threshold treated as trapped near own corner for position reward shaping",
+    )
+    parser.add_argument(
+        "--reward-corner-guard-cost",
+        type=float,
+        default=0.0,
+        help="Positive raw reward cost subtracted from clean guard starts near own corner",
+    )
+    parser.add_argument(
+        "--reward-corner-back-cost",
+        type=float,
+        default=0.0,
+        help="Positive raw reward cost subtracted from clean back starts near own corner",
+    )
+    parser.add_argument(
+        "--reward-corner-escape-bonus",
+        type=float,
+        default=0.0,
+        help="Positive raw reward bonus when forward increases obs_self_back_edge_dist near own corner",
+    )
+    parser.add_argument(
+        "--reward-corner-escape-min-delta",
+        type=int,
+        default=8,
+        help="Minimum obs_self_back_edge_dist increase needed for --reward-corner-escape-bonus",
+    )
+    parser.add_argument(
         "--demo-attribution-training-mode",
         choices=DEMO_ATTRIBUTION_TRAINING_MODES,
         default="off",
@@ -1434,6 +1591,7 @@ def main() -> None:
     reward_risk_config = reward_risk_config_from_args(args)
     reward_guard_config = reward_guard_config_from_args(args)
     reward_spacing_config = reward_spacing_config_from_args(args)
+    reward_position_config = reward_position_config_from_args(args)
     demo_attribution_config = demo_attribution_config_from_args(args)
     (
         experiences,
@@ -1445,6 +1603,7 @@ def main() -> None:
         reward_risk_stats,
         reward_guard_stats,
         reward_spacing_stats,
+        reward_position_stats,
         demo_attribution_stats,
     ) = build_experiences(
         rows,
@@ -1453,6 +1612,7 @@ def main() -> None:
         reward_risk_config,
         reward_guard_config,
         reward_spacing_config,
+        reward_position_config,
         demo_attribution_config,
     )
     if not experiences:
@@ -1479,6 +1639,8 @@ def main() -> None:
         reward_sources.append("guard-shaping")
     if reward_spacing_stats.net_adjustment != 0.0:
         reward_sources.append("spacing-shaping")
+    if reward_position_stats.net_adjustment != 0.0:
+        reward_sources.append("position-shaping")
     if demo_attribution_config.training_mode != "off":
         reward_sources.append("demo-attribution")
     reward_source = "+".join(reward_sources)
@@ -1520,6 +1682,12 @@ def main() -> None:
         "reward_spacing_maintain_bonus": reward_spacing_config.maintain_bonus,
         "reward_spacing_threat_back_bonus": reward_spacing_config.threat_back_bonus,
         "reward_spacing_stats": reward_spacing_stats.as_metadata(),
+        "reward_corner_back_edge_threshold": reward_position_config.corner_back_edge_threshold,
+        "reward_corner_guard_cost": reward_position_config.corner_guard_cost,
+        "reward_corner_back_cost": reward_position_config.corner_back_cost,
+        "reward_corner_escape_bonus": reward_position_config.corner_escape_bonus,
+        "reward_corner_escape_min_delta": reward_position_config.corner_escape_min_delta,
+        "reward_position_stats": reward_position_stats.as_metadata(),
         "demo_attribution_training_mode": demo_attribution_config.training_mode,
         "demo_attribution_window_decisions": demo_attribution_config.window_decisions,
         "demo_attribution_action_windows": demo_attribution_config.action_windows,
@@ -1568,6 +1736,9 @@ def main() -> None:
         f"spacing_bonus={reward_spacing_stats.total_bonus:.1f} "
         f"spacing_cost={reward_spacing_stats.total_cost:.1f} "
         f"spacing_net={reward_spacing_stats.net_adjustment:.1f} "
+        f"position_bonus={reward_position_stats.total_bonus:.1f} "
+        f"position_cost={reward_position_stats.total_cost:.1f} "
+        f"position_net={reward_position_stats.net_adjustment:.1f} "
         f"demo_attr={demo_attribution_config.training_mode}:{demo_attribution_stats.included_events}/"
         f"{demo_attribution_stats.event_rows} "
         f"demo_attr_net={demo_attribution_stats.net_adjustment:.1f} "
@@ -1618,6 +1789,18 @@ def main() -> None:
         f"worsen:{reward_spacing_stats.worsen_events}/{reward_spacing_stats.worsen_cost_total:.1f} "
         f"threat_back:{reward_spacing_stats.threat_back_events}/{reward_spacing_stats.threat_back_bonus_total:.1f} "
         f"net:{reward_spacing_stats.net_adjustment:.1f}",
+        flush=True,
+    )
+    print(
+        "DQN diagnostics "
+        f"position_shape=corner_back_edge<={reward_position_config.corner_back_edge_threshold} "
+        f"corner_guard:{reward_position_stats.corner_guard_cost_events}/"
+        f"{reward_position_stats.corner_guard_cost_total:.1f} "
+        f"corner_back:{reward_position_stats.corner_back_cost_events}/"
+        f"{reward_position_stats.corner_back_cost_total:.1f} "
+        f"escape:{reward_position_stats.corner_escape_bonus_events}/"
+        f"{reward_position_stats.corner_escape_bonus_total:.1f} "
+        f"net:{reward_position_stats.net_adjustment:.1f}",
         flush=True,
     )
     print(

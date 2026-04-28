@@ -2435,8 +2435,10 @@ Tasks:
 - [x] Add jump-attack-specific DQN risk costs for high-commitment jump-in whiffs
 - [x] Add DQN replay filtering for initial repeat-delay-polluted episodes and clean-window guard costs
 - [x] Add offline DQN spacing reward shaping for Phase 1 movement credit
+- [x] Add offline DQN corner position reward shaping for anti-turtle experiments
 - [ ] Review walk-forward/back macro actions after spacing-shaping A/B results
 - [ ] Review finer distance buckets after spacing-shaping sample-volume checks
+- [ ] Collect targeted corner-escape demo data before treating corner anti-turtle shaping as solved
 - [ ] Review live basic-only collection with lower/no repeat-delay pollution after the next DQN comparison
 - [x] Add an offline transition analyzer for action/distance HP-delta attribution
 - [x] Add analyzer-only `(routine_no[1], routine_no[2])` engine-state action mapping for ordinary-state validation
@@ -2588,6 +2590,14 @@ Implementation notes:
     - `--reward-spacing-threat-back-bonus` can add a small extra bonus when `back` increases too-close spacing while `obs_opp_routine_attack_state=1`
     - spacing shaping applies only on `executed_policy_action_step == 0` and only when the movement window has no self HP damage, so getting hit remains governed by natural HP-delta loss
     - diagnostics print `spacing_shape=target:<min>-<max> improve:<events>/<bonus> maintain:<events>/<bonus> worsen:<events>/<cost> threat_back:<events>/<bonus> net:<raw_adjustment>` and metadata records the spacing-shaping config/stat payload
+  - corner position reward shaping is available for offline anti-turtle DQN experiments without changing transition schema:
+    - `--reward-corner-back-edge-threshold` defines the own-back-edge distance treated as trapped near the corner
+    - `--reward-corner-guard-cost` subtracts raw reward from clean `guard-stand` / `guard-crouch` starts near the corner
+    - `--reward-corner-back-cost` subtracts raw reward from clean `back` starts near the corner
+    - `--reward-corner-escape-bonus` rewards `forward` starts near the corner when the next decision boundary increases `obs_self_back_edge_dist` by at least `--reward-corner-escape-min-delta`
+    - position shaping applies only on `executed_policy_action_step == 0` and only when the short position window has no self HP damage
+    - diagnostics print `position_shape=corner_back_edge<=<threshold> corner_guard:<events>/<cost> corner_back:<events>/<cost> escape:<events>/<bonus> net:<raw_adjustment>` and metadata records the position-shaping config/stat payload
+    - first CPU-demo all-normal experiments showed this improves general far-range passivity but does not fully solve `corner + far + opp_attack=0` turtling, because the current CPU-demo dataset has insufficient successful corner-escape alternatives for the DQN to imitate
   - `--actions` trains and publishes a DQN action subset; excluded explicit actions are counted and reset delayed-credit attribution so their later neutral/recovery reward is not accidentally credited to the previous included action
   - DQN replay now treats high-level macro action starts as the training decision boundary:
     - only rows with `executed_policy_action_step == 0` create DQN experiences

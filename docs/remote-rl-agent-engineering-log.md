@@ -2,6 +2,55 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-28: Add DQN Corner Position Reward Shaping
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / anti-turtle DQN reward shaping
+
+Files changed:
+- `tools/train_dqn_learner.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- reduce the live all-normals DQN tendency to over-defend, retreat to its own corner, and keep guarding at long range.
+- add offline reward-shaping knobs that can penalize clean corner guard/back starts and reward forward movement that increases own back-edge distance.
+
+Implementation notes:
+- `tools/train_dqn_learner.py` now supports corner position shaping:
+  - `--reward-corner-back-edge-threshold`
+  - `--reward-corner-guard-cost`
+  - `--reward-corner-back-cost`
+  - `--reward-corner-escape-bonus`
+  - `--reward-corner-escape-min-delta`
+- shaping applies only to `executed_policy_action_step == 0` rows near the player's own back edge.
+- guard/back costs and forward escape bonus apply only when the short lookahead window has no self HP damage, preserving natural HP-delta punishment for actually getting hit.
+- training stdout and model metadata now include `position_bonus`, `position_cost`, `position_net`, and a `position_shape=...` diagnostics line.
+
+Validation:
+- `python3 -m py_compile tools/train_dqn_learner.py` passed.
+- smoke training against `logs/rl-transitions-cpu-demo-v1-4-3-3.ndjson` printed:
+  - `position_bonus=2130.0`
+  - `position_cost=28172.5`
+  - `position_shape=corner_back_edge<=80 corner_guard:11343/17014.5 corner_back:5579/11158.0 escape:1065/2130.0 net:-26042.5`
+- full CPU-demo all-normal retrains were compared on the same 5000-row CPU-demo tail:
+  - baseline `model/dqn-cpudemo-allnormals-v1`: `guard-crouch 33.3%`, `guard-stand 25.7%`, `forward 12.9%`, attack rate `27.9%`
+  - `model/dqn-cpudemo-allnormals-corner-v3`: `guard-crouch 25.0%`, `guard-stand 23.2%`, `forward 19.5%`, attack rate `32.4%`
+  - `model/dqn-cpudemo-allnormals-corner-v4`: `guard-crouch 20.6%`, `guard-stand 19.8%`, `forward 19.1%`, attack rate `40.4%`
+- targeted corner-bucket analysis showed the important limitation:
+  - non-corner `atk0_far` improved from `guard-crouch 70.1% / forward 8.2%` to `guard-crouch 36.9% / forward 30.7%` in v4.
+  - true `corner_atk0_far` stayed heavily defensive (`guard-crouch 98.0%` baseline to `96.0%` in v4), so this is not sufficient evidence that corner escape is learned.
+
+Findings:
+- position shaping is useful for reducing generic far-range passivity.
+- the current CPU-demo dataset does not contain enough successful corner-escape alternatives for reward shaping alone to flip the policy at `corner + far + no opponent attack`.
+- pushing corner costs higher mainly changes non-corner far behavior and overall attack/throw rate before it reliably fixes the exact corner turtle state.
+
+Follow-up:
+- collect targeted corner-escape demo data where the controlled side is near its own back edge, walks forward out of the corner, and then resumes offense/guard.
+- consider adding a corner-specific observation feature or finer distance/corner buckets if the MLP still fails to separate trapped-corner states from general far states.
+- do not treat `model/dqn-cpudemo-allnormals-corner-v4` as the final anti-turtle answer; it is a useful MiSTer smoke candidate only if we want to test whether more active non-corner behavior feels better.
+
 ## 2026-04-28: Expand Basic Normal Action Support And Train CPU-Demo DQN
 
 Milestone:

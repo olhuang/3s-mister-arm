@@ -2,6 +2,45 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-28: Add Ryu Engine-Attributed Demo Action Fields
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / CPU-demo and human-demo bootstrapping data quality
+
+Files changed:
+- `src/rl/rl_session.c`
+- `tools/rl_probe_server.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- preserve the existing input-based `requested_*` / `executed_*` action fields while adding a separate engine-observed move label for demo rows.
+- make CPU-demo logs useful even when the CPU input pulse is not visible on the exact decision frame, by attributing the move from Ryu `routine_no[2]`, `kind_of_waza`, and `current_attack`.
+
+Implementation notes:
+- transition rows now include:
+  - `demo_attributed_policy_action_id`
+  - `demo_attributed_policy_sub_action_id`
+  - `demo_attributed_routine2`
+  - `demo_attributed_kind_of_waza`
+  - `demo_attributed_current_attack`
+  - `demo_attribution_source`
+  - `demo_attribution_lag_frames`
+- attribution only runs for demo execution sources (`human-demo` / `cpu-demo`) and currently only when the controlled character is Ryu (`agent_character_id = 2`).
+- `demo_attribution_source = 1` means Ryu engine routine-start attribution (`R2 + KW`, including specials, throws, and provisional super-art routine IDs).
+- `demo_attribution_source = 2` means Ryu normal-attack attribution from `current_attack` / normal `kind_of_waza`; normal stance/jump class is best-effort and uses the sampled input class when available.
+- `learner_replay_row()` preserves the new fields so offline analyzers or later demo-specific training tools can consume them.
+
+Validation:
+- `git diff --check -- src/rl/rl_session.c tools/rl_probe_server.py` passed.
+- `python3 -m py_compile tools/rl_probe_server.py` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed and produced `build/mister-telemetry-package`.
+
+Follow-up:
+- collect a short `cpu-demo` Ryu log and compare input-based action counts with `demo_attributed_*` counts.
+- verify normal stance/jump attribution against overlay video before using normal `demo_attributed_*` labels as supervised targets.
+- add non-Ryu character mappings only after their `routine_no[2]` / `kind_of_waza` tables are validated.
+
 ## 2026-04-28: Add Fight Overlay Attack Identity Probe Fields
 
 Milestone:

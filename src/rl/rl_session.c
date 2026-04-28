@@ -97,6 +97,13 @@ typedef struct RLDecisionLedgerEntry {
     u16 executed_policy_action_id;
     u16 executed_policy_sub_action_id;
     u16 executed_policy_action_step;
+    u16 demo_attributed_policy_action_id;
+    u16 demo_attributed_policy_sub_action_id;
+    u16 demo_attributed_routine2;
+    u16 demo_attributed_current_attack;
+    u16 demo_attribution_lag_frames;
+    u8 demo_attributed_kind_of_waza;
+    u8 demo_attribution_source;
     s16 delta_self_hp;
     s16 delta_opp_hp;
     s16 delta_self_stun;
@@ -190,6 +197,14 @@ static const RLLocalFakeAction kLocalFakeAgentSequence[] = {
 #define RL_POLICY_ACTION_JUMP_ATTACK_NEUTRAL 13u
 #define RL_POLICY_ACTION_JUMP_ATTACK_BACK 14u
 #define RL_POLICY_ACTION_CROUCH_NORMAL 15u
+#define RL_POLICY_ACTION_RYU_SHINKUU_HADOUKEN 1220u
+#define RL_POLICY_ACTION_RYU_DENJIN_HADOUKEN 1221u
+#define RL_POLICY_ACTION_RYU_SHIN_SHORYUKEN 1222u
+#define RL_POLICY_ACTION_RYU_SHORYUKEN 1228u
+#define RL_POLICY_ACTION_RYU_FIREBALL 1229u
+#define RL_POLICY_ACTION_RYU_TATSU 1230u
+#define RL_POLICY_ACTION_RYU_JOUDAN 1231u
+#define RL_POLICY_ACTION_RYU_AIR_TATSU 1246u
 #define RL_POLICY_SUB_ACTION_NONE 0u
 #define RL_POLICY_SUB_ACTION_LP 1u
 #define RL_POLICY_SUB_ACTION_MP 2u
@@ -207,6 +222,10 @@ static const RLLocalFakeAction kLocalFakeAgentSequence[] = {
 #define RL_POLICY_SUB_ACTION_STAND 20u
 #define RL_POLICY_SUB_ACTION_CROUCH 21u
 #define RL_DEMO_GUARD_THREAT_DX 144
+#define RL_CHARACTER_RYU 2u
+#define RL_DEMO_ATTRIBUTION_NONE 0u
+#define RL_DEMO_ATTRIBUTION_RYU_ENGINE_ROUTINE_START 1u
+#define RL_DEMO_ATTRIBUTION_RYU_ENGINE_NORMAL_ATTACK_START 2u
 
 
 static u16 local_fake_action_index;
@@ -701,6 +720,200 @@ static void RLSession_DeriveDemoPolicyMeta(u8 move_intent,
     }
 }
 
+static bool RLSession_IsDemoExecutionSource(u8 source) {
+    return source == RL_EXECUTION_SOURCE_HUMAN_DEMO || source == RL_EXECUTION_SOURCE_CPU_DEMO;
+}
+
+static bool RLSession_IsNormalPolicyAction(u16 action_id) {
+    return action_id == RL_POLICY_ACTION_STAND_NORMAL || action_id == RL_POLICY_ACTION_CROUCH_NORMAL ||
+           action_id == RL_POLICY_ACTION_COMMAND_NORMAL || action_id == RL_POLICY_ACTION_JUMP_ATTACK_FORWARD ||
+           action_id == RL_POLICY_ACTION_JUMP_ATTACK_NEUTRAL || action_id == RL_POLICY_ACTION_JUMP_ATTACK_BACK;
+}
+
+static u16 RLSession_SubActionFromRyuKindOfWaza(u8 kind_of_waza) {
+    switch (kind_of_waza) {
+    case 0x00:
+    case 0x08:
+        return RL_POLICY_SUB_ACTION_LP;
+    case 0x02:
+    case 0x0A:
+        return RL_POLICY_SUB_ACTION_MP;
+    case 0x04:
+    case 0x0C:
+        return RL_POLICY_SUB_ACTION_HP;
+    case 0x01:
+    case 0x09:
+        return RL_POLICY_SUB_ACTION_LK;
+    case 0x03:
+    case 0x0B:
+        return RL_POLICY_SUB_ACTION_MK;
+    case 0x05:
+    case 0x0D:
+        return RL_POLICY_SUB_ACTION_HK;
+    default:
+        return RL_POLICY_SUB_ACTION_NONE;
+    }
+}
+
+static u16 RLSession_NormalSubActionFromAttackIdentity(u16 current_attack, u8 kind_of_waza) {
+    const u16 attack_sub = RLSession_FirstAttackSubAction(current_attack);
+    if (attack_sub != RL_POLICY_SUB_ACTION_NONE) {
+        return attack_sub;
+    }
+    switch (kind_of_waza) {
+    case 0x00:
+        return RL_POLICY_SUB_ACTION_LP;
+    case 0x02:
+        return RL_POLICY_SUB_ACTION_MP;
+    case 0x04:
+        return RL_POLICY_SUB_ACTION_HP;
+    case 0x01:
+        return RL_POLICY_SUB_ACTION_LK;
+    case 0x03:
+        return RL_POLICY_SUB_ACTION_MK;
+    case 0x05:
+        return RL_POLICY_SUB_ACTION_HK;
+    default:
+        return RL_POLICY_SUB_ACTION_NONE;
+    }
+}
+
+static u16 RLSession_ThrowSubActionForAttribution(const RLDecisionLedgerEntry* entry) {
+    if (entry != NULL && entry->executed_policy_action_id == RL_POLICY_ACTION_THROW &&
+        (entry->executed_policy_sub_action_id == RL_POLICY_SUB_ACTION_FORWARD ||
+         entry->executed_policy_sub_action_id == RL_POLICY_SUB_ACTION_BACK)) {
+        return entry->executed_policy_sub_action_id;
+    }
+    return RL_POLICY_SUB_ACTION_NONE;
+}
+
+static bool RLSession_RyuSpecialPolicyMetaFromRoutine2(const RLDecisionLedgerEntry* entry,
+                                                       u16 routine2,
+                                                       u8 kind_of_waza,
+                                                       u16* action_id,
+                                                       u16* sub_action_id) {
+    const u16 sub = RLSession_SubActionFromRyuKindOfWaza(kind_of_waza);
+
+    switch (routine2) {
+    case 2:
+    case 14:
+        *action_id = RL_POLICY_ACTION_THROW;
+        *sub_action_id = RLSession_ThrowSubActionForAttribution(entry);
+        return true;
+    case 16:
+        if (sub == RL_POLICY_SUB_ACTION_LP || sub == RL_POLICY_SUB_ACTION_MP || sub == RL_POLICY_SUB_ACTION_HP) {
+            *action_id = RL_POLICY_ACTION_RYU_FIREBALL;
+            *sub_action_id = sub;
+            return true;
+        }
+        break;
+    case 17:
+        if (sub == RL_POLICY_SUB_ACTION_LP || sub == RL_POLICY_SUB_ACTION_MP || sub == RL_POLICY_SUB_ACTION_HP) {
+            *action_id = RL_POLICY_ACTION_RYU_SHORYUKEN;
+            *sub_action_id = sub;
+            return true;
+        }
+        break;
+    case 18:
+        if (sub == RL_POLICY_SUB_ACTION_LK || sub == RL_POLICY_SUB_ACTION_MK || sub == RL_POLICY_SUB_ACTION_HK) {
+            *action_id = RL_POLICY_ACTION_RYU_TATSU;
+            *sub_action_id = sub;
+            return true;
+        }
+        break;
+    case 19:
+        *action_id = RL_POLICY_ACTION_RYU_SHINKUU_HADOUKEN;
+        *sub_action_id = RL_POLICY_SUB_ACTION_NONE;
+        return true;
+    case 20:
+        *action_id = RL_POLICY_ACTION_RYU_SHIN_SHORYUKEN;
+        *sub_action_id = RL_POLICY_SUB_ACTION_NONE;
+        return true;
+    case 21:
+        *action_id = RL_POLICY_ACTION_RYU_DENJIN_HADOUKEN;
+        *sub_action_id = RL_POLICY_SUB_ACTION_NONE;
+        return true;
+    case 22:
+        if (sub == RL_POLICY_SUB_ACTION_LK || sub == RL_POLICY_SUB_ACTION_MK || sub == RL_POLICY_SUB_ACTION_HK) {
+            *action_id = RL_POLICY_ACTION_RYU_AIR_TATSU;
+            *sub_action_id = sub;
+            return true;
+        }
+        break;
+    case 23:
+        if (sub == RL_POLICY_SUB_ACTION_LK || sub == RL_POLICY_SUB_ACTION_MK || sub == RL_POLICY_SUB_ACTION_HK) {
+            *action_id = RL_POLICY_ACTION_RYU_JOUDAN;
+            *sub_action_id = sub;
+            return true;
+        }
+        break;
+    default:
+        break;
+    }
+
+    return false;
+}
+
+static bool RLSession_RyuNormalPolicyMetaFromIdentity(const RLDecisionLedgerEntry* entry,
+                                                      const RLObservationV1* obs,
+                                                      u16* action_id,
+                                                      u16* sub_action_id) {
+    const u16 sub = RLSession_NormalSubActionFromAttackIdentity(obs->self_current_attack, obs->self_kind_of_waza);
+    if (sub == RL_POLICY_SUB_ACTION_NONE) {
+        return false;
+    }
+
+    if (entry != NULL && RLSession_IsNormalPolicyAction(entry->executed_policy_action_id)) {
+        *action_id = entry->executed_policy_action_id;
+        *sub_action_id = sub;
+        return true;
+    }
+
+    if (obs->self_airborne) {
+        *action_id = RL_POLICY_ACTION_JUMP_ATTACK_FORWARD;
+    } else if (entry != NULL && RLSession_MoveIntentIsCrouch(entry->executed_move_intent)) {
+        *action_id = RL_POLICY_ACTION_CROUCH_NORMAL;
+    } else {
+        *action_id = RL_POLICY_ACTION_STAND_NORMAL;
+    }
+    *sub_action_id = sub;
+    return true;
+}
+
+static void RLSession_MaybeAttributeDemoEngineAction(RLDecisionLedgerEntry* entry, const RLObservationV1* obs) {
+    u16 action_id = RL_POLICY_ACTION_NEUTRAL;
+    u16 sub_action_id = RL_POLICY_SUB_ACTION_NONE;
+    u8 source = RL_DEMO_ATTRIBUTION_NONE;
+    u32 lag_frames = 0;
+
+    if (entry == NULL || obs == NULL || !RLSession_IsDemoExecutionSource(entry->execution_source) ||
+        entry->demo_attribution_source != RL_DEMO_ATTRIBUTION_NONE || entry->agent_character_id != RL_CHARACTER_RYU) {
+        return;
+    }
+
+    if ((obs->self_attack_routine_started || obs->self_throw_started) &&
+        RLSession_RyuSpecialPolicyMetaFromRoutine2(entry, obs->self_routine[2], obs->self_kind_of_waza, &action_id,
+                                                   &sub_action_id)) {
+        source = RL_DEMO_ATTRIBUTION_RYU_ENGINE_ROUTINE_START;
+    } else if (obs->self_attack_started &&
+               RLSession_RyuNormalPolicyMetaFromIdentity(entry, obs, &action_id, &sub_action_id)) {
+        source = RL_DEMO_ATTRIBUTION_RYU_ENGINE_NORMAL_ATTACK_START;
+    } else {
+        return;
+    }
+
+    if (remote_debug.frame_id >= entry->obs_frame) {
+        lag_frames = remote_debug.frame_id - entry->obs_frame;
+    }
+    entry->demo_attributed_policy_action_id = action_id;
+    entry->demo_attributed_policy_sub_action_id = sub_action_id;
+    entry->demo_attributed_routine2 = obs->self_routine[2];
+    entry->demo_attributed_current_attack = obs->self_current_attack;
+    entry->demo_attributed_kind_of_waza = obs->self_kind_of_waza;
+    entry->demo_attribution_source = source;
+    entry->demo_attribution_lag_frames = (u16)(lag_frames > 65535u ? 65535u : lag_frames);
+}
+
 
 static const char* RLSession_TerminalReasonLabel(u8 terminal_reason) {
     switch (terminal_reason) {
@@ -989,6 +1202,13 @@ static int RLSession_FormatTransitionLogLine(const RLDecisionLedgerEntry* entry,
                         "\"executed_policy_action_id\":%u,"
                         "\"executed_policy_sub_action_id\":%u,"
                         "\"executed_policy_action_step\":%u,"
+                        "\"demo_attributed_policy_action_id\":%u,"
+                        "\"demo_attributed_policy_sub_action_id\":%u,"
+                        "\"demo_attributed_routine2\":%u,"
+                        "\"demo_attributed_kind_of_waza\":%u,"
+                        "\"demo_attributed_current_attack\":%u,"
+                        "\"demo_attribution_source\":%u,"
+                        "\"demo_attribution_lag_frames\":%u,"
                         "\"delta_self_hp\":%d,\"delta_opp_hp\":%d,"
                         "\"delta_self_stun\":%d,\"delta_opp_stun\":%d,"
                         "\"delta_self_y\":%d,\"delta_opp_y\":%d,"
@@ -1019,6 +1239,13 @@ static int RLSession_FormatTransitionLogLine(const RLDecisionLedgerEntry* entry,
                         entry->executed_policy_action_id,
                         entry->executed_policy_sub_action_id,
                         entry->executed_policy_action_step,
+                        entry->demo_attributed_policy_action_id,
+                        entry->demo_attributed_policy_sub_action_id,
+                        entry->demo_attributed_routine2,
+                        entry->demo_attributed_kind_of_waza,
+                        entry->demo_attributed_current_attack,
+                        entry->demo_attribution_source,
+                        entry->demo_attribution_lag_frames,
                         entry->delta_self_hp,
                         entry->delta_opp_hp,
                         entry->delta_self_stun,
@@ -1235,6 +1462,7 @@ static void RLSession_AccumulateAttackSignals(RLDecisionLedgerEntry* entry, cons
     entry->opp_attack_code_changed |= obs->opp_attack_code_changed;
     entry->opp_attack_counter_started |= obs->opp_attack_counter_started;
     entry->opp_attack_routine_started |= obs->opp_attack_routine_started;
+    RLSession_MaybeAttributeDemoEngineAction(entry, obs);
 }
 
 static void RLSession_AccumulateCombatSpan(RLDecisionLedgerEntry* entry,
@@ -1259,6 +1487,7 @@ static void RLSession_AccumulateCombatSpan(RLDecisionLedgerEntry* entry,
     entry->opp_throw_caught_started |= obs->opp_throw_caught_started;
     entry->self_throw_seen |= obs->self_throw_active;
     entry->opp_throw_caught_seen |= obs->opp_throw_caught;
+    RLSession_MaybeAttributeDemoEngineAction(entry, obs);
 }
 
 void RLSession_OnObservationFrameEnd(const RLObservationV1* obs) {

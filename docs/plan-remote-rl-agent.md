@@ -2521,6 +2521,16 @@ Implementation notes:
     - requested/executed action metadata is identical because the game CPU action is already executed locally
     - with `rl-network = on`, the UDP handshake and transition-batch upload path remain available, but OBS/action request packets are not emitted
     - the same demo mapper labels walk/guard/stand-normal/crouch-normal/jump-attack/throw metadata from the CPU-resolved input
+    - Ryu demo rows also include engine-attributed move metadata when the game starts an attack routine:
+      - `demo_attributed_policy_action_id`
+      - `demo_attributed_policy_sub_action_id`
+      - `demo_attributed_routine2`
+      - `demo_attributed_kind_of_waza`
+      - `demo_attributed_current_attack`
+      - `demo_attribution_source`
+      - `demo_attribution_lag_frames`
+      - the original `requested_*` / `executed_*` policy fields remain input-based; `demo_attributed_*` is the engine-observed actual move, useful for CPU-demo/human-demo labels and accidental-command checks
+      - first-pass attribution is Ryu-specific: specials/throws use `character_id + routine_no[2] + kind_of_waza`, while normal attacks use `current_attack` / normal `kind_of_waza` with a best-effort action class from the sampled input state
   - the Fight debug overlay now exposes self-side attack identity probe fields before adding them to transition rows:
     - `SATT R2<routine_no[2]> AK<current_attack> KW<kind_of_waza> RS<attack_routine_started>`
     - these fields are overlay-only until validated against visible normals, specials, throws, and projectiles

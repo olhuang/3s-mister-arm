@@ -63,9 +63,14 @@ RL_POLICY_ACTION_JUMP_ATTACK_FORWARD = 12
 RL_POLICY_ACTION_JUMP_ATTACK_NEUTRAL = 13
 RL_POLICY_ACTION_JUMP_ATTACK_BACK = 14
 RL_POLICY_ACTION_CROUCH_NORMAL = 15
+RL_POLICY_ACTION_RYU_SHINKUU_HADOUKEN = 1220
+RL_POLICY_ACTION_RYU_DENJIN_HADOUKEN = 1221
+RL_POLICY_ACTION_RYU_SHIN_SHORYUKEN = 1222
 RL_POLICY_ACTION_RYU_SHORYUKEN = 1228
 RL_POLICY_ACTION_RYU_FIREBALL = 1229
 RL_POLICY_ACTION_RYU_TATSU = 1230
+RL_POLICY_ACTION_RYU_JOUDAN = 1231
+RL_POLICY_ACTION_RYU_AIR_TATSU = 1246
 
 RL_POLICY_SUB_NONE = 0
 RL_POLICY_SUB_LP = 1
@@ -212,9 +217,25 @@ TABULAR_ACTION_NAMES_BY_POLICY_META = {
     (RL_POLICY_ACTION_CROUCH_NORMAL, RL_POLICY_SUB_HK): "crouch-hk",
     (RL_POLICY_ACTION_COMMAND_NORMAL, RL_POLICY_SUB_HP): "forward-hp",
     (RL_POLICY_ACTION_THROW, RL_POLICY_SUB_FORWARD): "throw",
+    (RL_POLICY_ACTION_THROW, RL_POLICY_SUB_NONE): "throw",
+    (RL_POLICY_ACTION_RYU_SHINKUU_HADOUKEN, RL_POLICY_SUB_NONE): "shinkuu-hadouken",
+    (RL_POLICY_ACTION_RYU_DENJIN_HADOUKEN, RL_POLICY_SUB_NONE): "denjin-hadouken",
+    (RL_POLICY_ACTION_RYU_SHIN_SHORYUKEN, RL_POLICY_SUB_NONE): "shin-shoryuken",
     (RL_POLICY_ACTION_RYU_FIREBALL, RL_POLICY_SUB_LP): "fireball",
+    (RL_POLICY_ACTION_RYU_FIREBALL, RL_POLICY_SUB_MP): "fireball-mp",
+    (RL_POLICY_ACTION_RYU_FIREBALL, RL_POLICY_SUB_HP): "fireball-hp",
+    (RL_POLICY_ACTION_RYU_SHORYUKEN, RL_POLICY_SUB_LP): "shoryuken-lp",
     (RL_POLICY_ACTION_RYU_SHORYUKEN, RL_POLICY_SUB_MP): "shoryuken-mp",
+    (RL_POLICY_ACTION_RYU_SHORYUKEN, RL_POLICY_SUB_HP): "shoryuken-hp",
+    (RL_POLICY_ACTION_RYU_TATSU, RL_POLICY_SUB_LK): "tatsu-lk",
     (RL_POLICY_ACTION_RYU_TATSU, RL_POLICY_SUB_MK): "tatsu-mk",
+    (RL_POLICY_ACTION_RYU_TATSU, RL_POLICY_SUB_HK): "tatsu-hk",
+    (RL_POLICY_ACTION_RYU_JOUDAN, RL_POLICY_SUB_LK): "joudan-lk",
+    (RL_POLICY_ACTION_RYU_JOUDAN, RL_POLICY_SUB_MK): "joudan-mk",
+    (RL_POLICY_ACTION_RYU_JOUDAN, RL_POLICY_SUB_HK): "joudan-hk",
+    (RL_POLICY_ACTION_RYU_AIR_TATSU, RL_POLICY_SUB_LK): "air-tatsu-lk",
+    (RL_POLICY_ACTION_RYU_AIR_TATSU, RL_POLICY_SUB_MK): "air-tatsu-mk",
+    (RL_POLICY_ACTION_RYU_AIR_TATSU, RL_POLICY_SUB_HK): "air-tatsu-hk",
     (RL_POLICY_ACTION_JUMP_ATTACK_FORWARD, RL_POLICY_SUB_MK): "jump-forward-mk",
     (RL_POLICY_ACTION_JUMP_ATTACK_FORWARD, RL_POLICY_SUB_HK): "jump-forward-hk",
     (RL_POLICY_ACTION_JUMP_ATTACK_NEUTRAL, RL_POLICY_SUB_HK): "jump-neutral-hk",
@@ -1164,6 +1185,13 @@ def learner_replay_row(row: dict[str, object]) -> dict[str, object] | None:
         "executed_policy_action_id": int(row.get("executed_policy_action_id", 0) or 0),
         "executed_policy_sub_action_id": int(row.get("executed_policy_sub_action_id", 0) or 0),
         "executed_policy_action_step": int(row.get("executed_policy_action_step", 0) or 0),
+        "demo_attributed_policy_action_id": int(row.get("demo_attributed_policy_action_id", 0) or 0),
+        "demo_attributed_policy_sub_action_id": int(row.get("demo_attributed_policy_sub_action_id", 0) or 0),
+        "demo_attributed_routine2": int(row.get("demo_attributed_routine2", 0) or 0),
+        "demo_attributed_kind_of_waza": int(row.get("demo_attributed_kind_of_waza", 0) or 0),
+        "demo_attributed_current_attack": int(row.get("demo_attributed_current_attack", 0) or 0),
+        "demo_attribution_source": int(row.get("demo_attribution_source", 0) or 0),
+        "demo_attribution_lag_frames": int(row.get("demo_attribution_lag_frames", 0) or 0),
         "delta_self_hp": int(row.get("delta_self_hp", 0) or 0),
         "delta_opp_hp": int(row.get("delta_opp_hp", 0) or 0),
         "delta_self_stun": int(row.get("delta_self_stun", 0) or 0),

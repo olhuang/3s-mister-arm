@@ -2,6 +2,50 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-28: Add Live Tabular Action Subsets
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / Phase 1 basic-action data collection
+
+Files changed:
+- `tools/rl_probe_server.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- collect a clean long-run transition log with only basic actions such as forward/back movement, stand/crouch guard, standing MK, crouching MK, and jump-forward MK.
+- avoid hard-coding one temporary curriculum action set into the probe server.
+- prevent a fresh model directory from bootstrapping a default full-action tabular actor before the learner publishes the intended subset.
+
+Implementation notes:
+- added `--tabular-actions`, a comma-separated live tabular action subset.
+- the tabular learner now trains only on the configured subset and publishes the same subset in tabular actor manifests.
+- `ActorModelStore` now accepts initial actions/fallback policy, so bootstrap `current.json` uses the configured tabular subset when `--policy tabular` starts from an empty model directory.
+- startup validation rejects tabular actor runs when `--tabular-fallback-policy` resolves to an action outside `--tabular-actions`; this avoids silently mixing HP/full-action fallback into a basic-only curriculum log.
+- learner publish metadata records `tabular_actions` for easier post-run audit.
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py` passed.
+- `python3 tools/rl_probe_server.py --help` shows `--tabular-actions`.
+- invalid action validation passed:
+  - `python3 tools/rl_probe_server.py --policy tabular --tabular-actions forward,bad --learner-only`
+  - exited with `Unknown action(s) for --tabular-actions: bad`.
+- subset/fallback validation passed:
+  - `python3 tools/rl_probe_server.py --policy tabular --tabular-actions forward,back --tabular-fallback-policy hp --learner-only`
+  - exited with `--tabular-fallback-policy hp resolves to stand-hp, which is not in --tabular-actions`.
+- non-tabular scripted fallback validation passed:
+  - `python3 tools/rl_probe_server.py --policy tabular --tabular-actions forward,back,tatsu-mk --tabular-fallback-policy tatsu --learner-only`
+  - exited with `--tabular-fallback-policy tatsu is not a tabular action alias`.
+- bootstrap manifest smoke passed:
+  - instantiated `ActorModelStore` with `policy=tabular`, actions `forward,back,guard-stand,guard-crouch,stand-mk,crouch-mk,jump-forward-mk`, and fallback `stand-mk`.
+  - generated `current.json` contained only that action subset and `fallback_policy=stand-mk`.
+
+Follow-up:
+- run a fresh basic-only hard-CPU long-run log with:
+  - `--tabular-actions forward,back,guard-stand,guard-crouch,stand-mk,crouch-mk,jump-forward-mk`
+  - `--tabular-fallback-policy stand-mk`
+- train Phase 1 DQN from that basic-only log before reintroducing fireball, shoryuken, tatsu, or HK jump attacks.
+
 ## 2026-04-28: Make Offline DQN Replay Decision-Level
 
 Milestone:

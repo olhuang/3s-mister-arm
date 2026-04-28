@@ -306,6 +306,37 @@ def _coerce_action_names(value: object) -> tuple[str, ...]:
     return tuple(actions) or TABULAR_DEFAULT_ACTIONS
 
 
+def parse_action_names(value: str, *, option_name: str = "--actions") -> tuple[str, ...]:
+    if not value.strip():
+        return TABULAR_DEFAULT_ACTIONS
+    actions: list[str] = []
+    invalid: list[str] = []
+    for raw_item in value.split(","):
+        action = raw_item.strip()
+        if not action:
+            continue
+        if action not in TABULAR_ACTION_NAMES:
+            invalid.append(action)
+            continue
+        if action not in actions:
+            actions.append(action)
+    if invalid:
+        raise SystemExit(f"Unknown action(s) for {option_name}: {','.join(invalid)}")
+    if not actions:
+        raise SystemExit(f"{option_name} did not include any actions")
+    return tuple(actions)
+
+
+def canonical_tabular_action_name(policy: str) -> str | None:
+    if policy in TABULAR_ACTION_NAMES:
+        return policy
+    return {
+        "guard": "guard-stand",
+        "hp": "stand-hp",
+        "ryu-fireball": "fireball",
+    }.get(policy)
+
+
 def _coerce_q_table(value: object) -> dict[str, dict[str, float]]:
     if not isinstance(value, dict):
         return {}
@@ -427,11 +458,24 @@ def replace_with_retries(src: str, dst: str, attempts: int = 8, delay_sec: float
 
 
 class ActorModelStore:
-    def __init__(self, model_dir: str | None, initial_policy: str, initial_version: int) -> None:
+    def __init__(
+        self,
+        model_dir: str | None,
+        initial_policy: str,
+        initial_version: int,
+        initial_actions: tuple[str, ...] = TABULAR_DEFAULT_ACTIONS,
+        initial_fallback_policy: str = "hp",
+    ) -> None:
         self._model_dir = model_dir
         self._current_path = os.path.join(model_dir, "current.json") if model_dir else None
         self._lock = threading.Lock()
-        self._active = ActorModel(max(0, initial_version), initial_policy, "cli")
+        self._active = ActorModel(
+            max(0, initial_version),
+            initial_policy,
+            "cli",
+            actions=initial_actions,
+            fallback_policy=initial_fallback_policy,
+        )
         self._known_policies: dict[int, str] = {self._active.version: self._active.policy}
         self._latest_tabular_state: str | None = None
         self._last_published_version = self._active.version
@@ -444,7 +488,13 @@ class ActorModelStore:
             os.makedirs(self._model_dir, exist_ok=True)
             self._load_current(force=True)
             if self._current_path and not os.path.exists(self._current_path):
-                self.publish(self._active.policy, source="bootstrap", version=self._active.version)
+                self.publish(
+                    self._active.policy,
+                    source="bootstrap",
+                    version=self._active.version,
+                    actions=self._active.actions,
+                    fallback_policy=self._active.fallback_policy,
+                )
             threading.Thread(target=self._watch_current, daemon=True).start()
 
     def _load_current(self, force: bool = False) -> None:
@@ -1370,6 +1420,7 @@ class LearnerLogTailer(threading.Thread):
         tabular_alpha: float,
         tabular_epsilon: float,
         tabular_fallback_policy: str,
+        tabular_actions: tuple[str, ...],
         tabular_min_action_count: int,
     ) -> None:
         super().__init__(daemon=True)
@@ -1384,7 +1435,12 @@ class LearnerLogTailer(threading.Thread):
         self._learner_auto_publish = learner_auto_publish
         self._learner_publish_interval_ns = int(max(0.1, learner_publish_interval_sec) * 1_000_000_000)
         self._learner_publish_policy = learner_publish_policy
-        self._tabular_learner = TabularPolicyLearner(tabular_alpha, tabular_epsilon, tabular_fallback_policy)
+        self._tabular_learner = TabularPolicyLearner(
+            tabular_alpha,
+            tabular_epsilon,
+            tabular_fallback_policy,
+            actions=tabular_actions,
+        )
         self._tabular_min_action_count = max(1, tabular_min_action_count)
         self._next_publish_ns = time.monotonic_ns() + self._learner_publish_interval_ns
         self._last_published_tabular_updates = -1
@@ -1533,6 +1589,9 @@ class LearnerLogTailer(threading.Thread):
                         "tabular_reward_source": "hp-delta",
                         "tabular_training_reward_total": tabular_snapshot["training_reward_total"],
                         "tabular_min_action_count": self._tabular_min_action_count,
+                        "tabular_actions": list(tabular_snapshot["actions"])
+                        if isinstance(tabular_snapshot["actions"], tuple)
+                        else list(TABULAR_DEFAULT_ACTIONS),
                     },
                     q_table=q_table if isinstance(q_table, dict) else None,
                     q_counts=q_counts if isinstance(q_counts, dict) else None,
@@ -2028,10 +2087,19 @@ def serve(
     tabular_alpha: float,
     tabular_epsilon: float,
     tabular_fallback_policy: str,
+    tabular_actions: tuple[str, ...],
     tabular_min_action_count: int,
 ) -> None:
     inference_stats = InferenceStats()
-    model_store = ActorModelStore(model_dir, policy, model_version)
+    initial_actions = tabular_actions if policy == "tabular" else TABULAR_DEFAULT_ACTIONS
+    initial_fallback_policy = tabular_fallback_policy if policy == "tabular" else "hp"
+    model_store = ActorModelStore(
+        model_dir,
+        policy,
+        model_version,
+        initial_actions=initial_actions,
+        initial_fallback_policy=initial_fallback_policy,
+    )
     if transition_log and (transition_pull_remote_path or transition_pull_local_source):
         TransitionPuller(
             transition_log,
@@ -2060,6 +2128,7 @@ def serve(
             tabular_alpha,
             tabular_epsilon,
             tabular_fallback_policy,
+            tabular_actions,
             tabular_min_action_count,
         ).start()
     if learner_only:
@@ -2351,6 +2420,11 @@ def main() -> None:
         help="Exploration probability stamped into learner-published tabular actors",
     )
     parser.add_argument(
+        "--tabular-actions",
+        default=",".join(TABULAR_DEFAULT_ACTIONS),
+        help="Comma-separated action subset used by live tabular learning and tabular actor manifests",
+    )
+    parser.add_argument(
         "--tabular-fallback-policy",
         choices=SCRIPTED_POLICY_CHOICES,
         default="hp",
@@ -2370,6 +2444,19 @@ def main() -> None:
     transition_server_port = args.transition_port
     if transition_server_port is None and transition_log is not None and args.action_port is not None:
         transition_server_port = args.action_port + 1
+    tabular_actions = parse_action_names(args.tabular_actions, option_name="--tabular-actions")
+    fallback_action = canonical_tabular_action_name(args.tabular_fallback_policy)
+    tabular_actor_requested = args.policy == "tabular" or args.learner_publish_policy == "tabular"
+    if tabular_actor_requested:
+        if fallback_action is None:
+            raise SystemExit(
+                f"--tabular-fallback-policy {args.tabular_fallback_policy} is not a tabular action alias"
+            )
+        if fallback_action not in tabular_actions:
+            raise SystemExit(
+                f"--tabular-fallback-policy {args.tabular_fallback_policy} resolves to {fallback_action}, "
+                f"which is not in --tabular-actions"
+            )
     serve(
         args.host,
         args.port,
@@ -2401,6 +2488,7 @@ def main() -> None:
         args.tabular_alpha,
         args.tabular_epsilon,
         args.tabular_fallback_policy,
+        tabular_actions,
         args.tabular_min_action_count,
     )
 

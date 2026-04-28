@@ -2431,6 +2431,7 @@ Tasks:
 - [x] Add DQN action subset training and collapse diagnostics for offline policy debugging
 - [x] Add offline DQN guard success / passive guard reward shaping knobs for Phase 1 defense curriculum smoke tests
 - [x] Make offline DQN replay decision-level by training only on macro step-0 action starts and delayed-crediting macro continuation rewards
+- [x] Add live tabular action-subset support for Phase 1 basic-action data collection
 - [x] Add an offline transition analyzer for action/distance HP-delta attribution
 - [x] Expand observation features only with schema versioning for the first routine attack/contact-reaction validation probes
 - [x] Promote validated opponent routine attack state into the first tabular strike-defense state split
@@ -2469,6 +2470,7 @@ Implementation notes:
 - `tools/rl_probe_server.py --policy tabular` now supports a minimal contextual-bandit learner loop:
   - transition rows are bucketed from the compact spacing snapshot (`obs_abs_dx`, `obs_abs_dy`, front/back edge distances, `obs_opp_in_front`) plus `obs_opp_routine_attack_state` as `opp_attack=0/1` for strike-defense learning
   - the learner maintains per-state action scores for explicit actions: `forward`, `back`, `guard-stand`, `guard-crouch`, `stand-lp`, `stand-mp`, `stand-hp`, `stand-lk`, `stand-mk`, `stand-hk`, `forward-hp`, `crouch-lk`, `crouch-mk`, `crouch-hk`, `fireball`, `throw`, `jump-forward-mk`, `jump-forward-hk`, `jump-neutral-hk`, `jump-back-hk`, `shoryuken-mp`, and `tatsu-mk`
+  - `--tabular-actions` can restrict live tabular learning and learner-published tabular actors to a curriculum subset; use a fresh model dir/log for each subset, and choose a `--tabular-fallback-policy` that resolves to an action inside that subset
   - neutral rows are not learned as greedy actions in the first version, because delayed damage/recovery rewards can otherwise make "do nothing" look falsely good
   - tabular score updates use a learner-local reward of `delta_opp_hp - delta_self_hp`; transition `reward_accum` still keeps full episode reward including terminal win/loss bonuses for future sequential RL learners
   - when a neutral/recovery row carries nonzero HP-delta reward, the learner conservatively credits that reward to the most recent explicit action bucket

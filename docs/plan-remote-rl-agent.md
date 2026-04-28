@@ -2440,6 +2440,7 @@ Tasks:
 - [ ] Review live basic-only collection with lower/no repeat-delay pollution after the next DQN comparison
 - [x] Add an offline transition analyzer for action/distance HP-delta attribution
 - [x] Add analyzer-only `(routine_no[1], routine_no[2])` engine-state action mapping for ordinary-state validation
+- [x] Add raw `routine_no[1]/[2]` transition diagnostics for self/opponent engine-state analyzer input
 - [x] Expand observation features only with schema versioning for the first routine attack/contact-reaction validation probes
 - [x] Promote validated opponent routine attack state into the first tabular strike-defense state split
 - [x] Draft an all-character policy action ID / sub-action / macro taxonomy from SF3 command source tables
@@ -2544,6 +2545,10 @@ Implementation notes:
   - `src/rl/rl_net.c` now protects the transition sender running-state with the transition queue mutex, clears it while observing an empty queue, reaps completed thread handles before replacement, and avoids clearing the shutdown handle until after the sender is joined
   - learner auto-publish skips duplicate tabular actor publication when `tab_updates` has not increased since the previous publish
   - `tools/analyze_rl_transitions.py <transition-log>` summarizes direct and delayed-credited HP-delta reward by action and `obs_abs_dx` bucket; use it before changing action sets or reward rules
+  - transition rows now include raw diagnostic routine ids for analyzer-only engine-state mapping:
+    - `obs_self_routine_1`, `obs_self_routine_2`
+    - `obs_opp_routine_1`, `obs_opp_routine_2`
+    - these are not included in UDP OBS payloads, tabular state keys, or DQN feature vectors by default
   - first full-log analyzer pass on `logs/rl-transitions-tabular-4-3-3.ndjson` (`383918` rows, `448` done rows) showed far fireball as the cleanest positive signal (`direct fireball dx=far reward=+1625`, credited fireball `reward=+2391`) while throw was negative in credited view (`reward=-3435`), so throw should not be treated as learner-safe strength until move-level labels or cleaner credit confirm it
   - UDP OBS packets now carry a schema-versioned compact spacing/state payload (`payload_version=2`) with the same bucket inputs used by transition replay: `obs_abs_dx`, `obs_abs_dy`, front/back edge distances, `obs_opp_in_front`, plus routine flags for `routine_no[1] == 4` attack state and `routine_no[1] == 1` contact/defensive reaction state; only opponent attack state is currently promoted to the learner state key
   - Python-side tabular inference prefers the same-frame OBS spacing bucket and falls back to the latest replay-imported bucket only when an old header-only OBS packet or invalid payload is seen

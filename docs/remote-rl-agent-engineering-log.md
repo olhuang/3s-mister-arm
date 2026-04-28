@@ -2,6 +2,39 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-28: Add Raw Routine Transition Diagnostics
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / R1/R2 ordinary-state validation
+
+Files changed:
+- `src/rl/rl_session.c`
+- `tools/rl_probe_server.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- write raw self/opponent `routine_no[1]` and `routine_no[2]` snapshots into transition rows so `tools/analyze_rl_transitions.py` can classify ordinary engine states such as walk, crouch, jump, guard, attack, damage/contact, catch, and caught.
+- keep these as diagnostic replay fields only; they are not promoted into UDP OBS payloads, tabular state keys, or DQN feature vectors.
+
+Implementation notes:
+- transition JSON now includes:
+  - `obs_self_routine_1`
+  - `obs_self_routine_2`
+  - `obs_opp_routine_1`
+  - `obs_opp_routine_2`
+- the values are captured from the same observation used for the existing spacing/state row snapshot.
+- `tools/rl_probe_server.py` preserves the four fields in `learner_replay_row()` so local replay/import paths do not strip them.
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py tools/analyze_rl_transitions.py` passed.
+- `python3 tools/analyze_rl_transitions.py logs/rl-transitions-cpu-demo-v1-4-3-3.ndjson --tail-rows 200 --limit 8` passed against an older log; as expected it fell back to derived coarse states because that log predates the raw fields.
+- `git diff --check -- src/rl/rl_session.c tools/rl_probe_server.py docs/plan-remote-rl-agent.md docs/remote-rl-agent-engineering-log.md` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed and rebuilt `src/rl/rl_session.c`.
+
+Follow-up:
+- collect a fresh short human-demo or CPU-demo log and confirm `ENGINE_STATE_ACTION_BY_ROUTINE` shows raw `normal.walk-*`, `normal.guard-*`, `normal.crouch`, and `normal.jump-*` labels before using these labels as learner targets.
+
 ## 2026-04-28: Add Engine State Action Analyzer Mapping
 
 Milestone:

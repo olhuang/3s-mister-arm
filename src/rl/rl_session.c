@@ -121,6 +121,10 @@ typedef struct RLDecisionLedgerEntry {
     s16 obs_opp_front_edge_dist;
     s16 obs_opp_back_edge_dist;
     u8 obs_opp_in_front;
+    u16 obs_self_routine_1;
+    u16 obs_self_routine_2;
+    u16 obs_opp_routine_1;
+    u16 obs_opp_routine_2;
     u8 obs_self_routine_attack_state;
     u8 obs_opp_routine_attack_state;
     u8 obs_self_contact_reaction_state;
@@ -1115,6 +1119,10 @@ static void RLSession_CaptureObservationSpacing(RLDecisionLedgerEntry* entry, co
     entry->obs_opp_front_edge_dist = payload.obs_opp_front_edge_dist;
     entry->obs_opp_back_edge_dist = payload.obs_opp_back_edge_dist;
     entry->obs_opp_in_front = payload.obs_opp_in_front;
+    entry->obs_self_routine_1 = obs->self_routine[1];
+    entry->obs_self_routine_2 = obs->self_routine[2];
+    entry->obs_opp_routine_1 = obs->opp_routine[1];
+    entry->obs_opp_routine_2 = obs->opp_routine[2];
     entry->obs_self_routine_attack_state = payload.obs_self_routine_attack_state;
     entry->obs_opp_routine_attack_state = payload.obs_opp_routine_attack_state;
     entry->obs_self_contact_reaction_state = payload.obs_self_contact_reaction_state;
@@ -1217,6 +1225,8 @@ static int RLSession_FormatTransitionLogLine(const RLDecisionLedgerEntry* entry,
                         "\"obs_self_front_edge_dist\":%d,\"obs_self_back_edge_dist\":%d,"
                         "\"obs_opp_front_edge_dist\":%d,\"obs_opp_back_edge_dist\":%d,"
                         "\"obs_opp_in_front\":%u,"
+                        "\"obs_self_routine_1\":%u,\"obs_self_routine_2\":%u,"
+                        "\"obs_opp_routine_1\":%u,\"obs_opp_routine_2\":%u,"
                         "\"obs_self_routine_attack_state\":%u,\"obs_opp_routine_attack_state\":%u,"
                         "\"obs_self_contact_reaction_state\":%u,\"obs_opp_contact_reaction_state\":%u,"
                         "\"final_self_hp\":%d,\"final_opp_hp\":%d,"
@@ -1261,6 +1271,10 @@ static int RLSession_FormatTransitionLogLine(const RLDecisionLedgerEntry* entry,
                         entry->obs_opp_front_edge_dist,
                         entry->obs_opp_back_edge_dist,
                         entry->obs_opp_in_front,
+                        entry->obs_self_routine_1,
+                        entry->obs_self_routine_2,
+                        entry->obs_opp_routine_1,
+                        entry->obs_opp_routine_2,
                         entry->obs_self_routine_attack_state,
                         entry->obs_opp_routine_attack_state,
                         entry->obs_self_contact_reaction_state,

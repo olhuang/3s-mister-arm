@@ -102,6 +102,14 @@ ATTACK_RISK_ACTIONS = frozenset(
     }
 )
 SHORYUKEN_ACTION = "shoryuken-mp"
+JUMP_ATTACK_RISK_ACTIONS = frozenset(
+    {
+        "jump-forward-mk",
+        "jump-forward-hk",
+        "jump-neutral-hk",
+        "jump-back-hk",
+    }
+)
 REWARD_RISK_PROFILES = ("none", "shoryuken-only", "all-attacks")
 GUARD_ACTIONS = frozenset({"guard-stand", "guard-crouch"})
 
@@ -114,6 +122,8 @@ class RewardRiskConfig:
     attack_punished_cost: float
     shoryuken_no_damage_extra_cost: float
     shoryuken_punished_extra_cost: float
+    jump_attack_no_damage_extra_cost: float
+    jump_attack_punished_extra_cost: float
 
 
 @dataclass
@@ -124,6 +134,8 @@ class RewardRiskStats:
     attack_punished_cost_total: float = 0.0
     shoryuken_no_damage_extra_cost_total: float = 0.0
     shoryuken_punished_extra_cost_total: float = 0.0
+    jump_attack_no_damage_extra_cost_total: float = 0.0
+    jump_attack_punished_extra_cost_total: float = 0.0
 
     @property
     def total_cost(self) -> float:
@@ -132,6 +144,8 @@ class RewardRiskStats:
             + self.attack_punished_cost_total
             + self.shoryuken_no_damage_extra_cost_total
             + self.shoryuken_punished_extra_cost_total
+            + self.jump_attack_no_damage_extra_cost_total
+            + self.jump_attack_punished_extra_cost_total
         )
 
     def as_metadata(self) -> dict[str, object]:
@@ -142,6 +156,8 @@ class RewardRiskStats:
             "attack_punished_cost_total": self.attack_punished_cost_total,
             "shoryuken_no_damage_extra_cost_total": self.shoryuken_no_damage_extra_cost_total,
             "shoryuken_punished_extra_cost_total": self.shoryuken_punished_extra_cost_total,
+            "jump_attack_no_damage_extra_cost_total": self.jump_attack_no_damage_extra_cost_total,
+            "jump_attack_punished_extra_cost_total": self.jump_attack_punished_extra_cost_total,
             "total_cost": self.total_cost,
         }
 
@@ -246,7 +262,8 @@ def reward_risk_cost(
 
     apply_attack_cost = config.profile == "all-attacks" and action_name in ATTACK_RISK_ACTIONS
     apply_shoryuken_cost = action_name == SHORYUKEN_ACTION and config.profile in {"shoryuken-only", "all-attacks"}
-    if not apply_attack_cost and not apply_shoryuken_cost:
+    apply_jump_attack_cost = config.profile == "all-attacks" and action_name in JUMP_ATTACK_RISK_ACTIONS
+    if not apply_attack_cost and not apply_shoryuken_cost and not apply_jump_attack_cost:
         return 0.0
 
     window_end = min(len(episode_rows), row_index + max(0, config.window_decisions) + 1)
@@ -276,6 +293,13 @@ def reward_risk_cost(
         if punished:
             cost += config.shoryuken_punished_extra_cost
             stats.shoryuken_punished_extra_cost_total += config.shoryuken_punished_extra_cost
+
+    if apply_jump_attack_cost:
+        cost += config.jump_attack_no_damage_extra_cost
+        stats.jump_attack_no_damage_extra_cost_total += config.jump_attack_no_damage_extra_cost
+        if punished:
+            cost += config.jump_attack_punished_extra_cost
+            stats.jump_attack_punished_extra_cost_total += config.jump_attack_punished_extra_cost
 
     if punished:
         stats.punished_cost_events += 1
@@ -463,6 +487,8 @@ def reward_risk_config_from_args(args: argparse.Namespace) -> RewardRiskConfig:
         attack_punished_cost=max(0.0, float(args.reward_attack_punished_cost)),
         shoryuken_no_damage_extra_cost=max(0.0, float(args.reward_shoryuken_no_damage_extra_cost)),
         shoryuken_punished_extra_cost=max(0.0, float(args.reward_shoryuken_punished_extra_cost)),
+        jump_attack_no_damage_extra_cost=max(0.0, float(args.reward_jump_attack_no_damage_extra_cost)),
+        jump_attack_punished_extra_cost=max(0.0, float(args.reward_jump_attack_punished_extra_cost)),
     )
 
 
@@ -848,6 +874,18 @@ def main() -> None:
         help="Additional positive raw reward cost when no-damage shoryuken-mp is followed by self HP damage",
     )
     parser.add_argument(
+        "--reward-jump-attack-no-damage-extra-cost",
+        type=float,
+        default=0.0,
+        help="Additional positive raw reward cost subtracted from no-damage jump attacks in all-attacks profile",
+    )
+    parser.add_argument(
+        "--reward-jump-attack-punished-extra-cost",
+        type=float,
+        default=0.0,
+        help="Additional positive raw reward cost when a no-damage jump attack is followed by self HP damage",
+    )
+    parser.add_argument(
         "--reward-guard-success-bonus",
         type=float,
         default=0.0,
@@ -965,6 +1003,8 @@ def main() -> None:
         "reward_attack_punished_cost": reward_risk_config.attack_punished_cost,
         "reward_shoryuken_no_damage_extra_cost": reward_risk_config.shoryuken_no_damage_extra_cost,
         "reward_shoryuken_punished_extra_cost": reward_risk_config.shoryuken_punished_extra_cost,
+        "reward_jump_attack_no_damage_extra_cost": reward_risk_config.jump_attack_no_damage_extra_cost,
+        "reward_jump_attack_punished_extra_cost": reward_risk_config.jump_attack_punished_extra_cost,
         "reward_risk_stats": reward_risk_stats.as_metadata(),
         "reward_guard_success_bonus": reward_guard_config.success_bonus,
         "reward_guard_success_window_decisions": reward_guard_config.success_window_decisions,
@@ -1024,6 +1064,17 @@ def main() -> None:
         "DQN diagnostics "
         f"observed_all=count/reward/mean "
         f"{format_action_scores(observed_action_counts, observed_action_rewards, rl.TABULAR_ACTION_NAMES, args.diagnostic_top_n)}",
+        flush=True,
+    )
+    print(
+        "DQN diagnostics "
+        f"risk_shape=no_damage:{reward_risk_stats.no_damage_cost_events} "
+        f"punished:{reward_risk_stats.punished_cost_events} "
+        f"attack:{reward_risk_stats.attack_no_damage_cost_total:.1f}/{reward_risk_stats.attack_punished_cost_total:.1f} "
+        f"shoryuken:{reward_risk_stats.shoryuken_no_damage_extra_cost_total:.1f}/"
+        f"{reward_risk_stats.shoryuken_punished_extra_cost_total:.1f} "
+        f"jump:{reward_risk_stats.jump_attack_no_damage_extra_cost_total:.1f}/"
+        f"{reward_risk_stats.jump_attack_punished_extra_cost_total:.1f}",
         flush=True,
     )
     print(

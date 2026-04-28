@@ -2,6 +2,43 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-28: Add DQN Jump-Attack Risk Extras
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / Phase 1 basic-action DQN reward shaping
+
+Files changed:
+- `tools/train_dqn_learner.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- make jump-in whiffs, especially `jump-forward-mk`, more expensive than ground poke whiffs during offline DQN training.
+- model the practical SF3 risk that a mistimed jump has high commitment, cannot guard in the air, and can be anti-aired or punished on landing.
+- keep useful jump-ins available by adding extra cost only when the jump attack produces no opponent HP damage in the lookahead window.
+
+Implementation notes:
+- added `JUMP_ATTACK_RISK_ACTIONS` for `jump-forward-mk`, `jump-forward-hk`, `jump-neutral-hk`, and `jump-back-hk`.
+- added two positive-cost CLI knobs:
+  - `--reward-jump-attack-no-damage-extra-cost`
+  - `--reward-jump-attack-punished-extra-cost`
+- jump extras apply only under `--reward-risk-profile all-attacks` and stack on top of the generic all-attacks no-damage / punished costs.
+- trainer metadata now records jump extra cost config and per-run totals through `reward_risk_stats`.
+- stdout prints `DQN diagnostics risk_shape=... jump:<no_damage_extra>/<punished_extra>` for quick smoke checks.
+
+Validation:
+- `python3 -m py_compile tools/train_dqn_learner.py` passed.
+- jump-risk smoke passed:
+  - `python3 tools/train_dqn_learner.py logs/rl-transitions-basic-v1-cpu-lv4-4-3-3.ndjson --model-dir /tmp/rl-dqn-jump-risk-smoke.<tmp> --model-version 1 --limit 5000 --steps 5 --batch-size 16 --hidden-sizes 16 --log-interval 0 --eval-limit 500 --actions forward,back,guard-stand,guard-crouch,stand-mk,crouch-mk,jump-forward-mk --reward-risk-profile all-attacks --reward-risk-window-decisions 15 --reward-attack-no-damage-cost 1.0 --reward-attack-punished-cost 2.0 --reward-jump-attack-no-damage-extra-cost 2.0 --reward-jump-attack-punished-extra-cost 2.0 --reward-guard-success-bonus 2.0 --reward-guard-success-window-decisions 15 --reward-guard-threat-max-dx 144 --reward-passive-guard-cost 0.2 --reward-far-guard-cost 0.5`
+  - published `risk_cost=508.0`, with `DQN diagnostics risk_shape=... attack:240.0/140.0 ... jump:94.0/34.0`, confirming jump extras fired separately from generic attack costs.
+
+Follow-up:
+- compare Phase 1 basic-only DQN variants:
+  - A: pure HP-delta baseline.
+  - B: guard bonus + generic all-attacks risk.
+  - C: guard bonus + generic all-attacks risk + jump-attack extra cost.
+- if C avoids jump spam without collapsing to passive guard or crouch MK, use the same cost profile for the next longer basic-only run.
+
 ## 2026-04-28: Add Live Tabular Action Subsets
 
 Milestone:

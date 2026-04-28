@@ -2432,6 +2432,7 @@ Tasks:
 - [x] Add offline DQN guard success / passive guard reward shaping knobs for Phase 1 defense curriculum smoke tests
 - [x] Make offline DQN replay decision-level by training only on macro step-0 action starts and delayed-crediting macro continuation rewards
 - [x] Add live tabular action-subset support for Phase 1 basic-action data collection
+- [x] Add jump-attack-specific DQN risk costs for high-commitment jump-in whiffs
 - [x] Add an offline transition analyzer for action/distance HP-delta attribution
 - [x] Expand observation features only with schema versioning for the first routine attack/contact-reaction validation probes
 - [x] Promote validated opponent routine attack state into the first tabular strike-defense state split
@@ -2516,6 +2517,7 @@ Implementation notes:
     - `--reward-risk-profile shoryuken-only`: applies only Shoryuken no-damage / punished extra costs
     - `--reward-risk-profile all-attacks`: applies generic attack no-damage / punished costs, plus Shoryuken extra costs
   - reward-risk costs use positive `cost` parameters (`--reward-attack-no-damage-cost`, `--reward-attack-punished-cost`, `--reward-shoryuken-no-damage-extra-cost`, `--reward-shoryuken-punished-extra-cost`) and are subtracted before `--reward-scale`, avoiding confusing negative penalty arguments
+  - jump attacks can receive additional high-commitment risk cost on top of generic attack cost through `--reward-jump-attack-no-damage-extra-cost` and `--reward-jump-attack-punished-extra-cost`; Phase 1 uses this to make `jump-forward-mk` whiffs costlier than ground `stand-mk` / `crouch-mk` whiffs without banning useful jump-ins outright
   - guard reward shaping is available for offline Phase 1 DQN experiments without changing transition schema:
     - `--reward-guard-success-bonus` adds raw reward to `guard-stand` / `guard-crouch` starts when `obs_opp_routine_attack_state=1`, `obs_abs_dx <= --reward-guard-threat-max-dx`, and the guard-success lookahead window has no self HP damage
     - `--reward-passive-guard-cost` subtracts raw reward from guard starts when the opponent is not attacking

@@ -2,6 +2,44 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-29: Transition Schema V2 C-Side Export Step 1
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / transition action-label cleanup
+
+Files changed:
+- `src/rl/rl_session.c`
+- `docs/rl-policy-action-taxonomy.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- start transition schema v2 by writing separate action identity field groups in new C-side transition rows.
+- keep the legacy fields untouched so existing logs, parsers, DQN training commands, and comparison tools remain compatible until the Python rollout steps are implemented.
+
+Implementation notes:
+- transition rows now include `transition_schema_version:2`.
+- remote action packets populate `policy_requested_*` when accepted and `policy_executed_*` when the queued remote or repeated-last policy action is executed.
+- human-demo / CPU-demo rows populate `input_action_id`, `input_sub_action_id`, `input_action_step`, and `input_label_source` from the existing demo input mapper.
+- Ryu demo engine attribution now mirrors the existing `demo_attributed_*` label into `engine_*` fields:
+  - `engine_action_id`
+  - `engine_sub_action_id`
+  - `engine_routine_1`
+  - `engine_routine_2`
+  - `engine_kind_of_waza`
+  - `engine_current_attack`
+  - `engine_label_source`
+  - `engine_lag_frames`
+- no Python ingestion or DQN action-source selection behavior changed in this step.
+
+Validation:
+- `git diff --check` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed and rebuilt `src/rl/rl_session.c`.
+
+Follow-up:
+- update `tools/rl_probe_server.py` replay ingestion to preserve the v2 fields while keeping legacy fallback.
+- add `--training-action-source auto|policy|input|engine|prefer-engine` only after ingestion can retain both schemas.
+
 ## 2026-04-29: Document Transition Schema V2 Rollout Plan
 
 Milestone:

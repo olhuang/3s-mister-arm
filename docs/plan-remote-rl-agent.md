@@ -2468,7 +2468,7 @@ Tasks:
 - [x] Add focus-action DQN comparison diagnostics so any specified action group can be inspected by rank, blocker action, and threat/distance bucket
 - [x] Tighten demo guard labels and DQN guard bonus semantics so crouch/back intent is not automatically treated as successful guard without threat or contact evidence
 - [ ] Implement transition schema v2 rollout from `docs/rl-policy-action-taxonomy.md#transition-schema-v2-rollout-plan`
-- [ ] Add C-side NDJSON export for `transition_schema_version=2` plus separate `policy_*`, `input_*`, and `engine_*` action identity fields while preserving legacy fields
+- [x] Add C-side NDJSON export for `transition_schema_version=2` plus separate `policy_*`, `input_*`, and `engine_*` action identity fields while preserving legacy fields
 - [ ] Update Python replay ingestion to preserve v2 fields and keep legacy fallback for old logs
 - [ ] Add DQN `--training-action-source auto|policy|input|engine|prefer-engine`
 - [ ] Add analyzer / compare source breakdown for canonical action labels (`policy`, `input`, `engine`, `skipped`)

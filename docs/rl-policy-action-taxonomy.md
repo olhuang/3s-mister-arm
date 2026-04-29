@@ -80,8 +80,9 @@ Current runtime identity fields:
 
 ### Transition Schema V2 Rollout Plan
 
-Status: planned. Do not treat these fields as present in current transition
-logs until the rollout steps below are implemented and validated.
+Status: rollout started. Step 1 C-side NDJSON export is implemented for new
+logs; Python readers and training defaults are still legacy-first until the
+later rollout steps below are implemented and validated.
 
 The goal of transition schema v2 is to stop overloading one action-id pair for
 three different meanings:
@@ -102,6 +103,16 @@ Planned field groups:
 | input | `input_action_id`, `input_sub_action_id`, `input_action_step`, `input_label_source` | Best-effort label derived from raw controller input. This is useful for walk, guard intent, and simple button inputs in human-demo / CPU-demo data. |
 | engine | `engine_action_id`, `engine_sub_action_id`, `engine_routine_1`, `engine_routine_2`, `engine_kind_of_waza`, `engine_current_attack`, `engine_label_source`, `engine_lag_frames` | Engine-recognized action start label. This is the preferred demo label for specials, throws, and validated normals when an engine event is observed. |
 
+Label source values in step 1:
+
+| field | value | meaning |
+|---|---:|---|
+| `input_label_source` | 0 | no input label |
+| `input_label_source` | 1 | existing human-demo / CPU-demo input mapper |
+| `engine_label_source` | 0 | no engine attribution |
+| `engine_label_source` | 1 | Ryu engine routine start attribution |
+| `engine_label_source` | 2 | Ryu engine normal attack start attribution |
+
 Important semantic split:
 
 - `engine_*` means "the game entered a recognizable move start near this
@@ -112,7 +123,8 @@ Important semantic split:
 
 Rollout steps:
 
-1. Add v2 fields to the C-side decision ledger and NDJSON export.
+1. Add v2 fields to the C-side decision ledger and NDJSON export. Done for new
+   logs as of 2026-04-29.
    - Remote RL rows fill `policy_*`.
    - Demo rows fill `input_*` from the existing demo input mapper.
    - Demo engine attribution fills `engine_*` from the existing Ryu

@@ -97,6 +97,24 @@ typedef struct RLDecisionLedgerEntry {
     u16 executed_policy_action_id;
     u16 executed_policy_sub_action_id;
     u16 executed_policy_action_step;
+    u16 policy_requested_action_id;
+    u16 policy_requested_sub_action_id;
+    u16 policy_requested_action_step;
+    u16 policy_executed_action_id;
+    u16 policy_executed_sub_action_id;
+    u16 policy_executed_action_step;
+    u16 input_action_id;
+    u16 input_sub_action_id;
+    u16 input_action_step;
+    u8 input_label_source;
+    u16 engine_action_id;
+    u16 engine_sub_action_id;
+    u16 engine_routine_1;
+    u16 engine_routine_2;
+    u16 engine_current_attack;
+    u16 engine_lag_frames;
+    u8 engine_kind_of_waza;
+    u8 engine_label_source;
     u16 demo_attributed_policy_action_id;
     u16 demo_attributed_policy_sub_action_id;
     u16 demo_attributed_routine2;
@@ -227,6 +245,9 @@ static const RLLocalFakeAction kLocalFakeAgentSequence[] = {
 #define RL_POLICY_SUB_ACTION_CROUCH 21u
 #define RL_DEMO_GUARD_THREAT_DX 144
 #define RL_CHARACTER_RYU 2u
+#define RL_TRANSITION_SCHEMA_VERSION 2u
+#define RL_INPUT_LABEL_SOURCE_NONE 0u
+#define RL_INPUT_LABEL_SOURCE_DEMO_INPUT 1u
 #define RL_DEMO_ATTRIBUTION_NONE 0u
 #define RL_DEMO_ATTRIBUTION_RYU_ENGINE_ROUTINE_START 1u
 #define RL_DEMO_ATTRIBUTION_RYU_ENGINE_NORMAL_ATTACK_START 2u
@@ -939,6 +960,14 @@ static void RLSession_MaybeAttributeDemoEngineAction(RLDecisionLedgerEntry* entr
     entry->demo_attributed_kind_of_waza = obs->self_kind_of_waza;
     entry->demo_attribution_source = source;
     entry->demo_attribution_lag_frames = (u16)(lag_frames > 65535u ? 65535u : lag_frames);
+    entry->engine_action_id = action_id;
+    entry->engine_sub_action_id = sub_action_id;
+    entry->engine_routine_1 = obs->self_routine[1];
+    entry->engine_routine_2 = obs->self_routine[2];
+    entry->engine_current_attack = obs->self_current_attack;
+    entry->engine_kind_of_waza = obs->self_kind_of_waza;
+    entry->engine_label_source = source;
+    entry->engine_lag_frames = (u16)(lag_frames > 65535u ? 65535u : lag_frames);
 }
 
 
@@ -1225,6 +1254,7 @@ static int RLSession_FormatTransitionLogLine(const RLDecisionLedgerEntry* entry,
                         line_size,
                         "{\"run_id\":%" PRIu64 ",\"episode_id\":%u,\"decision_id\":%u,"
                         "\"round_num\":%u,\"obs_frame\":%u,"
+                        "\"transition_schema_version\":%u,"
                         "\"agent_character_id\":%u,\"opponent_character_id\":%u,"
                         "\"requested_action_wire\":%u,\"executed_action_wire\":%u,"
                         "\"requested_policy_action_id\":%u,"
@@ -1233,6 +1263,24 @@ static int RLSession_FormatTransitionLogLine(const RLDecisionLedgerEntry* entry,
                         "\"executed_policy_action_id\":%u,"
                         "\"executed_policy_sub_action_id\":%u,"
                         "\"executed_policy_action_step\":%u,"
+                        "\"policy_requested_action_id\":%u,"
+                        "\"policy_requested_sub_action_id\":%u,"
+                        "\"policy_requested_action_step\":%u,"
+                        "\"policy_executed_action_id\":%u,"
+                        "\"policy_executed_sub_action_id\":%u,"
+                        "\"policy_executed_action_step\":%u,"
+                        "\"input_action_id\":%u,"
+                        "\"input_sub_action_id\":%u,"
+                        "\"input_action_step\":%u,"
+                        "\"input_label_source\":%u,"
+                        "\"engine_action_id\":%u,"
+                        "\"engine_sub_action_id\":%u,"
+                        "\"engine_routine_1\":%u,"
+                        "\"engine_routine_2\":%u,"
+                        "\"engine_kind_of_waza\":%u,"
+                        "\"engine_current_attack\":%u,"
+                        "\"engine_label_source\":%u,"
+                        "\"engine_lag_frames\":%u,"
                         "\"demo_attributed_policy_action_id\":%u,"
                         "\"demo_attributed_policy_sub_action_id\":%u,"
                         "\"demo_attributed_routine2\":%u,"
@@ -1262,6 +1310,7 @@ static int RLSession_FormatTransitionLogLine(const RLDecisionLedgerEntry* entry,
                         entry->decision_id,
                         entry->round_num,
                         entry->obs_frame,
+                        RL_TRANSITION_SCHEMA_VERSION,
                         entry->agent_character_id,
                         entry->opponent_character_id,
                         entry->requested_action_wire,
@@ -1272,6 +1321,24 @@ static int RLSession_FormatTransitionLogLine(const RLDecisionLedgerEntry* entry,
                         entry->executed_policy_action_id,
                         entry->executed_policy_sub_action_id,
                         entry->executed_policy_action_step,
+                        entry->policy_requested_action_id,
+                        entry->policy_requested_sub_action_id,
+                        entry->policy_requested_action_step,
+                        entry->policy_executed_action_id,
+                        entry->policy_executed_sub_action_id,
+                        entry->policy_executed_action_step,
+                        entry->input_action_id,
+                        entry->input_sub_action_id,
+                        entry->input_action_step,
+                        entry->input_label_source,
+                        entry->engine_action_id,
+                        entry->engine_sub_action_id,
+                        entry->engine_routine_1,
+                        entry->engine_routine_2,
+                        entry->engine_kind_of_waza,
+                        entry->engine_current_attack,
+                        entry->engine_label_source,
+                        entry->engine_lag_frames,
                         entry->demo_attributed_policy_action_id,
                         entry->demo_attributed_policy_sub_action_id,
                         entry->demo_attributed_routine2,
@@ -1820,6 +1887,11 @@ static void RLSession_StartActiveRemoteAction(u32 episode_id,
         ledger->executed_policy_action_id = policy_action_id;
         ledger->executed_policy_sub_action_id = policy_sub_action_id;
         ledger->executed_policy_action_step = policy_action_step;
+        if (source == RL_EXECUTION_SOURCE_REMOTE || source == RL_EXECUTION_SOURCE_REPEATED_LAST_ACTION) {
+            ledger->policy_executed_action_id = policy_action_id;
+            ledger->policy_executed_sub_action_id = policy_sub_action_id;
+            ledger->policy_executed_action_step = policy_action_step;
+        }
         ledger->execution_frame_actual = remote_debug.frame_id;
         ledger->execution_source = (u8)source;
         ledger->executed_move_intent = move_intent;
@@ -2019,6 +2091,10 @@ static void RLSession_RecordDemoInput(s16 agent, u16 sw, RLExecutionSource sourc
     ledger->executed_policy_action_id = policy_action_id;
     ledger->executed_policy_sub_action_id = policy_sub_action_id;
     ledger->executed_policy_action_step = 0;
+    ledger->input_action_id = policy_action_id;
+    ledger->input_sub_action_id = policy_sub_action_id;
+    ledger->input_action_step = 0;
+    ledger->input_label_source = RL_INPUT_LABEL_SOURCE_DEMO_INPUT;
     ledger->executed_move_intent = move_intent;
     ledger->executed_attack_bits = attack_bits;
     ledger->execution_source = (u8)source;
@@ -2120,6 +2196,9 @@ RLRemoteActionSubmitResult RLSession_SubmitRemoteAction(const RLActionPacket* pa
             ledger->requested_policy_action_id = packet->policy_action_id;
             ledger->requested_policy_sub_action_id = packet->policy_sub_action_id;
             ledger->requested_policy_action_step = packet->policy_action_step;
+            ledger->policy_requested_action_id = packet->policy_action_id;
+            ledger->policy_requested_sub_action_id = packet->policy_sub_action_id;
+            ledger->policy_requested_action_step = packet->policy_action_step;
             ledger->model_version_requested = packet->model_version;
         }
     }

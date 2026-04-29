@@ -2,6 +2,38 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-29: Fix Engine Outcome Subset Fallback
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / schema-v3 trainer cleanup
+
+Files changed:
+- `tools/train_dqn_learner.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- fix `--engine-outcome-training-mode prefer-engine-action` when an engine-labeled move exists but the action is not present in the configured DQN action subset.
+- preserve input-labeled demo rows instead of allowing `--training-action-source auto` to select the same unsupported `engine_*` action a second time.
+
+Implementation notes:
+- when engine outcome experience creation fails for a demo row with `engine_*`, the trainer now forces that row's normal replay path through `select_training_action(row, "input")`.
+- `BuildDiagnostics` now records `engine_outcome_input_fallback_rows`.
+- the published summary line now prints `engine_input_fallback=<n>`.
+
+Validation:
+- Python compile passed:
+  - `python3 -m py_compile tools/train_dqn_learner.py`
+- subset fallback smoke passed:
+  - `python3 tools/train_dqn_learner.py logs/rl-transitions-cpu-demo-schema-v3-4-3-3.ndjson --model-dir /tmp/rl-dqn-engine-fallback-smoke --model-version 10 --limit 800 --steps 2 --batch-size 4 --hidden-sizes 8 --actions forward,back,guard-stand,guard-crouch,stand-mk --fallback-policy stand-mk --training-action-source auto --reward-risk-profile none --engine-outcome-training-mode prefer-engine-action --engine-outcome-window-decisions 15 --log-interval 1 --eval-limit 100 --diagnostic-top-n 8`
+  - reported `engine_input_fallback=17` and `action_source_counts=input:164,none:636`, confirming excluded engine events no longer return as normal engine-source exclusions.
+- full-action smoke on the current CPU-demo schema-v3 log passed:
+  - `python3 tools/train_dqn_learner.py logs/rl-transitions-cpu-demo-schema-v3-4-3-3.ndjson --model-dir /tmp/rl-dqn-engine-fallback-full-smoke --model-version 10 --steps 2 --batch-size 64 --hidden-sizes 8 --epsilon 0.05 --seed 7 --gamma 0.95 --actions forward,back,guard-stand,guard-crouch,stand-lp,stand-mp,stand-hp,stand-lk,stand-mk,stand-hk,forward-hp,crouch-lp,crouch-mp,crouch-hp,crouch-lk,crouch-mk,crouch-hk,fireball-lp,fireball-mp,fireball-hp,throw,jump-forward-lp,jump-forward-mp,jump-forward-hp,jump-forward-lk,jump-forward-mk,jump-forward-hk,jump-neutral-lp,jump-neutral-mp,jump-neutral-hp,jump-neutral-lk,jump-neutral-mk,jump-neutral-hk,jump-back-lp,jump-back-mp,jump-back-hp,jump-back-lk,jump-back-mk,jump-back-hk,shoryuken-lp,shoryuken-mp,shoryuken-hp,tatsu-lk,tatsu-mk,tatsu-hk --fallback-policy stand-mk --training-action-source auto --reward-risk-profile none --engine-outcome-training-mode prefer-engine-action --engine-outcome-window-decisions 15 --engine-outcome-action-windows fireball-lp=45,fireball-mp=45,fireball-hp=45,tatsu-lk=25,tatsu-mk=25,tatsu-hk=25 --engine-outcome-no-damage-cost 0.5 --engine-outcome-punished-cost 2.0 --log-interval 1 --eval-limit 100 --diagnostic-top-n 10`
+  - reported `engine_outcome=prefer-engine-action:251/291`, `excluded=0`, and `engine_input_fallback=40`.
+
+Follow-up:
+- retrain the CPU-demo schema-v3 DQN model with model version +1 so the live model benefits from the fallback fix.
+
 ## 2026-04-29: Rename DQN Demo Attribution To Engine Outcome
 
 Milestone:

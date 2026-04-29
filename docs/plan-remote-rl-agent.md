@@ -2593,7 +2593,7 @@ Implementation notes:
     - `--engine-outcome-training-mode off|prefer-engine-action`
     - `off` is the default and keeps the existing DQN replay behavior unchanged
     - `prefer-engine-action` uses `engine_*` event rows in place of input-based experiences only when a demo row has an engine-labeled move and that action is present in the configured `--actions` subset
-    - if an engine-labeled action is not present in `--actions`, trainer diagnostics count it as an excluded engine-outcome event and the row falls back to the normal selected action path, preserving subset training data instead of dropping the row
+    - if an engine-labeled action is not present in `--actions`, trainer diagnostics count it as an excluded engine-outcome event and force the normal replay path to use the row's `input_*` label, preserving subset training data instead of selecting the same unsupported `engine_*` label again
     - unattributed demo rows still keep their normal input-based experiences, preserving walk / guard examples
     - `--engine-outcome-window-decisions N` sums later `delta_opp_hp` / `delta_self_hp` in the same episode to give each engine-labeled move a delayed outcome reward
     - `--engine-outcome-action-windows action=N,...` reserves per-action delayed-credit tuning while preserving a global default window

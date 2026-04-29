@@ -34,6 +34,7 @@ class BuildDiagnostics:
     excluded_action_rows: int = 0
     excluded_action_reward_rows: int = 0
     excluded_action_reward_sum: float = 0.0
+    engine_outcome_input_fallback_rows: int = 0
     macro_continuation_rows: int = 0
     macro_continuation_reward_rows: int = 0
     macro_continuation_reward_sum: float = 0.0
@@ -49,6 +50,7 @@ class BuildDiagnostics:
             "excluded_action_rows": self.excluded_action_rows,
             "excluded_action_reward_rows": self.excluded_action_reward_rows,
             "excluded_action_reward_sum": self.excluded_action_reward_sum,
+            "engine_outcome_input_fallback_rows": self.engine_outcome_input_fallback_rows,
             "macro_continuation_rows": self.macro_continuation_rows,
             "macro_continuation_reward_rows": self.macro_continuation_reward_rows,
             "macro_continuation_reward_sum": self.macro_continuation_reward_sum,
@@ -852,6 +854,7 @@ def build_experiences(
         episode_rows.sort(key=row_order_key)
         last_exp_index: int | None = None
         for index, row in enumerate(episode_rows):
+            force_input_after_engine_outcome_excluded = False
             if (
                 engine_outcome_config.training_mode == "prefer-engine-action"
                 and is_demo_row(row)
@@ -873,8 +876,13 @@ def build_experiences(
                     set_experience_next_state(experiences, last_exp_index, row, bool(row.get("done", False)))
                     last_exp_index = None
                     continue
+                force_input_after_engine_outcome_excluded = True
+                build_stats.engine_outcome_input_fallback_rows += 1
 
-            action_selection = rl.select_training_action(row, training_action_source)
+            action_selection = rl.select_training_action(
+                row,
+                "input" if force_input_after_engine_outcome_excluded else training_action_source,
+            )
             action_name = action_selection.name
             action_start = action_selection.step == 0
             build_stats.action_source_counts[action_selection.source] = (
@@ -1861,6 +1869,7 @@ def main() -> None:
         f"engine_outcome_net={engine_outcome_stats.net_adjustment:.1f} "
         f"loss={train_stats['last_loss']:.6f} avg_loss={train_stats['avg_loss']:.6f} "
         f"included={build_stats.included_action_rows} excluded={build_stats.excluded_action_rows} "
+        f"engine_input_fallback={build_stats.engine_outcome_input_fallback_rows} "
         f"cont={build_stats.macro_continuation_rows} "
         f"cont_rew={build_stats.macro_continuation_reward_sum:.3f} "
         f"excluded_rew={build_stats.excluded_action_reward_sum:.3f} "

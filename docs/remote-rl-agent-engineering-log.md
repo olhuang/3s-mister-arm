@@ -2,6 +2,40 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-29: Transition Schema V2 Python Replay Ingestion Step 2
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / transition action-label cleanup
+
+Files changed:
+- `tools/rl_probe_server.py`
+- `docs/rl-policy-action-taxonomy.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- make Python replay normalization preserve the schema-v2 action identity fields emitted by new C-side transition logs.
+- keep old logs compatible without synthesizing misleading v2 policy fields from legacy demo labels.
+
+Implementation notes:
+- `learner_replay_row()` now preserves:
+  - `transition_schema_version`
+  - `policy_requested_*`
+  - `policy_executed_*`
+  - `input_*`
+  - `engine_*`
+- missing `transition_schema_version` defaults to `1`; missing v2 action groups default to zero.
+- the function deliberately does not copy legacy `requested_*` / `executed_*` into `policy_*`, because old `human-demo` / `cpu-demo` rows used those legacy fields as input-derived labels.
+- DQN/training action source selection is unchanged in this step.
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py` passed.
+- smoke check confirmed v2 fields survive `learner_replay_row()` and a legacy row gets `transition_schema_version=1` with zeroed v2 fields.
+- `git diff --check` passed.
+
+Follow-up:
+- add `--training-action-source auto|policy|input|engine|prefer-engine` and update DQN/compare/analyzer code paths to report action-label source breakdown.
+
 ## 2026-04-29: Transition Schema V2 C-Side Export Step 1
 
 Milestone:

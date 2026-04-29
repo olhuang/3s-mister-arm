@@ -80,8 +80,8 @@ Current runtime identity fields:
 
 ### Transition Schema V2 Rollout Plan
 
-Status: rollout started. Step 1 C-side NDJSON export is implemented for new
-logs; Python readers and training defaults are still legacy-first until the
+Status: rollout started. Step 1 C-side NDJSON export and step 2 Python replay
+ingestion are implemented; training defaults are still legacy-first until the
 later rollout steps below are implemented and validated.
 
 The goal of transition schema v2 is to stop overloading one action-id pair for
@@ -132,7 +132,7 @@ Rollout steps:
    - Legacy `requested_*`, `executed_*`, and `demo_attributed_*` fields remain
      unchanged in the same row.
 
-2. Update Python ingestion to preserve both schemas.
+2. Update Python ingestion to preserve both schemas. Done as of 2026-04-29.
    - `tools/rl_probe_server.py` keeps v2 fields in replay rows when present.
    - Older logs without `transition_schema_version` continue to parse through
      the legacy fields.

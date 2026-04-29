@@ -95,6 +95,31 @@ REMOVED_ENGINE_OUTCOME_MODES = ("augment", "replace-demo")
 TRAINING_ACTION_SOURCES = rl.TRAINING_ACTION_SOURCES
 GUARD_ACTIONS = frozenset({"guard-stand", "guard-crouch"})
 MOVEMENT_SPACING_ACTIONS = frozenset({"forward", "back"})
+BATCH_SAMPLING_MODES = ("uniform", "balanced")
+BATCH_GROUPS = ("movement", "normal", "special")
+SPECIAL_ACTION_PREFIXES = ("fireball-", "shoryuken-", "tatsu-")
+
+
+@dataclass(frozen=True)
+class BatchSamplingConfig:
+    mode: str
+    ratios: dict[str, float]
+
+
+@dataclass(frozen=True)
+class BatchSamplingDiagnostics:
+    mode: str
+    ratios: dict[str, float]
+    pool_counts: dict[str, int]
+    target_counts: dict[str, int]
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "mode": self.mode,
+            "ratios": self.ratios,
+            "pool_counts": self.pool_counts,
+            "target_counts": self.target_counts,
+        }
 
 
 @dataclass(frozen=True)
@@ -471,6 +496,134 @@ def parse_action_multipliers(value: str, flag_name: str) -> dict[str, int]:
             raise SystemExit(f"Invalid multiplier for {action}: {raw_multiplier}") from exc
         multipliers[action] = max(1, multiplier)
     return multipliers
+
+
+def canonical_batch_group_name(raw_group: str) -> str | None:
+    normalized = raw_group.strip().lower().replace("_", "-")
+    aliases = {
+        "movement": "movement",
+        "move": "movement",
+        "guard": "movement",
+        "movement-guard": "movement",
+        "movement+guard": "movement",
+        "normal": "normal",
+        "normals": "normal",
+        "normal-throw": "normal",
+        "normals-throw": "normal",
+        "normal+throw": "normal",
+        "normals+throw": "normal",
+        "special": "special",
+        "specials": "special",
+    }
+    return aliases.get(normalized)
+
+
+def parse_batch_ratios(value: str, flag_name: str) -> dict[str, float]:
+    ratios: dict[str, float] = {group: 0.0 for group in BATCH_GROUPS}
+    if not value.strip():
+        return ratios
+    for raw_item in value.split(","):
+        item = raw_item.strip()
+        if not item:
+            continue
+        if "=" not in item:
+            raise SystemExit(f"Invalid {flag_name} item: {item!r}; expected group=ratio")
+        raw_group, raw_ratio = (part.strip() for part in item.split("=", 1))
+        group = canonical_batch_group_name(raw_group)
+        if group is None:
+            raise SystemExit(f"Unknown batch group in {flag_name}: {raw_group}")
+        try:
+            ratio = float(raw_ratio)
+        except ValueError as exc:
+            raise SystemExit(f"Invalid ratio for {group}: {raw_ratio}") from exc
+        ratios[group] = max(0.0, ratio)
+    total = sum(ratios.values())
+    if total <= 0.0:
+        raise SystemExit(f"{flag_name} must contain at least one positive ratio")
+    return {group: ratios[group] / total for group in BATCH_GROUPS}
+
+
+def batch_sampling_config_from_args(args: argparse.Namespace) -> BatchSamplingConfig:
+    mode = str(args.batch_sampling)
+    if mode not in BATCH_SAMPLING_MODES:
+        raise SystemExit(f"unknown --batch-sampling {mode!r}; expected one of {','.join(BATCH_SAMPLING_MODES)}")
+    ratios = parse_batch_ratios(str(args.balanced_batch_ratios), "--balanced-batch-ratios")
+    return BatchSamplingConfig(mode=mode, ratios=ratios)
+
+
+def action_batch_group(action_name: str) -> str:
+    if action_name in NON_ATTACK_ACTIONS:
+        return "movement"
+    if action_name.startswith(SPECIAL_ACTION_PREFIXES):
+        return "special"
+    return "normal"
+
+
+def build_batch_pools(
+    experiences: list[Experience],
+    actions: tuple[str, ...],
+) -> dict[str, list[Experience]]:
+    pools: dict[str, list[Experience]] = {group: [] for group in BATCH_GROUPS}
+    for exp in experiences:
+        if 0 <= exp.action_index < len(actions):
+            pools[action_batch_group(actions[exp.action_index])].append(exp)
+    return pools
+
+
+def balanced_target_counts(batch_size: int, ratios: dict[str, float]) -> dict[str, int]:
+    raw_counts = {group: max(0.0, ratios.get(group, 0.0)) * batch_size for group in BATCH_GROUPS}
+    counts = {group: int(math.floor(raw_counts[group])) for group in BATCH_GROUPS}
+    remaining = max(0, batch_size - sum(counts.values()))
+    remainders = sorted(
+        ((raw_counts[group] - counts[group], group) for group in BATCH_GROUPS),
+        key=lambda item: (item[0], item[1]),
+        reverse=True,
+    )
+    for index in range(remaining):
+        counts[remainders[index % len(remainders)][1]] += 1
+    return counts
+
+
+def batch_sampling_diagnostics(
+    experiences: list[Experience],
+    actions: tuple[str, ...],
+    batch_size: int,
+    config: BatchSamplingConfig,
+) -> BatchSamplingDiagnostics:
+    pools = build_batch_pools(experiences, actions)
+    return BatchSamplingDiagnostics(
+        mode=config.mode,
+        ratios=dict(config.ratios),
+        pool_counts={group: len(pools[group]) for group in BATCH_GROUPS},
+        target_counts=balanced_target_counts(batch_size, config.ratios) if config.mode == "balanced" else {},
+    )
+
+
+def sample_training_batch(
+    experiences: list[Experience],
+    pools: dict[str, list[Experience]],
+    target_counts: dict[str, int],
+    batch_size: int,
+    rng: random.Random,
+    config: BatchSamplingConfig,
+) -> list[Experience]:
+    if config.mode == "uniform":
+        return rng.choices(experiences, k=batch_size)
+
+    batch: list[Experience] = []
+    fallback_pool = experiences
+    for group in BATCH_GROUPS:
+        count = max(0, int(target_counts.get(group, 0)))
+        if count <= 0:
+            continue
+        pool = pools.get(group) or fallback_pool
+        batch.extend(rng.choices(pool, k=count))
+    if len(batch) < batch_size:
+        batch.extend(rng.choices(fallback_pool, k=batch_size - len(batch)))
+    elif len(batch) > batch_size:
+        batch = batch[:batch_size]
+    rng.shuffle(batch)
+    return batch
 
 
 def is_terminal_win(row: dict[str, object]) -> bool:
@@ -1237,15 +1390,29 @@ def train_dqn(
     target_sync_steps: int,
     seed: int,
     log_interval: int,
+    batch_sampling_config: BatchSamplingConfig,
 ) -> tuple[list[dict[str, object]], dict[str, float]]:
     rng = random.Random(seed)
     layers = init_network(len(rl.DQN_FEATURE_NAMES), hidden_sizes, len(actions), rng)
     target_layers = copy.deepcopy(layers)
+    batch_pools = build_batch_pools(experiences, actions)
+    batch_target_counts = (
+        balanced_target_counts(batch_size, batch_sampling_config.ratios)
+        if batch_sampling_config.mode == "balanced"
+        else {}
+    )
     last_loss = 0.0
     avg_loss = 0.0
 
     for step in range(1, steps + 1):
-        batch = rng.choices(experiences, k=batch_size)
+        batch = sample_training_batch(
+            experiences,
+            batch_pools,
+            batch_target_counts,
+            batch_size,
+            rng,
+            batch_sampling_config,
+        )
         grads = zero_grads(layers)
         loss = 0.0
         for exp in batch:
@@ -1265,7 +1432,13 @@ def train_dqn(
         if log_interval > 0 and (step == 1 or step % log_interval == 0 or step == steps):
             print(f"TRAIN step={step} loss={last_loss:.6f} avg_loss={avg_loss:.6f}", flush=True)
 
-    return layers, {"last_loss": last_loss, "avg_loss": avg_loss}
+    batch_diag = BatchSamplingDiagnostics(
+        mode=batch_sampling_config.mode,
+        ratios=dict(batch_sampling_config.ratios),
+        pool_counts={group: len(batch_pools[group]) for group in BATCH_GROUPS},
+        target_counts=dict(batch_target_counts),
+    )
+    return layers, {"last_loss": last_loss, "avg_loss": avg_loss, "batch_sampling": batch_diag.as_metadata()}
 
 
 def count_greedy_actions(layers: list[dict[str, object]], experiences: list[Experience], actions: tuple[str, ...], limit: int) -> dict[str, int]:
@@ -1450,6 +1623,21 @@ def main() -> None:
     )
     parser.add_argument("--steps", type=int, default=2000, help="Gradient steps")
     parser.add_argument("--batch-size", type=int, default=64, help="Replay batch size")
+    parser.add_argument(
+        "--batch-sampling",
+        choices=BATCH_SAMPLING_MODES,
+        default="uniform",
+        help="Replay batch sampler: uniform keeps raw replay sampling, balanced samples by action family ratios",
+    )
+    parser.add_argument(
+        "--balanced-batch-ratios",
+        default="movement=0.4,normal=0.3,special=0.3",
+        help=(
+            "Comma-separated group ratios used when --batch-sampling balanced, e.g. "
+            "movement=0.4,normal=0.3,special=0.3; movement includes forward/back/guard, "
+            "normal includes normals and throw, special includes fireball/shoryuken/tatsu"
+        ),
+    )
     parser.add_argument("--hidden-sizes", default="64,64", help="Comma-separated hidden layer sizes")
     parser.add_argument(
         "--actions",
@@ -1778,6 +1966,7 @@ def main() -> None:
     reward_spacing_config = reward_spacing_config_from_args(args)
     reward_position_config = reward_position_config_from_args(args)
     engine_outcome_config = engine_outcome_config_from_args(args)
+    batch_sampling_config = batch_sampling_config_from_args(args)
     (
         experiences,
         action_counts,
@@ -1815,6 +2004,13 @@ def main() -> None:
         max(1, args.target_sync_steps),
         args.seed,
         args.log_interval,
+        batch_sampling_config,
+    )
+    batch_sampling_diag = batch_sampling_diagnostics(
+        experiences,
+        actions,
+        max(1, args.batch_size),
+        batch_sampling_config,
     )
     greedy_diag = evaluate_greedy_actions(layers, experiences, actions, args.eval_limit)
     version = next_model_version(args.model_dir, args.model_version)
@@ -1888,6 +2084,7 @@ def main() -> None:
         "engine_outcome_stats": engine_outcome_stats.as_metadata(),
         "steps": max(1, args.steps),
         "batch_size": max(1, args.batch_size),
+        "batch_sampling": batch_sampling_diag.as_metadata(),
         "gamma": min(0.999, max(0.0, args.gamma)),
         "learning_rate": max(1e-8, args.learning_rate),
         "action_counts": action_counts,
@@ -1920,6 +2117,7 @@ def main() -> None:
         f"experiences={len(experiences)} "
         f"actions={len(actions)} "
         f"action_source={args.training_action_source} "
+        f"batch_sampling={batch_sampling_diag.mode} "
         f"risk={reward_risk_config.profile} risk_cost={reward_risk_stats.total_cost:.1f} "
         f"guard_bonus={reward_guard_stats.total_bonus:.1f} "
         f"guard_cost={reward_guard_stats.total_cost:.1f} "
@@ -1949,6 +2147,14 @@ def main() -> None:
         "DQN diagnostics "
         f"action_source_counts="
         f"{','.join(f'{key}:{value}' for key, value in sorted(build_stats.action_source_counts.items()))}",
+        flush=True,
+    )
+    print(
+        "DQN diagnostics "
+        f"batch_sampling=mode:{batch_sampling_diag.mode} "
+        f"ratios:{','.join(f'{group}:{batch_sampling_diag.ratios.get(group, 0.0):.2f}' for group in BATCH_GROUPS)} "
+        f"target:{','.join(f'{group}:{batch_sampling_diag.target_counts.get(group, 0)}' for group in BATCH_GROUPS)} "
+        f"pools:{','.join(f'{group}:{batch_sampling_diag.pool_counts.get(group, 0)}' for group in BATCH_GROUPS)}",
         flush=True,
     )
     print(

@@ -2602,6 +2602,12 @@ Implementation notes:
     - `--engine-outcome-oversample N` and `--engine-outcome-action-oversamples action=N,...` can duplicate included engine-outcome experiences in replay so low-frequency engine-labeled specials can be A/B tested without changing raw logs or normal input replay rows
     - stdout and model metadata record `engine_outcome=...` / `engine_outcome_stats` so CPU-demo training can be audited for included/excluded events, hit/no-damage/punished/trade counts, HP sums, reward adjustment totals, and oversampled replay experience counts
     - deprecated hidden aliases for the old `--demo-attribution-*` flag names still map to the new engine-outcome config for short-term command compatibility; removed schema-v2 modes `augment` and `replace-demo` now fail fast
+  - can train with balanced replay batches:
+    - `--batch-sampling uniform|balanced`
+    - `uniform` preserves the historical random replay sampling
+    - `balanced` samples each training batch by action family using `--balanced-batch-ratios movement=0.4,normal=0.3,special=0.3`
+    - movement includes `forward`, `back`, `guard-stand`, and `guard-crouch`; normal includes normals and `throw`; special includes `fireball-*`, `shoryuken-*`, and `tatsu-*`
+    - stdout and model metadata record `batch_sampling` diagnostics with pool counts and per-batch target counts so DQN A/B tests can confirm whether specials are actually represented in every batch
   - supports offline A/B/C reward-risk profiles without changing transition logs:
     - `--reward-risk-profile none`: baseline `hp-delta` reward
     - `--reward-risk-profile shoryuken-only`: applies only Shoryuken no-damage / punished extra costs

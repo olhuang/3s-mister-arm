@@ -2,6 +2,42 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-29: Add Balanced Batch Sampling For Offline DQN
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / DQN action distribution experiments
+
+Files changed:
+- `tools/train_dqn_learner.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- prevent high-frequency movement / guard rows from dominating every offline DQN gradient batch.
+- give low-frequency but learner-important action families such as fireball / shoryuken / tatsu a stable per-batch presence without further changing raw replay logs.
+
+Implementation notes:
+- added `--batch-sampling uniform|balanced`; `uniform` preserves historical random replay sampling.
+- added `--balanced-batch-ratios movement=0.4,normal=0.3,special=0.3` for action-family batch targets.
+- action-family grouping is:
+  - movement: `forward`, `back`, `guard-stand`, `guard-crouch`
+  - normal: normals and `throw`
+  - special: `fireball-*`, `shoryuken-*`, `tatsu-*`
+- stdout and model metadata now include `batch_sampling` diagnostics with ratios, target counts, and replay pool counts.
+
+Validation:
+- Python compile passed:
+  - `python3 -m py_compile tools/train_dqn_learner.py`
+- uniform smoke preserved baseline sampler behavior:
+  - `python3 tools/train_dqn_learner.py logs/rl-transitions-cpu-demo-schema-v3-4-3-3.ndjson --model-dir /tmp/rl-dqn-balanced-uniform-smoke --model-version 12 --limit 800 --steps 2 --batch-size 4 --hidden-sizes 8 --actions forward,back,guard-stand,guard-crouch,stand-mk,fireball-lp,fireball-mp,fireball-hp,shoryuken-lp,tatsu-hk --fallback-policy stand-mk --training-action-source auto --reward-risk-profile none --engine-outcome-training-mode prefer-engine-action --engine-outcome-window-decisions 15 --engine-outcome-action-windows fireball-lp=45,fireball-mp=45,fireball-hp=45 --engine-outcome-no-damage-cost 0.5 --engine-outcome-punished-cost 2.0 --log-interval 1 --eval-limit 100 --diagnostic-top-n 10`
+  - reported `batch_sampling=mode:uniform` and zero target counts.
+- balanced smoke confirmed family target counts:
+  - same smoke shape with `--batch-size 64 --engine-outcome-oversample 1 --engine-outcome-action-oversamples fireball-lp=5,fireball-mp=5,fireball-hp=5,shoryuken-lp=4,tatsu-hk=4 --batch-sampling balanced --balanced-batch-ratios movement=0.4,normal=0.3,special=0.3`
+  - reported `batch_sampling=mode:balanced`, `target:movement:26,normal:19,special:19`, and pools `movement:136,normal:1,special:72`.
+
+Follow-up:
+- train `model/dqn-mixdemo-schema-v3-ground-specials-v6` with ground + specials actions, specials oversampling, and balanced batch sampling; compare fireball top2/top3 against v5.
+
 ## 2026-04-29: Add Engine Outcome Oversampling For Offline DQN
 
 Milestone:

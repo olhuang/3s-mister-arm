@@ -1072,7 +1072,7 @@ def action_name_from_policy_meta(action_id: int, sub_action_id: int) -> str | No
     return action_name
 
 
-def demo_attribution_present(row: dict[str, object]) -> bool:
+def engine_outcome_present(row: dict[str, object]) -> bool:
     return (
         row_int_field(row, "engine_label_source") != 0
         or row_int_field(row, "engine_action_id") != 0
@@ -1080,11 +1080,19 @@ def demo_attribution_present(row: dict[str, object]) -> bool:
     )
 
 
-def engine_attributed_action_name(row: dict[str, object]) -> str | None:
+def engine_outcome_action_name(row: dict[str, object]) -> str | None:
     return action_name_from_policy_meta(
         row_int_field(row, "engine_action_id"),
         row_int_field(row, "engine_sub_action_id"),
     )
+
+
+def demo_attribution_present(row: dict[str, object]) -> bool:
+    return engine_outcome_present(row)
+
+
+def engine_attributed_action_name(row: dict[str, object]) -> str | None:
+    return engine_outcome_action_name(row)
 
 
 def action_selection_from_fields(

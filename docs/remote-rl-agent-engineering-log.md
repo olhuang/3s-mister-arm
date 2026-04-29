@@ -2,6 +2,60 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-29: Rename DQN Demo Attribution To Engine Outcome
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / schema-v3 trainer cleanup
+
+Files changed:
+- `tools/rl_probe_server.py`
+- `tools/train_dqn_learner.py`
+- `tools/analyze_rl_transitions.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- align DQN trainer/analyzer terminology with schema v3's `policy_*`, `input_*`, and `engine_*` label families.
+- replace the confusing `demo-attribution` trainer concept with `engine-outcome`, because delayed outcome credit is based on observed `engine_*` move starts.
+- remove the data-loss trap where an engine-labeled row whose action was not in the configured DQN `--actions` subset skipped the normal input fallback path.
+
+Implementation notes:
+- `tools/train_dqn_learner.py` now exposes:
+  - `--engine-outcome-training-mode off|prefer-engine-action`
+  - `--engine-outcome-window-decisions`
+  - `--engine-outcome-action-windows`
+  - `--engine-outcome-stop-at-next-event`
+  - `--engine-outcome-hit-bonus`
+  - `--engine-outcome-no-damage-cost`
+  - `--engine-outcome-punished-cost`
+- deprecated hidden aliases for the old `--demo-attribution-*` flags still map to the new engine-outcome config for short-term command compatibility and print a warning.
+- schema-v2-era modes `augment` and `replace-demo` now fail fast; v3 training should use `prefer-engine-action`.
+- `prefer-engine-action` now uses the engine outcome experience only when the engine-labeled action is present in the configured action subset; otherwise it records an excluded engine-outcome event and lets the row continue through the normal `--training-action-source auto` path.
+- stdout and model metadata now use `engine_outcome=...` / `engine_outcome_stats` instead of `demo_attr=...` / `demo_attribution_stats`.
+- `tools/analyze_rl_transitions.py` now uses `--engine-outcome-window-decisions` and `--engine-outcome-stop-at-next-event`; hidden old aliases remain for short-term compatibility.
+- `tools/rl_probe_server.py` now provides `engine_outcome_present()` and `engine_outcome_action_name()` helpers over schema-v3 `engine_*` fields.
+
+Validation:
+- Python compile passed:
+  - `python3 -m py_compile tools/train_dqn_learner.py tools/analyze_rl_transitions.py tools/rl_probe_server.py`
+- help output shows the new engine-outcome trainer/analyzer flags.
+- schema-v3 CPU-demo DQN smoke with engine outcome enabled passed:
+  - `python3 tools/train_dqn_learner.py logs/rl-transitions-cpu-demo-schema-v3-4-3-3.ndjson --model-dir /tmp/rl-dqn-engine-outcome-smoke --model-version 9 --limit 800 --steps 2 --batch-size 4 --hidden-sizes 8 --actions forward,back,guard-stand,guard-crouch,stand-mk,fireball-lp,fireball-mp,fireball-hp,shoryuken-lp,tatsu-hk --fallback-policy stand-mk --training-action-source auto --reward-risk-profile none --engine-outcome-training-mode prefer-engine-action --engine-outcome-window-decisions 15 --engine-outcome-action-windows fireball-lp=45,fireball-mp=45,fireball-hp=45 --engine-outcome-no-damage-cost 0.5 --engine-outcome-punished-cost 2.0 --log-interval 1 --eval-limit 100 --diagnostic-top-n 8`
+  - reported `engine_outcome=prefer-engine-action:15/17`.
+- subset fallback smoke passed:
+  - `python3 tools/train_dqn_learner.py logs/rl-transitions-cpu-demo-schema-v3-4-3-3.ndjson --model-dir /tmp/rl-dqn-engine-outcome-subset-smoke --model-version 9 --limit 800 --steps 2 --batch-size 4 --hidden-sizes 8 --actions forward,back,guard-stand,guard-crouch,stand-mk --fallback-policy stand-mk --training-action-source auto --reward-risk-profile none --engine-outcome-training-mode prefer-engine-action --engine-outcome-window-decisions 15 --log-interval 1 --eval-limit 100 --diagnostic-top-n 8`
+  - reported `engine_outcome=prefer-engine-action:0/17` and still built `experiences=137`, proving excluded engine labels no longer discard input fallback rows.
+- analyzer smoke passed:
+  - `python3 tools/analyze_rl_transitions.py logs/rl-transitions-cpu-demo-schema-v3-4-3-3.ndjson --tail-rows 800 --engine-outcome-window-decisions 15 --limit 5`
+  - reported `ENGINE_OUTCOME_SUMMARY ... events=12`.
+- `git diff --check` passed.
+- canonical MiSTer telemetry build passed:
+  - `tools/mister/build-game.sh --flavor telemetry`
+
+Follow-up:
+- use only `--engine-outcome-*` flags in new train commands.
+- after the next long CPU-demo run, compare `engine_outcome_stats.excluded_events` against the action subset to catch missing action names before live testing.
+
 ## 2026-04-29: Remove Hot-Path Local Transition File Writes
 
 Milestone:

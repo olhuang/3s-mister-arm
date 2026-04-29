@@ -161,7 +161,7 @@ class EngineStateAction:
 
 
 @dataclass
-class DemoAttributionStats:
+class EngineOutcomeStats:
     events: int = 0
     hit_events: int = 0
     punished_events: int = 0
@@ -243,21 +243,36 @@ def parse_args() -> argparse.Namespace:
         help="Flag rows where either HP delta magnitude is at least this value",
     )
     parser.add_argument(
-        "--demo-attribution-window-decisions",
+        "--engine-outcome-window-decisions",
         type=int,
-        default=10,
+        default=None,
         help=(
-            "For engine-attributed demo move starts, sum HP deltas over this many following decision rows "
-            "within the same episode; default: %(default)s"
+            "For engine-labeled move starts, sum HP deltas over this many following decision rows "
+            "within the same episode; default: 10"
+        ),
+    )
+    parser.add_argument(
+        "--demo-attribution-window-decisions",
+        dest="deprecated_demo_attribution_window_decisions",
+        type=int,
+        default=None,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--engine-outcome-stop-at-next-event",
+        action="store_true",
+        default=None,
+        help=(
+            "Stop each engine-outcome window before the next engine-labeled move event. "
+            "Off by default because projectiles can hit after a later input."
         ),
     )
     parser.add_argument(
         "--demo-attribution-stop-at-next-event",
+        dest="deprecated_demo_attribution_stop_at_next_event",
         action="store_true",
-        help=(
-            "Stop each demo-attribution window before the next attributed move event. "
-            "Off by default because projectiles can hit after a later input."
-        ),
+        default=None,
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--training-action-source",
@@ -268,7 +283,41 @@ def parse_args() -> argparse.Namespace:
             "for schema-v3 demo rows and policy labels for schema-v3 remote rows."
         ),
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    if (
+        args.engine_outcome_window_decisions is not None
+        and args.deprecated_demo_attribution_window_decisions is not None
+    ):
+        parser.error(
+            "use only one of --engine-outcome-window-decisions "
+            "or deprecated --demo-attribution-window-decisions"
+        )
+    if args.deprecated_demo_attribution_window_decisions is not None:
+        print(
+            "warning: --demo-attribution-window-decisions is deprecated; use --engine-outcome-window-decisions",
+            file=sys.stderr,
+        )
+        args.engine_outcome_window_decisions = args.deprecated_demo_attribution_window_decisions
+    if args.engine_outcome_window_decisions is None:
+        args.engine_outcome_window_decisions = 10
+
+    if (
+        args.engine_outcome_stop_at_next_event is not None
+        and args.deprecated_demo_attribution_stop_at_next_event is not None
+    ):
+        parser.error(
+            "use only one of --engine-outcome-stop-at-next-event "
+            "or deprecated --demo-attribution-stop-at-next-event"
+        )
+    if args.deprecated_demo_attribution_stop_at_next_event is not None:
+        print(
+            "warning: --demo-attribution-stop-at-next-event is deprecated; use --engine-outcome-stop-at-next-event",
+            file=sys.stderr,
+        )
+        args.engine_outcome_stop_at_next_event = args.deprecated_demo_attribution_stop_at_next_event
+    if args.engine_outcome_stop_at_next_event is None:
+        args.engine_outcome_stop_at_next_event = False
+    return args
 
 
 def iter_lines(path: Path, tail_rows: int) -> Iterable[str]:
@@ -414,15 +463,15 @@ def engine_state_action_from_row(row: dict[str, object], side: str) -> EngineSta
     )
 
 
-def demo_attribution_present(row: dict[str, object]) -> bool:
-    return rl.demo_attribution_present(row)
+def engine_outcome_present(row: dict[str, object]) -> bool:
+    return rl.engine_outcome_present(row)
 
 
-def engine_attributed_action_name(row: dict[str, object]) -> str:
-    return rl.engine_attributed_action_name(row) or "neutral"
+def engine_outcome_action_name(row: dict[str, object]) -> str:
+    return rl.engine_outcome_action_name(row) or "neutral"
 
 
-def format_demo_stats(key: tuple[str, ...], stats: DemoAttributionStats) -> str:
+def format_engine_outcome_stats(key: tuple[str, ...], stats: EngineOutcomeStats) -> str:
     key_text = " ".join(key)
     return (
         f"{key_text:<42} events={stats.events:5d} "
@@ -435,7 +484,7 @@ def format_demo_stats(key: tuple[str, ...], stats: DemoAttributionStats) -> str:
     )
 
 
-def print_demo_table(title: str, table: dict[tuple[str, ...], DemoAttributionStats], limit: int) -> None:
+def print_engine_outcome_table(title: str, table: dict[tuple[str, ...], EngineOutcomeStats], limit: int) -> None:
     print(f"\n{title}")
     if not table:
         print("  none")
@@ -449,7 +498,7 @@ def print_demo_table(title: str, table: dict[tuple[str, ...], DemoAttributionSta
         if index >= limit:
             print(f"  ... {len(ordered) - limit} more")
             break
-        print(format_demo_stats(key, stats))
+        print(format_engine_outcome_stats(key, stats))
 
 
 def print_table(title: str, table: dict[tuple[str, ...], Stats], limit: int) -> None:
@@ -492,29 +541,29 @@ def format_counter(counter: collections.Counter[str], limit: int = 12) -> str:
     return ",".join(f"{key}:{value}" for key, value in counter.most_common(limit))
 
 
-def analyze_demo_attribution(rows: list[dict[str, object]], args: argparse.Namespace) -> None:
-    window_decisions = max(0, int(args.demo_attribution_window_decisions))
-    stop_at_next = bool(args.demo_attribution_stop_at_next_event)
+def analyze_engine_outcome(rows: list[dict[str, object]], args: argparse.Namespace) -> None:
+    window_decisions = max(0, int(args.engine_outcome_window_decisions))
+    stop_at_next = bool(args.engine_outcome_stop_at_next_event)
     by_episode: dict[tuple[int, int], list[dict[str, object]]] = collections.defaultdict(list)
     source_counts: collections.Counter[int] = collections.Counter()
     lag_counts: collections.Counter[int] = collections.Counter()
     mismatch_counts: collections.Counter[tuple[str, str]] = collections.Counter()
     event_rows = 0
 
-    by_action: dict[tuple[str, ...], DemoAttributionStats] = {}
-    by_action_dx: dict[tuple[str, ...], DemoAttributionStats] = {}
-    by_r2_kw: dict[tuple[str, ...], DemoAttributionStats] = {}
+    by_action: dict[tuple[str, ...], EngineOutcomeStats] = {}
+    by_action_dx: dict[tuple[str, ...], EngineOutcomeStats] = {}
+    by_r2_kw: dict[tuple[str, ...], EngineOutcomeStats] = {}
 
     for row in rows:
         by_episode[episode_key(row)].append(row)
 
     for episode_rows in by_episode.values():
         for index, row in enumerate(episode_rows):
-            if not demo_attribution_present(row):
+            if not engine_outcome_present(row):
                 continue
 
             event_rows += 1
-            action = engine_attributed_action_name(row)
+            action = engine_outcome_action_name(row)
             bucket = dx_bucket(row)
             r2 = int_field(row, "engine_routine_2")
             kw = int_field(row, "engine_kind_of_waza")
@@ -526,7 +575,7 @@ def analyze_demo_attribution(rows: list[dict[str, object]], args: argparse.Names
             end = min(len(episode_rows), index + window_decisions + 1)
             if stop_at_next:
                 for next_index in range(index + 1, end):
-                    if demo_attribution_present(episode_rows[next_index]):
+                    if engine_outcome_present(episode_rows[next_index]):
                         end = next_index
                         break
             window = episode_rows[index:end]
@@ -539,14 +588,14 @@ def analyze_demo_attribution(rows: list[dict[str, object]], args: argparse.Names
                 (by_action_dx, (action, f"dx={bucket}")),
                 (by_r2_kw, (f"R2={r2}", f"KW=0x{kw:02X}", action)),
             ):
-                table.setdefault(key, DemoAttributionStats()).add(opp_hp, self_hp, lag, window_rows)
+                table.setdefault(key, EngineOutcomeStats()).add(opp_hp, self_hp, lag, window_rows)
 
             input_action = rl.select_training_action(row, "input").name
             if input_action != action:
                 mismatch_counts[(input_action or "none", action)] += 1
 
     print(
-        f"\nDEMO_ATTRIBUTION_SUMMARY window_decisions={window_decisions} "
+        f"\nENGINE_OUTCOME_SUMMARY window_decisions={window_decisions} "
         f"stop_at_next_event={str(stop_at_next).lower()} events={event_rows}"
     )
     if event_rows == 0:
@@ -554,11 +603,11 @@ def analyze_demo_attribution(rows: list[dict[str, object]], args: argparse.Names
         return
     print("  source_counts=" + ",".join(f"{source}:{count}" for source, count in sorted(source_counts.items())))
     print("  lag_frames=" + ",".join(f"{lag}:{count}" for lag, count in sorted(lag_counts.items())))
-    print_demo_table("ENGINE_ATTRIBUTED_BY_ACTION_WINDOW", by_action, args.limit)
-    print_demo_table("ENGINE_ATTRIBUTED_BY_ACTION_DX_WINDOW", by_action_dx, args.limit)
-    print_demo_table("ENGINE_ATTRIBUTED_BY_R2_KW_WINDOW", by_r2_kw, args.limit)
+    print_engine_outcome_table("ENGINE_OUTCOME_BY_ACTION_WINDOW", by_action, args.limit)
+    print_engine_outcome_table("ENGINE_OUTCOME_BY_ACTION_DX_WINDOW", by_action_dx, args.limit)
+    print_engine_outcome_table("ENGINE_OUTCOME_BY_R2_KW_WINDOW", by_r2_kw, args.limit)
 
-    print("\nDEMO_ATTRIBUTION_INPUT_TO_ENGINE_MISMATCH")
+    print("\nENGINE_OUTCOME_INPUT_TO_ENGINE_MISMATCH")
     if not mismatch_counts:
         print("  none")
     else:
@@ -767,7 +816,7 @@ def main() -> int:
         print_count_table("ENGINE_STATE_ACTION_BY_SIDE", engine_state_by_side, args.limit)
         print_count_table("ENGINE_STATE_ACTION_BY_SIDE_DX", engine_state_by_side_dx, args.limit)
         print_count_table("ENGINE_STATE_ACTION_BY_ROUTINE", engine_state_by_routine, args.limit)
-    analyze_demo_attribution(rows, args)
+    analyze_engine_outcome(rows, args)
     return 0
 
 

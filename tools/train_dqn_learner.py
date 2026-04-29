@@ -10,6 +10,7 @@ import json
 import math
 import os
 import random
+import sys
 import tempfile
 import time
 from dataclasses import dataclass, field
@@ -86,7 +87,9 @@ ATTACK_RISK_ACTIONS = frozenset(action for action in rl.TABULAR_ACTION_NAMES if 
 SHORYUKEN_ACTIONS = frozenset({"shoryuken-lp", "shoryuken-mp", "shoryuken-hp"})
 JUMP_ATTACK_RISK_ACTIONS = frozenset(action for action in rl.TABULAR_ACTION_NAMES if action.startswith("jump-"))
 REWARD_RISK_PROFILES = ("none", "shoryuken-only", "all-attacks")
-DEMO_ATTRIBUTION_TRAINING_MODES = ("off", "augment", "replace-demo", "prefer-demo-action")
+ENGINE_OUTCOME_TRAINING_MODES = ("off", "prefer-engine-action")
+ENGINE_OUTCOME_MODE_ALIASES = {"prefer-demo-action": "prefer-engine-action"}
+REMOVED_ENGINE_OUTCOME_MODES = ("augment", "replace-demo")
 TRAINING_ACTION_SOURCES = rl.TRAINING_ACTION_SOURCES
 GUARD_ACTIONS = frozenset({"guard-stand", "guard-crouch"})
 MOVEMENT_SPACING_ACTIONS = frozenset({"forward", "back"})
@@ -280,7 +283,7 @@ class RewardPositionStats:
 
 
 @dataclass(frozen=True)
-class DemoAttributionConfig:
+class EngineOutcomeConfig:
     training_mode: str
     window_decisions: int
     action_windows: dict[str, int]
@@ -291,7 +294,7 @@ class DemoAttributionConfig:
 
 
 @dataclass
-class DemoAttributionStats:
+class EngineOutcomeStats:
     event_rows: int = 0
     included_events: int = 0
     excluded_events: int = 0
@@ -708,18 +711,18 @@ def set_experience_next_state(
     experiences[exp_index].done = done
 
 
-def demo_attribution_window_for_action(action_name: str, config: DemoAttributionConfig) -> int:
+def engine_outcome_window_for_action(action_name: str, config: EngineOutcomeConfig) -> int:
     return max(0, int(config.action_windows.get(action_name, config.window_decisions)))
 
 
-def add_demo_attribution_experience(
+def add_engine_outcome_experience(
     episode_rows: list[dict[str, object]],
     row_index: int,
     actions: tuple[str, ...],
     action_to_index: dict[str, int],
     reward_scale: float,
-    config: DemoAttributionConfig,
-    stats: DemoAttributionStats,
+    config: EngineOutcomeConfig,
+    stats: EngineOutcomeStats,
     experiences: list[Experience],
     action_counts: dict[str, int],
     action_rewards: dict[str, float],
@@ -727,19 +730,19 @@ def add_demo_attribution_experience(
     if config.training_mode == "off":
         return False
     row = episode_rows[row_index]
-    if not is_demo_row(row) or not rl.demo_attribution_present(row):
+    if not is_demo_row(row) or not rl.engine_outcome_present(row):
         return False
 
     stats.event_rows += 1
-    action_name = rl.engine_attributed_action_name(row)
+    action_name = rl.engine_outcome_action_name(row)
     if action_name is None or action_name not in action_to_index:
         stats.excluded_events += 1
         return False
 
-    window_end = min(len(episode_rows), row_index + demo_attribution_window_for_action(action_name, config) + 1)
+    window_end = min(len(episode_rows), row_index + engine_outcome_window_for_action(action_name, config) + 1)
     if config.stop_at_next_event:
         for next_index in range(row_index + 1, window_end):
-            if rl.demo_attribution_present(episode_rows[next_index]):
+            if rl.engine_outcome_present(episode_rows[next_index]):
                 window_end = next_index
                 break
     for next_index in range(row_index, window_end):
@@ -814,7 +817,7 @@ def build_experiences(
     reward_guard_config: RewardGuardConfig,
     reward_spacing_config: RewardSpacingConfig,
     reward_position_config: RewardPositionConfig,
-    demo_attribution_config: DemoAttributionConfig,
+    engine_outcome_config: EngineOutcomeConfig,
 ) -> tuple[
     list[Experience],
     dict[str, int],
@@ -826,7 +829,7 @@ def build_experiences(
     RewardGuardStats,
     RewardSpacingStats,
     RewardPositionStats,
-    DemoAttributionStats,
+    EngineOutcomeStats,
 ]:
     action_to_index = {action: index for index, action in enumerate(actions)}
     by_episode: dict[tuple[int, int], list[dict[str, object]]] = collections.defaultdict(list)
@@ -843,61 +846,33 @@ def build_experiences(
     guard_stats = RewardGuardStats()
     spacing_stats = RewardSpacingStats()
     position_stats = RewardPositionStats()
-    demo_attribution_stats = DemoAttributionStats()
+    engine_outcome_stats = EngineOutcomeStats()
 
     for episode_rows in by_episode.values():
         episode_rows.sort(key=row_order_key)
         last_exp_index: int | None = None
         for index, row in enumerate(episode_rows):
-            if demo_attribution_config.training_mode != "off":
-                if (
-                    demo_attribution_config.training_mode == "prefer-demo-action"
-                    and is_demo_row(row)
-                    and rl.demo_attribution_present(row)
-                ):
-                    set_experience_next_state(experiences, last_exp_index, row, bool(row.get("done", False)))
-                    last_exp_index = None
-                    add_demo_attribution_experience(
-                        episode_rows,
-                        index,
-                        actions,
-                        action_to_index,
-                        reward_scale,
-                        demo_attribution_config,
-                        demo_attribution_stats,
-                        experiences,
-                        action_counts,
-                        action_rewards,
-                    )
-                    continue
-                if demo_attribution_config.training_mode == "replace-demo" and is_demo_row(row):
-                    set_experience_next_state(experiences, last_exp_index, row, bool(row.get("done", False)))
-                    last_exp_index = None
-                    add_demo_attribution_experience(
-                        episode_rows,
-                        index,
-                        actions,
-                        action_to_index,
-                        reward_scale,
-                        demo_attribution_config,
-                        demo_attribution_stats,
-                        experiences,
-                        action_counts,
-                        action_rewards,
-                    )
-                    continue
-                add_demo_attribution_experience(
+            if (
+                engine_outcome_config.training_mode == "prefer-engine-action"
+                and is_demo_row(row)
+                and rl.engine_outcome_present(row)
+            ):
+                engine_outcome_added = add_engine_outcome_experience(
                     episode_rows,
                     index,
                     actions,
                     action_to_index,
                     reward_scale,
-                    demo_attribution_config,
-                    demo_attribution_stats,
+                    engine_outcome_config,
+                    engine_outcome_stats,
                     experiences,
                     action_counts,
                     action_rewards,
                 )
+                if engine_outcome_added:
+                    set_experience_next_state(experiences, last_exp_index, row, bool(row.get("done", False)))
+                    last_exp_index = None
+                    continue
 
             action_selection = rl.select_training_action(row, training_action_source)
             action_name = action_selection.name
@@ -993,7 +968,7 @@ def build_experiences(
         guard_stats,
         spacing_stats,
         position_stats,
-        demo_attribution_stats,
+        engine_outcome_stats,
     )
 
 
@@ -1045,15 +1020,49 @@ def reward_position_config_from_args(args: argparse.Namespace) -> RewardPosition
     )
 
 
-def demo_attribution_config_from_args(args: argparse.Namespace) -> DemoAttributionConfig:
-    return DemoAttributionConfig(
-        training_mode=str(args.demo_attribution_training_mode),
-        window_decisions=max(0, int(args.demo_attribution_window_decisions)),
-        action_windows=parse_action_windows(str(args.demo_attribution_action_windows), "--demo-attribution-action-windows"),
-        stop_at_next_event=bool(args.demo_attribution_stop_at_next_event),
-        hit_bonus=max(0.0, float(args.demo_attribution_hit_bonus)),
-        no_damage_cost=max(0.0, float(args.demo_attribution_no_damage_cost)),
-        punished_cost=max(0.0, float(args.demo_attribution_punished_cost)),
+def resolved_engine_outcome_arg(args: argparse.Namespace, name: str, default: object) -> object:
+    new_value = getattr(args, f"engine_outcome_{name}")
+    old_value = getattr(args, f"deprecated_demo_attribution_{name}")
+    if new_value is not None and old_value is not None:
+        raise SystemExit(
+            f"Use only one of --engine-outcome-{name.replace('_', '-')} "
+            f"or deprecated --demo-attribution-{name.replace('_', '-')}"
+        )
+    if old_value is not None:
+        print(
+            f"warning: --demo-attribution-{name.replace('_', '-')} is deprecated; "
+            f"use --engine-outcome-{name.replace('_', '-')}",
+            file=sys.stderr,
+        )
+        return old_value
+    if new_value is not None:
+        return new_value
+    return default
+
+
+def engine_outcome_config_from_args(args: argparse.Namespace) -> EngineOutcomeConfig:
+    training_mode = str(resolved_engine_outcome_arg(args, "training_mode", "off"))
+    training_mode = ENGINE_OUTCOME_MODE_ALIASES.get(training_mode, training_mode)
+    if training_mode in REMOVED_ENGINE_OUTCOME_MODES:
+        raise SystemExit(
+            f"--engine-outcome-training-mode {training_mode!r} was removed for schema v3; "
+            "use 'prefer-engine-action' so engine-labeled rows replace only matching input rows"
+        )
+    if training_mode not in ENGINE_OUTCOME_TRAINING_MODES:
+        raise SystemExit(
+            "unknown --engine-outcome-training-mode "
+            f"{training_mode!r}; expected one of {','.join(ENGINE_OUTCOME_TRAINING_MODES)}"
+        )
+
+    action_windows_text = str(resolved_engine_outcome_arg(args, "action_windows", ""))
+    return EngineOutcomeConfig(
+        training_mode=training_mode,
+        window_decisions=max(0, int(resolved_engine_outcome_arg(args, "window_decisions", 10))),
+        action_windows=parse_action_windows(action_windows_text, "--engine-outcome-action-windows"),
+        stop_at_next_event=bool(resolved_engine_outcome_arg(args, "stop_at_next_event", False)),
+        hit_bonus=max(0.0, float(resolved_engine_outcome_arg(args, "hit_bonus", 0.0))),
+        no_damage_cost=max(0.0, float(resolved_engine_outcome_arg(args, "no_damage_cost", 0.0))),
+        punished_cost=max(0.0, float(resolved_engine_outcome_arg(args, "punished_cost", 0.0))),
     )
 
 
@@ -1560,56 +1569,101 @@ def main() -> None:
         help="Minimum obs_self_back_edge_dist increase needed for --reward-corner-escape-bonus",
     )
     parser.add_argument(
-        "--demo-attribution-training-mode",
-        choices=DEMO_ATTRIBUTION_TRAINING_MODES,
-        default="off",
+        "--engine-outcome-training-mode",
+        default=None,
         help=(
-            "Optional engine-attributed demo training: off=use normal selected action rows, "
-            "augment=add extra engine-attributed experiences, replace-demo=use engine-attributed "
-            "experiences instead of input rows for demo sources, prefer-demo-action=use engine-attributed "
-            "rows only when present and keep input rows for other demo rows"
+            "Optional engine-observed move outcome training: off=use normal selected action rows, "
+            "prefer-engine-action=use engine-labeled rows when present and keep input rows for other demo rows"
         ),
     )
     parser.add_argument(
-        "--demo-attribution-window-decisions",
+        "--demo-attribution-training-mode",
+        dest="deprecated_demo_attribution_training_mode",
+        default=None,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--engine-outcome-window-decisions",
         type=int,
-        default=10,
+        default=None,
         help=(
-            "Maximum lookahead decisions used to credit delayed HP deltas to demo-attributed move events; "
+            "Maximum lookahead decisions used to credit delayed HP deltas to engine-labeled move events; "
             "the effective window stops early at the first self/opponent HP delta"
         ),
     )
     parser.add_argument(
-        "--demo-attribution-action-windows",
-        default="",
+        "--demo-attribution-window-decisions",
+        dest="deprecated_demo_attribution_window_decisions",
+        type=int,
+        default=None,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--engine-outcome-action-windows",
+        default=None,
         help=(
             "Optional comma-separated per-action delayed-credit windows, e.g. "
-            "fireball-lp=15,throw=8; omitted actions use --demo-attribution-window-decisions; "
+            "fireball-lp=15,throw=8; omitted actions use --engine-outcome-window-decisions; "
             "all windows still stop early at the first self/opponent HP delta"
         ),
     )
     parser.add_argument(
-        "--demo-attribution-stop-at-next-event",
+        "--demo-attribution-action-windows",
+        dest="deprecated_demo_attribution_action_windows",
+        default=None,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--engine-outcome-stop-at-next-event",
         action="store_true",
-        help="Stop a demo-attribution delayed-credit window at the next demo-attributed move event in the same episode",
+        default=None,
+        help="Stop an engine-outcome delayed-credit window at the next engine-labeled move event in the same episode",
+    )
+    parser.add_argument(
+        "--demo-attribution-stop-at-next-event",
+        dest="deprecated_demo_attribution_stop_at_next_event",
+        action="store_true",
+        default=None,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--engine-outcome-hit-bonus",
+        type=float,
+        default=None,
+        help="Additional positive raw reward added when an engine-labeled move causes opponent HP damage in its window",
     )
     parser.add_argument(
         "--demo-attribution-hit-bonus",
+        dest="deprecated_demo_attribution_hit_bonus",
         type=float,
-        default=0.0,
-        help="Additional positive raw reward added when a demo-attributed move causes opponent HP damage in its window",
+        default=None,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--engine-outcome-no-damage-cost",
+        type=float,
+        default=None,
+        help="Positive raw reward cost subtracted when an engine-labeled move causes no opponent HP damage in its window",
     )
     parser.add_argument(
         "--demo-attribution-no-damage-cost",
+        dest="deprecated_demo_attribution_no_damage_cost",
         type=float,
-        default=0.0,
-        help="Positive raw reward cost subtracted when a demo-attributed move causes no opponent HP damage in its window",
+        default=None,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--engine-outcome-punished-cost",
+        type=float,
+        default=None,
+        help="Positive raw reward cost subtracted when an engine-labeled move window includes self HP damage",
     )
     parser.add_argument(
         "--demo-attribution-punished-cost",
+        dest="deprecated_demo_attribution_punished_cost",
         type=float,
-        default=0.0,
-        help="Positive raw reward cost subtracted when a demo-attributed move window includes self HP damage",
+        default=None,
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--training-action-source",
@@ -1651,7 +1705,7 @@ def main() -> None:
     reward_guard_config = reward_guard_config_from_args(args)
     reward_spacing_config = reward_spacing_config_from_args(args)
     reward_position_config = reward_position_config_from_args(args)
-    demo_attribution_config = demo_attribution_config_from_args(args)
+    engine_outcome_config = engine_outcome_config_from_args(args)
     (
         experiences,
         action_counts,
@@ -1663,7 +1717,7 @@ def main() -> None:
         reward_guard_stats,
         reward_spacing_stats,
         reward_position_stats,
-        demo_attribution_stats,
+        engine_outcome_stats,
     ) = build_experiences(
         rows,
         actions,
@@ -1673,7 +1727,7 @@ def main() -> None:
         reward_guard_config,
         reward_spacing_config,
         reward_position_config,
-        demo_attribution_config,
+        engine_outcome_config,
     )
     if not experiences:
         raise SystemExit("No DQN experiences built from transition logs")
@@ -1701,8 +1755,8 @@ def main() -> None:
         reward_sources.append("spacing-shaping")
     if reward_position_stats.net_adjustment != 0.0:
         reward_sources.append("position-shaping")
-    if demo_attribution_config.training_mode != "off":
-        reward_sources.append("demo-attribution")
+    if engine_outcome_config.training_mode != "off":
+        reward_sources.append("engine-outcome")
     reward_source = "+".join(reward_sources)
     metadata = {
         "transition_logs": args.transition_logs,
@@ -1750,14 +1804,14 @@ def main() -> None:
         "reward_corner_escape_bonus": reward_position_config.corner_escape_bonus,
         "reward_corner_escape_min_delta": reward_position_config.corner_escape_min_delta,
         "reward_position_stats": reward_position_stats.as_metadata(),
-        "demo_attribution_training_mode": demo_attribution_config.training_mode,
-        "demo_attribution_window_decisions": demo_attribution_config.window_decisions,
-        "demo_attribution_action_windows": demo_attribution_config.action_windows,
-        "demo_attribution_stop_at_next_event": demo_attribution_config.stop_at_next_event,
-        "demo_attribution_hit_bonus": demo_attribution_config.hit_bonus,
-        "demo_attribution_no_damage_cost": demo_attribution_config.no_damage_cost,
-        "demo_attribution_punished_cost": demo_attribution_config.punished_cost,
-        "demo_attribution_stats": demo_attribution_stats.as_metadata(),
+        "engine_outcome_training_mode": engine_outcome_config.training_mode,
+        "engine_outcome_window_decisions": engine_outcome_config.window_decisions,
+        "engine_outcome_action_windows": engine_outcome_config.action_windows,
+        "engine_outcome_stop_at_next_event": engine_outcome_config.stop_at_next_event,
+        "engine_outcome_hit_bonus": engine_outcome_config.hit_bonus,
+        "engine_outcome_no_damage_cost": engine_outcome_config.no_damage_cost,
+        "engine_outcome_punished_cost": engine_outcome_config.punished_cost,
+        "engine_outcome_stats": engine_outcome_stats.as_metadata(),
         "steps": max(1, args.steps),
         "batch_size": max(1, args.batch_size),
         "gamma": min(0.999, max(0.0, args.gamma)),
@@ -1802,9 +1856,9 @@ def main() -> None:
         f"position_bonus={reward_position_stats.total_bonus:.1f} "
         f"position_cost={reward_position_stats.total_cost:.1f} "
         f"position_net={reward_position_stats.net_adjustment:.1f} "
-        f"demo_attr={demo_attribution_config.training_mode}:{demo_attribution_stats.included_events}/"
-        f"{demo_attribution_stats.event_rows} "
-        f"demo_attr_net={demo_attribution_stats.net_adjustment:.1f} "
+        f"engine_outcome={engine_outcome_config.training_mode}:{engine_outcome_stats.included_events}/"
+        f"{engine_outcome_stats.event_rows} "
+        f"engine_outcome_net={engine_outcome_stats.net_adjustment:.1f} "
         f"loss={train_stats['last_loss']:.6f} avg_loss={train_stats['avg_loss']:.6f} "
         f"included={build_stats.included_action_rows} excluded={build_stats.excluded_action_rows} "
         f"cont={build_stats.macro_continuation_rows} "
@@ -1875,25 +1929,25 @@ def main() -> None:
     )
     print(
         "DQN diagnostics "
-        f"demo_attr=mode:{demo_attribution_config.training_mode} "
-        f"events:{demo_attribution_stats.event_rows} "
-        f"included:{demo_attribution_stats.included_events} "
-        f"excluded:{demo_attribution_stats.excluded_events} "
-        f"early:{demo_attribution_stats.early_outcome_events} "
-        f"window:{demo_attribution_config.window_decisions} "
-        f"stop_next:{int(demo_attribution_config.stop_at_next_event)} "
-        f"hit:{demo_attribution_stats.hit_events} "
-        f"no_damage:{demo_attribution_stats.no_damage_events} "
-        f"punished:{demo_attribution_stats.punished_events} "
-        f"trade:{demo_attribution_stats.trade_events} "
-        f"claimed:{demo_attribution_stats.claimed_hp_events}/"
-        f"{demo_attribution_stats.claimed_opp_hp_sum}/"
-        f"{demo_attribution_stats.claimed_self_hp_sum} "
-        f"hp:{demo_attribution_stats.opp_hp_sum}/{demo_attribution_stats.self_hp_sum} "
-        f"bonus:{demo_attribution_stats.total_bonus:.1f} "
-        f"cost:{demo_attribution_stats.total_cost:.1f} "
-        f"net:{demo_attribution_stats.net_adjustment:.1f} "
-        f"scaled_reward:{demo_attribution_stats.scaled_reward_sum:.3f}",
+        f"engine_outcome=mode:{engine_outcome_config.training_mode} "
+        f"events:{engine_outcome_stats.event_rows} "
+        f"included:{engine_outcome_stats.included_events} "
+        f"excluded:{engine_outcome_stats.excluded_events} "
+        f"early:{engine_outcome_stats.early_outcome_events} "
+        f"window:{engine_outcome_config.window_decisions} "
+        f"stop_next:{int(engine_outcome_config.stop_at_next_event)} "
+        f"hit:{engine_outcome_stats.hit_events} "
+        f"no_damage:{engine_outcome_stats.no_damage_events} "
+        f"punished:{engine_outcome_stats.punished_events} "
+        f"trade:{engine_outcome_stats.trade_events} "
+        f"claimed:{engine_outcome_stats.claimed_hp_events}/"
+        f"{engine_outcome_stats.claimed_opp_hp_sum}/"
+        f"{engine_outcome_stats.claimed_self_hp_sum} "
+        f"hp:{engine_outcome_stats.opp_hp_sum}/{engine_outcome_stats.self_hp_sum} "
+        f"bonus:{engine_outcome_stats.total_bonus:.1f} "
+        f"cost:{engine_outcome_stats.total_cost:.1f} "
+        f"net:{engine_outcome_stats.net_adjustment:.1f} "
+        f"scaled_reward:{engine_outcome_stats.scaled_reward_sum:.3f}",
         flush=True,
     )
     print(

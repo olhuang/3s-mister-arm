@@ -2462,7 +2462,7 @@ Tasks:
 - [x] Run move-family validation passes with scripted policies such as `hp`, `throw`, `ryu-fireball`, `tatsu`, and `shoryuken`, then document which attack-outcome fields are trustworthy enough for learner use versus debug-only analysis
 - [x] Add a human-demo recording path so human-vs-CPU play can export learner-ingestible episodes for bootstrapping / behavior-cloning experiments
 - [x] Add a CPU-demo recording path so built-in CPU-vs-CPU play can export learner-ingestible bootstrap episodes
-- [x] Add `prefer-demo-action` DQN replay mode so engine-attributed demo attacks replace input labels without discarding unattributed guard / walk demo rows
+- [x] Add `prefer-engine-action` / engine-outcome DQN replay mode so engine-labeled demo attacks replace input labels without discarding unattributed guard / walk demo rows
 - [x] Stop engine-attributed demo delayed-credit windows at the first self/opponent HP delta, while still using per-action window settings as maximum tracking lengths
 - [x] Consume HP deltas claimed by engine-attributed demo experiences so delayed projectile credit does not also reward unrelated later input-based rows
 - [x] Add focus-action DQN comparison diagnostics so any specified action group can be inspected by rank, blocker action, and threat/distance bucket
@@ -2569,8 +2569,8 @@ Implementation notes:
       - first-pass attribution is Ryu-specific: specials/throws use `character_id + routine_no[2] + kind_of_waza`, while normal attacks use `current_attack` / normal `kind_of_waza` with a best-effort action class from the sampled input state
       - the reusable expansion method is documented in `docs/rl-policy-action-taxonomy.md#engine-move-attribution-method`: add another character by matching source command slot -> engine `R2` dispatch -> observed `R2/KW/AK/RS` overlay values before promoting the decoder to runtime
       - `tools/analyze_rl_transitions.py` can now delayed-credit `engine_*` move starts over a configurable future decision window:
-        - `--demo-attribution-window-decisions N` sums later `delta_opp_hp` / `delta_self_hp` inside the same episode to classify each attributed move as hit, whiff/no-damage, punished, or trade
-        - `--demo-attribution-stop-at-next-event` optionally prevents overlapping windows, but the default keeps overlap allowed because projectiles can hit after the next input
+        - `--engine-outcome-window-decisions N` sums later `delta_opp_hp` / `delta_self_hp` inside the same episode to classify each engine-labeled move as hit, whiff/no-damage, punished, or trade
+        - `--engine-outcome-stop-at-next-event` optionally prevents overlapping windows, but the default keeps overlap allowed because projectiles can hit after the next input
         - this is analysis / reward-shaping logic, not C-side transition truth
   - the Fight debug overlay now exposes self-side attack identity probe fields before adding them to transition rows:
     - `SATT R2<routine_no[2]> AK<current_attack> KW<kind_of_waza> RS<attack_routine_started>`
@@ -2589,17 +2589,18 @@ Implementation notes:
   - learner stats print `obs=<payload>/<header-only>` and `tab_state=obs:<n>/latest:<n>` so live runs can confirm whether tabular inference is using same-frame OBS state
 - `tools/train_dqn_learner.py` now supports the first offline DQN/MLP Q learner path:
   - reads transition NDJSON logs and converts rows into `(state, action, reward, next_state, done)` experiences using the same learner-safe HP-delta reward as tabular (`delta_opp_hp - delta_self_hp`)
-  - can optionally train from engine-attributed demo move starts instead of input-only demo labels:
-    - `--demo-attribution-training-mode off|augment|replace-demo|prefer-demo-action`
+  - can optionally train from engine-labeled move starts instead of input-only demo labels:
+    - `--engine-outcome-training-mode off|prefer-engine-action`
     - `off` is the default and keeps the existing DQN replay behavior unchanged
-    - `augment` adds extra `engine_*` experiences while retaining the normal input-based row experiences
-    - `replace-demo` uses `engine_*` event rows in place of normal input-based experiences for `human-demo` / `cpu-demo` sources, while non-demo rows still use the normal path
-    - `prefer-demo-action` uses `engine_*` event rows in place of input-based experiences only when a demo row has an attributed engine move; unattributed demo rows still keep their normal input-based experiences, preserving walk / guard examples
-    - `--demo-attribution-window-decisions N` sums later `delta_opp_hp` / `delta_self_hp` in the same episode to give each attributed move a delayed outcome reward
-    - `--demo-attribution-action-windows action=N,...` reserves per-action delayed-credit tuning while preserving a global default window
-    - `--demo-attribution-stop-at-next-event` can prevent overlapping windows when projectile-delayed credit is not desired
-    - `--demo-attribution-hit-bonus`, `--demo-attribution-no-damage-cost`, and `--demo-attribution-punished-cost` are raw reward adjustments applied before `--reward-scale`
-    - stdout and model metadata record `demo_attr=...` / `demo_attribution_stats` so CPU-demo training can be audited for included/excluded events, hit/no-damage/punished/trade counts, HP sums, and reward adjustment totals
+    - `prefer-engine-action` uses `engine_*` event rows in place of input-based experiences only when a demo row has an engine-labeled move and that action is present in the configured `--actions` subset
+    - if an engine-labeled action is not present in `--actions`, trainer diagnostics count it as an excluded engine-outcome event and the row falls back to the normal selected action path, preserving subset training data instead of dropping the row
+    - unattributed demo rows still keep their normal input-based experiences, preserving walk / guard examples
+    - `--engine-outcome-window-decisions N` sums later `delta_opp_hp` / `delta_self_hp` in the same episode to give each engine-labeled move a delayed outcome reward
+    - `--engine-outcome-action-windows action=N,...` reserves per-action delayed-credit tuning while preserving a global default window
+    - `--engine-outcome-stop-at-next-event` can prevent overlapping windows when projectile-delayed credit is not desired
+    - `--engine-outcome-hit-bonus`, `--engine-outcome-no-damage-cost`, and `--engine-outcome-punished-cost` are raw reward adjustments applied before `--reward-scale`
+    - stdout and model metadata record `engine_outcome=...` / `engine_outcome_stats` so CPU-demo training can be audited for included/excluded events, hit/no-damage/punished/trade counts, HP sums, and reward adjustment totals
+    - deprecated hidden aliases for the old `--demo-attribution-*` flag names still map to the new engine-outcome config for short-term command compatibility; removed schema-v2 modes `augment` and `replace-demo` now fail fast
   - supports offline A/B/C reward-risk profiles without changing transition logs:
     - `--reward-risk-profile none`: baseline `hp-delta` reward
     - `--reward-risk-profile shoryuken-only`: applies only Shoryuken no-damage / punished extra costs

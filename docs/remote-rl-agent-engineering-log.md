@@ -2,6 +2,31 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-29: Record Anti-Air Shoryuken Feature Plan
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / DQN anti-air behavior
+
+Files changed:
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- capture the plan for teaching DQN to use Shoryuken as an anti-air against opponent jump-ins.
+- avoid a misleading shortcut where raw routine ids are added only to training logs, or a large global engine hit bonus accidentally buffs every special / normal hit instead of specifically teaching anti-air.
+
+Decision notes:
+- current DQN feature vectors still use compact numeric spacing/threat fields and do not include `obs_opp_routine_1` / `obs_opp_routine_2`.
+- future anti-air learner visibility should prefer derived, schema-versioned features such as `obs_opp_airborne`, `obs_opp_jump_toward`, `obs_opp_above_self`, and `obs_anti_air_threat`.
+- train and live inference must receive the same OBS payload fields before any model is trained with those features; transition-log-only fields would create train/live mismatch.
+- reward shaping should use a targeted anti-air Shoryuken bonus rather than a large global `--engine-outcome-hit-bonus`, so fireball / tatsu / throw / normal hits are not all boosted at the same time.
+
+Follow-up:
+- validate opponent jump-in routine states with fresh schema-v3 logs and analyzer summaries.
+- bump the compact OBS payload schema when the derived anti-air fields are promoted.
+- collect a focused human-demo anti-air Shoryuken log before expecting offline DQN to learn reliable jump-in punishment.
+- add compare diagnostics for Shoryuken rank/top-k specifically when `obs_anti_air_threat=1`.
+
 ## 2026-04-29: Add Balanced Batch Sampling For Offline DQN
 
 Milestone:

@@ -2459,6 +2459,9 @@ Tasks:
 - [x] Expand probe/DQN action support to all standing, crouching, forward-jump, neutral-jump, and back-jump LP/MP/HP/LK/MK/HK basic normals
 - [ ] Expand reward features only after baseline reward is stable
 - [ ] Review whether `overlay_attack_event_finalized` / `overlay_attack_contact` / `overlay_attack_whiff` have consistent learner semantics across normals, specials, projectiles, throws, and multistage moves before promoting them beyond debug / auxiliary labels
+- [x] Record the anti-air Shoryuken feature plan before changing the DQN observation schema or reward knobs
+- [ ] Promote anti-air DQN observation features only after train/live payload parity and jump-in validation are defined
+- [ ] Collect a targeted human-demo anti-air Shoryuken log before expecting offline DQN to learn jump-in punishment reliably
 - [x] Run move-family validation passes with scripted policies such as `hp`, `throw`, `ryu-fireball`, `tatsu`, and `shoryuken`, then document which attack-outcome fields are trustworthy enough for learner use versus debug-only analysis
 - [x] Add a human-demo recording path so human-vs-CPU play can export learner-ingestible episodes for bootstrapping / behavior-cloning experiments
 - [x] Add a CPU-demo recording path so built-in CPU-vs-CPU play can export learner-ingestible bootstrap episodes
@@ -2587,6 +2590,36 @@ Implementation notes:
   - UDP OBS packets now carry a schema-versioned compact spacing/state payload (`payload_version=2`) with the same bucket inputs used by transition replay: `obs_abs_dx`, `obs_abs_dy`, front/back edge distances, `obs_opp_in_front`, plus routine flags for `routine_no[1] == 4` attack state and `routine_no[1] == 1` contact/defensive reaction state; only opponent attack state is currently promoted to the learner state key
   - Python-side tabular inference prefers the same-frame OBS spacing bucket and falls back to the latest replay-imported bucket only when an old header-only OBS packet or invalid payload is seen
   - learner stats print `obs=<payload>/<header-only>` and `tab_state=obs:<n>/latest:<n>` so live runs can confirm whether tabular inference is using same-frame OBS state
+- Anti-air Shoryuken feature plan:
+  - Goal: teach the DQN to choose `shoryuken-*` when the opponent is jumping in, without globally over-buffing every engine-labeled hit or destabilizing the current fireball / spacing / guard balance.
+  - Do not rely only on raw `obs_opp_routine_1` / `obs_opp_routine_2` as continuous numeric DQN inputs:
+    - those raw routine ids are useful analyzer diagnostics, but they are categorical engine state codes.
+    - if they become learner-visible, train and live inference must both receive the same schema-versioned values; adding them only to transition logs would create train/live mismatch.
+  - Prefer derived learner features for the first anti-air schema slice:
+    - `obs_opp_airborne`: opponent is in a validated jump-air / airborne routine state.
+    - `obs_opp_jump_toward`: opponent airborne movement is closing horizontal distance or is otherwise identified as a forward jump-in.
+    - `obs_opp_above_self`: opponent has vertical separation consistent with a jump-in threat.
+    - `obs_anti_air_threat`: compact boolean derived from airborne + closing/jump-in + Shoryuken-relevant distance/height.
+    - raw routine ids may remain analyzer-only or auxiliary manifest/debug fields until the derived flags are validated.
+  - Implementation sequence:
+    - validate Ryu / opponent jump-in routine states with fresh schema-v3 logs and analyzer summaries.
+    - bump the OBS spacing/state payload version and add the derived anti-air fields to both C-side OBS packets and Python `parse_obs_spacing_payload()`.
+    - add the derived fields to `DQN_FEATURE_NAMES` / `DQN_FEATURE_SCALES`, so `tools/train_dqn_learner.py` model manifests and `tools/rl_probe_server.py --policy dqn` live inference use identical inputs.
+    - add compare/analyzer diagnostics that bucket greedy choices by `obs_anti_air_threat=0/1`, especially Shoryuken top1/top2/top3 rate and blocker action.
+  - Data requirement:
+    - collect a dedicated human-demo anti-air log such as `logs/rl-transitions-human-demo-antiair-shoryuken-v1-4-3-3.ndjson`.
+    - the demo should include repeated opponent jump-ins at close/mid spacing, correctly timed `shoryuken-mp` / `shoryuken-hp`, and a small number of late/whiff/punished examples so the model sees both success and failure.
+  - Reward-shaping requirement:
+    - avoid using a large global `--engine-outcome-hit-bonus` such as `3.0` as the main anti-air fix, because it also buffs fireballs, tatsu, throw, and normal engine hits.
+    - add a targeted anti-air Shoryuken reward knob instead, for example a future `--reward-anti-air-shoryuken-hit-bonus`, applied only when:
+      - the training action is `shoryuken-lp`, `shoryuken-mp`, or `shoryuken-hp`;
+      - the decision or delayed-outcome window observed `obs_anti_air_threat=1` / opponent airborne jump-in evidence;
+      - the delayed outcome includes opponent HP damage.
+    - keep normal Shoryuken whiff/punished costs separate so the agent still learns not to DP after neutral jumps, back jumps, or out-of-range airborne states.
+  - Success criteria for the first A/B test:
+    - on anti-air-threat observations, Shoryuken variants appear in top1/top2/top3 at a materially higher rate than the baseline model.
+    - on non-airborne or far/back-jump observations, Shoryuken remains rare and does not replace fireball / spacing / guard decisions.
+    - live probe logs show actual Shoryuken attempts against jump-ins, not only elevated offline Q ranks.
 - `tools/train_dqn_learner.py` now supports the first offline DQN/MLP Q learner path:
   - reads transition NDJSON logs and converts rows into `(state, action, reward, next_state, done)` experiences using the same learner-safe HP-delta reward as tabular (`delta_opp_hp - delta_self_hp`)
   - can optionally train from engine-labeled move starts instead of input-only demo labels:

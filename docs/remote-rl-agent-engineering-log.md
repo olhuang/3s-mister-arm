@@ -2,6 +2,42 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-29: Document Transition Schema V2 Rollout Plan
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / transition action-label cleanup
+
+Files changed:
+- `docs/rl-policy-action-taxonomy.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- record a staged rollout plan for separating policy-selected actions, input-derived demo labels, and engine-attributed move labels.
+- avoid adding more overloaded fields to `requested_policy_action_id` / `executed_policy_action_id` before the schema semantics are clear.
+- explicitly defer guard-specific diagnostic fields such as `guard_intent`, `guard_engine_candidate`, and `guard_contact_confirmed` until after the core action-identity split is implemented.
+
+Implementation notes:
+- added `Transition Schema V2 Rollout Plan` to the action taxonomy document.
+- planned v2 field groups are:
+  - `policy_*`: remote RL/DQN requested/executed action identity.
+  - `input_*`: best-effort controller / CPU-demo input label.
+  - `engine_*`: SF3 engine-recognized action-start label from R1/R2/KW/AK attribution.
+- documented that `engine_*` means "engine-recognized move start near this decision row", not "current per-frame engine state"; future per-row state should use a separate `obs_self_engine_state_*` family.
+- added Milestone 6 checklist items for the staged implementation:
+  - C-side NDJSON export.
+  - Python replay ingestion.
+  - DQN `--training-action-source`.
+  - analyzer / compare source breakdown.
+  - short mixed remote + CPU-demo validation before long-run retraining.
+
+Validation:
+- documentation-only update; reviewed the diff for placement and wording.
+
+Follow-up:
+- implement step 1 by adding schema-v2 fields to the C decision ledger / transition export while preserving legacy fields.
+- then update Python ingestion before changing DQN training defaults.
+
 ## 2026-04-29: Tighten Demo Guard Labels And Guard Bonus
 
 Milestone:

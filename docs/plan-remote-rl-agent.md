@@ -2467,6 +2467,12 @@ Tasks:
 - [x] Consume HP deltas claimed by engine-attributed demo experiences so delayed projectile credit does not also reward unrelated later input-based rows
 - [x] Add focus-action DQN comparison diagnostics so any specified action group can be inspected by rank, blocker action, and threat/distance bucket
 - [x] Tighten demo guard labels and DQN guard bonus semantics so crouch/back intent is not automatically treated as successful guard without threat or contact evidence
+- [ ] Implement transition schema v2 rollout from `docs/rl-policy-action-taxonomy.md#transition-schema-v2-rollout-plan`
+- [ ] Add C-side NDJSON export for `transition_schema_version=2` plus separate `policy_*`, `input_*`, and `engine_*` action identity fields while preserving legacy fields
+- [ ] Update Python replay ingestion to preserve v2 fields and keep legacy fallback for old logs
+- [ ] Add DQN `--training-action-source auto|policy|input|engine|prefer-engine`
+- [ ] Add analyzer / compare source breakdown for canonical action labels (`policy`, `input`, `engine`, `skipped`)
+- [ ] Validate schema v2 with a short mixed remote + CPU-demo log before long-run retraining
 - [ ] Define how replay-buffer import mixes human-demo episodes with remote-agent episodes, including metadata such as data source, control mode, and player side
 - [ ] Add character curriculum
 - [ ] Add stage curriculum

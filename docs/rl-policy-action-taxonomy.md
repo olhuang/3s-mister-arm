@@ -78,6 +78,82 @@ Current runtime identity fields:
 | `AK` | `current_attack` | normal button identity; not reliable for specials |
 | `RS` | attack routine start event | attribution timing hint; not a move id |
 
+### Transition Schema V2 Rollout Plan
+
+Status: planned. Do not treat these fields as present in current transition
+logs until the rollout steps below are implemented and validated.
+
+The goal of transition schema v2 is to stop overloading one action-id pair for
+three different meanings:
+
+- policy intent: what the remote actor requested and what the bridge executed.
+- input label: what the local controller / CPU-demo input looked like.
+- engine attribution: what the SF3 engine actually recognized as a move start.
+
+Schema v2 should add `transition_schema_version: 2` and keep the legacy fields
+for compatibility during migration. New readers should prefer the v2 fields
+when present and fall back to the legacy fields for older logs.
+
+Planned field groups:
+
+| group | fields | meaning |
+|---|---|---|
+| policy | `policy_requested_action_id`, `policy_requested_sub_action_id`, `policy_requested_action_step`, `policy_executed_action_id`, `policy_executed_sub_action_id`, `policy_executed_action_step` | Remote RL/DQN action identity only. In `human-demo` / `cpu-demo` rows these should normally be zero because no remote policy selected the action. |
+| input | `input_action_id`, `input_sub_action_id`, `input_action_step`, `input_label_source` | Best-effort label derived from raw controller input. This is useful for walk, guard intent, and simple button inputs in human-demo / CPU-demo data. |
+| engine | `engine_action_id`, `engine_sub_action_id`, `engine_routine_1`, `engine_routine_2`, `engine_kind_of_waza`, `engine_current_attack`, `engine_label_source`, `engine_lag_frames` | Engine-recognized action start label. This is the preferred demo label for specials, throws, and validated normals when an engine event is observed. |
+
+Important semantic split:
+
+- `engine_*` means "the game entered a recognizable move start near this
+  decision row."
+- It does not mean "the character is currently in this state on every frame."
+- If a future analyzer needs per-row engine state, add a separate
+  `obs_self_engine_state_*` family instead of reusing `engine_*`.
+
+Rollout steps:
+
+1. Add v2 fields to the C-side decision ledger and NDJSON export.
+   - Remote RL rows fill `policy_*`.
+   - Demo rows fill `input_*` from the existing demo input mapper.
+   - Demo engine attribution fills `engine_*` from the existing Ryu
+     `R2/KW/AK` attribution path.
+   - Legacy `requested_*`, `executed_*`, and `demo_attributed_*` fields remain
+     unchanged in the same row.
+
+2. Update Python ingestion to preserve both schemas.
+   - `tools/rl_probe_server.py` keeps v2 fields in replay rows when present.
+   - Older logs without `transition_schema_version` continue to parse through
+     the legacy fields.
+
+3. Add an explicit DQN/training action source selector.
+   - Proposed CLI:
+     `--training-action-source auto|policy|input|engine|prefer-engine`.
+   - Default `auto` behavior:
+     - demo row with `engine_*`: train engine action.
+     - demo row without `engine_*` but with `input_*`: train input action.
+     - remote row with `policy_executed_*`: train policy action.
+     - otherwise skip / neutral fallback, depending on the existing learner
+       path.
+
+4. Add analyzer and compare diagnostics for label-source breakdown.
+   - Report counts for `source=policy`, `source=input`, `source=engine`, and
+     `source=skipped`.
+   - Compare canonical action counts from legacy mode and v2 `auto` mode on the
+     same log before using v2 for model selection.
+
+5. Validate with a short mixed log before retraining long runs.
+   - Include at least one remote DQN episode and one CPU-demo episode.
+   - Confirm remote rows keep policy identity.
+   - Confirm CPU-demo fireball / shoryuken / tatsu rows train from `engine_*`
+     rather than input `0/0`.
+   - Confirm walk / guard samples still train from `input_*` when no engine
+     attribution exists.
+
+6. Deprecate legacy names only after v2 is stable.
+   - Keep legacy fields in transition logs until all active tools read v2.
+   - Documentation may mark them deprecated, but they should not be removed
+     during the first v2 rollout.
+
 ### Routine Number Dispatch Source Map
 
 Do not interpret `R2` without `R1`. The stable engine-state key is at least

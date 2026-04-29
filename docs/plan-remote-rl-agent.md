@@ -2462,6 +2462,10 @@ Tasks:
 - [x] Record the anti-air Shoryuken feature plan before changing the DQN observation schema or reward knobs
 - [ ] Promote anti-air DQN observation features only after train/live payload parity and jump-in validation are defined
 - [ ] Collect a targeted human-demo anti-air Shoryuken log before expecting offline DQN to learn jump-in punishment reliably
+- [x] Record the support-aware conservative DQN penalty plan for sparse-action overestimation
+- [x] Add an opt-in conservative action penalty to offline DQN replay rewards without changing transition schema or live inference
+- [ ] A/B test conservative DQN penalty against v9/v11-style ground-specials models before making it part of the default training recipe
+- [ ] Review whether sparse-action overestimation still requires Double DQN / inference reranking after conservative-penalty A/B results
 - [x] Run move-family validation passes with scripted policies such as `hp`, `throw`, `ryu-fireball`, `tatsu`, and `shoryuken`, then document which attack-outcome fields are trustworthy enough for learner use versus debug-only analysis
 - [x] Add a human-demo recording path so human-vs-CPU play can export learner-ingestible episodes for bootstrapping / behavior-cloning experiments
 - [x] Add a CPU-demo recording path so built-in CPU-vs-CPU play can export learner-ingestible bootstrap episodes
@@ -2620,7 +2624,7 @@ Implementation notes:
     - on anti-air-threat observations, Shoryuken variants appear in top1/top2/top3 at a materially higher rate than the baseline model.
     - on non-airborne or far/back-jump observations, Shoryuken remains rare and does not replace fireball / spacing / guard decisions.
     - live probe logs show actual Shoryuken attempts against jump-ins, not only elevated offline Q ranks.
-- `tools/train_dqn_learner.py` now supports the first offline DQN/MLP Q learner path:
+  - `tools/train_dqn_learner.py` now supports the first offline DQN/MLP Q learner path:
   - reads transition NDJSON logs and converts rows into `(state, action, reward, next_state, done)` experiences using the same learner-safe HP-delta reward as tabular (`delta_opp_hp - delta_self_hp`)
   - can optionally train from engine-labeled move starts instead of input-only demo labels:
     - `--engine-outcome-training-mode off|prefer-engine-action`
@@ -2641,6 +2645,15 @@ Implementation notes:
     - `balanced` samples each training batch by action family using `--balanced-batch-ratios movement=0.4,normal=0.3,special=0.3`
     - movement includes `forward`, `back`, `guard-stand`, and `guard-crouch`; normal includes normals and `throw`; special includes `fireball-*`, `shoryuken-*`, and `tatsu-*`
     - stdout and model metadata record `batch_sampling` diagnostics with pool counts and per-batch target counts so DQN A/B tests can confirm whether specials are actually represented in every batch
+  - can apply an opt-in support-aware conservative action penalty after replay building:
+    - purpose: reduce sparse-action Q overestimation where a low-support action such as `crouch-hp` / `stand-mk` / `fireball-lp` becomes a greedy all-purpose answer despite weak observed reward evidence
+    - the penalty is trainer-only reward shaping; it does not change transition schema, C-side logging, OBS payloads, or live inference code
+    - `--conservative-action-penalty` subtracts a positive raw reward cost from each replay experience whose final post-build action count is below `--conservative-min-action-count`
+    - `--conservative-negative-mean-extra` subtracts an additional positive raw reward cost when the action's observed mean reward is non-positive; when no observed rows exist for an action, the post-build training mean is used
+    - `--conservative-exempt-actions` excludes known curriculum-safe actions from both checks, useful for protecting engine-labeled specials during early A/B tests
+    - the adjustment runs after engine-outcome delayed credit / HP-delta consumption / macro continuation credit, so it does not interfere with attribution semantics
+    - stdout and model metadata record `conservative_penalty` diagnostics: adjusted experience count, raw/scaled cost, low-count actions, non-positive-mean actions, and per-action cost totals
+    - first A/B target: rerun a v9/v11-style ground-specials command with conservative penalties enabled and check whether `crouch-hp`, `stand-lp`, `stand-hk`, and `stand-mk` fall without creating a new `guard` / `fireball` collapse
   - supports offline A/B/C reward-risk profiles without changing transition logs:
     - `--reward-risk-profile none`: baseline `hp-delta` reward
     - `--reward-risk-profile shoryuken-only`: applies only Shoryuken no-damage / punished extra costs

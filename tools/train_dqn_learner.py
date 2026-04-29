@@ -101,6 +101,51 @@ SPECIAL_ACTION_PREFIXES = ("fireball-", "shoryuken-", "tatsu-")
 
 
 @dataclass(frozen=True)
+class ConservativeActionPenaltyConfig:
+    action_penalty: float
+    min_action_count: int
+    negative_mean_extra: float
+    exempt_actions: frozenset[str]
+
+    @property
+    def enabled(self) -> bool:
+        return (
+            (self.action_penalty > 0.0 and self.min_action_count > 0)
+            or self.negative_mean_extra > 0.0
+        )
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "action_penalty": self.action_penalty,
+            "min_action_count": self.min_action_count,
+            "negative_mean_extra": self.negative_mean_extra,
+            "exempt_actions": sorted(self.exempt_actions),
+        }
+
+
+@dataclass
+class ConservativeActionPenaltyStats:
+    adjusted_experiences: int = 0
+    raw_cost_total: float = 0.0
+    scaled_cost_total: float = 0.0
+    per_action_events: dict[str, int] = field(default_factory=dict)
+    per_action_raw_cost: dict[str, float] = field(default_factory=dict)
+    low_count_actions: list[str] = field(default_factory=list)
+    nonpositive_mean_actions: list[str] = field(default_factory=list)
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "adjusted_experiences": self.adjusted_experiences,
+            "raw_cost_total": self.raw_cost_total,
+            "scaled_cost_total": self.scaled_cost_total,
+            "per_action_events": self.per_action_events,
+            "per_action_raw_cost": self.per_action_raw_cost,
+            "low_count_actions": self.low_count_actions,
+            "nonpositive_mean_actions": self.nonpositive_mean_actions,
+        }
+
+
+@dataclass(frozen=True)
 class BatchSamplingConfig:
     mode: str
     ratios: dict[str, float]
@@ -549,6 +594,34 @@ def batch_sampling_config_from_args(args: argparse.Namespace) -> BatchSamplingCo
         raise SystemExit(f"unknown --batch-sampling {mode!r}; expected one of {','.join(BATCH_SAMPLING_MODES)}")
     ratios = parse_batch_ratios(str(args.balanced_batch_ratios), "--balanced-batch-ratios")
     return BatchSamplingConfig(mode=mode, ratios=ratios)
+
+
+def parse_action_name_set(value: str, flag_name: str) -> frozenset[str]:
+    actions: set[str] = set()
+    if not value.strip():
+        return frozenset()
+    invalid: list[str] = []
+    for raw_item in value.split(","):
+        raw_action = raw_item.strip()
+        if not raw_action:
+            continue
+        action = rl.canonical_tabular_action_name(raw_action)
+        if action is None:
+            invalid.append(raw_action)
+        else:
+            actions.add(action)
+    if invalid:
+        raise SystemExit(f"Unknown action in {flag_name}: {','.join(invalid)}")
+    return frozenset(actions)
+
+
+def conservative_action_penalty_config_from_args(args: argparse.Namespace) -> ConservativeActionPenaltyConfig:
+    return ConservativeActionPenaltyConfig(
+        action_penalty=max(0.0, float(args.conservative_action_penalty)),
+        min_action_count=max(0, int(args.conservative_min_action_count)),
+        negative_mean_extra=max(0.0, float(args.conservative_negative_mean_extra)),
+        exempt_actions=parse_action_name_set(str(args.conservative_exempt_actions), "--conservative-exempt-actions"),
+    )
 
 
 def action_batch_group(action_name: str) -> str:
@@ -1175,6 +1248,67 @@ def build_experiences(
     )
 
 
+def apply_conservative_action_penalty(
+    experiences: list[Experience],
+    actions: tuple[str, ...],
+    action_counts: dict[str, int],
+    action_rewards: dict[str, float],
+    observed_action_counts: dict[str, int],
+    observed_action_rewards: dict[str, float],
+    reward_scale: float,
+    config: ConservativeActionPenaltyConfig,
+) -> ConservativeActionPenaltyStats:
+    stats = ConservativeActionPenaltyStats()
+    if not config.enabled:
+        return stats
+
+    raw_penalty_by_index: dict[int, float] = {}
+    low_count_actions: list[str] = []
+    nonpositive_mean_actions: list[str] = []
+    for action_index, action in enumerate(actions):
+        if action in config.exempt_actions:
+            continue
+        count = int(action_counts.get(action, 0))
+        if count <= 0:
+            continue
+
+        observed_count = int(observed_action_counts.get(action, 0))
+        if observed_count > 0:
+            mean_reward = float(observed_action_rewards.get(action, 0.0)) / observed_count
+        else:
+            mean_reward = float(action_rewards.get(action, 0.0)) / count
+
+        raw_penalty = 0.0
+        if config.action_penalty > 0.0 and config.min_action_count > 0 and count < config.min_action_count:
+            raw_penalty += config.action_penalty
+            low_count_actions.append(action)
+        if config.negative_mean_extra > 0.0 and mean_reward <= 0.0:
+            raw_penalty += config.negative_mean_extra
+            nonpositive_mean_actions.append(action)
+        if raw_penalty > 0.0:
+            raw_penalty_by_index[action_index] = raw_penalty
+
+    if not raw_penalty_by_index:
+        return stats
+
+    stats.low_count_actions = low_count_actions
+    stats.nonpositive_mean_actions = nonpositive_mean_actions
+    for exp in experiences:
+        raw_penalty = raw_penalty_by_index.get(exp.action_index, 0.0)
+        if raw_penalty <= 0.0:
+            continue
+        scaled_penalty = raw_penalty * reward_scale
+        exp.reward -= scaled_penalty
+        action = actions[exp.action_index]
+        action_rewards[action] -= scaled_penalty
+        stats.adjusted_experiences += 1
+        stats.raw_cost_total += raw_penalty
+        stats.scaled_cost_total += scaled_penalty
+        stats.per_action_events[action] = stats.per_action_events.get(action, 0) + 1
+        stats.per_action_raw_cost[action] = stats.per_action_raw_cost.get(action, 0.0) + raw_penalty
+    return stats
+
+
 def reward_risk_config_from_args(args: argparse.Namespace) -> RewardRiskConfig:
     return RewardRiskConfig(
         profile=str(args.reward_risk_profile),
@@ -1648,6 +1782,35 @@ def main() -> None:
     parser.add_argument("--gamma", type=float, default=0.95, help="DQN discounted future reward")
     parser.add_argument("--reward-scale", type=float, default=0.01, help="Scale applied to HP-delta reward during training")
     parser.add_argument(
+        "--conservative-action-penalty",
+        type=float,
+        default=0.0,
+        help=(
+            "Positive raw reward cost subtracted from each replay experience whose action has fewer than "
+            "--conservative-min-action-count training examples; 0 disables this low-support cost"
+        ),
+    )
+    parser.add_argument(
+        "--conservative-min-action-count",
+        type=int,
+        default=0,
+        help="Minimum post-build training examples required before --conservative-action-penalty is skipped",
+    )
+    parser.add_argument(
+        "--conservative-negative-mean-extra",
+        type=float,
+        default=0.0,
+        help=(
+            "Additional positive raw reward cost subtracted from each replay experience whose action has "
+            "non-positive observed mean reward; 0 disables this cost"
+        ),
+    )
+    parser.add_argument(
+        "--conservative-exempt-actions",
+        default="",
+        help="Comma-separated action names exempt from conservative action penalties",
+    )
+    parser.add_argument(
         "--reward-risk-profile",
         choices=REWARD_RISK_PROFILES,
         default="none",
@@ -1966,6 +2129,7 @@ def main() -> None:
     reward_spacing_config = reward_spacing_config_from_args(args)
     reward_position_config = reward_position_config_from_args(args)
     engine_outcome_config = engine_outcome_config_from_args(args)
+    conservative_action_penalty_config = conservative_action_penalty_config_from_args(args)
     batch_sampling_config = batch_sampling_config_from_args(args)
     (
         experiences,
@@ -1992,6 +2156,16 @@ def main() -> None:
     )
     if not experiences:
         raise SystemExit("No DQN experiences built from transition logs")
+    conservative_action_penalty_stats = apply_conservative_action_penalty(
+        experiences,
+        actions,
+        action_counts,
+        action_rewards,
+        observed_action_counts,
+        observed_action_rewards,
+        args.reward_scale,
+        conservative_action_penalty_config,
+    )
 
     layers, train_stats = train_dqn(
         experiences,
@@ -2025,6 +2199,8 @@ def main() -> None:
         reward_sources.append("position-shaping")
     if engine_outcome_config.training_mode != "off":
         reward_sources.append("engine-outcome")
+    if conservative_action_penalty_stats.adjusted_experiences > 0:
+        reward_sources.append("conservative-action-penalty")
     reward_source = "+".join(reward_sources)
     metadata = {
         "transition_logs": args.transition_logs,
@@ -2042,6 +2218,8 @@ def main() -> None:
         "reward_scale": args.reward_scale,
         "reward_scale_applied_after_risk_cost": True,
         "reward_scale_applied_after_raw_adjustments": True,
+        "conservative_action_penalty_config": conservative_action_penalty_config.as_metadata(),
+        "conservative_action_penalty_stats": conservative_action_penalty_stats.as_metadata(),
         "training_action_source": str(args.training_action_source),
         "reward_risk_profile": reward_risk_config.profile,
         "reward_risk_window_decisions": reward_risk_config.window_decisions,
@@ -2133,6 +2311,7 @@ def main() -> None:
         f"engine_outcome_net={engine_outcome_stats.net_adjustment:.1f} "
         f"engine_oversample={engine_outcome_stats.training_experiences}/"
         f"+{engine_outcome_stats.oversample_extra_experiences} "
+        f"conservative_cost={conservative_action_penalty_stats.raw_cost_total:.1f} "
         f"loss={train_stats['last_loss']:.6f} avg_loss={train_stats['avg_loss']:.6f} "
         f"included={build_stats.included_action_rows} excluded={build_stats.excluded_action_rows} "
         f"engine_input_fallback={build_stats.engine_outcome_input_fallback_rows} "
@@ -2166,6 +2345,17 @@ def main() -> None:
         "DQN diagnostics "
         f"observed_all=count/reward/mean "
         f"{format_action_scores(observed_action_counts, observed_action_rewards, rl.TABULAR_ACTION_NAMES, args.diagnostic_top_n)}",
+        flush=True,
+    )
+    print(
+        "DQN diagnostics "
+        f"conservative_penalty=events:{conservative_action_penalty_stats.adjusted_experiences} "
+        f"raw_cost:{conservative_action_penalty_stats.raw_cost_total:.1f} "
+        f"scaled_cost:{conservative_action_penalty_stats.scaled_cost_total:.3f} "
+        f"low_count:{','.join(conservative_action_penalty_stats.low_count_actions) or 'none'} "
+        f"nonpositive_mean:{','.join(conservative_action_penalty_stats.nonpositive_mean_actions) or 'none'} "
+        f"by_action=count/raw/mean "
+        f"{format_action_scores(conservative_action_penalty_stats.per_action_events, conservative_action_penalty_stats.per_action_raw_cost, actions, args.diagnostic_top_n)}",
         flush=True,
     )
     print(

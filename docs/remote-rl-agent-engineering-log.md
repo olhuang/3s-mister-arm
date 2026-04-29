@@ -2,6 +2,44 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-29: Add Conservative Action Penalty Plan And Trainer Flags
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / DQN sparse-action overestimation control
+
+Files changed:
+- `tools/train_dqn_learner.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- make sparse-action overestimation an explicit A/B path after v11-v15 showed that pure command tuning shifts collapse between `crouch-hp`, `stand-mk`, `throw`, and fireball variants instead of solving it.
+- add a small opt-in trainer-side regularization step without changing transition schema, C-side logging, OBS payloads, or live DQN inference.
+
+Implementation notes:
+- recorded the support-aware conservative DQN penalty rollout plan in `docs/plan-remote-rl-agent.md`.
+- added `--conservative-action-penalty` and `--conservative-min-action-count`:
+  - after replay building, actions with fewer than the configured post-build training examples receive a raw reward cost on each replay experience.
+- added `--conservative-negative-mean-extra`:
+  - actions with non-positive observed mean reward receive an additional raw reward cost.
+  - if no observed rows exist for an action, the post-build training mean is used.
+- added `--conservative-exempt-actions` so engine-labeled specials or other trusted curriculum actions can be excluded from the checks.
+- conservative penalties run after engine-outcome delayed credit, HP-delta consumption, macro-continuation credit, and all other reward shaping, then update the replay experiences and action reward diagnostics.
+- stdout and model metadata now record `conservative_penalty` diagnostics with adjusted experience count, raw/scaled cost, low-count actions, non-positive-mean actions, and per-action cost totals.
+
+Validation:
+- Python compile passed:
+  - `python3 -m py_compile tools/train_dqn_learner.py`
+- diff whitespace check passed:
+  - `git diff --check -- tools/train_dqn_learner.py docs/plan-remote-rl-agent.md`
+- conservative penalty smoke passed:
+  - `python3 tools/train_dqn_learner.py logs/rl-transitions-cpu-demo-schema-v3-4-3-3.ndjson --model-dir /tmp/rl-dqn-conservative-smoke --model-version 1 --limit 1200 --steps 2 --batch-size 16 --hidden-sizes 8 --actions forward,back,guard-stand,guard-crouch,stand-mk,crouch-hp,fireball-lp,fireball-mp,fireball-hp,shoryuken-hp --fallback-policy stand-mk --training-action-source auto --reward-risk-profile all-attacks --reward-risk-window-decisions 15 --reward-risk-action-windows fireball-lp=45,fireball-mp=45,fireball-hp=45 --reward-attack-no-damage-cost 0.3 --reward-attack-punished-cost 1.0 --engine-outcome-training-mode prefer-engine-action --engine-outcome-window-decisions 15 --engine-outcome-action-windows fireball-lp=45,fireball-mp=45,fireball-hp=45 --engine-outcome-hit-bonus 1.0 --engine-outcome-no-damage-cost 0.2 --engine-outcome-punished-cost 1.0 --conservative-action-penalty 0.2 --conservative-min-action-count 10 --conservative-negative-mean-extra 0.1 --conservative-exempt-actions fireball-lp,fireball-mp,fireball-hp,shoryuken-hp --log-interval 1 --eval-limit 200 --diagnostic-top-n 10`
+  - diagnostics reported `conservative_penalty=events:99 raw_cost:10.7 scaled_cost:0.107`, with low-count penalties applied to `stand-mk,crouch-hp`.
+
+Follow-up:
+- train a v16-style ground-specials model from the v9/v11 command family with conservative penalties enabled.
+- compare whether `crouch-hp`, `stand-lp`, `stand-hk`, and `stand-mk` top1/top3 rates drop without creating a new `guard` / `fireball` collapse.
+
 ## 2026-04-29: Record Anti-Air Shoryuken Feature Plan
 
 Milestone:

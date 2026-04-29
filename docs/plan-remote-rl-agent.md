@@ -2599,7 +2599,8 @@ Implementation notes:
     - `--engine-outcome-action-windows action=N,...` reserves per-action delayed-credit tuning while preserving a global default window
     - `--engine-outcome-stop-at-next-event` can prevent overlapping windows when projectile-delayed credit is not desired
     - `--engine-outcome-hit-bonus`, `--engine-outcome-no-damage-cost`, and `--engine-outcome-punished-cost` are raw reward adjustments applied before `--reward-scale`
-    - stdout and model metadata record `engine_outcome=...` / `engine_outcome_stats` so CPU-demo training can be audited for included/excluded events, hit/no-damage/punished/trade counts, HP sums, and reward adjustment totals
+    - `--engine-outcome-oversample N` and `--engine-outcome-action-oversamples action=N,...` can duplicate included engine-outcome experiences in replay so low-frequency engine-labeled specials can be A/B tested without changing raw logs or normal input replay rows
+    - stdout and model metadata record `engine_outcome=...` / `engine_outcome_stats` so CPU-demo training can be audited for included/excluded events, hit/no-damage/punished/trade counts, HP sums, reward adjustment totals, and oversampled replay experience counts
     - deprecated hidden aliases for the old `--demo-attribution-*` flag names still map to the new engine-outcome config for short-term command compatibility; removed schema-v2 modes `augment` and `replace-demo` now fail fast
   - supports offline A/B/C reward-risk profiles without changing transition logs:
     - `--reward-risk-profile none`: baseline `hp-delta` reward

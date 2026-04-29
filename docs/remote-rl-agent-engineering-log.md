@@ -2,6 +2,40 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-29: Add Engine Outcome Oversampling For Offline DQN
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / DQN action distribution experiments
+
+Files changed:
+- `tools/train_dqn_learner.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- make low-frequency engine-labeled moves, especially Ryu fireballs and specials, easier to A/B test without recollecting logs.
+- keep raw transition logs and normal input replay rows unchanged while allowing included engine-outcome experiences to be duplicated in the DQN replay set.
+
+Implementation notes:
+- added `--engine-outcome-oversample N`, where `1` preserves the previous one-experience-per-event behavior.
+- added `--engine-outcome-action-oversamples action=N,...` for per-action replay copy counts.
+- engine outcome diagnostics now record `training_experiences`, `oversample_extra_experiences`, and `training_scaled_reward_sum`; action count/reward diagnostics reflect the replay distribution after oversampling.
+
+Validation:
+- Python compile passed:
+  - `python3 -m py_compile tools/train_dqn_learner.py`
+- baseline oversampling smoke passed:
+  - `python3 tools/train_dqn_learner.py logs/rl-transitions-cpu-demo-schema-v3-4-3-3.ndjson --model-dir /tmp/rl-dqn-engine-oversample-baseline-smoke --model-version 11 --limit 800 --steps 2 --batch-size 4 --hidden-sizes 8 --actions forward,back,guard-stand,guard-crouch,stand-mk,fireball-lp,fireball-mp,fireball-hp,shoryuken-lp,tatsu-hk --fallback-policy stand-mk --training-action-source auto --reward-risk-profile none --engine-outcome-training-mode prefer-engine-action --engine-outcome-window-decisions 15 --engine-outcome-action-windows fireball-lp=45,fireball-mp=45,fireball-hp=45 --engine-outcome-no-damage-cost 0.5 --engine-outcome-punished-cost 2.0 --log-interval 1 --eval-limit 100 --diagnostic-top-n 10`
+  - reported `engine_oversample=15/+0`, preserving the default one-copy behavior.
+- specials oversampling smoke passed:
+  - same smoke command plus `--engine-outcome-oversample 2 --engine-outcome-action-oversamples fireball-lp=5,fireball-mp=5,fireball-hp=5,shoryuken-lp=4,tatsu-hk=4`
+  - reported `engine_oversample=72/+57`; `fireball-hp` count rose from `6` to `30`, `fireball-mp` from `3` to `15`, and `fireball-lp` from `3` to `15`.
+- mixed full-action smoke passed:
+  - first `5000` rows from CPU-demo + human-demo with full action set and specials oversampling reported `engine_outcome=prefer-engine-action:64/73`, `engine_oversample=424/+360`, `excluded=0`, and `engine_input_fallback=9`.
+
+Follow-up:
+- run a mixed CPU-demo + human-demo all-action v4 train with specials oversampling and compare focus ranks for `fireball-lp`, `fireball-mp`, and `fireball-hp` against v3.
+
 ## 2026-04-29: Fix Engine Outcome Subset Fallback
 
 Milestone:

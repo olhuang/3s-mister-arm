@@ -293,6 +293,8 @@ class EngineOutcomeConfig:
     hit_bonus: float
     no_damage_cost: float
     punished_cost: float
+    oversample: int
+    action_oversamples: dict[str, int]
 
 
 @dataclass
@@ -300,6 +302,8 @@ class EngineOutcomeStats:
     event_rows: int = 0
     included_events: int = 0
     excluded_events: int = 0
+    training_experiences: int = 0
+    oversample_extra_experiences: int = 0
     early_outcome_events: int = 0
     hit_events: int = 0
     no_damage_events: int = 0
@@ -315,6 +319,7 @@ class EngineOutcomeStats:
     no_damage_cost_total: float = 0.0
     punished_cost_total: float = 0.0
     scaled_reward_sum: float = 0.0
+    training_scaled_reward_sum: float = 0.0
 
     @property
     def total_bonus(self) -> float:
@@ -333,6 +338,8 @@ class EngineOutcomeStats:
             "event_rows": self.event_rows,
             "included_events": self.included_events,
             "excluded_events": self.excluded_events,
+            "training_experiences": self.training_experiences,
+            "oversample_extra_experiences": self.oversample_extra_experiences,
             "early_outcome_events": self.early_outcome_events,
             "hit_events": self.hit_events,
             "no_damage_events": self.no_damage_events,
@@ -351,6 +358,7 @@ class EngineOutcomeStats:
             "total_cost": self.total_cost,
             "net_adjustment": self.net_adjustment,
             "scaled_reward_sum": self.scaled_reward_sum,
+            "training_scaled_reward_sum": self.training_scaled_reward_sum,
         }
 
 
@@ -441,6 +449,28 @@ def parse_action_windows(value: str, flag_name: str) -> dict[str, int]:
             raise SystemExit(f"Invalid window for {action}: {raw_window}") from exc
         windows[action] = max(0, window)
     return windows
+
+
+def parse_action_multipliers(value: str, flag_name: str) -> dict[str, int]:
+    multipliers: dict[str, int] = {}
+    if not value.strip():
+        return multipliers
+    for raw_item in value.split(","):
+        item = raw_item.strip()
+        if not item:
+            continue
+        if "=" not in item:
+            raise SystemExit(f"Invalid {flag_name} item: {item!r}; expected action=N")
+        raw_action, raw_multiplier = (part.strip() for part in item.split("=", 1))
+        action = rl.canonical_tabular_action_name(raw_action)
+        if action is None:
+            raise SystemExit(f"Unknown action in {flag_name}: {raw_action}")
+        try:
+            multiplier = int(raw_multiplier)
+        except ValueError as exc:
+            raise SystemExit(f"Invalid multiplier for {action}: {raw_multiplier}") from exc
+        multipliers[action] = max(1, multiplier)
+    return multipliers
 
 
 def is_terminal_win(row: dict[str, object]) -> bool:
@@ -717,6 +747,10 @@ def engine_outcome_window_for_action(action_name: str, config: EngineOutcomeConf
     return max(0, int(config.action_windows.get(action_name, config.window_decisions)))
 
 
+def engine_outcome_oversample_for_action(action_name: str, config: EngineOutcomeConfig) -> int:
+    return max(1, int(config.action_oversamples.get(action_name, config.oversample)))
+
+
 def add_engine_outcome_experience(
     episode_rows: list[dict[str, object]],
     row_index: int,
@@ -791,22 +825,30 @@ def add_engine_outcome_experience(
     reward = (base_reward + adjustment) * reward_scale
     next_row = window_rows[-1]
     done = any(bool(window_row.get("done", False)) for window_row in window_rows)
-    experiences.append(
-        Experience(
-            state=rl.dqn_feature_vector(row),
-            action_index=action_to_index[action_name],
-            reward=reward,
-            next_state=rl.dqn_feature_vector(next_row),
-            done=done,
+    multiplier = engine_outcome_oversample_for_action(action_name, config)
+    state = rl.dqn_feature_vector(row)
+    next_state = rl.dqn_feature_vector(next_row)
+    action_index = action_to_index[action_name]
+    for _ in range(multiplier):
+        experiences.append(
+            Experience(
+                state=list(state),
+                action_index=action_index,
+                reward=reward,
+                next_state=list(next_state),
+                done=done,
+            )
         )
-    )
     stats.included_events += 1
+    stats.training_experiences += multiplier
+    stats.oversample_extra_experiences += max(0, multiplier - 1)
     stats.opp_hp_sum += opponent_damage
     stats.self_hp_sum += self_damage
     stats.base_reward_sum += base_reward
     stats.scaled_reward_sum += reward
-    action_counts[action_name] += 1
-    action_rewards[action_name] += reward
+    stats.training_scaled_reward_sum += reward * multiplier
+    action_counts[action_name] += multiplier
+    action_rewards[action_name] += reward * multiplier
     return True
 
 
@@ -1071,6 +1113,11 @@ def engine_outcome_config_from_args(args: argparse.Namespace) -> EngineOutcomeCo
         hit_bonus=max(0.0, float(resolved_engine_outcome_arg(args, "hit_bonus", 0.0))),
         no_damage_cost=max(0.0, float(resolved_engine_outcome_arg(args, "no_damage_cost", 0.0))),
         punished_cost=max(0.0, float(resolved_engine_outcome_arg(args, "punished_cost", 0.0))),
+        oversample=max(1, int(args.engine_outcome_oversample)),
+        action_oversamples=parse_action_multipliers(
+            str(args.engine_outcome_action_oversamples),
+            "--engine-outcome-action-oversamples",
+        ),
     )
 
 
@@ -1674,6 +1721,23 @@ def main() -> None:
         help=argparse.SUPPRESS,
     )
     parser.add_argument(
+        "--engine-outcome-oversample",
+        type=int,
+        default=1,
+        help=(
+            "Total replay copies to emit for each included engine-outcome experience; "
+            "1 keeps the baseline one-copy behavior"
+        ),
+    )
+    parser.add_argument(
+        "--engine-outcome-action-oversamples",
+        default="",
+        help=(
+            "Optional comma-separated per-action engine-outcome replay copy counts, e.g. "
+            "fireball-lp=10,shoryuken-hp=6; omitted actions use --engine-outcome-oversample"
+        ),
+    )
+    parser.add_argument(
         "--training-action-source",
         choices=TRAINING_ACTION_SOURCES,
         default="auto",
@@ -1819,6 +1883,8 @@ def main() -> None:
         "engine_outcome_hit_bonus": engine_outcome_config.hit_bonus,
         "engine_outcome_no_damage_cost": engine_outcome_config.no_damage_cost,
         "engine_outcome_punished_cost": engine_outcome_config.punished_cost,
+        "engine_outcome_oversample": engine_outcome_config.oversample,
+        "engine_outcome_action_oversamples": engine_outcome_config.action_oversamples,
         "engine_outcome_stats": engine_outcome_stats.as_metadata(),
         "steps": max(1, args.steps),
         "batch_size": max(1, args.batch_size),
@@ -1867,6 +1933,8 @@ def main() -> None:
         f"engine_outcome={engine_outcome_config.training_mode}:{engine_outcome_stats.included_events}/"
         f"{engine_outcome_stats.event_rows} "
         f"engine_outcome_net={engine_outcome_stats.net_adjustment:.1f} "
+        f"engine_oversample={engine_outcome_stats.training_experiences}/"
+        f"+{engine_outcome_stats.oversample_extra_experiences} "
         f"loss={train_stats['last_loss']:.6f} avg_loss={train_stats['avg_loss']:.6f} "
         f"included={build_stats.included_action_rows} excluded={build_stats.excluded_action_rows} "
         f"engine_input_fallback={build_stats.engine_outcome_input_fallback_rows} "
@@ -1942,6 +2010,9 @@ def main() -> None:
         f"events:{engine_outcome_stats.event_rows} "
         f"included:{engine_outcome_stats.included_events} "
         f"excluded:{engine_outcome_stats.excluded_events} "
+        f"train_exp:{engine_outcome_stats.training_experiences} "
+        f"extra:{engine_outcome_stats.oversample_extra_experiences} "
+        f"oversample:{engine_outcome_config.oversample} "
         f"early:{engine_outcome_stats.early_outcome_events} "
         f"window:{engine_outcome_config.window_decisions} "
         f"stop_next:{int(engine_outcome_config.stop_at_next_event)} "
@@ -1956,7 +2027,8 @@ def main() -> None:
         f"bonus:{engine_outcome_stats.total_bonus:.1f} "
         f"cost:{engine_outcome_stats.total_cost:.1f} "
         f"net:{engine_outcome_stats.net_adjustment:.1f} "
-        f"scaled_reward:{engine_outcome_stats.scaled_reward_sum:.3f}",
+        f"scaled_reward:{engine_outcome_stats.scaled_reward_sum:.3f} "
+        f"training_scaled_reward:{engine_outcome_stats.training_scaled_reward_sum:.3f}",
         flush=True,
     )
     print(

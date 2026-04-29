@@ -2464,7 +2464,7 @@ Tasks:
 - [x] Add a CPU-demo recording path so built-in CPU-vs-CPU play can export learner-ingestible bootstrap episodes
 - [x] Add `prefer-demo-action` DQN replay mode so engine-attributed demo attacks replace input labels without discarding unattributed guard / walk demo rows
 - [x] Stop engine-attributed demo delayed-credit windows at the first self/opponent HP delta, while still using per-action window settings as maximum tracking lengths
-- [ ] Review HP-delta ownership / consume logic so delayed projectile credit does not also reward unrelated later input-based rows
+- [x] Consume HP deltas claimed by engine-attributed demo experiences so delayed projectile credit does not also reward unrelated later input-based rows
 - [ ] Define how replay-buffer import mixes human-demo episodes with remote-agent episodes, including metadata such as data source, control mode, and player side
 - [ ] Add character curriculum
 - [ ] Add stage curriculum

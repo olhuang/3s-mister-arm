@@ -297,8 +297,11 @@ class DemoAttributionStats:
     no_damage_events: int = 0
     punished_events: int = 0
     trade_events: int = 0
+    claimed_hp_events: int = 0
     opp_hp_sum: int = 0
     self_hp_sum: int = 0
+    claimed_opp_hp_sum: int = 0
+    claimed_self_hp_sum: int = 0
     base_reward_sum: float = 0.0
     hit_bonus_total: float = 0.0
     no_damage_cost_total: float = 0.0
@@ -327,8 +330,11 @@ class DemoAttributionStats:
             "no_damage_events": self.no_damage_events,
             "punished_events": self.punished_events,
             "trade_events": self.trade_events,
+            "claimed_hp_events": self.claimed_hp_events,
             "opp_hp_sum": self.opp_hp_sum,
             "self_hp_sum": self.self_hp_sum,
+            "claimed_opp_hp_sum": self.claimed_opp_hp_sum,
+            "claimed_self_hp_sum": self.claimed_self_hp_sum,
             "base_reward_sum": self.base_reward_sum,
             "hit_bonus_total": self.hit_bonus_total,
             "no_damage_cost_total": self.no_damage_cost_total,
@@ -752,17 +758,17 @@ def add_demo_attribution_experience(
         return False
 
     window_end = min(len(episode_rows), row_index + demo_attribution_window_for_action(action_name, config) + 1)
+    if config.stop_at_next_event:
+        for next_index in range(row_index + 1, window_end):
+            if demo_attribution_present(episode_rows[next_index]):
+                window_end = next_index
+                break
     for next_index in range(row_index, window_end):
         window_row = episode_rows[next_index]
         if int_field(window_row, "delta_opp_hp") > 0 or int_field(window_row, "delta_self_hp") > 0:
             window_end = next_index + 1
             stats.early_outcome_events += 1
             break
-    if config.stop_at_next_event:
-        for next_index in range(row_index + 1, window_end):
-            if demo_attribution_present(episode_rows[next_index]):
-                window_end = next_index
-                break
     window_rows = episode_rows[row_index:window_end]
     if not window_rows:
         window_rows = [row]
@@ -787,6 +793,16 @@ def add_demo_attribution_experience(
         stats.punished_cost_total += config.punished_cost
     if opponent_damage > 0 and self_damage > 0:
         stats.trade_events += 1
+
+    if opponent_damage > 0 or self_damage > 0:
+        stats.claimed_hp_events += 1
+        stats.claimed_opp_hp_sum += opponent_damage
+        stats.claimed_self_hp_sum += self_damage
+        for window_row in window_rows:
+            if int_field(window_row, "delta_opp_hp") > 0:
+                window_row["delta_opp_hp"] = 0
+            if int_field(window_row, "delta_self_hp") > 0:
+                window_row["delta_self_hp"] = 0
 
     reward = (base_reward + adjustment) * reward_scale
     next_row = window_rows[-1]
@@ -835,7 +851,7 @@ def build_experiences(
     action_to_index = {action: index for index, action in enumerate(actions)}
     by_episode: dict[tuple[int, int], list[dict[str, object]]] = collections.defaultdict(list)
     for row in rows:
-        by_episode[episode_key(row)].append(row)
+        by_episode[episode_key(row)].append(dict(row))
 
     experiences: list[Experience] = []
     action_counts = {action: 0 for action in actions}
@@ -1856,6 +1872,9 @@ def main() -> None:
         f"no_damage:{demo_attribution_stats.no_damage_events} "
         f"punished:{demo_attribution_stats.punished_events} "
         f"trade:{demo_attribution_stats.trade_events} "
+        f"claimed:{demo_attribution_stats.claimed_hp_events}/"
+        f"{demo_attribution_stats.claimed_opp_hp_sum}/"
+        f"{demo_attribution_stats.claimed_self_hp_sum} "
         f"hp:{demo_attribution_stats.opp_hp_sum}/{demo_attribution_stats.self_hp_sum} "
         f"bonus:{demo_attribution_stats.total_bonus:.1f} "
         f"cost:{demo_attribution_stats.total_cost:.1f} "

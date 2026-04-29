@@ -2,6 +2,45 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-29: Consume Demo-Claimed HP Deltas During DQN Replay Build
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / CPU-demo delayed-credit cleanup
+
+Files changed:
+- `tools/train_dqn_learner.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- prevent one HP delta from rewarding both the engine-attributed move that caused it and a later unrelated input-based row.
+- make long-window projectile credit cleaner: if a Hadouken chip is claimed by `fireball-lp`, the later `guard` / `neutral` row where the chip lands no longer receives that same `delta_opp_hp` reward.
+
+Implementation notes:
+- `build_experiences()` now copies each row into per-episode working rows so training-only HP-delta mutation does not alter the raw loaded row list.
+- when `add_demo_attribution_experience()` finds an HP outcome inside its effective window, it:
+  - computes the demo-attributed reward from that available HP delta.
+  - records claimed diagnostics.
+  - zeroes the claimed `delta_opp_hp` / `delta_self_hp` on the working rows before subsequent input-based replay processing.
+- later input-based rewards, risk windows, guard shaping, spacing shaping, and position shaping see only unclaimed HP deltas in that episode pass.
+- `demo_attr` diagnostics now print `claimed:<events>/<opp_hp>/<self_hp>`.
+
+Validation:
+- `python3 -m py_compile tools/train_dqn_learner.py` passed.
+- targeted smoke on `logs/rl-transitions-cpu-demo-v1-4-3-3.ndjson`, `run=3`, `episode=15`, `decision=79`:
+  - before demo attribution, `decision=96` had `delta_opp_hp=1`.
+  - `fireball-lp` claimed that outcome and received `+1` raw / `+0.01` scaled reward.
+  - after claim, the working row for `decision=96` had `delta_opp_hp=0`, so its input-based training reward became `0`.
+- 5000-row DQN smoke passed:
+  - `demo_attr=prefer-demo-action:59/86`
+  - `early:57`
+  - `claimed:57/233/140`
+  - `action_stats` still included `fireball-lp`, `fireball-mp`, `fireball-hp`, `tatsu-mk`, `guard-crouch`, and `stand-mk`.
+
+Follow-up:
+- rerun the all-actions CPU-demo A/B models and compare whether `guard` drops when projectile/chip credit is no longer duplicated.
+- decide whether fireball chip needs an action-specific contact bonus after inspecting the new non-duplicated reward stats.
+
 ## 2026-04-29: Stop Demo Attribution Windows At First HP Outcome
 
 Milestone:

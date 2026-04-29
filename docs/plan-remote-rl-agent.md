@@ -2452,6 +2452,7 @@ Tasks:
 - [x] Add high-level policy action / sub-action / macro-step attribution to transition rows
 - [x] Add `guard-stand`, `guard-crouch`, `crouch-mk`, `shoryuken-mp`, and `tatsu-mk` to the probe-side action set
 - [x] Split Ryu Hadouken into LP / MP / HP learner actions instead of collapsing CPU-demo variants into LP fireball
+- [x] Split Ryu Shoryuken and Tatsumaki Senpukyaku into LP/MP/HP and LK/MK/HK learner actions
 - [x] Split jump attacks into forward / neutral / back policy action IDs and add HK jump-kick probes
 - [x] Split stand/crouch normal policy action IDs and add standing LP/MP/LK/MK/HK plus crouching LK/MK/HK probes
 - [x] Expand probe/DQN action support to all standing, crouching, forward-jump, neutral-jump, and back-jump LP/MP/HP/LK/MK/HK basic normals
@@ -2484,7 +2485,7 @@ Implementation notes:
 
 - `tools/rl_probe_server.py --policy tabular` now supports a minimal contextual-bandit learner loop:
   - transition rows are bucketed from the compact spacing snapshot (`obs_abs_dx`, `obs_abs_dy`, front/back edge distances, `obs_opp_in_front`) plus `obs_opp_routine_attack_state` as `opp_attack=0/1` for strike-defense learning
-  - the learner maintains per-state action scores for explicit actions: `forward`, `back`, `guard-stand`, `guard-crouch`, `stand-lp`, `stand-mp`, `stand-hp`, `stand-lk`, `stand-mk`, `stand-hk`, `forward-hp`, `crouch-lk`, `crouch-mk`, `crouch-hk`, `fireball`, `throw`, `jump-forward-mk`, `jump-forward-hk`, `jump-neutral-hk`, `jump-back-hk`, `shoryuken-mp`, and `tatsu-mk`
+  - the learner maintains per-state action scores for explicit actions including movement, stand/crouch/jump normals, `fireball` / `fireball-mp` / `fireball-hp`, `throw`, `shoryuken-lp` / `shoryuken-mp` / `shoryuken-hp`, and `tatsu-lk` / `tatsu-mk` / `tatsu-hk`
   - `--tabular-actions` can restrict live tabular learning and learner-published tabular actors to a curriculum subset; use a fresh model dir/log for each subset, and choose a `--tabular-fallback-policy` that resolves to an action inside that subset
   - neutral rows are not learned as greedy actions in the first version, because delayed damage/recovery rewards can otherwise make "do nothing" look falsely good
   - tabular score updates use a learner-local reward of `delta_opp_hp - delta_self_hp`; transition `reward_accum` still keeps full episode reward including terminal win/loss bonuses for future sequential RL learners
@@ -2513,8 +2514,14 @@ Implementation notes:
     - `stand-lp`, `stand-mp`, `stand-hp`, `stand-lk`, `stand-mk`, `stand-hk`: `stand_normal` / button strength
     - `crouch-lp`, `crouch-mp`, `crouch-hp`, `crouch-lk`, `crouch-mk`, `crouch-hk`: `crouch_normal` / button strength
   - the legacy scripted `hp` policy remains as an alias for `stand-hp`, but learner action attribution should use `stand-hp`
-  - `shoryuken-mp` is available as a scripted probe policy and learner macro: `forward -> down -> down-forward -> down-forward+MP -> neutral -> neutral`, stamped as Ryu `Shoryuken` / `mp`
-  - `tatsu-mk` is available as a scripted probe policy and learner macro: `down -> down-back -> back -> back+MK -> neutral -> neutral`, stamped as Ryu `Tatsumaki Senpukyaku` / `mk`
+  - Ryu Shoryuken learner actions use strength-specific macros and taxonomy sub-actions:
+    - `shoryuken-lp`: `forward -> down -> down-forward -> down-forward+LP -> neutral -> neutral`
+    - `shoryuken-mp`: `forward -> down -> down-forward -> down-forward+MP -> neutral -> neutral`
+    - `shoryuken-hp` / `shoryuken`: `forward -> down -> down-forward -> down-forward+HP -> neutral -> neutral`
+  - Ryu Tatsumaki Senpukyaku learner actions use strength-specific macros and taxonomy sub-actions:
+    - `tatsu-lk` / `tatsu`: `down -> down-back -> back -> back+LK -> neutral -> neutral`
+    - `tatsu-mk`: `down -> down-back -> back -> back+MK -> neutral -> neutral`
+    - `tatsu-hk`: `down -> down-back -> back -> back+HK -> neutral -> neutral`
   - Ryu Hadouken learner actions use strength-specific macros and taxonomy sub-actions:
     - `fireball` / `ryu-fireball`: `down-back -> down -> down-forward -> forward+LP -> neutral -> neutral`
     - `fireball-mp`: `down-back -> down -> down-forward -> forward+MP -> neutral -> neutral`
@@ -2619,7 +2626,7 @@ Implementation notes:
   - uses normalized numeric spacing/threat features: `obs_abs_dx`, `obs_abs_dy`, both fighters' front/back edge distances, `obs_opp_in_front`, and `obs_opp_routine_attack_state`
   - trains a small stdlib-only MLP with target-network DQN updates, so it does not require `numpy` / `torch` for first smoke tests
   - publishes `policy=dqn` actor manifests with `actions`, `epsilon`, `fallback_policy`, and serialized MLP weights under `dqn`
-  - `tools/rl_probe_server.py --policy dqn --model-dir <dir>` can hot-load those manifests and run DQN inference from same-frame OBS payloads, then reuse the existing macro/fixed action adapter for `fireball`, `fireball-mp`, `fireball-hp`, `guard-stand`, `guard-crouch`, all standing/crouching LP/MP/HP/LK/MK/HK normals, all forward/neutral/back jump LP/MP/HP/LK/MK/HK normals, `shoryuken-mp`, and `tatsu-mk`
+  - `tools/rl_probe_server.py --policy dqn --model-dir <dir>` can hot-load those manifests and run DQN inference from same-frame OBS payloads, then reuse the existing macro/fixed action adapter for `fireball`, `fireball-mp`, `fireball-hp`, `guard-stand`, `guard-crouch`, all standing/crouching LP/MP/HP/LK/MK/HK normals, all forward/neutral/back jump LP/MP/HP/LK/MK/HK normals, `shoryuken-lp`, `shoryuken-mp`, `shoryuken-hp`, `tatsu-lk`, `tatsu-mk`, and `tatsu-hk`
   - `tools/compare_dqn_models.py` compares A/B/C DQN manifests on the same transition observations and prints overall, distance/threat-bucketed, attack-rate, Shoryuken-rate, selected-Q, and collapse-warning greedy action distributions
 - `docs/rl-policy-action-taxonomy.md` now records the first source-backed action registry:
   - universal actions use IDs below `1000`

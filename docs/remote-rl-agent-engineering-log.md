@@ -2,6 +2,53 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-29: Split Ryu Shoryuken And Tatsumaki Strength Variants
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / special-move action refinement
+
+Files changed:
+- `tools/rl_probe_server.py`
+- `tools/train_dqn_learner.py`
+- `tools/compare_dqn_models.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- add LP/MP/HP Shoryuken and LK/MK/HK Tatsumaki Senpukyaku as first-class learner/probe actions.
+- keep CPU-demo engine-attributed Shoryuken/Tatsumaki strengths semantically clean instead of collapsing regular variants into `shoryuken-mp` / `tatsu-mk`.
+
+Implementation notes:
+- `TABULAR_ACTION_NAMES` now includes:
+  - `shoryuken-lp`, `shoryuken-mp`, `shoryuken-hp`
+  - `tatsu-lk`, `tatsu-mk`, `tatsu-hk`
+- scripted probe policies now expose the same strength-specific names.
+- legacy aliases remain:
+  - `shoryuken` -> `shoryuken-hp`
+  - `tatsu` -> `tatsu-lk`
+- strength-specific scripted macros emit:
+  - Shoryuken: `forward, down, down-forward, down-forward+P, neutral, neutral`
+  - Tatsumaki: `down, down-back, back, back+K, neutral, neutral`
+- DQN Shoryuken extra risk costs now apply to all `shoryuken-*` variants instead of only `shoryuken-mp`.
+- `tools/compare_dqn_models.py` now aggregates `shoryuken_rate`, `base_shoryuken_to_other`, and `other_to_shoryuken` across all Shoryuken variants.
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py tools/train_dqn_learner.py tools/compare_dqn_models.py` passed.
+- action registry smoke confirmed:
+  - `tabular_count 45`
+  - no missing tabular or scripted entries for `shoryuken-lp`, `shoryuken-mp`, `shoryuken-hp`, `tatsu-lk`, `tatsu-mk`, `tatsu-hk`
+  - policy metadata round-trips for all six new/expanded special variants
+  - `shoryuken` canonicalizes to `shoryuken-hp`; `tatsu` canonicalizes to `tatsu-lk`
+- DQN smoke passed with all six variants in `--actions`, `--reward-risk-action-windows`, and `--demo-attribution-action-windows`:
+  - `actions=15`
+  - `demo_attr=prefer-demo-action:79/86`
+  - `action_stats` included `shoryuken-lp`, `tatsu-lk`, `tatsu-mk`, and Hadouken variants in the sampled rows
+- compare smoke passed and reported aggregate `shoryuken_rate=100.0%` for a synthetic collapsed smoke model selecting `shoryuken-lp`, confirming compare aggregation includes non-MP Shoryuken variants.
+
+Follow-up:
+- retrain the CPU-demo special-action DQN with `shoryuken-lp`, `shoryuken-mp`, `shoryuken-hp`, `tatsu-lk`, `tatsu-mk`, and `tatsu-hk` in `--actions`.
+- include per-action windows for all Tatsu variants when using delayed-credit training, e.g. `tatsu-lk=25,tatsu-mk=25,tatsu-hk=25`.
+
 ## 2026-04-29: Add Prefer-Demo-Action DQN Replay Mode
 
 Milestone:

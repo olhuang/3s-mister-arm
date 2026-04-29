@@ -14,6 +14,7 @@ import rl_probe_server as rl
 DX_BUCKETS = ("close", "mid", "far")
 NON_ATTACK_ACTIONS = frozenset({"forward", "back", "guard-stand", "guard-crouch"})
 ATTACK_ACTIONS = frozenset(action for action in rl.TABULAR_ACTION_NAMES if action not in NON_ATTACK_ACTIONS)
+SHORYUKEN_ACTIONS = frozenset(action for action in rl.TABULAR_ACTION_NAMES if action.startswith("shoryuken-"))
 
 
 def model_path(value: str) -> Path:
@@ -159,7 +160,7 @@ def main() -> int:
         if isinstance(metadata, dict):
             profile = str(metadata.get("reward_risk_profile", "unknown") or "unknown")
         attack_total = sum(count for action, count in counts.items() if action in ATTACK_ACTIONS)
-        shoryuken_total = counts.get("shoryuken-mp", 0)
+        shoryuken_total = sum(counts.get(action, 0) for action in SHORYUKEN_ACTIONS)
         top_action, top_count = counts.most_common(1)[0] if counts else ("none", 0)
         top_rate = top_count / max(1, len(rows))
         collapse = "WARN" if top_rate >= max(0.0, min(1.0, args.collapse_warning_threshold)) else "ok"
@@ -183,10 +184,14 @@ def main() -> int:
             continue
         changed = sum(1 for base, other in zip(baseline_choices, choices) if base != other)
         base_shoryu_to_other = sum(
-            1 for base, other in zip(baseline_choices, choices) if base == "shoryuken-mp" and other != "shoryuken-mp"
+            1
+            for base, other in zip(baseline_choices, choices)
+            if base in SHORYUKEN_ACTIONS and other not in SHORYUKEN_ACTIONS
         )
         other_to_shoryu = sum(
-            1 for base, other in zip(baseline_choices, choices) if base != "shoryuken-mp" and other == "shoryuken-mp"
+            1
+            for base, other in zip(baseline_choices, choices)
+            if base not in SHORYUKEN_ACTIONS and other in SHORYUKEN_ACTIONS
         )
         print(
             f"\nCOMPARE {first_label} -> {label} "

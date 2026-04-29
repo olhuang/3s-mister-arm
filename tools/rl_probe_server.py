@@ -100,6 +100,18 @@ RL_POLICY_JUMP_DIRECTIONS = (
 STAND_NORMAL_ACTION_NAMES = tuple(f"stand-{button}" for button, _, _ in RL_POLICY_BUTTONS)
 CROUCH_NORMAL_ACTION_NAMES = tuple(f"crouch-{button}" for button, _, _ in RL_POLICY_BUTTONS)
 FIREBALL_ACTION_NAMES = ("fireball", "fireball-mp", "fireball-hp")
+SHORYUKEN_ACTIONS = (
+    ("shoryuken-lp", BTN_LP, RL_POLICY_SUB_LP),
+    ("shoryuken-mp", BTN_MP, RL_POLICY_SUB_MP),
+    ("shoryuken-hp", BTN_HP, RL_POLICY_SUB_HP),
+)
+SHORYUKEN_ACTION_NAMES = tuple(action for action, _, _ in SHORYUKEN_ACTIONS)
+TATSU_ACTIONS = (
+    ("tatsu-lk", BTN_LK, RL_POLICY_SUB_LK),
+    ("tatsu-mk", BTN_MK, RL_POLICY_SUB_MK),
+    ("tatsu-hk", BTN_HK, RL_POLICY_SUB_HK),
+)
+TATSU_ACTION_NAMES = tuple(action for action, _, _ in TATSU_ACTIONS)
 JUMP_NORMAL_ACTION_NAMES = tuple(
     f"jump-{direction}-{button}"
     for direction, _, _ in RL_POLICY_JUMP_DIRECTIONS
@@ -137,9 +149,9 @@ SCRIPTED_POLICY_CHOICES = (
     "ryu-fireball",
     "throw",
     "tatsu",
-    "tatsu-mk",
+    *TATSU_ACTION_NAMES,
     "shoryuken",
-    "shoryuken-mp",
+    *SHORYUKEN_ACTION_NAMES,
     *JUMP_NORMAL_ACTION_NAMES,
 )
 MODEL_POLICY_CHOICES = (
@@ -160,8 +172,8 @@ TABULAR_ACTION_NAMES = (
     *FIREBALL_ACTION_NAMES,
     "throw",
     *JUMP_NORMAL_ACTION_NAMES,
-    "shoryuken-mp",
-    "tatsu-mk",
+    *SHORYUKEN_ACTION_NAMES,
+    *TATSU_ACTION_NAMES,
 )
 TABULAR_ACTION_WIRES = {
     "neutral": RL_MOVE_NEUTRAL,
@@ -177,8 +189,8 @@ TABULAR_ACTION_NAMES_BY_WIRE = {
 }
 TABULAR_ACTION_NAMES_BY_WIRE[RL_MOVE_FORWARD | BTN_LP] = "fireball"
 TABULAR_ACTION_NAMES_BY_WIRE.update({wire: action for action, wire in JUMP_NORMAL_ACTION_WIRES.items()})
-TABULAR_ACTION_NAMES_BY_WIRE[RL_MOVE_DOWN_FORWARD | BTN_MP] = "shoryuken-mp"
-TABULAR_ACTION_NAMES_BY_WIRE[RL_MOVE_BACK | BTN_MK] = "tatsu-mk"
+TABULAR_ACTION_NAMES_BY_WIRE.update({RL_MOVE_DOWN_FORWARD | wire: action for action, wire, _ in SHORYUKEN_ACTIONS})
+TABULAR_ACTION_NAMES_BY_WIRE.update({RL_MOVE_BACK | wire: action for action, wire, _ in TATSU_ACTIONS})
 TABULAR_DEFAULT_ACTIONS = TABULAR_ACTION_NAMES
 
 POLICY_ACTION_META_BY_NAME = {
@@ -196,10 +208,14 @@ POLICY_ACTION_META_BY_NAME = {
     "fireball-hp": (RL_POLICY_ACTION_RYU_FIREBALL, RL_POLICY_SUB_HP),
     "ryu-fireball": (RL_POLICY_ACTION_RYU_FIREBALL, RL_POLICY_SUB_LP),
     "tatsu": (RL_POLICY_ACTION_RYU_TATSU, RL_POLICY_SUB_LK),
-    "tatsu-mk": (RL_POLICY_ACTION_RYU_TATSU, RL_POLICY_SUB_MK),
     "shoryuken": (RL_POLICY_ACTION_RYU_SHORYUKEN, RL_POLICY_SUB_HP),
-    "shoryuken-mp": (RL_POLICY_ACTION_RYU_SHORYUKEN, RL_POLICY_SUB_MP),
 }
+POLICY_ACTION_META_BY_NAME.update(
+    {action: (RL_POLICY_ACTION_RYU_SHORYUKEN, sub_action) for action, _, sub_action in SHORYUKEN_ACTIONS}
+)
+POLICY_ACTION_META_BY_NAME.update(
+    {action: (RL_POLICY_ACTION_RYU_TATSU, sub_action) for action, _, sub_action in TATSU_ACTIONS}
+)
 POLICY_ACTION_META_BY_NAME.update(
     {f"stand-{name}": (RL_POLICY_ACTION_STAND_NORMAL, sub_action) for name, _, sub_action in RL_POLICY_BUTTONS}
 )
@@ -368,6 +384,8 @@ def canonical_tabular_action_name(policy: str) -> str | None:
         "guard": "guard-stand",
         "hp": "stand-hp",
         "ryu-fireball": "fireball",
+        "shoryuken": "shoryuken-hp",
+        "tatsu": "tatsu-lk",
     }.get(policy)
 
 
@@ -1875,14 +1893,6 @@ def scripted_sequence(policy: str) -> tuple[int, ...] | None:
             RL_MOVE_NEUTRAL,
             RL_MOVE_NEUTRAL,
         ),
-        "tatsu-mk": (
-            RL_MOVE_DOWN,
-            RL_MOVE_DOWN_BACK,
-            RL_MOVE_BACK,
-            RL_MOVE_BACK | BTN_MK,
-            RL_MOVE_NEUTRAL,
-            RL_MOVE_NEUTRAL,
-        ),
         "shoryuken": (
             RL_MOVE_FORWARD,
             RL_MOVE_DOWN,
@@ -1891,14 +1901,28 @@ def scripted_sequence(policy: str) -> tuple[int, ...] | None:
             RL_MOVE_NEUTRAL,
             RL_MOVE_NEUTRAL,
         ),
-        "shoryuken-mp": (
-            RL_MOVE_FORWARD,
-            RL_MOVE_DOWN,
-            RL_MOVE_DOWN_FORWARD,
-            RL_MOVE_DOWN_FORWARD | BTN_MP,
-            RL_MOVE_NEUTRAL,
-            RL_MOVE_NEUTRAL,
-        ),
+        **{
+            action: (
+                RL_MOVE_DOWN,
+                RL_MOVE_DOWN_BACK,
+                RL_MOVE_BACK,
+                RL_MOVE_BACK | wire,
+                RL_MOVE_NEUTRAL,
+                RL_MOVE_NEUTRAL,
+            )
+            for action, wire, _ in TATSU_ACTIONS
+        },
+        **{
+            action: (
+                RL_MOVE_FORWARD,
+                RL_MOVE_DOWN,
+                RL_MOVE_DOWN_FORWARD,
+                RL_MOVE_DOWN_FORWARD | wire,
+                RL_MOVE_NEUTRAL,
+                RL_MOVE_NEUTRAL,
+            )
+            for action, wire, _ in SHORYUKEN_ACTIONS
+        },
     }
     return scripts.get(policy)
 

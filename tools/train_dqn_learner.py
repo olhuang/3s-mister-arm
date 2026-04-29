@@ -81,7 +81,7 @@ class GreedyDiagnostics:
 
 NON_ATTACK_ACTIONS = frozenset({"forward", "back", "guard-stand", "guard-crouch"})
 ATTACK_RISK_ACTIONS = frozenset(action for action in rl.TABULAR_ACTION_NAMES if action not in NON_ATTACK_ACTIONS)
-SHORYUKEN_ACTION = "shoryuken-mp"
+SHORYUKEN_ACTIONS = frozenset({"shoryuken-lp", "shoryuken-mp", "shoryuken-hp"})
 JUMP_ATTACK_RISK_ACTIONS = frozenset(action for action in rl.TABULAR_ACTION_NAMES if action.startswith("jump-"))
 REWARD_RISK_PROFILES = ("none", "shoryuken-only", "all-attacks")
 DEMO_ATTRIBUTION_TRAINING_MODES = ("off", "augment", "replace-demo", "prefer-demo-action")
@@ -491,7 +491,7 @@ def reward_risk_cost(
         return 0.0
 
     apply_attack_cost = config.profile == "all-attacks" and action_name in ATTACK_RISK_ACTIONS
-    apply_shoryuken_cost = action_name == SHORYUKEN_ACTION and config.profile in {"shoryuken-only", "all-attacks"}
+    apply_shoryuken_cost = action_name in SHORYUKEN_ACTIONS and config.profile in {"shoryuken-only", "all-attacks"}
     apply_jump_attack_cost = config.profile == "all-attacks" and action_name in JUMP_ATTACK_RISK_ACTIONS
     if not apply_attack_cost and not apply_shoryuken_cost and not apply_jump_attack_cost:
         return 0.0
@@ -1393,7 +1393,7 @@ def main() -> None:
         default="none",
         help=(
             "Optional no-damage action cost profile: none=HP-delta baseline, "
-            "shoryuken-only=only Shoryuken extra costs, all-attacks=generic attack costs plus Shoryuken extra costs"
+            "shoryuken-only=only Shoryuken variant extra costs, all-attacks=generic attack costs plus Shoryuken extra costs"
         ),
     )
     parser.add_argument(
@@ -1423,13 +1423,13 @@ def main() -> None:
         "--reward-shoryuken-no-damage-extra-cost",
         type=float,
         default=1.0,
-        help="Positive raw reward cost subtracted from no-damage shoryuken-mp in shoryuken-only/all-attacks profiles",
+        help="Positive raw reward cost subtracted from no-damage Shoryuken variants in shoryuken-only/all-attacks profiles",
     )
     parser.add_argument(
         "--reward-shoryuken-punished-extra-cost",
         type=float,
         default=4.0,
-        help="Additional positive raw reward cost when no-damage shoryuken-mp is followed by self HP damage",
+        help="Additional positive raw reward cost when a no-damage Shoryuken variant is followed by self HP damage",
     )
     parser.add_argument(
         "--reward-jump-attack-no-damage-extra-cost",

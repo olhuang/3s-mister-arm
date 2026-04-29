@@ -353,7 +353,7 @@ def read_transition_rows(paths: list[str], limit: int) -> list[dict[str, object]
     rows: list[dict[str, object]] = []
     for path in paths:
         with open(path, "r", encoding="utf-8") as stream:
-            for line in stream:
+            for line_no, line in enumerate(stream, start=1):
                 if limit > 0 and len(rows) >= limit:
                     return rows
                 line = line.strip()
@@ -363,7 +363,10 @@ def read_transition_rows(paths: list[str], limit: int) -> list[dict[str, object]
                     raw_row = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                replay_row = rl.learner_replay_row(raw_row)
+                try:
+                    replay_row = rl.learner_replay_row(raw_row)
+                except ValueError as exc:
+                    raise SystemExit(f"{path}:{line_no}: {exc}") from exc
                 if replay_row is not None:
                     rows.append(replay_row)
     return rows
@@ -404,7 +407,9 @@ def int_field(row: dict[str, object], name: str) -> int:
 
 
 def is_action_start(row: dict[str, object]) -> bool:
-    return int_field(row, "executed_policy_action_step") == 0
+    if is_demo_row(row):
+        return int_field(row, "input_action_step") == 0
+    return int_field(row, "policy_executed_action_step") == 0
 
 
 def is_demo_row(row: dict[str, object]) -> bool:
@@ -726,7 +731,7 @@ def add_demo_attribution_experience(
         return False
 
     stats.event_rows += 1
-    action_name = rl.demo_attributed_action_name(row)
+    action_name = rl.engine_attributed_action_name(row)
     if action_name is None or action_name not in action_to_index:
         stats.excluded_events += 1
         return False
@@ -1559,10 +1564,10 @@ def main() -> None:
         choices=DEMO_ATTRIBUTION_TRAINING_MODES,
         default="off",
         help=(
-            "Optional engine-attributed demo training: off=use input/executed action rows, "
-            "augment=add extra demo_attributed_* experiences, replace-demo=use demo_attributed_* "
-            "instead of input/executed rows for demo sources, prefer-demo-action=use demo_attributed_* "
-            "only for rows with an attributed move and keep input/executed rows for other demo rows"
+            "Optional engine-attributed demo training: off=use normal selected action rows, "
+            "augment=add extra engine-attributed experiences, replace-demo=use engine-attributed "
+            "experiences instead of input rows for demo sources, prefer-demo-action=use engine-attributed "
+            "rows only when present and keep input rows for other demo rows"
         ),
     )
     parser.add_argument(
@@ -1611,8 +1616,8 @@ def main() -> None:
         choices=TRAINING_ACTION_SOURCES,
         default="auto",
         help=(
-            "Action label source for normal DQN replay rows. auto keeps legacy behavior for old logs, "
-            "uses engine/input labels for schema-v2 demo rows, and policy labels for schema-v2 remote rows"
+            "Action label source for normal DQN replay rows. auto uses engine/input labels for "
+            "schema-v3 demo rows and policy labels for schema-v3 remote rows"
         ),
     )
     parser.add_argument("--target-sync-steps", type=int, default=200, help="Steps between target-network syncs")

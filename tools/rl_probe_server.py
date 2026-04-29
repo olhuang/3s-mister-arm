@@ -167,6 +167,7 @@ MODEL_POLICY_CHOICES = (
 POLICY_CHOICES = SCRIPTED_POLICY_CHOICES + MODEL_POLICY_CHOICES
 GUARD_MACRO_DECISION_STEPS = 6
 DEMO_EXECUTION_SOURCES = frozenset({4, 5})
+TRANSITION_SCHEMA_VERSION = 3
 TRAINING_ACTION_SOURCES = ("auto", "policy", "input", "engine", "prefer-engine")
 
 TABULAR_ACTION_NAMES = (
@@ -1035,23 +1036,6 @@ def tabular_action_name(action_wire: int) -> str | None:
     return TABULAR_ACTION_NAMES_BY_WIRE.get(action_wire & 0xFFFF)
 
 
-def transition_action_name(row: dict[str, object]) -> str | None:
-    try:
-        action_id = int(row.get("executed_policy_action_id", 0) or 0)
-        sub_action_id = int(row.get("executed_policy_sub_action_id", 0) or 0)
-    except (TypeError, ValueError):
-        action_id = 0
-        sub_action_id = 0
-    action_name = TABULAR_ACTION_NAMES_BY_POLICY_META.get((action_id, sub_action_id))
-    if action_name is not None:
-        return action_name
-    try:
-        action_wire = int(row.get("executed_action_wire", 0) or 0)
-    except (TypeError, ValueError):
-        action_wire = 0
-    return tabular_action_name(action_wire)
-
-
 def row_int_field(row: dict[str, object], name: str) -> int:
     try:
         return int(row.get(name, 0) or 0)
@@ -1059,8 +1043,14 @@ def row_int_field(row: dict[str, object], name: str) -> int:
         return 0
 
 
-def is_schema_v2_transition_row(row: dict[str, object]) -> bool:
-    return row_int_field(row, "transition_schema_version") >= 2
+def is_schema_v3_transition_row(row: dict[str, object]) -> bool:
+    return row_int_field(row, "transition_schema_version") == TRANSITION_SCHEMA_VERSION
+
+
+def require_transition_schema_v3(row: dict[str, object], context: str = "transition row") -> None:
+    version = row_int_field(row, "transition_schema_version")
+    if version != TRANSITION_SCHEMA_VERSION:
+        raise ValueError(f"{context}: transition_schema_version={version} expected={TRANSITION_SCHEMA_VERSION}")
 
 
 def is_demo_transition_row(row: dict[str, object]) -> bool:
@@ -1087,22 +1077,13 @@ def demo_attribution_present(row: dict[str, object]) -> bool:
         row_int_field(row, "engine_label_source") != 0
         or row_int_field(row, "engine_action_id") != 0
         or row_int_field(row, "engine_sub_action_id") != 0
-        or row_int_field(row, "demo_attribution_source") != 0
-        or row_int_field(row, "demo_attributed_policy_action_id") != 0
-        or row_int_field(row, "demo_attributed_policy_sub_action_id") != 0
     )
 
 
-def demo_attributed_action_name(row: dict[str, object]) -> str | None:
-    action_name = action_name_from_policy_meta(
+def engine_attributed_action_name(row: dict[str, object]) -> str | None:
+    return action_name_from_policy_meta(
         row_int_field(row, "engine_action_id"),
         row_int_field(row, "engine_sub_action_id"),
-    )
-    if action_name is not None:
-        return action_name
-    return action_name_from_policy_meta(
-        row_int_field(row, "demo_attributed_policy_action_id"),
-        row_int_field(row, "demo_attributed_policy_sub_action_id"),
     )
 
 
@@ -1117,27 +1098,19 @@ def action_selection_from_fields(
     return ActionSelection(action_name, row_int_field(row, step_field), source)
 
 
-def legacy_action_selection(row: dict[str, object]) -> ActionSelection:
-    return ActionSelection(transition_action_name(row), row_int_field(row, "executed_policy_action_step"), "legacy")
-
-
 def engine_action_selection(row: dict[str, object]) -> ActionSelection:
     action_name = action_name_from_policy_meta(
         row_int_field(row, "engine_action_id"),
         row_int_field(row, "engine_sub_action_id"),
     )
-    if action_name is not None:
-        return ActionSelection(action_name, 0, "engine")
-    action_name = demo_attributed_action_name(row)
-    return ActionSelection(action_name, 0, "engine-legacy" if action_name is not None else "none")
+    return ActionSelection(action_name, 0, "engine" if action_name is not None else "none")
 
 
 def select_training_action(row: dict[str, object], source_mode: str = "auto") -> ActionSelection:
     if source_mode not in TRAINING_ACTION_SOURCES:
         raise ValueError(f"unknown training action source: {source_mode}")
 
-    schema_v2 = is_schema_v2_transition_row(row)
-    legacy = legacy_action_selection(row)
+    require_transition_schema_v3(row)
     policy = action_selection_from_fields(
         row,
         "policy_executed_action_id",
@@ -1155,11 +1128,9 @@ def select_training_action(row: dict[str, object], source_mode: str = "auto") ->
     engine = engine_action_selection(row)
 
     if source_mode == "policy":
-        return policy if policy.name is not None else (legacy if not schema_v2 else ActionSelection(None, 0, "none"))
+        return policy if policy.name is not None else ActionSelection(None, 0, "none")
     if source_mode == "input":
-        return input_selection if input_selection.name is not None else (
-            legacy if not schema_v2 else ActionSelection(None, 0, "none")
-        )
+        return input_selection if input_selection.name is not None else ActionSelection(None, 0, "none")
     if source_mode == "engine":
         return engine
     if source_mode == "prefer-engine":
@@ -1169,19 +1140,17 @@ def select_training_action(row: dict[str, object], source_mode: str = "auto") ->
             return input_selection
         if policy.name is not None:
             return policy
-        return legacy if not schema_v2 else ActionSelection(None, 0, "none")
-
-    if schema_v2:
-        if is_demo_transition_row(row):
-            if engine.name is not None:
-                return engine
-            if input_selection.name is not None:
-                return input_selection
-            return ActionSelection(None, 0, "none")
-        if policy.name is not None:
-            return policy
         return ActionSelection(None, 0, "none")
-    return legacy
+
+    if is_demo_transition_row(row):
+        if engine.name is not None:
+            return engine
+        if input_selection.name is not None:
+            return input_selection
+        return ActionSelection(None, 0, "none")
+    if policy.name is not None:
+        return policy
+    return ActionSelection(None, 0, "none")
 
 
 def tabular_training_reward(row: dict[str, object]) -> float:
@@ -1265,7 +1234,11 @@ class TabularPolicyLearner:
         return self._fallback_policy
 
     def update(self, row: dict[str, object]) -> str | None:
-        action_name = transition_action_name(row)
+        try:
+            action_selection = select_training_action(row, "auto")
+        except ValueError:
+            return None
+        action_name = action_selection.name
         reward = tabular_training_reward(row)
         if action_name is None or action_name not in self._actions:
             with self._lock:
@@ -1355,23 +1328,18 @@ class TabularPolicyLearner:
 
 
 def learner_replay_row(row: dict[str, object]) -> dict[str, object] | None:
+    require_transition_schema_v3(row, "learner replay row")
     return {
         "run_id": int(row.get("run_id", 0) or 0),
         "episode_id": int(row.get("episode_id", 0) or 0),
         "decision_id": int(row.get("decision_id", 0) or 0),
         "round_num": int(row.get("round_num", 0) or 0),
         "obs_frame": int(row.get("obs_frame", 0) or 0),
-        "transition_schema_version": int(row.get("transition_schema_version", 1) or 1),
+        "transition_schema_version": int(row.get("transition_schema_version", 0) or 0),
         "agent_character_id": int(row.get("agent_character_id", 0) or 0),
         "opponent_character_id": int(row.get("opponent_character_id", 0) or 0),
         "requested_action_wire": int(row.get("requested_action_wire", 0) or 0),
-        "requested_policy_action_id": int(row.get("requested_policy_action_id", 0) or 0),
-        "requested_policy_sub_action_id": int(row.get("requested_policy_sub_action_id", 0) or 0),
-        "requested_policy_action_step": int(row.get("requested_policy_action_step", 0) or 0),
         "executed_action_wire": int(row.get("executed_action_wire", 0) or 0),
-        "executed_policy_action_id": int(row.get("executed_policy_action_id", 0) or 0),
-        "executed_policy_sub_action_id": int(row.get("executed_policy_sub_action_id", 0) or 0),
-        "executed_policy_action_step": int(row.get("executed_policy_action_step", 0) or 0),
         "policy_requested_action_id": int(row.get("policy_requested_action_id", 0) or 0),
         "policy_requested_sub_action_id": int(row.get("policy_requested_sub_action_id", 0) or 0),
         "policy_requested_action_step": int(row.get("policy_requested_action_step", 0) or 0),
@@ -1390,13 +1358,6 @@ def learner_replay_row(row: dict[str, object]) -> dict[str, object] | None:
         "engine_current_attack": int(row.get("engine_current_attack", 0) or 0),
         "engine_label_source": int(row.get("engine_label_source", 0) or 0),
         "engine_lag_frames": int(row.get("engine_lag_frames", 0) or 0),
-        "demo_attributed_policy_action_id": int(row.get("demo_attributed_policy_action_id", 0) or 0),
-        "demo_attributed_policy_sub_action_id": int(row.get("demo_attributed_policy_sub_action_id", 0) or 0),
-        "demo_attributed_routine2": int(row.get("demo_attributed_routine2", 0) or 0),
-        "demo_attributed_kind_of_waza": int(row.get("demo_attributed_kind_of_waza", 0) or 0),
-        "demo_attributed_current_attack": int(row.get("demo_attributed_current_attack", 0) or 0),
-        "demo_attribution_source": int(row.get("demo_attribution_source", 0) or 0),
-        "demo_attribution_lag_frames": int(row.get("demo_attribution_lag_frames", 0) or 0),
         "delta_self_hp": int(row.get("delta_self_hp", 0) or 0),
         "delta_opp_hp": int(row.get("delta_opp_hp", 0) or 0),
         "delta_self_stun": int(row.get("delta_self_stun", 0) or 0),
@@ -1716,7 +1677,11 @@ class LearnerLogTailer(threading.Thread):
         if replay_key in self._seen_keys:
             return
 
-        replay_row = learner_replay_row(row)
+        try:
+            replay_row = learner_replay_row(row)
+        except ValueError:
+            self._skipped_unexecuted += 1
+            return
         if replay_row is None:
             self._skipped_unexecuted += 1
             return

@@ -17,7 +17,6 @@ from rl_probe_server import (
     TABULAR_ACTION_NAMES_BY_POLICY_META,
     bucket_range,
     tabular_training_reward,
-    transition_action_name,
 )
 
 
@@ -248,7 +247,7 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=10,
         help=(
-            "For demo_attributed move starts, sum HP deltas over this many following decision rows "
+            "For engine-attributed demo move starts, sum HP deltas over this many following decision rows "
             "within the same episode; default: %(default)s"
         ),
     )
@@ -265,8 +264,8 @@ def parse_args() -> argparse.Namespace:
         choices=rl.TRAINING_ACTION_SOURCES,
         default="auto",
         help=(
-            "Canonical action label source for DIRECT/CREDITED tables. auto keeps legacy behavior for old logs, "
-            "uses engine/input labels for schema-v2 demo rows, and policy labels for schema-v2 remote rows."
+            "Canonical action label source for DIRECT/CREDITED tables. auto uses engine/input labels "
+            "for schema-v3 demo rows and policy labels for schema-v3 remote rows."
         ),
     )
     return parser.parse_args()
@@ -419,8 +418,8 @@ def demo_attribution_present(row: dict[str, object]) -> bool:
     return rl.demo_attribution_present(row)
 
 
-def demo_attributed_action_name(row: dict[str, object]) -> str:
-    return rl.demo_attributed_action_name(row) or "neutral"
+def engine_attributed_action_name(row: dict[str, object]) -> str:
+    return rl.engine_attributed_action_name(row) or "neutral"
 
 
 def format_demo_stats(key: tuple[str, ...], stats: DemoAttributionStats) -> str:
@@ -515,12 +514,12 @@ def analyze_demo_attribution(rows: list[dict[str, object]], args: argparse.Names
                 continue
 
             event_rows += 1
-            action = demo_attributed_action_name(row)
+            action = engine_attributed_action_name(row)
             bucket = dx_bucket(row)
-            r2 = int_field(row, "engine_routine_2") or int_field(row, "demo_attributed_routine2")
-            kw = int_field(row, "engine_kind_of_waza") or int_field(row, "demo_attributed_kind_of_waza")
-            source = int_field(row, "engine_label_source") or int_field(row, "demo_attribution_source")
-            lag = int_field(row, "engine_lag_frames") or int_field(row, "demo_attribution_lag_frames")
+            r2 = int_field(row, "engine_routine_2")
+            kw = int_field(row, "engine_kind_of_waza")
+            source = int_field(row, "engine_label_source")
+            lag = int_field(row, "engine_lag_frames")
             source_counts[source] += 1
             lag_counts[lag] += 1
 
@@ -543,15 +542,8 @@ def analyze_demo_attribution(rows: list[dict[str, object]], args: argparse.Names
                 table.setdefault(key, DemoAttributionStats()).add(opp_hp, self_hp, lag, window_rows)
 
             input_action = rl.select_training_action(row, "input").name
-            if input_action is None and not rl.is_schema_v2_transition_row(row):
-                input_action = transition_action_name(row)
-            if input_action is None:
-                input_action = policy_meta_name(
-                    int_field(row, "executed_policy_action_id"),
-                    int_field(row, "executed_policy_sub_action_id"),
-                )
             if input_action != action:
-                mismatch_counts[(input_action, action)] += 1
+                mismatch_counts[(input_action or "none", action)] += 1
 
     print(
         f"\nDEMO_ATTRIBUTION_SUMMARY window_decisions={window_decisions} "
@@ -562,9 +554,9 @@ def analyze_demo_attribution(rows: list[dict[str, object]], args: argparse.Names
         return
     print("  source_counts=" + ",".join(f"{source}:{count}" for source, count in sorted(source_counts.items())))
     print("  lag_frames=" + ",".join(f"{lag}:{count}" for lag, count in sorted(lag_counts.items())))
-    print_demo_table("DEMO_ATTRIBUTED_BY_ACTION_WINDOW", by_action, args.limit)
-    print_demo_table("DEMO_ATTRIBUTED_BY_ACTION_DX_WINDOW", by_action_dx, args.limit)
-    print_demo_table("DEMO_ATTRIBUTED_BY_R2_KW_WINDOW", by_r2_kw, args.limit)
+    print_demo_table("ENGINE_ATTRIBUTED_BY_ACTION_WINDOW", by_action, args.limit)
+    print_demo_table("ENGINE_ATTRIBUTED_BY_ACTION_DX_WINDOW", by_action_dx, args.limit)
+    print_demo_table("ENGINE_ATTRIBUTED_BY_R2_KW_WINDOW", by_r2_kw, args.limit)
 
     print("\nDEMO_ATTRIBUTION_INPUT_TO_ENGINE_MISMATCH")
     if not mismatch_counts:
@@ -623,7 +615,10 @@ def main() -> int:
         if not isinstance(row, dict):
             skipped_json += 1
             continue
-        replay_row = rl.learner_replay_row(row)
+        try:
+            replay_row = rl.learner_replay_row(row)
+        except ValueError as exc:
+            raise SystemExit(f"{path}:{row_index}: {exc}") from exc
         if replay_row is None:
             skipped_json += 1
             continue

@@ -1307,7 +1307,7 @@ In v1, `action_wire` means:
 - the already-expanded executable frame of the high-level policy action
 - no implicit absolute `LEFT` / `RIGHT` `SWKey` unless an explicit absolute-action compatibility mode is negotiated
 
-In action schema v2, `policy_action_id`, `policy_sub_action_id`, and
+In the action-packet schema, `policy_action_id`, `policy_sub_action_id`, and
 `policy_action_step` are attribution fields produced by the remote adapter. They
 do not ask MiSTer to expand a macro; they let transition logs distinguish
 semantic actions such as `guard`, `fireball`, `throw`, and `jump-forward-mk`
@@ -2467,12 +2467,12 @@ Tasks:
 - [x] Consume HP deltas claimed by engine-attributed demo experiences so delayed projectile credit does not also reward unrelated later input-based rows
 - [x] Add focus-action DQN comparison diagnostics so any specified action group can be inspected by rank, blocker action, and threat/distance bucket
 - [x] Tighten demo guard labels and DQN guard bonus semantics so crouch/back intent is not automatically treated as successful guard without threat or contact evidence
-- [ ] Implement transition schema v2 rollout from `docs/rl-policy-action-taxonomy.md#transition-schema-v2-rollout-plan`
-- [x] Add C-side NDJSON export for `transition_schema_version=2` plus separate `policy_*`, `input_*`, and `engine_*` action identity fields while preserving legacy fields
-- [x] Update Python replay ingestion to preserve v2 fields and keep legacy fallback for old logs
-- [x] Add DQN `--training-action-source auto|policy|input|engine|prefer-engine`
-- [x] Add analyzer / compare source breakdown for canonical action labels (`policy`, `input`, `engine`, `legacy`, `none`)
-- [ ] Validate schema v2 with a short mixed remote + CPU-demo log before long-run retraining
+- [x] Implement strict transition schema v3 rollout from `docs/rl-policy-action-taxonomy.md#transition-schema-v3-rollout-plan`
+- [x] Remove legacy transition action fields from C-side NDJSON export and bump `transition_schema_version` to `3`
+- [x] Update Python replay ingestion to require schema v3 and remove schema 1/2 fallback
+- [x] Keep DQN `--training-action-source auto|policy|input|engine|prefer-engine`
+- [x] Update analyzer / compare source breakdown for strict v3 canonical action labels (`policy`, `input`, `engine`, `none`)
+- [ ] Validate schema v3 with fresh CPU-demo and human-demo logs before long-run retraining
 - [ ] Define how replay-buffer import mixes human-demo episodes with remote-agent episodes, including metadata such as data source, control mode, and player side
 - [ ] Add character curriculum
 - [ ] Add stage curriculum
@@ -2513,7 +2513,11 @@ Implementation notes:
     - `guard-stand`: six consecutive relative `back` decision replies, roughly an 18-frame stand-guard window with the current `decision_interval=3` / `action_hold=3` timing
     - `guard-crouch`: six consecutive relative `down-back` decision replies, roughly an 18-frame crouch-guard window with the same timing
   - the legacy scripted `guard` policy remains an alias for stand guard, but new learner action attribution should use `guard-stand` or `guard-crouch`
-  - action schema v2 adds `requested_policy_action_id`, `requested_policy_sub_action_id`, `requested_policy_action_step`, `executed_policy_action_id`, `executed_policy_sub_action_id`, and `executed_policy_action_step` to transition rows; current tabular/DQN learners prefer these fields and fall back to old `executed_action_wire` when reading older logs
+  - transition schema v3 requires `transition_schema_version = 3` and uses only non-overlapping action-label families:
+    - `policy_*`: remote RL/DQN/tabular policy request and execution
+    - `input_*`: human-demo / CPU-demo input-derived labels such as walk, back, guard intent, and simple normals
+    - `engine_*`: engine-observed move-start labels from validated `R1/R2/KW/AK` attribution
+  - schema v3 intentionally removed the old `requested_policy_*`, `executed_policy_*`, and `demo_attributed_*` compatibility fields; Python replay/training/analyzer tools now reject schema 1/2 logs instead of guessing legacy semantics
   - tabular inference now locks multi-step scripted actions such as `fireball-lp` until the full input sequence has been emitted, preventing later q-table decisions from interrupting QCF+LP before the projectile can come out
   - jump attacks now use direction-specific policy action IDs:
     - `jump-forward-lp`, `jump-forward-mp`, `jump-forward-hp`, `jump-forward-lk`, `jump-forward-mk`, and `jump-forward-hk`: `jump_attack_forward` / button strength
@@ -2537,7 +2541,7 @@ Implementation notes:
     - `fireball-lp`: `down-back -> down -> down-forward -> forward+LP -> neutral -> neutral`
     - `fireball-mp`: `down-back -> down -> down-forward -> forward+MP -> neutral -> neutral`
     - `fireball-hp`: `down-back -> down -> down-forward -> forward+HP -> neutral -> neutral`
-    - CPU-demo `demo_attributed_*` rows now keep `fireball-lp`, `fireball-mp`, and `fireball-hp` as distinct DQN actions when those names are present in the training action set
+    - CPU-demo `engine_*` rows now keep `fireball-lp`, `fireball-mp`, and `fireball-hp` as distinct DQN actions when those names are present in the training action set
     - the LP sequence remains the anti-DP default for the legacy `fireball` / `ryu-fireball` aliases; model manifests and CLI action subsets canonicalize those names to `fireball-lp`
   - `rl-control-source = human-demo` records human-controlled agent-side input as transition rows without overwriting `p1sw_buff` / `p2sw_buff`:
     - the selected `rl-player` side stays human-controlled while the opponent routing still follows `rl-opponent-mode`
@@ -2553,17 +2557,18 @@ Implementation notes:
     - with `rl-network = on`, the UDP handshake and transition-batch upload path remain available, but OBS/action request packets are not emitted
     - the same demo mapper labels walk/guard/stand-normal/crouch-normal/jump-attack/throw metadata from the CPU-resolved input
     - Ryu demo rows also include engine-attributed move metadata when the game starts an attack routine:
-      - `demo_attributed_policy_action_id`
-      - `demo_attributed_policy_sub_action_id`
-      - `demo_attributed_routine2`
-      - `demo_attributed_kind_of_waza`
-      - `demo_attributed_current_attack`
-      - `demo_attribution_source`
-      - `demo_attribution_lag_frames`
-      - the original `requested_*` / `executed_*` policy fields remain input-based; `demo_attributed_*` is the engine-observed actual move, useful for CPU-demo/human-demo labels and accidental-command checks
+      - `engine_action_id`
+      - `engine_sub_action_id`
+      - `engine_routine_1`
+      - `engine_routine_2`
+      - `engine_kind_of_waza`
+      - `engine_current_attack`
+      - `engine_label_source`
+      - `engine_lag_frames`
+      - `input_*` remains the input-derived label; `engine_*` is the engine-observed actual move, useful for CPU-demo/human-demo labels and accidental-command checks
       - first-pass attribution is Ryu-specific: specials/throws use `character_id + routine_no[2] + kind_of_waza`, while normal attacks use `current_attack` / normal `kind_of_waza` with a best-effort action class from the sampled input state
       - the reusable expansion method is documented in `docs/rl-policy-action-taxonomy.md#engine-move-attribution-method`: add another character by matching source command slot -> engine `R2` dispatch -> observed `R2/KW/AK/RS` overlay values before promoting the decoder to runtime
-      - `tools/analyze_rl_transitions.py` can now delayed-credit `demo_attributed_*` move starts over a configurable future decision window:
+      - `tools/analyze_rl_transitions.py` can now delayed-credit `engine_*` move starts over a configurable future decision window:
         - `--demo-attribution-window-decisions N` sums later `delta_opp_hp` / `delta_self_hp` inside the same episode to classify each attributed move as hit, whiff/no-damage, punished, or trade
         - `--demo-attribution-stop-at-next-event` optionally prevents overlapping windows, but the default keeps overlap allowed because projectiles can hit after the next input
         - this is analysis / reward-shaping logic, not C-side transition truth
@@ -2587,9 +2592,9 @@ Implementation notes:
   - can optionally train from engine-attributed demo move starts instead of input-only demo labels:
     - `--demo-attribution-training-mode off|augment|replace-demo|prefer-demo-action`
     - `off` is the default and keeps the existing DQN replay behavior unchanged
-    - `augment` adds extra `demo_attributed_*` experiences while retaining the normal input-based row experiences
-    - `replace-demo` uses `demo_attributed_*` event rows in place of normal input-based experiences for `human-demo` / `cpu-demo` sources, while non-demo rows still use the normal path
-    - `prefer-demo-action` uses `demo_attributed_*` event rows in place of input-based experiences only when a demo row has an attributed engine move; unattributed demo rows still keep their normal input-based experiences, preserving walk / guard examples
+    - `augment` adds extra `engine_*` experiences while retaining the normal input-based row experiences
+    - `replace-demo` uses `engine_*` event rows in place of normal input-based experiences for `human-demo` / `cpu-demo` sources, while non-demo rows still use the normal path
+    - `prefer-demo-action` uses `engine_*` event rows in place of input-based experiences only when a demo row has an attributed engine move; unattributed demo rows still keep their normal input-based experiences, preserving walk / guard examples
     - `--demo-attribution-window-decisions N` sums later `delta_opp_hp` / `delta_self_hp` in the same episode to give each attributed move a delayed outcome reward
     - `--demo-attribution-action-windows action=N,...` reserves per-action delayed-credit tuning while preserving a global default window
     - `--demo-attribution-stop-at-next-event` can prevent overlapping windows when projectile-delayed credit is not desired

@@ -56,14 +56,17 @@ def read_rows(paths: list[str], limit: int, tail_rows: int) -> list[dict[str, ob
     raw_rows: list[dict[str, object]] = []
     for path in paths:
         with open(path, "r", encoding="utf-8") as stream:
-            for line in stream:
+            for line_no, line in enumerate(stream, start=1):
                 if not line.strip():
                     continue
                 try:
                     row = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                replay_row = rl.learner_replay_row(row)
+                try:
+                    replay_row = rl.learner_replay_row(row)
+                except ValueError as exc:
+                    raise SystemExit(f"{path}:{line_no}: {exc}") from exc
                 if replay_row is not None:
                     raw_rows.append(replay_row)
     if tail_rows > 0:
@@ -292,8 +295,8 @@ def main() -> int:
         choices=rl.TRAINING_ACTION_SOURCES,
         default="auto",
         help=(
-            "Canonical log action label source to summarize before model evaluation. auto keeps legacy behavior "
-            "for old logs, uses engine/input labels for schema-v2 demo rows, and policy labels for schema-v2 remote rows."
+            "Canonical log action label source to summarize before model evaluation. auto uses engine/input "
+            "labels for schema-v3 demo rows and policy labels for schema-v3 remote rows."
         ),
     )
     parser.add_argument(

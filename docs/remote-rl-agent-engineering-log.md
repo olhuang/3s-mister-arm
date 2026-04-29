@@ -2,6 +2,70 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-29: Strict Transition Schema V3 Cleanup
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / transition action-label cleanup
+
+Files changed:
+- `src/rl/rl_session.c`
+- `tools/rl_probe_server.py`
+- `tools/train_dqn_learner.py`
+- `tools/analyze_rl_transitions.py`
+- `tools/compare_dqn_models.py`
+- `docs/rl-policy-action-taxonomy.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- remove legacy transition action-label fields now that old transition logs have been cleared.
+- make schema v3 rows carry only the explicit `policy_*`, `input_*`, and `engine_*` action-label families.
+- make Python replay/training/analyzer tools fail fast on schema 1/2 instead of guessing legacy semantics.
+
+Implementation notes:
+- C-side transition export now stamps `transition_schema_version=3`.
+- C-side NDJSON no longer emits:
+  - `requested_policy_action_id`
+  - `requested_policy_sub_action_id`
+  - `requested_policy_action_step`
+  - `executed_policy_action_id`
+  - `executed_policy_sub_action_id`
+  - `executed_policy_action_step`
+  - `demo_attributed_policy_action_id`
+  - `demo_attributed_policy_sub_action_id`
+  - `demo_attributed_routine2`
+  - `demo_attributed_kind_of_waza`
+  - `demo_attributed_current_attack`
+  - `demo_attribution_source`
+  - `demo_attribution_lag_frames`
+- demo engine attribution now writes only `engine_*`; demo input labels continue to use `input_*`; remote RL policy rows continue to use `policy_*`.
+- `tools/rl_probe_server.py` now defines `TRANSITION_SCHEMA_VERSION = 3`, requires schema v3 in replay normalization and action selection, and no longer has legacy action/wire fallback paths.
+- `tools/train_dqn_learner.py` action-start gating now uses `input_action_step` for demo rows and `policy_executed_action_step` for remote rows.
+- analyzer / compare diagnostics now report strict v3 label sources only (`policy`, `input`, `engine`, `none`).
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py tools/train_dqn_learner.py tools/analyze_rl_transitions.py tools/compare_dqn_models.py` passed.
+- `git diff --check` passed.
+- synthetic v3 analyzer smoke passed:
+  - `python3 tools/analyze_rl_transitions.py /tmp/rl-transitions-schema-v3-smoke.ndjson --training-action-source auto --limit 12`
+  - reported `action_label_source training_action_source=auto counts=none:3,engine:1`.
+- synthetic v3 DQN smoke passed:
+  - `python3 tools/train_dqn_learner.py /tmp/rl-transitions-schema-v3-smoke.ndjson --model-dir /tmp/rl-dqn-schema-v3-smoke --model-version 3 --steps 2 --batch-size 2 --hidden-sizes 8 --actions forward,guard-stand,fireball-lp --fallback-policy stand-mk --training-action-source auto --reward-risk-profile none --demo-attribution-training-mode prefer-demo-action --demo-attribution-window-decisions 15 --log-interval 1 --eval-limit 4 --diagnostic-top-n 5`
+  - reported `demo_attr=prefer-demo-action:1/1`.
+- synthetic v3 compare smoke passed:
+  - `python3 tools/compare_dqn_models.py /tmp/rl-transitions-schema-v3-smoke.ndjson --model SMOKE=/tmp/rl-dqn-schema-v3-smoke --tail-rows 4 --top-n 5 --focus-actions fireball-lp`
+  - reported `LOG_ACTION_SOURCE ... counts=none:3,engine:1`.
+- strict schema rejection passed:
+  - `python3 tools/analyze_rl_transitions.py /tmp/rl-transitions-schema-v2-reject.ndjson`
+  - failed with `transition_schema_version=2 expected=3`.
+- canonical MiSTer telemetry build passed:
+  - `tools/mister/build-game.sh --flavor telemetry`
+
+Follow-up:
+- deploy the new telemetry package and collect fresh schema-v3 `cpu-demo` and `human-demo` logs.
+- verify demo logs have `policy_* == 0`, engine-attributed specials in `engine_*`, and walk/back/guard intent in `input_*`.
+- use only fresh v3 logs for the next long-run DQN retraining pass.
+
 ## 2026-04-29: Transition Schema V2 Analyzer Source Breakdown Step 4
 
 Milestone:

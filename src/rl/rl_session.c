@@ -91,12 +91,6 @@ typedef struct RLDecisionLedgerEntry {
     u32 model_version_executed;
     u16 requested_action_wire;
     u16 executed_action_wire;
-    u16 requested_policy_action_id;
-    u16 requested_policy_sub_action_id;
-    u16 requested_policy_action_step;
-    u16 executed_policy_action_id;
-    u16 executed_policy_sub_action_id;
-    u16 executed_policy_action_step;
     u16 policy_requested_action_id;
     u16 policy_requested_sub_action_id;
     u16 policy_requested_action_step;
@@ -115,13 +109,6 @@ typedef struct RLDecisionLedgerEntry {
     u16 engine_lag_frames;
     u8 engine_kind_of_waza;
     u8 engine_label_source;
-    u16 demo_attributed_policy_action_id;
-    u16 demo_attributed_policy_sub_action_id;
-    u16 demo_attributed_routine2;
-    u16 demo_attributed_current_attack;
-    u16 demo_attribution_lag_frames;
-    u8 demo_attributed_kind_of_waza;
-    u8 demo_attribution_source;
     s16 delta_self_hp;
     s16 delta_opp_hp;
     s16 delta_self_stun;
@@ -245,7 +232,7 @@ static const RLLocalFakeAction kLocalFakeAgentSequence[] = {
 #define RL_POLICY_SUB_ACTION_CROUCH 21u
 #define RL_DEMO_GUARD_THREAT_DX 144
 #define RL_CHARACTER_RYU 2u
-#define RL_TRANSITION_SCHEMA_VERSION 2u
+#define RL_TRANSITION_SCHEMA_VERSION 3u
 #define RL_INPUT_LABEL_SOURCE_NONE 0u
 #define RL_INPUT_LABEL_SOURCE_DEMO_INPUT 1u
 #define RL_DEMO_ATTRIBUTION_NONE 0u
@@ -827,10 +814,10 @@ static u16 RLSession_NormalSubActionFromAttackIdentity(u16 current_attack, u8 ki
 }
 
 static u16 RLSession_ThrowSubActionForAttribution(const RLDecisionLedgerEntry* entry) {
-    if (entry != NULL && entry->executed_policy_action_id == RL_POLICY_ACTION_THROW &&
-        (entry->executed_policy_sub_action_id == RL_POLICY_SUB_ACTION_FORWARD ||
-         entry->executed_policy_sub_action_id == RL_POLICY_SUB_ACTION_BACK)) {
-        return entry->executed_policy_sub_action_id;
+    if (entry != NULL && entry->input_action_id == RL_POLICY_ACTION_THROW &&
+        (entry->input_sub_action_id == RL_POLICY_SUB_ACTION_FORWARD ||
+         entry->input_sub_action_id == RL_POLICY_SUB_ACTION_BACK)) {
+        return entry->input_sub_action_id;
     }
     return RL_POLICY_SUB_ACTION_NONE;
 }
@@ -911,8 +898,8 @@ static bool RLSession_RyuNormalPolicyMetaFromIdentity(const RLDecisionLedgerEntr
         return false;
     }
 
-    if (entry != NULL && RLSession_IsNormalPolicyAction(entry->executed_policy_action_id)) {
-        *action_id = entry->executed_policy_action_id;
+    if (entry != NULL && RLSession_IsNormalPolicyAction(entry->input_action_id)) {
+        *action_id = entry->input_action_id;
         *sub_action_id = sub;
         return true;
     }
@@ -935,7 +922,7 @@ static void RLSession_MaybeAttributeDemoEngineAction(RLDecisionLedgerEntry* entr
     u32 lag_frames = 0;
 
     if (entry == NULL || obs == NULL || !RLSession_IsDemoExecutionSource(entry->execution_source) ||
-        entry->demo_attribution_source != RL_DEMO_ATTRIBUTION_NONE || entry->agent_character_id != RL_CHARACTER_RYU) {
+        entry->engine_label_source != RL_DEMO_ATTRIBUTION_NONE || entry->agent_character_id != RL_CHARACTER_RYU) {
         return;
     }
 
@@ -953,13 +940,6 @@ static void RLSession_MaybeAttributeDemoEngineAction(RLDecisionLedgerEntry* entr
     if (remote_debug.frame_id >= entry->obs_frame) {
         lag_frames = remote_debug.frame_id - entry->obs_frame;
     }
-    entry->demo_attributed_policy_action_id = action_id;
-    entry->demo_attributed_policy_sub_action_id = sub_action_id;
-    entry->demo_attributed_routine2 = obs->self_routine[2];
-    entry->demo_attributed_current_attack = obs->self_current_attack;
-    entry->demo_attributed_kind_of_waza = obs->self_kind_of_waza;
-    entry->demo_attribution_source = source;
-    entry->demo_attribution_lag_frames = (u16)(lag_frames > 65535u ? 65535u : lag_frames);
     entry->engine_action_id = action_id;
     entry->engine_sub_action_id = sub_action_id;
     entry->engine_routine_1 = obs->self_routine[1];
@@ -1257,12 +1237,6 @@ static int RLSession_FormatTransitionLogLine(const RLDecisionLedgerEntry* entry,
                         "\"transition_schema_version\":%u,"
                         "\"agent_character_id\":%u,\"opponent_character_id\":%u,"
                         "\"requested_action_wire\":%u,\"executed_action_wire\":%u,"
-                        "\"requested_policy_action_id\":%u,"
-                        "\"requested_policy_sub_action_id\":%u,"
-                        "\"requested_policy_action_step\":%u,"
-                        "\"executed_policy_action_id\":%u,"
-                        "\"executed_policy_sub_action_id\":%u,"
-                        "\"executed_policy_action_step\":%u,"
                         "\"policy_requested_action_id\":%u,"
                         "\"policy_requested_sub_action_id\":%u,"
                         "\"policy_requested_action_step\":%u,"
@@ -1281,13 +1255,6 @@ static int RLSession_FormatTransitionLogLine(const RLDecisionLedgerEntry* entry,
                         "\"engine_current_attack\":%u,"
                         "\"engine_label_source\":%u,"
                         "\"engine_lag_frames\":%u,"
-                        "\"demo_attributed_policy_action_id\":%u,"
-                        "\"demo_attributed_policy_sub_action_id\":%u,"
-                        "\"demo_attributed_routine2\":%u,"
-                        "\"demo_attributed_kind_of_waza\":%u,"
-                        "\"demo_attributed_current_attack\":%u,"
-                        "\"demo_attribution_source\":%u,"
-                        "\"demo_attribution_lag_frames\":%u,"
                         "\"delta_self_hp\":%d,\"delta_opp_hp\":%d,"
                         "\"delta_self_stun\":%d,\"delta_opp_stun\":%d,"
                         "\"delta_self_y\":%d,\"delta_opp_y\":%d,"
@@ -1315,12 +1282,6 @@ static int RLSession_FormatTransitionLogLine(const RLDecisionLedgerEntry* entry,
                         entry->opponent_character_id,
                         entry->requested_action_wire,
                         entry->executed_action_wire,
-                        entry->requested_policy_action_id,
-                        entry->requested_policy_sub_action_id,
-                        entry->requested_policy_action_step,
-                        entry->executed_policy_action_id,
-                        entry->executed_policy_sub_action_id,
-                        entry->executed_policy_action_step,
                         entry->policy_requested_action_id,
                         entry->policy_requested_sub_action_id,
                         entry->policy_requested_action_step,
@@ -1339,13 +1300,6 @@ static int RLSession_FormatTransitionLogLine(const RLDecisionLedgerEntry* entry,
                         entry->engine_current_attack,
                         entry->engine_label_source,
                         entry->engine_lag_frames,
-                        entry->demo_attributed_policy_action_id,
-                        entry->demo_attributed_policy_sub_action_id,
-                        entry->demo_attributed_routine2,
-                        entry->demo_attributed_kind_of_waza,
-                        entry->demo_attributed_current_attack,
-                        entry->demo_attribution_source,
-                        entry->demo_attribution_lag_frames,
                         entry->delta_self_hp,
                         entry->delta_opp_hp,
                         entry->delta_self_stun,
@@ -1884,9 +1838,6 @@ static void RLSession_StartActiveRemoteAction(u32 episode_id,
     if (ledger != NULL) {
         ledger->was_executed = true;
         ledger->executed_action_wire = executed_action_wire;
-        ledger->executed_policy_action_id = policy_action_id;
-        ledger->executed_policy_sub_action_id = policy_sub_action_id;
-        ledger->executed_policy_action_step = policy_action_step;
         if (source == RL_EXECUTION_SOURCE_REMOTE || source == RL_EXECUTION_SOURCE_REPEATED_LAST_ACTION) {
             ledger->policy_executed_action_id = policy_action_id;
             ledger->policy_executed_sub_action_id = policy_sub_action_id;
@@ -2085,12 +2036,6 @@ static void RLSession_RecordDemoInput(s16 agent, u16 sw, RLExecutionSource sourc
     ledger->execution_frame_actual = remote_debug.frame_id;
     ledger->requested_action_wire = action_wire;
     ledger->executed_action_wire = action_wire;
-    ledger->requested_policy_action_id = policy_action_id;
-    ledger->requested_policy_sub_action_id = policy_sub_action_id;
-    ledger->requested_policy_action_step = 0;
-    ledger->executed_policy_action_id = policy_action_id;
-    ledger->executed_policy_sub_action_id = policy_sub_action_id;
-    ledger->executed_policy_action_step = 0;
     ledger->input_action_id = policy_action_id;
     ledger->input_sub_action_id = policy_sub_action_id;
     ledger->input_action_step = 0;
@@ -2193,9 +2138,6 @@ RLRemoteActionSubmitResult RLSession_SubmitRemoteAction(const RLActionPacket* pa
         RLDecisionLedgerEntry* ledger = RLSession_FindLedgerEntry(packet->run_id, packet->episode_id, packet->decision_id);
         if (ledger != NULL) {
             ledger->requested_action_wire = packet->action_wire;
-            ledger->requested_policy_action_id = packet->policy_action_id;
-            ledger->requested_policy_sub_action_id = packet->policy_sub_action_id;
-            ledger->requested_policy_action_step = packet->policy_action_step;
             ledger->policy_requested_action_id = packet->policy_action_id;
             ledger->policy_requested_sub_action_id = packet->policy_sub_action_id;
             ledger->policy_requested_action_step = packet->policy_action_step;

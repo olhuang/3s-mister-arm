@@ -12,7 +12,7 @@ import os
 import random
 import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import rl_probe_server as rl
@@ -25,6 +25,13 @@ class Experience:
     reward: float
     next_state: list[float]
     done: bool
+
+
+@dataclass(frozen=True)
+class ActionSelection:
+    name: str | None
+    step: int
+    source: str
 
 
 @dataclass
@@ -40,6 +47,7 @@ class BuildDiagnostics:
     macro_continuation_uncredited_reward_rows: int = 0
     unrecognized_delayed_rewards: int = 0
     unrecognized_uncredited_reward_rows: int = 0
+    action_source_counts: dict[str, int] = field(default_factory=dict)
 
     def as_metadata(self) -> dict[str, object]:
         return {
@@ -54,6 +62,7 @@ class BuildDiagnostics:
             "macro_continuation_uncredited_reward_rows": self.macro_continuation_uncredited_reward_rows,
             "unrecognized_delayed_rewards": self.unrecognized_delayed_rewards,
             "unrecognized_uncredited_reward_rows": self.unrecognized_uncredited_reward_rows,
+            "action_source_counts": self.action_source_counts,
         }
 
 
@@ -85,6 +94,7 @@ SHORYUKEN_ACTIONS = frozenset({"shoryuken-lp", "shoryuken-mp", "shoryuken-hp"})
 JUMP_ATTACK_RISK_ACTIONS = frozenset(action for action in rl.TABULAR_ACTION_NAMES if action.startswith("jump-"))
 REWARD_RISK_PROFILES = ("none", "shoryuken-only", "all-attacks")
 DEMO_ATTRIBUTION_TRAINING_MODES = ("off", "augment", "replace-demo", "prefer-demo-action")
+TRAINING_ACTION_SOURCES = ("auto", "policy", "input", "engine", "prefer-engine")
 GUARD_ACTIONS = frozenset({"guard-stand", "guard-crouch"})
 MOVEMENT_SPACING_ACTIONS = frozenset({"forward", "back"})
 DEMO_EXECUTION_SOURCES = frozenset({4, 5})
@@ -405,13 +415,20 @@ def is_action_start(row: dict[str, object]) -> bool:
     return int_field(row, "executed_policy_action_step") == 0
 
 
+def is_schema_v2(row: dict[str, object]) -> bool:
+    return int_field(row, "transition_schema_version") >= 2
+
+
 def is_demo_row(row: dict[str, object]) -> bool:
     return int_field(row, "execution_source") in DEMO_EXECUTION_SOURCES
 
 
 def demo_attribution_present(row: dict[str, object]) -> bool:
     return (
-        int_field(row, "demo_attribution_source") != 0
+        int_field(row, "engine_label_source") != 0
+        or int_field(row, "engine_action_id") != 0
+        or int_field(row, "engine_sub_action_id") != 0
+        or int_field(row, "demo_attribution_source") != 0
         or int_field(row, "demo_attributed_policy_action_id") != 0
         or int_field(row, "demo_attributed_policy_sub_action_id") != 0
     )
@@ -421,14 +438,10 @@ def policy_meta_action_name(action_id: int, sub_action_id: int) -> str | None:
     return rl.TABULAR_ACTION_NAMES_BY_POLICY_META.get((action_id, sub_action_id))
 
 
-def demo_attributed_action_name(row: dict[str, object]) -> str | None:
-    action_id = int_field(row, "demo_attributed_policy_action_id")
-    sub_action_id = int_field(row, "demo_attributed_policy_sub_action_id")
+def action_name_from_policy_meta(action_id: int, sub_action_id: int) -> str | None:
     action_name = policy_meta_action_name(action_id, sub_action_id)
     if action_name is not None and action_name in rl.TABULAR_ACTION_NAMES:
         return action_name
-
-    # Fall back to the safest learner alias for older or partially labeled logs.
     if action_id == rl.RL_POLICY_ACTION_RYU_FIREBALL:
         return "fireball-lp"
     if action_id == rl.RL_POLICY_ACTION_RYU_SHORYUKEN:
@@ -438,6 +451,90 @@ def demo_attributed_action_name(row: dict[str, object]) -> str | None:
     if action_id == rl.RL_POLICY_ACTION_THROW:
         return "throw"
     return action_name
+
+
+def demo_attributed_action_name(row: dict[str, object]) -> str | None:
+    action_id = int_field(row, "engine_action_id")
+    sub_action_id = int_field(row, "engine_sub_action_id")
+    action_name = action_name_from_policy_meta(action_id, sub_action_id)
+    if action_name is not None:
+        return action_name
+    return action_name_from_policy_meta(
+        int_field(row, "demo_attributed_policy_action_id"),
+        int_field(row, "demo_attributed_policy_sub_action_id"),
+    )
+
+
+def action_selection_from_fields(
+    row: dict[str, object],
+    action_field: str,
+    sub_action_field: str,
+    step_field: str,
+    source: str,
+) -> ActionSelection:
+    action_name = action_name_from_policy_meta(int_field(row, action_field), int_field(row, sub_action_field))
+    return ActionSelection(action_name, int_field(row, step_field), source)
+
+
+def legacy_action_selection(row: dict[str, object]) -> ActionSelection:
+    return ActionSelection(rl.transition_action_name(row), int_field(row, "executed_policy_action_step"), "legacy")
+
+
+def engine_action_selection(row: dict[str, object]) -> ActionSelection:
+    action_name = action_name_from_policy_meta(int_field(row, "engine_action_id"), int_field(row, "engine_sub_action_id"))
+    if action_name is not None:
+        return ActionSelection(action_name, 0, "engine")
+    action_name = demo_attributed_action_name(row)
+    return ActionSelection(action_name, 0, "engine-legacy" if action_name is not None else "none")
+
+
+def select_training_action(row: dict[str, object], source_mode: str) -> ActionSelection:
+    schema_v2 = is_schema_v2(row)
+    legacy = legacy_action_selection(row)
+    policy = action_selection_from_fields(
+        row,
+        "policy_executed_action_id",
+        "policy_executed_sub_action_id",
+        "policy_executed_action_step",
+        "policy",
+    )
+    input_selection = action_selection_from_fields(
+        row,
+        "input_action_id",
+        "input_sub_action_id",
+        "input_action_step",
+        "input",
+    )
+    engine = engine_action_selection(row)
+
+    if source_mode == "policy":
+        return policy if policy.name is not None else (legacy if not schema_v2 else ActionSelection(None, 0, "none"))
+    if source_mode == "input":
+        return input_selection if input_selection.name is not None else (
+            legacy if not schema_v2 else ActionSelection(None, 0, "none")
+        )
+    if source_mode == "engine":
+        return engine
+    if source_mode == "prefer-engine":
+        if engine.name is not None:
+            return engine
+        if input_selection.name is not None:
+            return input_selection
+        if policy.name is not None:
+            return policy
+        return legacy if not schema_v2 else ActionSelection(None, 0, "none")
+
+    if schema_v2:
+        if is_demo_row(row):
+            if engine.name is not None:
+                return engine
+            if input_selection.name is not None:
+                return input_selection
+            return ActionSelection(None, 0, "none")
+        if policy.name is not None:
+            return policy
+        return ActionSelection(None, 0, "none")
+    return legacy
 
 
 def parse_action_windows(value: str, flag_name: str) -> dict[str, int]:
@@ -833,6 +930,7 @@ def build_experiences(
     rows: list[dict[str, object]],
     actions: tuple[str, ...],
     reward_scale: float,
+    training_action_source: str,
     reward_risk_config: RewardRiskConfig,
     reward_guard_config: RewardGuardConfig,
     reward_spacing_config: RewardSpacingConfig,
@@ -922,8 +1020,12 @@ def build_experiences(
                     action_rewards,
                 )
 
-            action_name = rl.transition_action_name(row)
-            action_start = is_action_start(row)
+            action_selection = select_training_action(row, training_action_source)
+            action_name = action_selection.name
+            action_start = action_selection.step == 0
+            build_stats.action_source_counts[action_selection.source] = (
+                build_stats.action_source_counts.get(action_selection.source, 0) + 1
+            )
             risk_cost = (
                 reward_risk_cost(episode_rows, index, action_name, reward_risk_config, risk_stats)
                 if action_name is not None
@@ -1630,6 +1732,15 @@ def main() -> None:
         default=0.0,
         help="Positive raw reward cost subtracted when a demo-attributed move window includes self HP damage",
     )
+    parser.add_argument(
+        "--training-action-source",
+        choices=TRAINING_ACTION_SOURCES,
+        default="auto",
+        help=(
+            "Action label source for normal DQN replay rows. auto keeps legacy behavior for old logs, "
+            "uses engine/input labels for schema-v2 demo rows, and policy labels for schema-v2 remote rows"
+        ),
+    )
     parser.add_argument("--target-sync-steps", type=int, default=200, help="Steps between target-network syncs")
     parser.add_argument("--epsilon", type=float, default=0.05, help="Exploration probability stamped into the published actor")
     parser.add_argument(
@@ -1678,6 +1789,7 @@ def main() -> None:
         rows,
         actions,
         args.reward_scale,
+        str(args.training_action_source),
         reward_risk_config,
         reward_guard_config,
         reward_spacing_config,
@@ -1729,6 +1841,7 @@ def main() -> None:
         "reward_scale": args.reward_scale,
         "reward_scale_applied_after_risk_cost": True,
         "reward_scale_applied_after_raw_adjustments": True,
+        "training_action_source": str(args.training_action_source),
         "reward_risk_profile": reward_risk_config.profile,
         "reward_risk_window_decisions": reward_risk_config.window_decisions,
         "reward_attack_no_damage_cost": reward_risk_config.attack_no_damage_cost,
@@ -1799,6 +1912,7 @@ def main() -> None:
         f"drop_ep={dropped_initial_episodes}/{dropped_initial_episode_rows} "
         f"experiences={len(experiences)} "
         f"actions={len(actions)} "
+        f"action_source={args.training_action_source} "
         f"risk={reward_risk_config.profile} risk_cost={reward_risk_stats.total_cost:.1f} "
         f"guard_bonus={reward_guard_stats.total_bonus:.1f} "
         f"guard_cost={reward_guard_stats.total_cost:.1f} "
@@ -1819,6 +1933,12 @@ def main() -> None:
         f"excluded_rew={build_stats.excluded_action_reward_sum:.3f} "
         f"top={greedy_diag.top_action}:{greedy_diag.top_action_rate * 100.0:.1f}% "
         f"greedy={format_counts(greedy_diag.counts, greedy_diag.evaluated, args.diagnostic_top_n)}",
+        flush=True,
+    )
+    print(
+        "DQN diagnostics "
+        f"action_source_counts="
+        f"{','.join(f'{key}:{value}' for key, value in sorted(build_stats.action_source_counts.items()))}",
         flush=True,
     )
     print(

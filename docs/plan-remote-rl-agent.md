@@ -2470,7 +2470,7 @@ Tasks:
 - [ ] Implement transition schema v2 rollout from `docs/rl-policy-action-taxonomy.md#transition-schema-v2-rollout-plan`
 - [x] Add C-side NDJSON export for `transition_schema_version=2` plus separate `policy_*`, `input_*`, and `engine_*` action identity fields while preserving legacy fields
 - [x] Update Python replay ingestion to preserve v2 fields and keep legacy fallback for old logs
-- [ ] Add DQN `--training-action-source auto|policy|input|engine|prefer-engine`
+- [x] Add DQN `--training-action-source auto|policy|input|engine|prefer-engine`
 - [ ] Add analyzer / compare source breakdown for canonical action labels (`policy`, `input`, `engine`, `skipped`)
 - [ ] Validate schema v2 with a short mixed remote + CPU-demo log before long-run retraining
 - [ ] Define how replay-buffer import mixes human-demo episodes with remote-agent episodes, including metadata such as data source, control mode, and player side

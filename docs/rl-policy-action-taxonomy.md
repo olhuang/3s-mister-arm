@@ -80,9 +80,9 @@ Current runtime identity fields:
 
 ### Transition Schema V2 Rollout Plan
 
-Status: rollout started. Step 1 C-side NDJSON export and step 2 Python replay
-ingestion are implemented; training defaults are still legacy-first until the
-later rollout steps below are implemented and validated.
+Status: rollout started. Step 1 C-side NDJSON export, step 2 Python replay
+ingestion, and step 3 DQN action-source selection are implemented. Analyzer /
+compare source breakdown and mixed-log validation are still pending.
 
 The goal of transition schema v2 is to stop overloading one action-id pair for
 three different meanings:
@@ -137,15 +137,15 @@ Rollout steps:
    - Older logs without `transition_schema_version` continue to parse through
      the legacy fields.
 
-3. Add an explicit DQN/training action source selector.
+3. Add an explicit DQN/training action source selector. Done as of 2026-04-29.
    - Proposed CLI:
      `--training-action-source auto|policy|input|engine|prefer-engine`.
    - Default `auto` behavior:
      - demo row with `engine_*`: train engine action.
      - demo row without `engine_*` but with `input_*`: train input action.
      - remote row with `policy_executed_*`: train policy action.
-     - otherwise skip / neutral fallback, depending on the existing learner
-       path.
+     - older schema-v1 rows keep legacy action-label behavior unless a specific
+       source such as `engine` or `prefer-engine` is requested.
 
 4. Add analyzer and compare diagnostics for label-source breakdown.
    - Report counts for `source=policy`, `source=input`, `source=engine`, and

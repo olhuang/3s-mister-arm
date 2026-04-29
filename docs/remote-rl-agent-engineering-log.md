@@ -2,6 +2,45 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-29: Transition Schema V2 DQN Action Source Step 3
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / transition action-label cleanup
+
+Files changed:
+- `tools/train_dqn_learner.py`
+- `docs/rl-policy-action-taxonomy.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- let offline DQN replay choose the action-label source explicitly after schema-v2 rows split policy, input, and engine identities.
+- keep default behavior compatible with old schema-v1 logs while enabling schema-v2 logs to use cleaner demo and remote labels.
+
+Implementation notes:
+- added `--training-action-source auto|policy|input|engine|prefer-engine`.
+- default `auto` behavior:
+  - schema-v2 demo row: use `engine_*` when present, otherwise `input_*`.
+  - schema-v2 non-demo row: use `policy_executed_*`.
+  - schema-v1 row: keep legacy `executed_policy_*` / wire fallback behavior.
+- explicit `engine` can train from v2 `engine_*` and falls back to legacy `demo_attributed_*` for older logs.
+- explicit `prefer-engine` uses engine first, then input, then policy, with schema-v1 legacy fallback.
+- demo-attribution delayed-credit logic now treats v2 `engine_*` attribution as present and uses it before legacy `demo_attributed_*`.
+- DQN metadata and stdout now include `training_action_source` and `action_source_counts`.
+
+Validation:
+- `python3 -m py_compile tools/train_dqn_learner.py` passed.
+- targeted selector smoke passed:
+  - schema-v2 demo row with engine/input/policy labels selected `fireball-hp` under `auto`, `guard-crouch` under `input`, and `stand-mp` under `policy`.
+  - schema-v1 row selected legacy `guard-crouch` under `auto`.
+- schema-v2 `build_experiences()` smoke passed and produced `action_source_counts={'engine': 1, 'policy': 1}` for a two-row mixed demo/remote sample.
+- one-step DQN smoke on `logs/rl-transitions-cpu-demo-r12-v1-4-3-3.ndjson` passed with `--training-action-source auto`; because this is a schema-v1 log, diagnostics correctly printed `action_source_counts=legacy:200`.
+- `git diff --check` passed.
+
+Follow-up:
+- update analyzer / compare tools to report label-source breakdown.
+- collect a fresh schema-v2 mixed remote + CPU-demo log after deploying the new C-side build, then validate source counts before long-run retraining.
+
 ## 2026-04-29: Transition Schema V2 Python Replay Ingestion Step 2
 
 Milestone:

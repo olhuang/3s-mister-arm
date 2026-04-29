@@ -15,6 +15,7 @@ DX_BUCKETS = ("close", "mid", "far")
 NON_ATTACK_ACTIONS = frozenset({"forward", "back", "guard-stand", "guard-crouch"})
 ATTACK_ACTIONS = frozenset(action for action in rl.TABULAR_ACTION_NAMES if action not in NON_ATTACK_ACTIONS)
 SHORYUKEN_ACTIONS = frozenset(action for action in rl.TABULAR_ACTION_NAMES if action.startswith("shoryuken-"))
+THREAT_DX_BUCKETS = ("atk0_close", "atk0_mid", "atk0_far", "atk1_close", "atk1_mid", "atk1_far")
 
 
 def model_path(value: str) -> Path:
@@ -82,16 +83,41 @@ def threat_dx_bucket(row: dict[str, object]) -> str:
 
 
 def greedy_action(model: dict[str, object], row: dict[str, object]) -> tuple[str, float]:
+    ranked = ranked_actions(model, row)
+    if not ranked:
+        return "none", 0.0
+    return ranked[0]
+
+
+def ranked_actions(model: dict[str, object], row: dict[str, object]) -> list[tuple[str, float]]:
     actions = [str(action) for action in model.get("actions", [])]
     dqn_model = model.get("dqn")
     if not isinstance(dqn_model, dict) or not actions:
-        return "none", 0.0
+        return []
     values = rl.dqn_predict_values(dqn_model, row)
     if not values:
-        return "none", 0.0
+        return []
     count = min(len(actions), len(values))
-    best_index = max(range(count), key=lambda index: (float(values[index]), actions[index]))
-    return actions[best_index], float(values[best_index])
+    ranked = sorted(range(count), key=lambda index: (float(values[index]), actions[index]), reverse=True)
+    return [(actions[index], float(values[index])) for index in ranked]
+
+
+def parse_focus_actions(value: str) -> tuple[str, ...]:
+    actions: list[str] = []
+    invalid: list[str] = []
+    for raw_item in value.split(","):
+        raw_action = raw_item.strip()
+        if not raw_action:
+            continue
+        action = rl.canonical_tabular_action_name(raw_action)
+        if action is None:
+            invalid.append(raw_action)
+            continue
+        if action not in actions:
+            actions.append(action)
+    if invalid:
+        raise SystemExit(f"Unknown focus action(s): {','.join(invalid)}")
+    return tuple(actions)
 
 
 def format_counts(counts: collections.Counter[str], total: int, limit: int) -> str:
@@ -115,6 +141,109 @@ def format_selected_q(counts: collections.Counter[str], q_sum: collections.Count
     return ",".join(parts) if parts else "none"
 
 
+def format_rank_counts(counts: collections.Counter[str], total: int) -> str:
+    labels = ("top1", "top2", "top3", "top4plus")
+    parts: list[str] = []
+    for label in labels:
+        count = counts.get(label, 0)
+        pct = 100.0 * count / max(1, total)
+        parts.append(f"{label}:{count}/{pct:.1f}%")
+    return " ".join(parts)
+
+
+def rank_label(rank: int) -> str:
+    if rank <= 1:
+        return "top1"
+    if rank == 2:
+        return "top2"
+    if rank == 3:
+        return "top3"
+    return "top4plus"
+
+
+def percentile(values: list[float], pct: float) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    index = int(round((len(ordered) - 1) * max(0.0, min(1.0, pct))))
+    return ordered[index]
+
+
+def print_focus_diagnostics(
+    label: str,
+    model: dict[str, object],
+    rows: list[dict[str, object]],
+    focus_actions: tuple[str, ...],
+    focus_rank_limit: int,
+    top_n: int,
+) -> None:
+    model_actions = {str(action) for action in model.get("actions", [])}
+    available_actions = tuple(action for action in focus_actions if action in model_actions)
+    missing_actions = tuple(action for action in focus_actions if action not in model_actions)
+    if not focus_actions:
+        return
+    if not available_actions:
+        print(f"  focus {','.join(focus_actions)} missing_in_model={','.join(missing_actions) or 'none'}")
+        return
+
+    rank_counts: collections.Counter[str] = collections.Counter()
+    focus_action_counts: collections.Counter[str] = collections.Counter()
+    blocked_by_topn: collections.Counter[str] = collections.Counter()
+    bucket_rank_counts: dict[str, collections.Counter[str]] = collections.defaultdict(collections.Counter)
+    bucket_focus_counts: dict[str, collections.Counter[str]] = collections.defaultdict(collections.Counter)
+    bucket_blocked_by: dict[str, collections.Counter[str]] = collections.defaultdict(collections.Counter)
+    q_gaps: list[float] = []
+
+    for row in rows:
+        ranked = ranked_actions(model, row)
+        if not ranked:
+            continue
+        top_action, top_value = ranked[0]
+        focus_ranked = [
+            (rank, action, value)
+            for rank, (action, value) in enumerate(ranked, start=1)
+            if action in available_actions
+        ]
+        if not focus_ranked:
+            continue
+        best_focus_rank, best_focus_action, best_focus_value = min(
+            focus_ranked,
+            key=lambda item: (item[0], -item[2], item[1]),
+        )
+        label_name = rank_label(best_focus_rank)
+        bucket = threat_dx_bucket(row)
+        rank_counts[label_name] += 1
+        focus_action_counts[best_focus_action] += 1
+        bucket_rank_counts[bucket][label_name] += 1
+        q_gaps.append(top_value - best_focus_value)
+        if best_focus_rank <= focus_rank_limit:
+            bucket_focus_counts[bucket][best_focus_action] += 1
+            if best_focus_rank > 1:
+                blocked_by_topn[top_action] += 1
+                bucket_blocked_by[bucket][top_action] += 1
+
+    total = sum(rank_counts.values())
+    q_gap_mean = sum(q_gaps) / len(q_gaps) if q_gaps else 0.0
+    missing_text = f" missing_in_model={','.join(missing_actions)}" if missing_actions else ""
+    print(f"  focus {','.join(available_actions)}{missing_text}")
+    print(f"    rank {format_rank_counts(rank_counts, total)}")
+    print(f"    best_focus {format_counts(focus_action_counts, max(1, total), max(1, top_n))}")
+    print(
+        f"    blocked_by_top{focus_rank_limit} "
+        f"{format_counts(blocked_by_topn, max(1, sum(blocked_by_topn.values())), max(1, top_n))}"
+    )
+    print(f"    q_gap mean:{q_gap_mean:.3f} p90:{percentile(q_gaps, 0.90):.3f}")
+    for bucket in THREAT_DX_BUCKETS:
+        bucket_total = sum(bucket_rank_counts[bucket].values())
+        if bucket_total <= 0:
+            continue
+        print(
+            f"    {bucket:<10} rank {format_rank_counts(bucket_rank_counts[bucket], bucket_total)} "
+            f"top{focus_rank_limit}_focus={format_counts(bucket_focus_counts[bucket], bucket_total, max(1, top_n))} "
+            f"blocked_by={format_counts(bucket_blocked_by[bucket], max(1, sum(bucket_blocked_by[bucket].values())), max(1, top_n))}"
+        )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("transition_logs", nargs="+", help="Transition NDJSON logs used as evaluation observations")
@@ -128,6 +257,20 @@ def main() -> int:
     parser.add_argument("--tail-rows", type=int, default=0, help="Evaluate only the last N rows across all logs")
     parser.add_argument("--top-n", type=int, default=8, help="Top actions to print per distribution")
     parser.add_argument(
+        "--focus-actions",
+        default="",
+        help=(
+            "Comma-separated actions to inspect by rank, e.g. "
+            "fireball-lp,fireball-mp,fireball-hp or shoryuken-lp,shoryuken-mp,shoryuken-hp"
+        ),
+    )
+    parser.add_argument(
+        "--focus-rank-limit",
+        type=int,
+        default=3,
+        help="Rank threshold used for focus top-N and blocker diagnostics",
+    )
+    parser.add_argument(
         "--collapse-warning-threshold",
         type=float,
         default=0.70,
@@ -139,6 +282,7 @@ def main() -> int:
     rows = read_rows(args.transition_logs, max(0, args.limit), max(0, args.tail_rows))
     if not rows:
         raise SystemExit("No evaluation rows loaded")
+    focus_actions = parse_focus_actions(args.focus_actions)
 
     choices_by_label: dict[str, list[str]] = {}
     first_label = models[0][0]
@@ -174,9 +318,17 @@ def main() -> int:
         )
         print(f"  overall {format_counts(counts, len(rows), max(1, args.top_n))}")
         print(f"  selected_q_mean {format_selected_q(counts, q_sum, max(1, args.top_n))}")
-        for bucket in ("atk0_close", "atk0_mid", "atk0_far", "atk1_close", "atk1_mid", "atk1_far"):
+        for bucket in THREAT_DX_BUCKETS:
             bucket_counts = by_threat_dx.get(bucket, collections.Counter())
             print(f"  {bucket:<10} {format_counts(bucket_counts, sum(bucket_counts.values()), max(1, args.top_n))}")
+        print_focus_diagnostics(
+            label,
+            model,
+            rows,
+            focus_actions,
+            max(1, args.focus_rank_limit),
+            max(1, args.top_n),
+        )
 
     baseline_choices = choices_by_label[first_label]
     for label, choices in choices_by_label.items():

@@ -2465,6 +2465,7 @@ Tasks:
 - [x] Add `prefer-demo-action` DQN replay mode so engine-attributed demo attacks replace input labels without discarding unattributed guard / walk demo rows
 - [x] Stop engine-attributed demo delayed-credit windows at the first self/opponent HP delta, while still using per-action window settings as maximum tracking lengths
 - [x] Consume HP deltas claimed by engine-attributed demo experiences so delayed projectile credit does not also reward unrelated later input-based rows
+- [x] Add focus-action DQN comparison diagnostics so any specified action group can be inspected by rank, blocker action, and threat/distance bucket
 - [ ] Define how replay-buffer import mixes human-demo episodes with remote-agent episodes, including metadata such as data source, control mode, and player side
 - [ ] Add character curriculum
 - [ ] Add stage curriculum

@@ -2,6 +2,37 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-29: Add Focus-Action DQN Compare Diagnostics
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / offline DQN policy diagnosis
+
+Files changed:
+- `tools/compare_dqn_models.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- make the DQN comparison tool inspect any caller-specified action group instead of hard-coding Hadouken / fireball analysis.
+- answer whether an action is absent because it is truly low-value or because it is near top-1 but consistently blocked by another action.
+
+Implementation notes:
+- added `--focus-actions`, a comma-separated list of canonical tabular/DQN action names.
+- added `--focus-rank-limit`, defaulting to `3`, for top-N blocker diagnostics.
+- focus output reports:
+  - rank distribution: `top1`, `top2`, `top3`, `top4plus`.
+  - best focus action counts.
+  - actions that block the focus group when the focus action is inside the selected top-N but not top-1.
+  - mean and p90 Q gap between the selected top action and the best focus action.
+  - the same breakdown inside `atk0/atk1 x close/mid/far` threat-distance buckets.
+
+Validation:
+- `python3 -m py_compile tools/compare_dqn_models.py` passed.
+- focus smoke against `logs/rl-transitions-cpu-demo-v1-4-3-3.ndjson` and `model/dqn-cpudemo-allactions-demo-outcome-v2` passed with `--focus-actions fireball-lp,fireball-mp,fireball-hp`.
+
+Follow-up:
+- use this output to compare Hadouken, Shoryuken, Tatsumaki, and selected normal groups before adding replay upsampling or extra action-specific rewards.
+
 ## 2026-04-29: Consume Demo-Claimed HP Deltas During DQN Replay Build
 
 Milestone:

@@ -84,7 +84,7 @@ ATTACK_RISK_ACTIONS = frozenset(action for action in rl.TABULAR_ACTION_NAMES if 
 SHORYUKEN_ACTION = "shoryuken-mp"
 JUMP_ATTACK_RISK_ACTIONS = frozenset(action for action in rl.TABULAR_ACTION_NAMES if action.startswith("jump-"))
 REWARD_RISK_PROFILES = ("none", "shoryuken-only", "all-attacks")
-DEMO_ATTRIBUTION_TRAINING_MODES = ("off", "augment", "replace-demo")
+DEMO_ATTRIBUTION_TRAINING_MODES = ("off", "augment", "replace-demo", "prefer-demo-action")
 GUARD_ACTIONS = frozenset({"guard-stand", "guard-crouch"})
 MOVEMENT_SPACING_ACTIONS = frozenset({"forward", "back"})
 DEMO_EXECUTION_SOURCES = frozenset({4, 5})
@@ -94,6 +94,7 @@ DEMO_EXECUTION_SOURCES = frozenset({4, 5})
 class RewardRiskConfig:
     profile: str
     window_decisions: int
+    action_windows: dict[str, int]
     attack_no_damage_cost: float
     attack_punished_cost: float
     shoryuken_no_damage_extra_cost: float
@@ -431,7 +432,7 @@ def demo_attributed_action_name(row: dict[str, object]) -> str | None:
     return action_name
 
 
-def parse_demo_attribution_action_windows(value: str) -> dict[str, int]:
+def parse_action_windows(value: str, flag_name: str) -> dict[str, int]:
     windows: dict[str, int] = {}
     if not value.strip():
         return windows
@@ -441,10 +442,10 @@ def parse_demo_attribution_action_windows(value: str) -> dict[str, int]:
         if not item:
             continue
         if "=" not in item:
-            raise SystemExit(f"Invalid --demo-attribution-action-windows item: {item!r}; expected action=N")
+            raise SystemExit(f"Invalid {flag_name} item: {item!r}; expected action=N")
         action, raw_window = (part.strip() for part in item.split("=", 1))
         if action not in valid:
-            raise SystemExit(f"Unknown action in --demo-attribution-action-windows: {action}")
+            raise SystemExit(f"Unknown action in {flag_name}: {action}")
         try:
             window = int(raw_window)
         except ValueError as exc:
@@ -495,7 +496,8 @@ def reward_risk_cost(
     if not apply_attack_cost and not apply_shoryuken_cost and not apply_jump_attack_cost:
         return 0.0
 
-    window_end = min(len(episode_rows), row_index + max(0, config.window_decisions) + 1)
+    window_length = config.action_windows.get(action_name, config.window_decisions)
+    window_end = min(len(episode_rows), row_index + max(0, window_length) + 1)
     lookahead = episode_rows[row_index:window_end]
     if any(is_terminal_win(row) for row in lookahead):
         return 0.0
@@ -845,6 +847,26 @@ def build_experiences(
         last_exp_index: int | None = None
         for index, row in enumerate(episode_rows):
             if demo_attribution_config.training_mode != "off":
+                if (
+                    demo_attribution_config.training_mode == "prefer-demo-action"
+                    and is_demo_row(row)
+                    and demo_attribution_present(row)
+                ):
+                    set_experience_next_state(experiences, last_exp_index, row, bool(row.get("done", False)))
+                    last_exp_index = None
+                    add_demo_attribution_experience(
+                        episode_rows,
+                        index,
+                        actions,
+                        action_to_index,
+                        reward_scale,
+                        demo_attribution_config,
+                        demo_attribution_stats,
+                        experiences,
+                        action_counts,
+                        action_rewards,
+                    )
+                    continue
                 if demo_attribution_config.training_mode == "replace-demo" and is_demo_row(row):
                     set_experience_next_state(experiences, last_exp_index, row, bool(row.get("done", False)))
                     last_exp_index = None
@@ -972,6 +994,7 @@ def reward_risk_config_from_args(args: argparse.Namespace) -> RewardRiskConfig:
     return RewardRiskConfig(
         profile=str(args.reward_risk_profile),
         window_decisions=max(0, int(args.reward_risk_window_decisions)),
+        action_windows=parse_action_windows(str(args.reward_risk_action_windows), "--reward-risk-action-windows"),
         attack_no_damage_cost=max(0.0, float(args.reward_attack_no_damage_cost)),
         attack_punished_cost=max(0.0, float(args.reward_attack_punished_cost)),
         shoryuken_no_damage_extra_cost=max(0.0, float(args.reward_shoryuken_no_damage_extra_cost)),
@@ -1018,7 +1041,7 @@ def demo_attribution_config_from_args(args: argparse.Namespace) -> DemoAttributi
     return DemoAttributionConfig(
         training_mode=str(args.demo_attribution_training_mode),
         window_decisions=max(0, int(args.demo_attribution_window_decisions)),
-        action_windows=parse_demo_attribution_action_windows(str(args.demo_attribution_action_windows)),
+        action_windows=parse_action_windows(str(args.demo_attribution_action_windows), "--demo-attribution-action-windows"),
         stop_at_next_event=bool(args.demo_attribution_stop_at_next_event),
         hit_bonus=max(0.0, float(args.demo_attribution_hit_bonus)),
         no_damage_cost=max(0.0, float(args.demo_attribution_no_damage_cost)),
@@ -1380,6 +1403,11 @@ def main() -> None:
         help="Lookahead decisions used to decide whether an action produced no opponent HP damage",
     )
     parser.add_argument(
+        "--reward-risk-action-windows",
+        default="",
+        help="Comma-separated overrides for risk window by action (e.g., fireball=30)",
+    )
+    parser.add_argument(
         "--reward-attack-no-damage-cost",
         type=float,
         default=0.5,
@@ -1521,7 +1549,8 @@ def main() -> None:
         help=(
             "Optional engine-attributed demo training: off=use input/executed action rows, "
             "augment=add extra demo_attributed_* experiences, replace-demo=use demo_attributed_* "
-            "instead of input/executed rows for demo sources"
+            "instead of input/executed rows for demo sources, prefer-demo-action=use demo_attributed_* "
+            "only for rows with an attributed move and keep input/executed rows for other demo rows"
         ),
     )
     parser.add_argument(

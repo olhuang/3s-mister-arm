@@ -2,6 +2,48 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-29: Add Prefer-Demo-Action DQN Replay Mode
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / CPU-demo move-outcome training
+
+Files changed:
+- `tools/train_dqn_learner.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- train CPU-demo / human-demo attacks from engine-attributed `demo_attributed_*` move labels instead of input-based `executed_*` labels when an attributed move is present.
+- preserve unattributed demo rows, such as walk / guard / spacing examples, as normal input-based experiences.
+- support per-action risk windows so projectile and long-animation actions are not forced to use the same no-damage / punished lookahead as quick normals.
+
+Implementation notes:
+- `--demo-attribution-training-mode` now accepts `prefer-demo-action`.
+- `prefer-demo-action` behavior:
+  - demo row with `demo_attributed_*`: close the previous input-based experience, add one engine-attributed demo experience, and skip the row's input-based action experience.
+  - demo row without `demo_attributed_*`: keep the normal input-based replay path.
+  - non-demo row: keep the normal input-based replay path.
+- this differs from:
+  - `augment`, which adds engine-attributed experiences but also keeps the same row's input-based experience.
+  - `replace-demo`, which skips input-based replay for all demo rows, including unattributed walk / guard rows.
+- `--reward-risk-action-windows action=N,...` now overrides `--reward-risk-window-decisions` per action for input-based risk shaping; this pairs with the existing `--demo-attribution-action-windows` for engine-attributed delayed credit.
+
+Validation:
+- `python3 -m py_compile tools/train_dqn_learner.py` passed.
+- prefer-demo-action smoke passed:
+  ```sh
+  python3 tools/train_dqn_learner.py logs/rl-transitions-cpu-demo-v1-4-3-3.ndjson --model-dir /tmp/rl-dqn-prefer-demo-smoke --model-version 1 --limit 5000 --steps 5 --batch-size 8 --hidden-sizes 16 --actions forward,back,guard-stand,guard-crouch,throw,stand-mk,fireball,fireball-mp,fireball-hp,shoryuken-mp,tatsu-mk --demo-attribution-training-mode prefer-demo-action --demo-attribution-window-decisions 15 --demo-attribution-action-windows fireball=45,fireball-mp=45,fireball-hp=45,tatsu-mk=25 --demo-attribution-no-damage-cost 0.5 --demo-attribution-punished-cost 2.0 --log-interval 5 --eval-limit 200 --diagnostic-top-n 8
+  ```
+- smoke output confirmed mixed behavior:
+  - `demo_attr=prefer-demo-action:79/86`
+  - `experiences=1999`
+  - `included=1920`, showing unattributed input-based demo rows were preserved
+  - `action_stats` included attributed specials such as `fireball-hp`, `fireball`, and `tatsu-mk`
+
+Follow-up:
+- train the CPU-demo special-action model with `--demo-attribution-training-mode prefer-demo-action` and compare it against `augment` and `replace-demo`.
+- if Hadouken still remains low, next diagnostics should test a no-throw action subset and fireball-focused data rather than further increasing global shaping.
+
 ## 2026-04-28: Split Ryu Fireball Strength Variants
 
 Milestone:

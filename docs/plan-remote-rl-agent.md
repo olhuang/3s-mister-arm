@@ -2460,6 +2460,7 @@ Tasks:
 - [x] Run move-family validation passes with scripted policies such as `hp`, `throw`, `ryu-fireball`, `tatsu`, and `shoryuken`, then document which attack-outcome fields are trustworthy enough for learner use versus debug-only analysis
 - [x] Add a human-demo recording path so human-vs-CPU play can export learner-ingestible episodes for bootstrapping / behavior-cloning experiments
 - [x] Add a CPU-demo recording path so built-in CPU-vs-CPU play can export learner-ingestible bootstrap episodes
+- [x] Add `prefer-demo-action` DQN replay mode so engine-attributed demo attacks replace input labels without discarding unattributed guard / walk demo rows
 - [ ] Define how replay-buffer import mixes human-demo episodes with remote-agent episodes, including metadata such as data source, control mode, and player side
 - [ ] Add character curriculum
 - [ ] Add stage curriculum
@@ -2566,10 +2567,11 @@ Implementation notes:
 - `tools/train_dqn_learner.py` now supports the first offline DQN/MLP Q learner path:
   - reads transition NDJSON logs and converts rows into `(state, action, reward, next_state, done)` experiences using the same learner-safe HP-delta reward as tabular (`delta_opp_hp - delta_self_hp`)
   - can optionally train from engine-attributed demo move starts instead of input-only demo labels:
-    - `--demo-attribution-training-mode off|augment|replace-demo`
+    - `--demo-attribution-training-mode off|augment|replace-demo|prefer-demo-action`
     - `off` is the default and keeps the existing DQN replay behavior unchanged
     - `augment` adds extra `demo_attributed_*` experiences while retaining the normal input-based row experiences
     - `replace-demo` uses `demo_attributed_*` event rows in place of normal input-based experiences for `human-demo` / `cpu-demo` sources, while non-demo rows still use the normal path
+    - `prefer-demo-action` uses `demo_attributed_*` event rows in place of input-based experiences only when a demo row has an attributed engine move; unattributed demo rows still keep their normal input-based experiences, preserving walk / guard examples
     - `--demo-attribution-window-decisions N` sums later `delta_opp_hp` / `delta_self_hp` in the same episode to give each attributed move a delayed outcome reward
     - `--demo-attribution-action-windows action=N,...` reserves per-action delayed-credit tuning while preserving a global default window
     - `--demo-attribution-stop-at-next-event` can prevent overlapping windows when projectile-delayed credit is not desired
@@ -2580,6 +2582,7 @@ Implementation notes:
     - `--reward-risk-profile shoryuken-only`: applies only Shoryuken no-damage / punished extra costs
     - `--reward-risk-profile all-attacks`: applies generic attack no-damage / punished costs, plus Shoryuken extra costs
   - reward-risk costs use positive `cost` parameters (`--reward-attack-no-damage-cost`, `--reward-attack-punished-cost`, `--reward-shoryuken-no-damage-extra-cost`, `--reward-shoryuken-punished-extra-cost`) and are subtracted before `--reward-scale`, avoiding confusing negative penalty arguments
+  - reward-risk lookahead supports per-action overrides with `--reward-risk-action-windows action=N,...`, so projectile or long-animation actions can use a longer no-damage / punished evaluation window than quick normals
   - jump attacks can receive additional high-commitment risk cost on top of generic attack cost through `--reward-jump-attack-no-damage-extra-cost` and `--reward-jump-attack-punished-extra-cost`; Phase 1 uses this to make `jump-forward-mk` whiffs costlier than ground `stand-mk` / `crouch-mk` whiffs without banning useful jump-ins outright
   - guard reward shaping is available for offline Phase 1 DQN experiments without changing transition schema:
     - `--reward-guard-success-bonus` adds raw reward to `guard-stand` / `guard-crouch` starts when `obs_opp_routine_attack_state=1`, `obs_abs_dx <= --reward-guard-threat-max-dx`, and the guard-success lookahead window has no self HP damage

@@ -144,6 +144,7 @@ class RewardGuardConfig:
     success_bonus: float
     success_window_decisions: int
     threat_max_dx: int
+    success_require_contact: bool
     passive_guard_cost: float
     far_guard_cost: float
 
@@ -561,10 +562,12 @@ def reward_guard_adjustment(
     window_end = min(len(episode_rows), row_index + max(0, config.success_window_decisions) + 1)
     lookahead = episode_rows[row_index:window_end]
     self_damage = sum(int_field(lookahead_row, "delta_self_hp") for lookahead_row in lookahead)
+    guard_contact = any(int_field(lookahead_row, "obs_self_contact_reaction_state") != 0 for lookahead_row in lookahead)
     clean_guard_window = self_damage == 0
+    confirmed_guard_window = clean_guard_window and (guard_contact or not config.success_require_contact)
     adjustment = 0.0
 
-    if config.success_bonus > 0.0 and opponent_attacking and in_threat_range and clean_guard_window:
+    if config.success_bonus > 0.0 and opponent_attacking and in_threat_range and confirmed_guard_window:
         adjustment += config.success_bonus
         stats.success_bonus_events += 1
         stats.success_bonus_total += config.success_bonus
@@ -1032,6 +1035,7 @@ def reward_guard_config_from_args(args: argparse.Namespace) -> RewardGuardConfig
         success_bonus=max(0.0, float(args.reward_guard_success_bonus)),
         success_window_decisions=max(0, int(args.reward_guard_success_window_decisions)),
         threat_max_dx=max(0, int(args.reward_guard_threat_max_dx)),
+        success_require_contact=bool(args.reward_guard_success_require_contact),
         passive_guard_cost=max(0.0, float(args.reward_passive_guard_cost)),
         far_guard_cost=max(0.0, float(args.reward_far_guard_cost)),
     )
@@ -1482,6 +1486,15 @@ def main() -> None:
         help="Lookahead decisions used to decide whether a guard action avoided self HP damage",
     )
     parser.add_argument(
+        "--reward-guard-success-require-contact",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Require obs_self_contact_reaction_state inside the guard-success window before awarding "
+            "the guard success bonus"
+        ),
+    )
+    parser.add_argument(
         "--reward-guard-threat-max-dx",
         type=int,
         default=144,
@@ -1727,6 +1740,7 @@ def main() -> None:
         "reward_risk_stats": reward_risk_stats.as_metadata(),
         "reward_guard_success_bonus": reward_guard_config.success_bonus,
         "reward_guard_success_window_decisions": reward_guard_config.success_window_decisions,
+        "reward_guard_success_require_contact": reward_guard_config.success_require_contact,
         "reward_guard_threat_max_dx": reward_guard_config.threat_max_dx,
         "reward_passive_guard_cost": reward_guard_config.passive_guard_cost,
         "reward_far_guard_cost": reward_guard_config.far_guard_cost,
@@ -1832,6 +1846,7 @@ def main() -> None:
     print(
         "DQN diagnostics "
         f"guard_shape=success:{reward_guard_stats.success_bonus_events}/{reward_guard_stats.success_bonus_total:.1f} "
+        f"require_contact:{int(reward_guard_config.success_require_contact)} "
         f"passive:{reward_guard_stats.passive_guard_cost_events}/{reward_guard_stats.passive_guard_cost_total:.1f} "
         f"far:{reward_guard_stats.far_guard_cost_events}/{reward_guard_stats.far_guard_cost_total:.1f} "
         f"net:{reward_guard_stats.net_adjustment:.1f}",

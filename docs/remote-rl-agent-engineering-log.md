@@ -2,6 +2,46 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-29: Tighten Demo Guard Labels And Guard Bonus
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / CPU-demo guard-label cleanup
+
+Files changed:
+- `src/rl/rl_session.c`
+- `tools/train_dqn_learner.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- stop CPU-demo / human-demo `DOWN_BACK` input from always becoming `guard-crouch`.
+- reduce the false guard samples that made DQN overvalue crouch guard / passive defense.
+- make guard success reward require actual contact evidence by default, not just `opp_attack=1` plus no self damage.
+
+Implementation notes:
+- `RLSession_DeriveDemoPolicyMeta()` now uses stricter demo guard labels:
+  - `BACK` remains `guard-stand` when there is opponent attack threat in range, and can also use engine stand-guard candidate states.
+  - `DOWN_BACK` becomes `guard-crouch` only when there is opponent attack threat in range or engine crouch-guard candidate states.
+  - no-threat `DOWN_BACK` stays neutral/untrained instead of being labeled as guard.
+- engine guard candidate helpers currently use:
+  - stand: `R1=0 && R2 in {27,28,31,32,33}`
+  - crouch: `R1=0 && R2 in {29,31,32,33}`
+- `tools/train_dqn_learner.py` adds `--reward-guard-success-require-contact` / `--no-reward-guard-success-require-contact`.
+  - default is enabled.
+  - when enabled, guard success bonus requires `obs_self_contact_reaction_state` inside the guard window and no self HP damage.
+  - passive / far guard costs remain based on clean no-damage guard windows.
+- diagnostics now print `require_contact:1` in `guard_shape=...`.
+
+Validation:
+- `python3 -m py_compile tools/train_dqn_learner.py` passed.
+- source-level smoke confirmed no-threat `DOWN_BACK` is no longer labeled `guard-crouch`; it remains neutral unless threat or engine guard candidate evidence is present.
+- small DQN smoke passed on `logs/rl-transitions-cpu-demo-r12-v1-4-3-3.ndjson` with guard shaping enabled and printed `require_contact:1`.
+
+Follow-up:
+- rebuild/deploy the telemetry MiSTer binary before collecting the next CPU-demo log; Python-only reruns cannot change C-side demo labels in old logs.
+- collect a fresh CPU-demo R1/R2 log and confirm `guard-crouch` no longer contains a large idle/no-threat bucket.
+- retrain all-actions DQN on the fresh log and compare guard rates plus `--focus-actions fireball-lp,fireball-mp,fireball-hp`.
+
 ## 2026-04-29: Add Focus-Action DQN Compare Diagnostics
 
 Milestone:

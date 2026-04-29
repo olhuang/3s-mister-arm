@@ -642,6 +642,22 @@ static bool RLSession_MoveIntentIsCrouch(u8 move_intent) {
     return move_intent == RL_MOVE_DOWN || move_intent == RL_MOVE_DOWN_BACK || move_intent == RL_MOVE_DOWN_FORWARD;
 }
 
+static bool RLSession_ObservationIsStandGuardCandidate(const RLObservationV1* obs) {
+    if (obs == NULL || !obs->valid || obs->self_routine[1] != 0) {
+        return false;
+    }
+    return obs->self_routine[2] == 27 || obs->self_routine[2] == 28 || obs->self_routine[2] == 31 ||
+           obs->self_routine[2] == 32 || obs->self_routine[2] == 33;
+}
+
+static bool RLSession_ObservationIsCrouchGuardCandidate(const RLObservationV1* obs) {
+    if (obs == NULL || !obs->valid || obs->self_routine[1] != 0) {
+        return false;
+    }
+    return obs->self_routine[2] == 29 || obs->self_routine[2] == 31 || obs->self_routine[2] == 32 ||
+           obs->self_routine[2] == 33;
+}
+
 static void RLSession_DeriveDemoPolicyMeta(u8 move_intent,
                                            u16 attack_bits,
                                            const RLObservationV1* obs,
@@ -696,12 +712,19 @@ static void RLSession_DeriveDemoPolicyMeta(u8 move_intent,
         *policy_sub_action_id = RL_POLICY_SUB_ACTION_FORWARD;
         break;
     case RL_MOVE_BACK:
-        *policy_action_id = threat_guard ? RL_POLICY_ACTION_GUARD : RL_POLICY_ACTION_WALK;
-        *policy_sub_action_id = threat_guard ? RL_POLICY_SUB_ACTION_STAND : RL_POLICY_SUB_ACTION_BACK;
+        if (threat_guard || RLSession_ObservationIsStandGuardCandidate(obs)) {
+            *policy_action_id = RL_POLICY_ACTION_GUARD;
+            *policy_sub_action_id = RL_POLICY_SUB_ACTION_STAND;
+        } else {
+            *policy_action_id = RL_POLICY_ACTION_WALK;
+            *policy_sub_action_id = RL_POLICY_SUB_ACTION_BACK;
+        }
         break;
     case RL_MOVE_DOWN_BACK:
-        *policy_action_id = RL_POLICY_ACTION_GUARD;
-        *policy_sub_action_id = RL_POLICY_SUB_ACTION_CROUCH;
+        if (threat_guard || RLSession_ObservationIsCrouchGuardCandidate(obs)) {
+            *policy_action_id = RL_POLICY_ACTION_GUARD;
+            *policy_sub_action_id = RL_POLICY_SUB_ACTION_CROUCH;
+        }
         break;
     case RL_MOVE_UP_FORWARD:
         *policy_action_id = RL_POLICY_ACTION_JUMP;

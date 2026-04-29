@@ -99,7 +99,12 @@ RL_POLICY_JUMP_DIRECTIONS = (
 )
 STAND_NORMAL_ACTION_NAMES = tuple(f"stand-{button}" for button, _, _ in RL_POLICY_BUTTONS)
 CROUCH_NORMAL_ACTION_NAMES = tuple(f"crouch-{button}" for button, _, _ in RL_POLICY_BUTTONS)
-FIREBALL_ACTION_NAMES = ("fireball", "fireball-mp", "fireball-hp")
+FIREBALL_ACTIONS = (
+    ("fireball-lp", BTN_LP, RL_POLICY_SUB_LP),
+    ("fireball-mp", BTN_MP, RL_POLICY_SUB_MP),
+    ("fireball-hp", BTN_HP, RL_POLICY_SUB_HP),
+)
+FIREBALL_ACTION_NAMES = tuple(action for action, _, _ in FIREBALL_ACTIONS)
 SHORYUKEN_ACTIONS = (
     ("shoryuken-lp", BTN_LP, RL_POLICY_SUB_LP),
     ("shoryuken-mp", BTN_MP, RL_POLICY_SUB_MP),
@@ -146,6 +151,7 @@ SCRIPTED_POLICY_CHOICES = (
     "forward-hp",
     *CROUCH_NORMAL_ACTION_NAMES,
     *FIREBALL_ACTION_NAMES,
+    "fireball",
     "ryu-fireball",
     "throw",
     "tatsu",
@@ -187,11 +193,20 @@ TABULAR_ACTION_WIRES.update({f"crouch-{name}": RL_MOVE_DOWN | wire for name, wir
 TABULAR_ACTION_NAMES_BY_WIRE = {
     wire: name for name, wire in TABULAR_ACTION_WIRES.items() if name != "neutral"
 }
-TABULAR_ACTION_NAMES_BY_WIRE[RL_MOVE_FORWARD | BTN_LP] = "fireball"
+TABULAR_ACTION_NAMES_BY_WIRE[RL_MOVE_FORWARD | BTN_LP] = "fireball-lp"
 TABULAR_ACTION_NAMES_BY_WIRE.update({wire: action for action, wire in JUMP_NORMAL_ACTION_WIRES.items()})
 TABULAR_ACTION_NAMES_BY_WIRE.update({RL_MOVE_DOWN_FORWARD | wire: action for action, wire, _ in SHORYUKEN_ACTIONS})
 TABULAR_ACTION_NAMES_BY_WIRE.update({RL_MOVE_BACK | wire: action for action, wire, _ in TATSU_ACTIONS})
 TABULAR_DEFAULT_ACTIONS = TABULAR_ACTION_NAMES
+
+TABULAR_ACTION_ALIASES = {
+    "guard": "guard-stand",
+    "hp": "stand-hp",
+    "fireball": "fireball-lp",
+    "ryu-fireball": "fireball-lp",
+    "shoryuken": "shoryuken-hp",
+    "tatsu": "tatsu-lk",
+}
 
 POLICY_ACTION_META_BY_NAME = {
     "neutral": (RL_POLICY_ACTION_NEUTRAL, RL_POLICY_SUB_NONE),
@@ -203,6 +218,7 @@ POLICY_ACTION_META_BY_NAME = {
     "hp": (RL_POLICY_ACTION_STAND_NORMAL, RL_POLICY_SUB_HP),
     "forward-hp": (RL_POLICY_ACTION_COMMAND_NORMAL, RL_POLICY_SUB_HP),
     "throw": (RL_POLICY_ACTION_THROW, RL_POLICY_SUB_FORWARD),
+    "fireball-lp": (RL_POLICY_ACTION_RYU_FIREBALL, RL_POLICY_SUB_LP),
     "fireball": (RL_POLICY_ACTION_RYU_FIREBALL, RL_POLICY_SUB_LP),
     "fireball-mp": (RL_POLICY_ACTION_RYU_FIREBALL, RL_POLICY_SUB_MP),
     "fireball-hp": (RL_POLICY_ACTION_RYU_FIREBALL, RL_POLICY_SUB_HP),
@@ -241,7 +257,7 @@ TABULAR_ACTION_NAMES_BY_POLICY_META = {
     (RL_POLICY_ACTION_RYU_SHINKUU_HADOUKEN, RL_POLICY_SUB_NONE): "shinkuu-hadouken",
     (RL_POLICY_ACTION_RYU_DENJIN_HADOUKEN, RL_POLICY_SUB_NONE): "denjin-hadouken",
     (RL_POLICY_ACTION_RYU_SHIN_SHORYUKEN, RL_POLICY_SUB_NONE): "shin-shoryuken",
-    (RL_POLICY_ACTION_RYU_FIREBALL, RL_POLICY_SUB_LP): "fireball",
+    (RL_POLICY_ACTION_RYU_FIREBALL, RL_POLICY_SUB_LP): "fireball-lp",
     (RL_POLICY_ACTION_RYU_FIREBALL, RL_POLICY_SUB_MP): "fireball-mp",
     (RL_POLICY_ACTION_RYU_FIREBALL, RL_POLICY_SUB_HP): "fireball-hp",
     (RL_POLICY_ACTION_RYU_SHORYUKEN, RL_POLICY_SUB_LP): "shoryuken-lp",
@@ -350,8 +366,8 @@ def _coerce_action_names(value: object) -> tuple[str, ...]:
         return TABULAR_DEFAULT_ACTIONS
     actions: list[str] = []
     for item in value:
-        name = str(item)
-        if name in TABULAR_ACTION_NAMES and name not in actions:
+        name = canonical_tabular_action_name(str(item))
+        if name is not None and name not in actions:
             actions.append(name)
     return tuple(actions) or TABULAR_DEFAULT_ACTIONS
 
@@ -362,11 +378,15 @@ def parse_action_names(value: str, *, option_name: str = "--actions") -> tuple[s
     actions: list[str] = []
     invalid: list[str] = []
     for raw_item in value.split(","):
-        action = raw_item.strip()
-        if not action:
+        raw_action = raw_item.strip()
+        if not raw_action:
+            continue
+        action = canonical_tabular_action_name(raw_action)
+        if action is None:
+            invalid.append(raw_action)
             continue
         if action not in TABULAR_ACTION_NAMES:
-            invalid.append(action)
+            invalid.append(raw_action)
             continue
         if action not in actions:
             actions.append(action)
@@ -380,13 +400,7 @@ def parse_action_names(value: str, *, option_name: str = "--actions") -> tuple[s
 def canonical_tabular_action_name(policy: str) -> str | None:
     if policy in TABULAR_ACTION_NAMES:
         return policy
-    return {
-        "guard": "guard-stand",
-        "hp": "stand-hp",
-        "ryu-fireball": "fireball",
-        "shoryuken": "shoryuken-hp",
-        "tatsu": "tatsu-lk",
-    }.get(policy)
+    return TABULAR_ACTION_ALIASES.get(policy)
 
 
 def _coerce_q_table(value: object) -> dict[str, dict[str, float]]:
@@ -398,8 +412,8 @@ def _coerce_q_table(value: object) -> dict[str, dict[str, float]]:
             continue
         clean_scores: dict[str, float] = {}
         for action_name, score in scores.items():
-            action = str(action_name)
-            if action not in TABULAR_ACTION_NAMES:
+            action = canonical_tabular_action_name(str(action_name))
+            if action is None or action not in TABULAR_ACTION_NAMES:
                 continue
             try:
                 clean_scores[action] = float(score)
@@ -419,11 +433,11 @@ def _coerce_q_counts(value: object) -> dict[str, dict[str, int]]:
             continue
         clean_counts: dict[str, int] = {}
         for action_name, count in counts.items():
-            action = str(action_name)
-            if action not in TABULAR_ACTION_NAMES:
+            action = canonical_tabular_action_name(str(action_name))
+            if action is None or action not in TABULAR_ACTION_NAMES:
                 continue
             try:
-                clean_counts[action] = max(0, int(count))
+                clean_counts[action] = clean_counts.get(action, 0) + max(0, int(count))
             except (TypeError, ValueError):
                 continue
         if clean_counts:
@@ -1811,42 +1825,25 @@ def scripted_sequence(policy: str) -> tuple[int, ...] | None:
     if jump_sequence is not None:
         return jump_sequence
 
+    fireball_scripts = {
+        action: (
+            RL_MOVE_DOWN_BACK,
+            RL_MOVE_DOWN,
+            RL_MOVE_DOWN_FORWARD,
+            RL_MOVE_FORWARD | button_wire,
+            RL_MOVE_NEUTRAL,
+            RL_MOVE_NEUTRAL,
+        )
+        for action, button_wire, _ in FIREBALL_ACTIONS
+    }
+    fireball_scripts["fireball"] = fireball_scripts["fireball-lp"]
+    fireball_scripts["ryu-fireball"] = fireball_scripts["fireball-lp"]
+
     scripts = {
         "guard": (RL_MOVE_BACK,) * GUARD_MACRO_DECISION_STEPS,
         "guard-stand": (RL_MOVE_BACK,) * GUARD_MACRO_DECISION_STEPS,
         "guard-crouch": (RL_MOVE_DOWN_BACK,) * GUARD_MACRO_DECISION_STEPS,
-        "fireball": (
-            RL_MOVE_DOWN_BACK,
-            RL_MOVE_DOWN,
-            RL_MOVE_DOWN_FORWARD,
-            RL_MOVE_FORWARD | BTN_LP,
-            RL_MOVE_NEUTRAL,
-            RL_MOVE_NEUTRAL,
-        ),
-        "fireball-mp": (
-            RL_MOVE_DOWN_BACK,
-            RL_MOVE_DOWN,
-            RL_MOVE_DOWN_FORWARD,
-            RL_MOVE_FORWARD | BTN_MP,
-            RL_MOVE_NEUTRAL,
-            RL_MOVE_NEUTRAL,
-        ),
-        "fireball-hp": (
-            RL_MOVE_DOWN_BACK,
-            RL_MOVE_DOWN,
-            RL_MOVE_DOWN_FORWARD,
-            RL_MOVE_FORWARD | BTN_HP,
-            RL_MOVE_NEUTRAL,
-            RL_MOVE_NEUTRAL,
-        ),
-        "ryu-fireball": (
-            RL_MOVE_DOWN_BACK,
-            RL_MOVE_DOWN,
-            RL_MOVE_DOWN_FORWARD,
-            RL_MOVE_FORWARD | BTN_LP,
-            RL_MOVE_NEUTRAL,
-            RL_MOVE_NEUTRAL,
-        ),
+        **fireball_scripts,
         "throw": (
             RL_MOVE_FORWARD | BTN_LP | BTN_LK,
             RL_MOVE_NEUTRAL,

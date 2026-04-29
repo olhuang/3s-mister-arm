@@ -2,6 +2,47 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-29: Rename LP Hadouken Learner Action To Fireball-LP
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / special-move action naming cleanup
+
+Files changed:
+- `tools/rl_probe_server.py`
+- `tools/train_dqn_learner.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- remove the ambiguous legacy learner action name `fireball` from the default tabular/DQN action set.
+- make all Hadouken learner actions strength-explicit: `fireball-lp`, `fireball-mp`, and `fireball-hp`.
+- keep old commands, logs, and model manifests readable by treating `fireball` / `ryu-fireball` as aliases for `fireball-lp`.
+
+Implementation notes:
+- `TABULAR_ACTION_NAMES` now contains `fireball-lp`, `fireball-mp`, and `fireball-hp`; bare `fireball` is no longer a trainable/default action name.
+- `--policy fireball` and `--policy ryu-fireball` remain scripted LP Hadouken aliases for fixed-policy probes.
+- `canonical_tabular_action_name()` maps `fireball` and `ryu-fireball` to `fireball-lp`.
+- model/action coercion now canonicalizes legacy action names in `actions`, q-tables, q-counts, DQN `--actions`, and per-action window flags.
+- transition/demo attribution maps Ryu Hadouken LP metadata `(1229, lp)` to `fireball-lp`; old partial labels fall back to `fireball-lp`.
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py tools/train_dqn_learner.py tools/compare_dqn_models.py tools/analyze_rl_transitions.py` passed.
+- action registry smoke confirmed:
+  - `tabular_count 45`
+  - `fireball-lp` is in `TABULAR_ACTION_NAMES`
+  - bare `fireball` is not in `TABULAR_ACTION_NAMES`
+  - `fireball` and `ryu-fireball` canonicalize to `fireball-lp`
+  - `forward+LP` and `(Ryu Hadouken, lp)` both map to `fireball-lp`
+  - `parse_action_names("fireball,fireball-lp,ryu-fireball,fireball-mp")` dedupes to `("fireball-lp", "fireball-mp")`
+- DQN smoke passed with `fireball-lp`, `fireball-mp`, and `fireball-hp` in `--actions` and per-action demo windows:
+  - `actions=11`
+  - `demo_attr=prefer-demo-action:67/86`
+  - `action_stats` included `fireball-hp`, `fireball-lp`, and `fireball-mp`.
+
+Follow-up:
+- update active CPU-demo training commands to use `fireball-lp` and `fireball-lp=...` windows.
+- keep accepting bare `fireball` only as compatibility input, not as a new model action name.
+
 ## 2026-04-29: Split Ryu Shoryuken And Tatsumaki Strength Variants
 
 Milestone:

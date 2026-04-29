@@ -419,10 +419,9 @@ def demo_attributed_action_name(row: dict[str, object]) -> str | None:
     if action_name is not None and action_name in rl.TABULAR_ACTION_NAMES:
         return action_name
 
-    # The runtime can observe strength variants that are not separate live DQN
-    # macro actions yet. Collapse those families onto the current learner action.
+    # Fall back to the safest learner alias for older or partially labeled logs.
     if action_id == rl.RL_POLICY_ACTION_RYU_FIREBALL:
-        return "fireball"
+        return "fireball-lp"
     if action_id == rl.RL_POLICY_ACTION_RYU_SHORYUKEN:
         return "shoryuken-mp"
     if action_id == rl.RL_POLICY_ACTION_RYU_TATSU:
@@ -436,16 +435,16 @@ def parse_action_windows(value: str, flag_name: str) -> dict[str, int]:
     windows: dict[str, int] = {}
     if not value.strip():
         return windows
-    valid = set(rl.TABULAR_ACTION_NAMES)
     for raw_item in value.split(","):
         item = raw_item.strip()
         if not item:
             continue
         if "=" not in item:
             raise SystemExit(f"Invalid {flag_name} item: {item!r}; expected action=N")
-        action, raw_window = (part.strip() for part in item.split("=", 1))
-        if action not in valid:
-            raise SystemExit(f"Unknown action in {flag_name}: {action}")
+        raw_action, raw_window = (part.strip() for part in item.split("=", 1))
+        action = rl.canonical_tabular_action_name(raw_action)
+        if action is None:
+            raise SystemExit(f"Unknown action in {flag_name}: {raw_action}")
         try:
             window = int(raw_window)
         except ValueError as exc:
@@ -1268,15 +1267,15 @@ def parse_hidden_sizes(value: str) -> list[int]:
 def parse_action_subset(value: str) -> tuple[str, ...]:
     if not value.strip():
         return rl.TABULAR_DEFAULT_ACTIONS
-    valid = set(rl.TABULAR_ACTION_NAMES)
     actions: list[str] = []
     invalid: list[str] = []
     for raw_item in value.split(","):
-        action = raw_item.strip()
-        if not action:
+        raw_action = raw_item.strip()
+        if not raw_action:
             continue
-        if action not in valid:
-            invalid.append(action)
+        action = rl.canonical_tabular_action_name(raw_action)
+        if action is None:
+            invalid.append(raw_action)
             continue
         if action not in actions:
             actions.append(action)
@@ -1405,7 +1404,7 @@ def main() -> None:
     parser.add_argument(
         "--reward-risk-action-windows",
         default="",
-        help="Comma-separated overrides for risk window by action (e.g., fireball=30)",
+        help="Comma-separated overrides for risk window by action (e.g., fireball-lp=30)",
     )
     parser.add_argument(
         "--reward-attack-no-damage-cost",
@@ -1564,7 +1563,7 @@ def main() -> None:
         default="",
         help=(
             "Optional comma-separated per-action delayed-credit windows, e.g. "
-            "fireball=15,throw=8; omitted actions use --demo-attribution-window-decisions"
+            "fireball-lp=15,throw=8; omitted actions use --demo-attribution-window-decisions"
         ),
     )
     parser.add_argument(

@@ -292,6 +292,7 @@ class DemoAttributionStats:
     event_rows: int = 0
     included_events: int = 0
     excluded_events: int = 0
+    early_outcome_events: int = 0
     hit_events: int = 0
     no_damage_events: int = 0
     punished_events: int = 0
@@ -321,6 +322,7 @@ class DemoAttributionStats:
             "event_rows": self.event_rows,
             "included_events": self.included_events,
             "excluded_events": self.excluded_events,
+            "early_outcome_events": self.early_outcome_events,
             "hit_events": self.hit_events,
             "no_damage_events": self.no_damage_events,
             "punished_events": self.punished_events,
@@ -750,6 +752,12 @@ def add_demo_attribution_experience(
         return False
 
     window_end = min(len(episode_rows), row_index + demo_attribution_window_for_action(action_name, config) + 1)
+    for next_index in range(row_index, window_end):
+        window_row = episode_rows[next_index]
+        if int_field(window_row, "delta_opp_hp") > 0 or int_field(window_row, "delta_self_hp") > 0:
+            window_end = next_index + 1
+            stats.early_outcome_events += 1
+            break
     if config.stop_at_next_event:
         for next_index in range(row_index + 1, window_end):
             if demo_attribution_present(episode_rows[next_index]):
@@ -1556,14 +1564,18 @@ def main() -> None:
         "--demo-attribution-window-decisions",
         type=int,
         default=10,
-        help="Global lookahead decisions used to credit delayed HP deltas to demo-attributed move events",
+        help=(
+            "Maximum lookahead decisions used to credit delayed HP deltas to demo-attributed move events; "
+            "the effective window stops early at the first self/opponent HP delta"
+        ),
     )
     parser.add_argument(
         "--demo-attribution-action-windows",
         default="",
         help=(
             "Optional comma-separated per-action delayed-credit windows, e.g. "
-            "fireball-lp=15,throw=8; omitted actions use --demo-attribution-window-decisions"
+            "fireball-lp=15,throw=8; omitted actions use --demo-attribution-window-decisions; "
+            "all windows still stop early at the first self/opponent HP delta"
         ),
     )
     parser.add_argument(
@@ -1837,6 +1849,7 @@ def main() -> None:
         f"events:{demo_attribution_stats.event_rows} "
         f"included:{demo_attribution_stats.included_events} "
         f"excluded:{demo_attribution_stats.excluded_events} "
+        f"early:{demo_attribution_stats.early_outcome_events} "
         f"window:{demo_attribution_config.window_decisions} "
         f"stop_next:{int(demo_attribution_config.stop_at_next_event)} "
         f"hit:{demo_attribution_stats.hit_events} "

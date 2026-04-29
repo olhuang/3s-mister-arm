@@ -2,6 +2,39 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-29: Stop Demo Attribution Windows At First HP Outcome
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / CPU-demo delayed-credit cleanup
+
+Files changed:
+- `tools/train_dqn_learner.py`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- treat `--demo-attribution-window-decisions` and `--demo-attribution-action-windows` as maximum tracking windows.
+- for long-window moves such as Hadouken, stop the effective outcome window at the first self/opponent HP delta, because that means the move was either rewarded by hit/chip or punished by counter-hit.
+- if no HP delta occurs before the configured maximum window, keep the existing no-damage interpretation for whiff / evade / parry-like outcomes.
+
+Implementation notes:
+- `add_demo_attribution_experience()` now scans from the attributed event row to the configured maximum window and cuts `window_end` to the first row with `delta_opp_hp > 0` or `delta_self_hp > 0`.
+- the demo attribution diagnostics now print `early:<count>` and metadata includes `early_outcome_events`.
+- `--demo-attribution-stop-at-next-event` still applies after the first-HP-delta shortening; it can only make the effective window shorter.
+
+Validation:
+- `python3 -m py_compile tools/train_dqn_learner.py` passed.
+- targeted smoke on `logs/rl-transitions-cpu-demo-v1-4-3-3.ndjson`, `run=3`, `episode=15`, `decision=79`:
+  - event is `fireball-lp` (`1229/lp`)
+  - configured action window was `45`
+  - effective outcome window stopped at `decision=96`, the first row with `delta_opp_hp=1`
+  - `early_outcome_events=1`
+  - raw reward remained `+1`, scaled reward `+0.01`
+  - next state for the demo-attributed experience matches decision `96`, not the end of the full 45-decision maximum window.
+
+Follow-up:
+- decide whether to also consume/claim the HP delta so the later input-based row does not simultaneously reward unrelated `guard` / `neutral` actions.
+- evaluate whether fireball chip needs an action-specific contact bonus after duplicate-credit cleanup.
+
 ## 2026-04-29: Rename LP Hadouken Learner Action To Fireball-LP
 
 Milestone:

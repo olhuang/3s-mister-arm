@@ -2,6 +2,38 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-29: Remove Hot-Path Local Transition File Writes
+
+Milestone:
+- Milestone 4: Decision ledger and transition logging / Milestone 6 demo-data collection performance follow-up
+
+Files changed:
+- `src/rl/rl_session.c`
+- `docs/config.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- remove synchronous MiSTer local transition-log writes from the decision-finalization hot path.
+- rely on the existing per-episode transition batch upload to the probe server for demo and remote-RL data collection.
+- reduce human-demo FPS spikes caused by repeated SD/FAT `open -> write -> close` operations.
+
+Implementation notes:
+- removed `RLSession_AppendTransitionLogLine()`.
+- `RLSession_FinalizeLedgerEntry()` now formats each NDJSON row once and appends it only to the in-memory episode batch.
+- episode-close still calls `RLNet_QueueTransitionBatch()` so the probe server receives the same rows over the existing TCP transition port.
+- local MiSTer fallback file persistence is intentionally gone; if the probe server is not running or `rl-network = off`, transition rows are not persisted locally.
+
+Validation:
+- `rg -n 'AppendTransitionLogLine|SDL_IOFromFile\(log_path|rl-transitions\.ndjson' src/rl/rl_session.c docs/config.md docs/plan-remote-rl-agent.md` confirmed no runtime local append path remains in `src/rl/rl_session.c`.
+- `git diff --check` passed.
+- canonical telemetry build passed:
+  - `tools/mister/build-game.sh --flavor telemetry`
+
+Follow-up:
+- deploy the telemetry package and collect a human-demo log through probe-server `--transition-log`; check FPS stability and transition batch counters `TBQ/TBS/TBA/TBF`.
+- if long episodes still show spikes, profile `RLSession_FormatTransitionLogLine()` and transition batch `SDL_realloc` growth next.
+
 ## 2026-04-29: Strict Transition Schema V3 Cleanup
 
 Milestone:

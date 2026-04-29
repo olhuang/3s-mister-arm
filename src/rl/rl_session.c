@@ -1350,32 +1350,6 @@ static void RLSession_AppendTransitionBatchLine(const RLDecisionLedgerEntry* ent
     transition_batch_row_count++;
 }
 
-static void RLSession_AppendTransitionLogLine(const char* line, size_t line_len) {
-    char* logs_dir = NULL;
-    char* log_path = NULL;
-    SDL_IOStream* io = NULL;
-    const char* pref_path = NULL;
-
-    if (line == NULL || line_len == 0) {
-        return;
-    }
-
-    pref_path = Paths_GetPrefPath();
-    if (pref_path == NULL) {
-        return;
-    }
-    SDL_asprintf(&logs_dir, "%slogs", pref_path);
-    SDL_CreateDirectory(logs_dir);
-    SDL_asprintf(&log_path, "%s/rl-transitions.ndjson", logs_dir);
-    io = SDL_IOFromFile(log_path, "a");
-    if (io != NULL) {
-        SDL_WriteIO(io, line, line_len);
-        SDL_CloseIO(io);
-    }
-    SDL_free(log_path);
-    SDL_free(logs_dir);
-}
-
 static void RLSession_FinalizeLedgerEntry(RLDecisionLedgerEntry* entry, bool done, u8 terminal_reason) {
     char line[2048];
     int written = 0;
@@ -1390,7 +1364,6 @@ static void RLSession_FinalizeLedgerEntry(RLDecisionLedgerEntry* entry, bool don
     RLSession_UpdateDerivedOutcomeFields(entry);
     written = RLSession_FormatTransitionLogLine(entry, line, sizeof(line));
     if (written > 0) {
-        RLSession_AppendTransitionLogLine(line, (size_t)written);
         RLSession_AppendTransitionBatchLine(entry, line, (size_t)written);
     }
     entry->exported = true;

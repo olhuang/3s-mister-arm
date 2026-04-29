@@ -260,8 +260,8 @@ Notes:
 - `cpu-demo` routes the selected `rl-player` side through the built-in CPU and records the CPU-resolved input from that side as transition metadata.
 - In `human-demo`, transition rows are tagged with `execution_source = 4`. `requested_*` and `executed_*` action fields are identical because the action was performed directly by the player.
 - In `cpu-demo`, transition rows are tagged with `execution_source = 5`. `requested_*` and `executed_*` action fields are identical because the action was performed directly by the game CPU.
-- With `rl-network = on`, the MiSTer still handshakes with the probe server and can upload transition batches, but it does not send OBS/action requests for remote inference.
-- With `rl-network = off`, transitions are still written to the local MiSTer `logs/rl-transitions.ndjson` file.
+- With `rl-network = on`, the MiSTer still handshakes with the probe server and uploads transition batches, but it does not send OBS/action requests for remote inference.
+- With `rl-network = off`, demo transitions are accumulated in memory for the current episode but are not persisted locally; run the probe server with `--transition-log` when collecting demo data.
 - The first high-level action mapper is heuristic: down-back without attack is `guard-crouch`; back without attack becomes `guard-stand` only when the latest observation sees opponent attack state at short/mid distance, otherwise it is `back`.
 - Changes take effect on the next wrapper `Restart`; they do not hot-switch the currently running match.
 

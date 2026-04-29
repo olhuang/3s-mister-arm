@@ -2002,8 +2002,8 @@ Implementation notes:
   - `reward_accum`
   - `done`
   - `terminal_reason`
-- Transitions are appended as NDJSON to:
-  - `logs/rl-transitions.ndjson` under `Paths_GetPrefPath()`
+- Transitions are accumulated as per-episode NDJSON batches and uploaded to the probe server transition port.
+- MiSTer no longer writes local per-row `logs/rl-transitions.ndjson` files; this avoids synchronous SD/FAT writes in the frame hot path.
 - Current reward baseline:
   - per-frame `delta_opp_hp - delta_self_hp`
   - `+100` round win bonus
@@ -2355,8 +2355,8 @@ Implementation notes:
   - keeps executed action, reward / done, compact delta fields, overlay attack auxiliaries, and metadata such as character IDs and executed model version
   - tracks replay capacity, warmup readiness, reward-sign counts, and execution-source mix for learner bring-up
 - MiSTer now also has a first non-critical episode-batch transport:
-  - finalized transition rows still append to local `logs/rl-transitions.ndjson`
-  - episode-close also queues the episode's NDJSON rows for background TCP upload to the remote learner on `obs_port + 2`
+  - finalized transition rows are accumulated in memory for the active episode
+  - episode-close queues the episode's NDJSON rows for background TCP upload to the remote learner on `obs_port + 2`
   - transport runs off the action critical path and expects an ACK per uploaded episode batch
 - `tools/rl_probe_server.py` now also supports a non-critical transition pull path:
   - `--transition-pull-remote-path PATH` uses read-only SCP polling to mirror a MiSTer-side transition log into the local `--transition-log`

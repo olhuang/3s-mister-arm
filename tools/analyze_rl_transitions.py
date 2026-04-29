@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
+import rl_probe_server as rl
 from rl_probe_server import (
     TABULAR_ACTION_NAMES,
     TABULAR_ACTION_NAMES_BY_POLICY_META,
@@ -259,6 +260,15 @@ def parse_args() -> argparse.Namespace:
             "Off by default because projectiles can hit after a later input."
         ),
     )
+    parser.add_argument(
+        "--training-action-source",
+        choices=rl.TRAINING_ACTION_SOURCES,
+        default="auto",
+        help=(
+            "Canonical action label source for DIRECT/CREDITED tables. auto keeps legacy behavior for old logs, "
+            "uses engine/input labels for schema-v2 demo rows, and policy labels for schema-v2 remote rows."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -406,18 +416,11 @@ def engine_state_action_from_row(row: dict[str, object], side: str) -> EngineSta
 
 
 def demo_attribution_present(row: dict[str, object]) -> bool:
-    return (
-        int_field(row, "demo_attribution_source") != 0
-        or int_field(row, "demo_attributed_policy_action_id") != 0
-        or int_field(row, "demo_attributed_policy_sub_action_id") != 0
-    )
+    return rl.demo_attribution_present(row)
 
 
 def demo_attributed_action_name(row: dict[str, object]) -> str:
-    return policy_meta_name(
-        int_field(row, "demo_attributed_policy_action_id"),
-        int_field(row, "demo_attributed_policy_sub_action_id"),
-    )
+    return rl.demo_attributed_action_name(row) or "neutral"
 
 
 def format_demo_stats(key: tuple[str, ...], stats: DemoAttributionStats) -> str:
@@ -484,6 +487,12 @@ def print_count_table(title: str, table: dict[tuple[str, ...], Stats], limit: in
         print(format_stats(key, stats))
 
 
+def format_counter(counter: collections.Counter[str], limit: int = 12) -> str:
+    if not counter:
+        return "none"
+    return ",".join(f"{key}:{value}" for key, value in counter.most_common(limit))
+
+
 def analyze_demo_attribution(rows: list[dict[str, object]], args: argparse.Namespace) -> None:
     window_decisions = max(0, int(args.demo_attribution_window_decisions))
     stop_at_next = bool(args.demo_attribution_stop_at_next_event)
@@ -508,10 +517,10 @@ def analyze_demo_attribution(rows: list[dict[str, object]], args: argparse.Names
             event_rows += 1
             action = demo_attributed_action_name(row)
             bucket = dx_bucket(row)
-            r2 = int_field(row, "demo_attributed_routine2")
-            kw = int_field(row, "demo_attributed_kind_of_waza")
-            source = int_field(row, "demo_attribution_source")
-            lag = int_field(row, "demo_attribution_lag_frames")
+            r2 = int_field(row, "engine_routine_2") or int_field(row, "demo_attributed_routine2")
+            kw = int_field(row, "engine_kind_of_waza") or int_field(row, "demo_attributed_kind_of_waza")
+            source = int_field(row, "engine_label_source") or int_field(row, "demo_attribution_source")
+            lag = int_field(row, "engine_lag_frames") or int_field(row, "demo_attribution_lag_frames")
             source_counts[source] += 1
             lag_counts[lag] += 1
 
@@ -533,7 +542,9 @@ def analyze_demo_attribution(rows: list[dict[str, object]], args: argparse.Names
             ):
                 table.setdefault(key, DemoAttributionStats()).add(opp_hp, self_hp, lag, window_rows)
 
-            input_action = transition_action_name(row)
+            input_action = rl.select_training_action(row, "input").name
+            if input_action is None and not rl.is_schema_v2_transition_row(row):
+                input_action = transition_action_name(row)
             if input_action is None:
                 input_action = policy_meta_name(
                     int_field(row, "executed_policy_action_id"),
@@ -596,6 +607,8 @@ def main() -> int:
     engine_state_by_side_dx: dict[tuple[str, ...], Stats] = {}
     engine_state_by_routine: dict[tuple[str, ...], Stats] = {}
     engine_state_source_counts: collections.Counter[tuple[str, str]] = collections.Counter()
+    action_source_counts: collections.Counter[str] = collections.Counter()
+    action_source_action_counts: dict[str, collections.Counter[str]] = collections.defaultdict(collections.Counter)
     rows: list[dict[str, object]] = []
 
     for row_index, line in enumerate(iter_lines(path, max(0, args.tail_rows)), start=1):
@@ -610,6 +623,11 @@ def main() -> int:
         if not isinstance(row, dict):
             skipped_json += 1
             continue
+        replay_row = rl.learner_replay_row(row)
+        if replay_row is None:
+            skipped_json += 1
+            continue
+        row = replay_row
 
         rows.append(row)
         parsed_rows += 1
@@ -618,7 +636,11 @@ def main() -> int:
             first_key = key
         last_key = key
 
-        action = transition_action_name(row)
+        action_selection = rl.select_training_action(row, args.training_action_source)
+        action = action_selection.name
+        action_source_counts[action_selection.source] += 1
+        if action is not None:
+            action_source_action_counts[action_selection.source][action] += 1
         reward = tabular_training_reward(row)
         opp_hp = int_field(row, "delta_opp_hp")
         self_hp = int_field(row, "delta_self_hp")
@@ -724,6 +746,13 @@ def main() -> int:
         f"explicit_rows={explicit_rows} reward_rows={reward_rows} delayed_credit_rows={delayed_credit_rows} "
         f"uncredited_reward_rows={uncredited_reward_rows} actions={','.join(actions)}"
     )
+    print(
+        f"action_label_source training_action_source={args.training_action_source} "
+        f"counts={format_counter(action_source_counts, len(action_source_counts) or 1)}"
+    )
+    if action_source_action_counts:
+        for source in sorted(action_source_action_counts):
+            print(f"  {source:<13} {format_counter(action_source_action_counts[source], args.limit)}")
 
     print_table("DIRECT_BY_ACTION", direct_by_action, args.limit)
     print_table("DIRECT_BY_ACTION_DX", direct_by_action_dx, args.limit)

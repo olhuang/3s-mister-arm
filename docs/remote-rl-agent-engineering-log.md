@@ -2,6 +2,52 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-29: Transition Schema V2 Analyzer Source Breakdown Step 4
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / transition action-label cleanup
+
+Files changed:
+- `tools/rl_probe_server.py`
+- `tools/train_dqn_learner.py`
+- `tools/analyze_rl_transitions.py`
+- `tools/compare_dqn_models.py`
+- `docs/rl-policy-action-taxonomy.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- make training, analysis, and comparison use the same canonical action-label source selector.
+- expose label-source counts so schema-v2 logs can be checked before long-run retraining.
+
+Implementation notes:
+- moved the DQN action selector into `tools/rl_probe_server.py` as shared helpers:
+  - `select_training_action(row, source_mode)`
+  - `demo_attribution_present(row)`
+  - `demo_attributed_action_name(row)`
+  - `action_name_from_policy_meta(action_id, sub_action_id)`
+- `tools/train_dqn_learner.py` now calls the shared selector instead of carrying a private copy.
+- `tools/analyze_rl_transitions.py` now accepts `--training-action-source` and prints `action_label_source` counts plus top actions per source.
+- `tools/compare_dqn_models.py` now accepts `--training-action-source` and prints a `LOG_ACTION_SOURCE` summary before model greedy-action output.
+- schema-v1 logs continue to report `legacy`; schema-v2 logs should report `policy`, `input`, `engine`, `engine-legacy`, or `none` depending on selected mode and row contents.
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py tools/train_dqn_learner.py tools/analyze_rl_transitions.py tools/compare_dqn_models.py` passed.
+- selector smoke passed:
+  - schema-v2 demo row with engine/input/policy labels selected `fireball-hp` under `auto`, `guard-crouch` under `input`, and `stand-mp` under `policy`.
+  - schema-v1 row selected legacy `guard-crouch` under `auto`.
+- analyzer smoke on `logs/rl-transitions-cpu-demo-r12-v1-4-3-3.ndjson` printed `action_label_source training_action_source=auto counts=legacy:200`.
+- compare smoke on the same log printed `LOG_ACTION_SOURCE training_action_source=auto rows=200 counts=legacy:200`.
+- one-step DQN smoke still printed `action_source_counts=legacy:200`.
+- `git diff --check` passed.
+
+Follow-up:
+- deploy / run a fresh schema-v2 mixed remote + CPU-demo log and confirm:
+  - remote rows use `policy`.
+  - CPU-demo specials use `engine`.
+  - CPU-demo walk / guard rows use `input`.
+  - rows without a usable label use `none` rather than a misleading legacy label.
+
 ## 2026-04-29: Transition Schema V2 DQN Action Source Step 3
 
 Milestone:

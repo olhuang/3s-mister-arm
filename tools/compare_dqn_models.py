@@ -120,6 +120,23 @@ def parse_focus_actions(value: str) -> tuple[str, ...]:
     return tuple(actions)
 
 
+def print_action_source_summary(rows: list[dict[str, object]], training_action_source: str, top_n: int) -> None:
+    source_counts: collections.Counter[str] = collections.Counter()
+    source_action_counts: dict[str, collections.Counter[str]] = collections.defaultdict(collections.Counter)
+    for row in rows:
+        selection = rl.select_training_action(row, training_action_source)
+        source_counts[selection.source] += 1
+        if selection.name is not None:
+            source_action_counts[selection.source][selection.name] += 1
+
+    print(
+        f"\nLOG_ACTION_SOURCE training_action_source={training_action_source} rows={len(rows)} "
+        f"counts={','.join(f'{source}:{count}' for source, count in source_counts.most_common()) or 'none'}"
+    )
+    for source in sorted(source_action_counts):
+        print(f"  {source:<13} {format_counts(source_action_counts[source], sum(source_action_counts[source].values()), top_n)}")
+
+
 def format_counts(counts: collections.Counter[str], total: int, limit: int) -> str:
     if not counts:
         return "none"
@@ -271,6 +288,15 @@ def main() -> int:
         help="Rank threshold used for focus top-N and blocker diagnostics",
     )
     parser.add_argument(
+        "--training-action-source",
+        choices=rl.TRAINING_ACTION_SOURCES,
+        default="auto",
+        help=(
+            "Canonical log action label source to summarize before model evaluation. auto keeps legacy behavior "
+            "for old logs, uses engine/input labels for schema-v2 demo rows, and policy labels for schema-v2 remote rows."
+        ),
+    )
+    parser.add_argument(
         "--collapse-warning-threshold",
         type=float,
         default=0.70,
@@ -283,6 +309,7 @@ def main() -> int:
     if not rows:
         raise SystemExit("No evaluation rows loaded")
     focus_actions = parse_focus_actions(args.focus_actions)
+    print_action_source_summary(rows, args.training_action_source, max(1, args.top_n))
 
     choices_by_label: dict[str, list[str]] = {}
     first_label = models[0][0]

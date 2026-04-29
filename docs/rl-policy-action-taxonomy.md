@@ -81,8 +81,8 @@ Current runtime identity fields:
 ### Transition Schema V2 Rollout Plan
 
 Status: rollout started. Step 1 C-side NDJSON export, step 2 Python replay
-ingestion, and step 3 DQN action-source selection are implemented. Analyzer /
-compare source breakdown and mixed-log validation are still pending.
+ingestion, step 3 DQN action-source selection, and step 4 analyzer / compare
+source breakdown are implemented. Mixed-log validation is still pending.
 
 The goal of transition schema v2 is to stop overloading one action-id pair for
 three different meanings:
@@ -147,9 +147,10 @@ Rollout steps:
      - older schema-v1 rows keep legacy action-label behavior unless a specific
        source such as `engine` or `prefer-engine` is requested.
 
-4. Add analyzer and compare diagnostics for label-source breakdown.
-   - Report counts for `source=policy`, `source=input`, `source=engine`, and
-     `source=skipped`.
+4. Add analyzer and compare diagnostics for label-source breakdown. Done as of
+   2026-04-29.
+   - Report counts for `source=policy`, `source=input`, `source=engine`,
+     `source=engine-legacy`, `source=legacy`, and `source=none`.
    - Compare canonical action counts from legacy mode and v2 `auto` mode on the
      same log before using v2 for model selection.
 

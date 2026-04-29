@@ -166,6 +166,8 @@ MODEL_POLICY_CHOICES = (
 )
 POLICY_CHOICES = SCRIPTED_POLICY_CHOICES + MODEL_POLICY_CHOICES
 GUARD_MACRO_DECISION_STEPS = 6
+DEMO_EXECUTION_SOURCES = frozenset({4, 5})
+TRAINING_ACTION_SOURCES = ("auto", "policy", "input", "engine", "prefer-engine")
 
 TABULAR_ACTION_NAMES = (
     "forward",
@@ -339,6 +341,13 @@ class PolicyActionFrame:
     policy_action_id: int
     policy_sub_action_id: int
     policy_action_step: int = 0
+
+
+@dataclass(frozen=True)
+class ActionSelection:
+    name: str | None
+    step: int
+    source: str
 
 
 @dataclass
@@ -1041,6 +1050,138 @@ def transition_action_name(row: dict[str, object]) -> str | None:
     except (TypeError, ValueError):
         action_wire = 0
     return tabular_action_name(action_wire)
+
+
+def row_int_field(row: dict[str, object], name: str) -> int:
+    try:
+        return int(row.get(name, 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def is_schema_v2_transition_row(row: dict[str, object]) -> bool:
+    return row_int_field(row, "transition_schema_version") >= 2
+
+
+def is_demo_transition_row(row: dict[str, object]) -> bool:
+    return row_int_field(row, "execution_source") in DEMO_EXECUTION_SOURCES
+
+
+def action_name_from_policy_meta(action_id: int, sub_action_id: int) -> str | None:
+    action_name = TABULAR_ACTION_NAMES_BY_POLICY_META.get((action_id, sub_action_id))
+    if action_name is not None and action_name in TABULAR_ACTION_NAMES:
+        return action_name
+    if action_id == RL_POLICY_ACTION_RYU_FIREBALL:
+        return "fireball-lp"
+    if action_id == RL_POLICY_ACTION_RYU_SHORYUKEN:
+        return "shoryuken-mp"
+    if action_id == RL_POLICY_ACTION_RYU_TATSU:
+        return "tatsu-mk"
+    if action_id == RL_POLICY_ACTION_THROW:
+        return "throw"
+    return action_name
+
+
+def demo_attribution_present(row: dict[str, object]) -> bool:
+    return (
+        row_int_field(row, "engine_label_source") != 0
+        or row_int_field(row, "engine_action_id") != 0
+        or row_int_field(row, "engine_sub_action_id") != 0
+        or row_int_field(row, "demo_attribution_source") != 0
+        or row_int_field(row, "demo_attributed_policy_action_id") != 0
+        or row_int_field(row, "demo_attributed_policy_sub_action_id") != 0
+    )
+
+
+def demo_attributed_action_name(row: dict[str, object]) -> str | None:
+    action_name = action_name_from_policy_meta(
+        row_int_field(row, "engine_action_id"),
+        row_int_field(row, "engine_sub_action_id"),
+    )
+    if action_name is not None:
+        return action_name
+    return action_name_from_policy_meta(
+        row_int_field(row, "demo_attributed_policy_action_id"),
+        row_int_field(row, "demo_attributed_policy_sub_action_id"),
+    )
+
+
+def action_selection_from_fields(
+    row: dict[str, object],
+    action_field: str,
+    sub_action_field: str,
+    step_field: str,
+    source: str,
+) -> ActionSelection:
+    action_name = action_name_from_policy_meta(row_int_field(row, action_field), row_int_field(row, sub_action_field))
+    return ActionSelection(action_name, row_int_field(row, step_field), source)
+
+
+def legacy_action_selection(row: dict[str, object]) -> ActionSelection:
+    return ActionSelection(transition_action_name(row), row_int_field(row, "executed_policy_action_step"), "legacy")
+
+
+def engine_action_selection(row: dict[str, object]) -> ActionSelection:
+    action_name = action_name_from_policy_meta(
+        row_int_field(row, "engine_action_id"),
+        row_int_field(row, "engine_sub_action_id"),
+    )
+    if action_name is not None:
+        return ActionSelection(action_name, 0, "engine")
+    action_name = demo_attributed_action_name(row)
+    return ActionSelection(action_name, 0, "engine-legacy" if action_name is not None else "none")
+
+
+def select_training_action(row: dict[str, object], source_mode: str = "auto") -> ActionSelection:
+    if source_mode not in TRAINING_ACTION_SOURCES:
+        raise ValueError(f"unknown training action source: {source_mode}")
+
+    schema_v2 = is_schema_v2_transition_row(row)
+    legacy = legacy_action_selection(row)
+    policy = action_selection_from_fields(
+        row,
+        "policy_executed_action_id",
+        "policy_executed_sub_action_id",
+        "policy_executed_action_step",
+        "policy",
+    )
+    input_selection = action_selection_from_fields(
+        row,
+        "input_action_id",
+        "input_sub_action_id",
+        "input_action_step",
+        "input",
+    )
+    engine = engine_action_selection(row)
+
+    if source_mode == "policy":
+        return policy if policy.name is not None else (legacy if not schema_v2 else ActionSelection(None, 0, "none"))
+    if source_mode == "input":
+        return input_selection if input_selection.name is not None else (
+            legacy if not schema_v2 else ActionSelection(None, 0, "none")
+        )
+    if source_mode == "engine":
+        return engine
+    if source_mode == "prefer-engine":
+        if engine.name is not None:
+            return engine
+        if input_selection.name is not None:
+            return input_selection
+        if policy.name is not None:
+            return policy
+        return legacy if not schema_v2 else ActionSelection(None, 0, "none")
+
+    if schema_v2:
+        if is_demo_transition_row(row):
+            if engine.name is not None:
+                return engine
+            if input_selection.name is not None:
+                return input_selection
+            return ActionSelection(None, 0, "none")
+        if policy.name is not None:
+            return policy
+        return ActionSelection(None, 0, "none")
+    return legacy
 
 
 def tabular_training_reward(row: dict[str, object]) -> float:

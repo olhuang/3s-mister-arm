@@ -2,6 +2,62 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-30: Add Opt-In DQN Replay Source Mix Controls
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / replay source mixing preparation
+
+Files changed:
+- `tools/train_dqn_learner.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- allow a v18-style DQN run to train from mixed live-policy and demo logs with an explicit, reproducible source policy.
+- keep default trainer behavior raw so existing v9/v17 recipes and comparisons remain unchanged.
+
+Implementation notes:
+- added source-mix flags that run after log read / initial-episode drop and before DQN experience building:
+  - `--replay-source-include`
+  - `--replay-source-exclude`
+  - `--replay-source-max-rows`
+  - `--replay-source-ratios`
+- source names accept labels such as `remote`, `human-demo`, `cpu-demo`, `repeated-last-action`, and `neutral-fallback`, plus numeric execution-source ids.
+- `--replay-source-ratios` performs deterministic row-level undersampling with `--seed` and does not oversample scarce sources.
+- when ratios are set, sources not listed in the ratio are dropped; this gives a concise v18 candidate shape such as `remote=0.7,human-demo=0.3` while excluding repeated-action and fallback rows.
+- actor metadata now records:
+  - `rows_read_before_source_mix`
+  - `replay_source_mix_config`
+  - `replay_source_mix_stats`
+- stdout prints `source_mix=...` in the publish summary and a `replay_source_mix=...` diagnostics line with pre/post/target source counts.
+
+Result:
+- raw mode preserved previous behavior in the smoke test:
+  - `source_mix=raw:1200->1200`
+  - `replay_source_mix=mode:raw rows:1200->1200 dropped:0`
+- ratio mode worked on the mixed live-v9 + human-demo smoke:
+  - source mix rows changed from `3000` to `2781`
+  - post-mix rows were `remote=1947` and `human-demo=834`
+  - `repeated-last-action=16` and `neutral-fallback=4` were dropped because they were not listed in the target ratio
+  - row-level mix landed at `70.0% remote / 30.0% human-demo`
+- experience-level mix was `remote=1041` and `human-demo=349`; this differs from row-level mix because DQN experience construction is decision/macro based.
+
+Validation:
+- Python compile passed:
+  - `python3 -m py_compile tools/train_dqn_learner.py`
+- raw source-mix smoke passed:
+  - `python3 tools/train_dqn_learner.py logs/rl-transitions-cpu-demo-schema-v3-4-3-3.ndjson logs/rl-transitions-human-demo-schema-v3-4-3-3.ndjson --model-dir /tmp/rl-dqn-source-mix-raw-smoke --model-version 1 --limit 1200 --steps 2 --batch-size 16 --hidden-sizes 8 --actions forward,back,guard-stand,guard-crouch,stand-mk,crouch-hp,fireball-lp,fireball-mp,fireball-hp --fallback-policy stand-mk --training-action-source auto --reward-risk-profile none --engine-outcome-training-mode prefer-engine-action --engine-outcome-window-decisions 15 --engine-outcome-action-windows fireball-lp=45,fireball-mp=45,fireball-hp=45 --log-interval 1 --eval-limit 200 --diagnostic-top-n 8`
+  - reported unchanged raw source mix.
+- ratio source-mix smoke passed:
+  - `python3 tools/train_dqn_learner.py logs/rl-transitions-live-dqn-ground-specials-v9-4-3-3.ndjson logs/rl-transitions-human-demo-schema-v3-4-3-3.ndjson --model-dir /tmp/rl-dqn-source-mix-ratio-smoke --model-version 2 --limit 3000 --steps 2 --batch-size 16 --hidden-sizes 8 --actions forward,back,guard-stand,guard-crouch,stand-lp,stand-hk,crouch-hp,fireball-hp --fallback-policy stand-mk --training-action-source auto --reward-risk-profile none --engine-outcome-training-mode prefer-engine-action --engine-outcome-window-decisions 15 --replay-source-ratios remote=0.7,human-demo=0.3 --log-interval 1 --eval-limit 200 --diagnostic-top-n 8`
+  - reported `replay_source_mix=mode:configured rows:3000->2781 dropped:219 ... post:remote:1947/70.0%,human-demo:834/30.0%`.
+- metadata spot-check passed:
+  - `jq '.metadata | {rows_read, rows_read_before_source_mix, replay_source_mix_config, replay_source_mix_stats}' /tmp/rl-dqn-source-mix-ratio-smoke/current.json`
+
+Follow-up:
+- choose the actual v18 source mix recipe before full training; first candidate is likely v9-style DQN recipe plus `--replay-source-ratios remote=0.7,human-demo=0.3` against the v9 live log and fresh human-demo / CPU-demo logs.
+- compare any v18 candidate against v9/v17 on the same observation slice before live testing, with special attention to whether remote replay amplifies the existing `crouch-hp` / `stand-lp` / `fireball-hp` policy surface.
+
 ## 2026-04-30: Add Source-Aware DQN Replay Diagnostics
 
 Milestone:

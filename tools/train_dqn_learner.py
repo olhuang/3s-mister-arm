@@ -40,6 +40,24 @@ EXECUTION_SOURCE_NAMES = {
 }
 
 
+SOURCE_NAME_ALIASES = {
+    "none": "none",
+    "remote": "remote",
+    "remote-agent": "remote",
+    "repeated-last-action": "repeated-last-action",
+    "repeated-last": "repeated-last-action",
+    "repeated": "repeated-last-action",
+    "repeat": "repeated-last-action",
+    "neutral-fallback": "neutral-fallback",
+    "neutral": "neutral-fallback",
+    "fallback": "neutral-fallback",
+    "human-demo": "human-demo",
+    "human": "human-demo",
+    "cpu-demo": "cpu-demo",
+    "cpu": "cpu-demo",
+}
+
+
 @dataclass
 class SourceReplayDiagnostics:
     row_counts: dict[str, int] = field(default_factory=dict)
@@ -113,6 +131,55 @@ class SourceReplayDiagnostics:
                 source: dict(sorted(rewards.items()))
                 for source, rewards in sorted(self.experience_action_reward_sum.items())
             },
+        }
+
+
+@dataclass(frozen=True)
+class ReplaySourceMixConfig:
+    include_sources: frozenset[str]
+    exclude_sources: frozenset[str]
+    max_rows_by_source: dict[str, int]
+    target_ratios: dict[str, float]
+
+    @property
+    def enabled(self) -> bool:
+        return bool(
+            self.include_sources
+            or self.exclude_sources
+            or self.max_rows_by_source
+            or self.target_ratios
+        )
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "include_sources": sorted(self.include_sources),
+            "exclude_sources": sorted(self.exclude_sources),
+            "max_rows_by_source": dict(sorted(self.max_rows_by_source.items())),
+            "target_ratios": dict(sorted(self.target_ratios.items())),
+        }
+
+
+@dataclass(frozen=True)
+class ReplaySourceMixStats:
+    mode: str
+    raw_rows: int
+    mixed_rows: int
+    dropped_rows: int
+    pre_counts: dict[str, int]
+    post_counts: dict[str, int]
+    dropped_counts: dict[str, int]
+    target_counts: dict[str, int]
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "mode": self.mode,
+            "raw_rows": self.raw_rows,
+            "mixed_rows": self.mixed_rows,
+            "dropped_rows": self.dropped_rows,
+            "pre_counts": dict(sorted(self.pre_counts.items())),
+            "post_counts": dict(sorted(self.post_counts.items())),
+            "dropped_counts": dict(sorted(self.dropped_counts.items())),
+            "target_counts": dict(sorted(self.target_counts.items())),
         }
 
 
@@ -585,6 +652,174 @@ def execution_source_name(row: dict[str, object]) -> str:
 
 def model_version_executed(row: dict[str, object]) -> int:
     return int_field(row, "model_version_executed")
+
+
+def canonical_execution_source_name(raw_source: str, flag_name: str) -> str:
+    normalized = raw_source.strip().lower().replace("_", "-")
+    if not normalized:
+        raise SystemExit(f"Invalid empty source in {flag_name}")
+    try:
+        source_id = int(normalized)
+    except ValueError:
+        source_id = -1
+    if source_id >= 0:
+        return EXECUTION_SOURCE_NAMES.get(source_id, f"unknown-{source_id}")
+    source_name = SOURCE_NAME_ALIASES.get(normalized)
+    if source_name is None:
+        valid = ",".join(sorted(SOURCE_NAME_ALIASES))
+        raise SystemExit(f"Unknown execution source in {flag_name}: {raw_source}; expected one of {valid} or a numeric id")
+    return source_name
+
+
+def parse_source_name_set(value: str, flag_name: str) -> frozenset[str]:
+    sources: set[str] = set()
+    if not value.strip():
+        return frozenset()
+    for raw_item in value.split(","):
+        item = raw_item.strip()
+        if not item:
+            continue
+        sources.add(canonical_execution_source_name(item, flag_name))
+    return frozenset(sources)
+
+
+def parse_source_max_rows(value: str, flag_name: str) -> dict[str, int]:
+    max_rows: dict[str, int] = {}
+    if not value.strip():
+        return max_rows
+    for raw_item in value.split(","):
+        item = raw_item.strip()
+        if not item:
+            continue
+        if "=" not in item:
+            raise SystemExit(f"Invalid {flag_name} item: {item!r}; expected source=N")
+        raw_source, raw_count = (part.strip() for part in item.split("=", 1))
+        source = canonical_execution_source_name(raw_source, flag_name)
+        try:
+            count = int(raw_count)
+        except ValueError as exc:
+            raise SystemExit(f"Invalid max row count for {source}: {raw_count}") from exc
+        max_rows[source] = max(0, count)
+    return max_rows
+
+
+def parse_source_ratios(value: str, flag_name: str) -> dict[str, float]:
+    ratios: dict[str, float] = {}
+    if not value.strip():
+        return ratios
+    for raw_item in value.split(","):
+        item = raw_item.strip()
+        if not item:
+            continue
+        if "=" not in item:
+            raise SystemExit(f"Invalid {flag_name} item: {item!r}; expected source=ratio")
+        raw_source, raw_ratio = (part.strip() for part in item.split("=", 1))
+        source = canonical_execution_source_name(raw_source, flag_name)
+        try:
+            ratio = float(raw_ratio)
+        except ValueError as exc:
+            raise SystemExit(f"Invalid source ratio for {source}: {raw_ratio}") from exc
+        ratios[source] = max(0.0, ratio)
+    total = sum(ratios.values())
+    if total <= 0.0:
+        raise SystemExit(f"{flag_name} must contain at least one positive source ratio")
+    return {source: ratio / total if ratio > 0.0 else 0.0 for source, ratio in ratios.items()}
+
+
+def replay_source_mix_config_from_args(args: argparse.Namespace) -> ReplaySourceMixConfig:
+    return ReplaySourceMixConfig(
+        include_sources=parse_source_name_set(str(args.replay_source_include), "--replay-source-include"),
+        exclude_sources=parse_source_name_set(str(args.replay_source_exclude), "--replay-source-exclude"),
+        max_rows_by_source=parse_source_max_rows(str(args.replay_source_max_rows), "--replay-source-max-rows"),
+        target_ratios=parse_source_ratios(str(args.replay_source_ratios), "--replay-source-ratios"),
+    )
+
+
+def count_rows_by_source(rows: list[dict[str, object]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for row in rows:
+        source = execution_source_name(row)
+        counts[source] = counts.get(source, 0) + 1
+    return counts
+
+
+def sample_rows_by_source_counts(
+    rows: list[dict[str, object]],
+    target_counts: dict[str, int],
+    seed: int,
+) -> list[dict[str, object]]:
+    indices_by_source: dict[str, list[int]] = collections.defaultdict(list)
+    for index, row in enumerate(rows):
+        indices_by_source[execution_source_name(row)].append(index)
+
+    rng = random.Random(seed)
+    selected_indices: set[int] = set()
+    for source, indices in indices_by_source.items():
+        target_count = max(0, int(target_counts.get(source, len(indices))))
+        if target_count >= len(indices):
+            selected_indices.update(indices)
+        elif target_count > 0:
+            selected_indices.update(rng.sample(indices, target_count))
+    return [row for index, row in enumerate(rows) if index in selected_indices]
+
+
+def apply_replay_source_mix(
+    rows: list[dict[str, object]],
+    config: ReplaySourceMixConfig,
+    seed: int,
+) -> tuple[list[dict[str, object]], ReplaySourceMixStats]:
+    pre_counts = count_rows_by_source(rows)
+    target_counts = dict(pre_counts)
+
+    if config.include_sources:
+        target_counts = {
+            source: count for source, count in target_counts.items() if source in config.include_sources
+        }
+    if config.exclude_sources:
+        target_counts = {
+            source: count for source, count in target_counts.items() if source not in config.exclude_sources
+        }
+    for source, max_rows in config.max_rows_by_source.items():
+        target_counts[source] = min(target_counts.get(source, 0), max_rows)
+
+    if config.target_ratios:
+        positive_ratio_sources = {
+            source: ratio for source, ratio in config.target_ratios.items() if ratio > 0.0
+        }
+        for source in positive_ratio_sources:
+            if target_counts.get(source, 0) <= 0:
+                raise SystemExit(f"--replay-source-ratios requested source {source!r}, but no rows are available")
+        scale = min(target_counts[source] / ratio for source, ratio in positive_ratio_sources.items())
+        ratio_target_counts: dict[str, int] = {}
+        for source, ratio in config.target_ratios.items():
+            available = target_counts.get(source, 0)
+            if ratio <= 0.0 or available <= 0:
+                ratio_target_counts[source] = 0
+            else:
+                ratio_target_counts[source] = min(available, max(1, int(math.floor(scale * ratio))))
+        target_counts = {
+            source: ratio_target_counts.get(source, 0)
+            for source in set(target_counts) | set(config.target_ratios)
+        }
+
+    mixed_rows = sample_rows_by_source_counts(rows, target_counts, seed) if config.enabled else list(rows)
+    post_counts = count_rows_by_source(mixed_rows)
+    dropped_counts = {
+        source: count - post_counts.get(source, 0)
+        for source, count in pre_counts.items()
+        if count - post_counts.get(source, 0) > 0
+    }
+    stats = ReplaySourceMixStats(
+        mode="configured" if config.enabled else "raw",
+        raw_rows=len(rows),
+        mixed_rows=len(mixed_rows),
+        dropped_rows=len(rows) - len(mixed_rows),
+        pre_counts=pre_counts,
+        post_counts=post_counts,
+        dropped_counts=dropped_counts,
+        target_counts={source: count for source, count in target_counts.items() if count > 0},
+    )
+    return mixed_rows, stats
 
 
 def is_action_start(row: dict[str, object]) -> bool:
@@ -1942,6 +2177,38 @@ def main() -> None:
         default=0,
         help="Drop the first N episodes from each run before building DQN experiences",
     )
+    parser.add_argument(
+        "--replay-source-include",
+        default="",
+        help=(
+            "Optional comma-separated execution sources to keep before DQN replay building, "
+            "e.g. remote,human-demo,cpu-demo. Empty keeps every source unless other source-mix flags drop it"
+        ),
+    )
+    parser.add_argument(
+        "--replay-source-exclude",
+        default="",
+        help=(
+            "Optional comma-separated execution sources to drop before DQN replay building, "
+            "e.g. repeated-last-action,neutral-fallback"
+        ),
+    )
+    parser.add_argument(
+        "--replay-source-max-rows",
+        default="",
+        help=(
+            "Optional comma-separated per-source row caps applied before DQN replay building, "
+            "e.g. remote=10000,human-demo=4000,cpu-demo=4000"
+        ),
+    )
+    parser.add_argument(
+        "--replay-source-ratios",
+        default="",
+        help=(
+            "Optional comma-separated target source ratios applied by deterministic undersampling, "
+            "e.g. remote=0.7,human-demo=0.3. When set, sources not listed are dropped"
+        ),
+    )
     parser.add_argument("--steps", type=int, default=2000, help="Gradient steps")
     parser.add_argument("--batch-size", type=int, default=64, help="Replay batch size")
     parser.add_argument(
@@ -2317,6 +2584,13 @@ def main() -> None:
         rows,
         max(0, int(args.drop_initial_episodes_per_run)),
     )
+    rows_read_before_source_mix = len(rows)
+    replay_source_mix_config = replay_source_mix_config_from_args(args)
+    rows, replay_source_mix_stats = apply_replay_source_mix(
+        rows,
+        replay_source_mix_config,
+        int(args.seed),
+    )
     reward_risk_config = reward_risk_config_from_args(args)
     reward_guard_config = reward_guard_config_from_args(args)
     reward_spacing_config = reward_spacing_config_from_args(args)
@@ -2405,6 +2679,9 @@ def main() -> None:
         "drop_initial_episodes_per_run": max(0, int(args.drop_initial_episodes_per_run)),
         "dropped_initial_episode_rows": dropped_initial_episode_rows,
         "dropped_initial_episodes": dropped_initial_episodes,
+        "rows_read_before_source_mix": rows_read_before_source_mix,
+        "replay_source_mix_config": replay_source_mix_config.as_metadata(),
+        "replay_source_mix_stats": replay_source_mix_stats.as_metadata(),
         "experiences": len(experiences),
         "actions_subset": list(actions),
         "actions_subset_size": len(actions),
@@ -2491,6 +2768,7 @@ def main() -> None:
         f"version={version} model_dir={args.model_dir} rows={len(rows)} "
         f"raw_rows={rows_read_before_episode_drop} "
         f"drop_ep={dropped_initial_episodes}/{dropped_initial_episode_rows} "
+        f"source_mix={replay_source_mix_stats.mode}:{rows_read_before_source_mix}->{len(rows)} "
         f"experiences={len(experiences)} "
         f"actions={len(actions)} "
         f"action_source={args.training_action_source} "
@@ -2526,6 +2804,16 @@ def main() -> None:
         "DQN diagnostics "
         f"action_source_counts="
         f"{','.join(f'{key}:{value}' for key, value in sorted(build_stats.action_source_counts.items()))}",
+        flush=True,
+    )
+    print(
+        "DQN diagnostics "
+        f"replay_source_mix=mode:{replay_source_mix_stats.mode} "
+        f"rows:{replay_source_mix_stats.raw_rows}->{replay_source_mix_stats.mixed_rows} "
+        f"dropped:{replay_source_mix_stats.dropped_rows} "
+        f"pre:{format_counts(replay_source_mix_stats.pre_counts, replay_source_mix_stats.raw_rows, args.diagnostic_top_n)} "
+        f"post:{format_counts(replay_source_mix_stats.post_counts, replay_source_mix_stats.mixed_rows, args.diagnostic_top_n)} "
+        f"target:{format_counts(replay_source_mix_stats.target_counts, sum(replay_source_mix_stats.target_counts.values()), args.diagnostic_top_n)}",
         flush=True,
     )
     print(

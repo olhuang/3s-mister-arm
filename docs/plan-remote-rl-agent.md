@@ -2483,7 +2483,9 @@ Tasks:
 - [x] Update analyzer / compare source breakdown for strict v3 canonical action labels (`policy`, `input`, `engine`, `none`)
 - [x] Validate schema v3 with fresh CPU-demo and human-demo logs before long-run retraining
 - [x] Add DQN replay diagnostics for `execution_source` and `model_version_executed` before changing source-mix ratios
+- [x] Add opt-in DQN replay source-mix include / exclude / cap / ratio controls for v18 experiments
 - [ ] Define how replay-buffer import mixes human-demo episodes with remote-agent episodes, including metadata such as data source, control mode, and player side
+- [ ] Train a v18 candidate from a declared source-mix recipe and compare against v9 / v17 before live use
 - [ ] Add character curriculum
 - [ ] Add stage curriculum
 - [ ] Add automated reset loops
@@ -2642,6 +2644,9 @@ Implementation notes:
     - `--engine-outcome-oversample N` and `--engine-outcome-action-oversamples action=N,...` can duplicate included engine-outcome experiences in replay so low-frequency engine-labeled specials can be A/B tested without changing raw logs or normal input replay rows
     - stdout and model metadata record `engine_outcome=...` / `engine_outcome_stats` so CPU-demo training can be audited for included/excluded events, hit/no-damage/punished/trade counts, HP sums, reward adjustment totals, and oversampled replay experience counts
     - stdout and model metadata also record `source_replay_diagnostics`, splitting replay rows and built experiences by `execution_source`, `model_version_executed`, and per-source action reward/counts; this is diagnostics-only and does not change replay sampling
+    - `--replay-source-include`, `--replay-source-exclude`, `--replay-source-max-rows`, and `--replay-source-ratios` provide opt-in source-mix control before DQN experience building; default empty flags keep raw replay behavior unchanged
+    - `--replay-source-ratios remote=0.7,human-demo=0.3` applies deterministic row-level undersampling with `--seed`; sources not listed in the ratio are dropped, which is useful for excluding `repeated-last-action` / `neutral-fallback` rows from v18 candidate training
+    - model metadata records `replay_source_mix_config` and `replay_source_mix_stats`, including pre/post source counts, dropped counts, and target row counts
     - deprecated hidden aliases for the old `--demo-attribution-*` flag names still map to the new engine-outcome config for short-term command compatibility; removed schema-v2 modes `augment` and `replace-demo` now fail fast
   - can train with balanced replay batches:
     - `--batch-sampling uniform|balanced`

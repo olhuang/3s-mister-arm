@@ -2489,7 +2489,10 @@ Tasks:
 - [x] Review v18 source-mix results before using live-policy replay as a default training input
 - [x] Collect a clean live replay with v9 plus a conservative action-support prior before the next live-replay retrain
 - [x] Train the next live-replay candidate only from declared clean source ratios and compare it against raw v9 plus reranked v9 before live use
-- [ ] Review lower remote-replay ratios or source-specific filtering before promoting a live-replay-trained DQN
+- [x] Add opt-in movable action-start filtering for selected DQN replay sources so recovery-state policy selections do not become valid action samples
+- [x] Train v20 from the clean support-prior live replay with remote-only movable action-start filtering and compare it against v9/v18/v19 before live use
+- [x] Review lower remote-replay ratios or source-specific filtering before promoting a live-replay-trained DQN
+- [ ] Treat v20's remaining far-range `fireball-mp` shift as a separate issue from recovery-state action pollution before promoting a live-replay-trained DQN
 - [ ] Add character curriculum
 - [ ] Add stage curriculum
 - [ ] Add automated reset loops

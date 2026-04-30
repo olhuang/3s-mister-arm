@@ -198,6 +198,16 @@ class BuildDiagnostics:
     unrecognized_delayed_rewards: int = 0
     unrecognized_uncredited_reward_rows: int = 0
     action_source_counts: dict[str, int] = field(default_factory=dict)
+    movable_filter_checked_rows: int = 0
+    movable_filter_included_rows: int = 0
+    movable_filter_filtered_rows: int = 0
+    movable_filter_reward_rows: int = 0
+    movable_filter_reward_sum: float = 0.0
+    movable_filter_delayed_rewards: int = 0
+    movable_filter_uncredited_reward_rows: int = 0
+    movable_filter_by_source: dict[str, int] = field(default_factory=dict)
+    movable_filter_by_action: dict[str, int] = field(default_factory=dict)
+    movable_filter_by_reason: dict[str, int] = field(default_factory=dict)
 
     def as_metadata(self) -> dict[str, object]:
         return {
@@ -214,6 +224,16 @@ class BuildDiagnostics:
             "unrecognized_delayed_rewards": self.unrecognized_delayed_rewards,
             "unrecognized_uncredited_reward_rows": self.unrecognized_uncredited_reward_rows,
             "action_source_counts": self.action_source_counts,
+            "movable_filter_checked_rows": self.movable_filter_checked_rows,
+            "movable_filter_included_rows": self.movable_filter_included_rows,
+            "movable_filter_filtered_rows": self.movable_filter_filtered_rows,
+            "movable_filter_reward_rows": self.movable_filter_reward_rows,
+            "movable_filter_reward_sum": self.movable_filter_reward_sum,
+            "movable_filter_delayed_rewards": self.movable_filter_delayed_rewards,
+            "movable_filter_uncredited_reward_rows": self.movable_filter_uncredited_reward_rows,
+            "movable_filter_by_source": dict(sorted(self.movable_filter_by_source.items())),
+            "movable_filter_by_action": dict(sorted(self.movable_filter_by_action.items())),
+            "movable_filter_by_reason": dict(sorted(self.movable_filter_by_reason.items())),
         }
 
 
@@ -276,6 +296,23 @@ class ConservativeActionPenaltyConfig:
             "min_action_count": self.min_action_count,
             "negative_mean_extra": self.negative_mean_extra,
             "exempt_actions": sorted(self.exempt_actions),
+        }
+
+
+@dataclass(frozen=True)
+class DQNActionFilterConfig:
+    require_movable_state_sources: frozenset[str] = field(default_factory=frozenset)
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.require_movable_state_sources)
+
+    def requires_movable_state(self, source_name: str) -> bool:
+        return source_name in self.require_movable_state_sources
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "require_movable_state_sources": sorted(self.require_movable_state_sources),
         }
 
 
@@ -654,6 +691,17 @@ def model_version_executed(row: dict[str, object]) -> int:
     return int_field(row, "model_version_executed")
 
 
+def movable_action_filter_reason(row: dict[str, object]) -> str:
+    routine1 = int_field(row, "obs_self_routine_1")
+    if routine1 != 0:
+        return f"self_routine_1:{routine1}"
+    if int_field(row, "obs_self_routine_attack_state") != 0:
+        return "self_attack_state"
+    if int_field(row, "obs_self_contact_reaction_state") != 0:
+        return "self_contact_reaction"
+    return ""
+
+
 def canonical_execution_source_name(raw_source: str, flag_name: str) -> str:
     normalized = raw_source.strip().lower().replace("_", "-")
     if not normalized:
@@ -732,6 +780,15 @@ def replay_source_mix_config_from_args(args: argparse.Namespace) -> ReplaySource
         exclude_sources=parse_source_name_set(str(args.replay_source_exclude), "--replay-source-exclude"),
         max_rows_by_source=parse_source_max_rows(str(args.replay_source_max_rows), "--replay-source-max-rows"),
         target_ratios=parse_source_ratios(str(args.replay_source_ratios), "--replay-source-ratios"),
+    )
+
+
+def dqn_action_filter_config_from_args(args: argparse.Namespace) -> DQNActionFilterConfig:
+    return DQNActionFilterConfig(
+        require_movable_state_sources=parse_source_name_set(
+            str(args.dqn_require_movable_state_sources),
+            "--dqn-require-movable-state-sources",
+        ),
     )
 
 
@@ -1432,6 +1489,7 @@ def build_experiences(
     reward_spacing_config: RewardSpacingConfig,
     reward_position_config: RewardPositionConfig,
     engine_outcome_config: EngineOutcomeConfig,
+    action_filter_config: DQNActionFilterConfig,
 ) -> tuple[
     list[Experience],
     dict[str, int],
@@ -1508,6 +1566,43 @@ def build_experiences(
             build_stats.action_source_counts[action_selection.source] = (
                 build_stats.action_source_counts.get(action_selection.source, 0) + 1
             )
+            base_reward = rl.tabular_training_reward(row) * reward_scale
+            if (
+                action_start
+                and action_name is not None
+                and action_filter_config.requires_movable_state(source_name)
+            ):
+                build_stats.movable_filter_checked_rows += 1
+                filter_reason = movable_action_filter_reason(row)
+                if filter_reason:
+                    set_experience_next_state(experiences, last_exp_index, row, bool(row.get("done", False)))
+                    build_stats.movable_filter_filtered_rows += 1
+                    build_stats.movable_filter_by_source[source_name] = (
+                        build_stats.movable_filter_by_source.get(source_name, 0) + 1
+                    )
+                    build_stats.movable_filter_by_action[action_name] = (
+                        build_stats.movable_filter_by_action.get(action_name, 0) + 1
+                    )
+                    build_stats.movable_filter_by_reason[filter_reason] = (
+                        build_stats.movable_filter_by_reason.get(filter_reason, 0) + 1
+                    )
+                    if base_reward != 0.0:
+                        build_stats.movable_filter_reward_rows += 1
+                        build_stats.movable_filter_reward_sum += base_reward
+                        if add_delayed_reward(
+                            experiences,
+                            last_exp_index,
+                            base_reward,
+                            actions,
+                            action_rewards,
+                            source_stats,
+                        ):
+                            build_stats.movable_filter_delayed_rewards += 1
+                        else:
+                            build_stats.movable_filter_uncredited_reward_rows += 1
+                    last_exp_index = None
+                    continue
+                build_stats.movable_filter_included_rows += 1
             risk_cost = (
                 reward_risk_cost(episode_rows, index, action_name, reward_risk_config, risk_stats)
                 if action_name is not None
@@ -1528,12 +1623,8 @@ def build_experiences(
                 if action_name is not None
                 else 0.0
             )
-            reward = (
-                rl.tabular_training_reward(row)
-                - risk_cost
-                + guard_adjustment
-                + spacing_adjustment
-                + position_adjustment
+            reward = base_reward + (
+                -risk_cost + guard_adjustment + spacing_adjustment + position_adjustment
             ) * reward_scale
             if action_name is None:
                 if reward != 0.0:
@@ -2209,6 +2300,15 @@ def main() -> None:
             "e.g. remote=0.7,human-demo=0.3. When set, sources not listed are dropped"
         ),
     )
+    parser.add_argument(
+        "--dqn-require-movable-state-sources",
+        default="",
+        help=(
+            "Comma-separated execution sources whose action-start rows must be in a movable self state "
+            "before they can create DQN experiences, e.g. remote. Filtered rows can still delay-credit "
+            "their HP delta to the previous valid experience"
+        ),
+    )
     parser.add_argument("--steps", type=int, default=2000, help="Gradient steps")
     parser.add_argument("--batch-size", type=int, default=64, help="Replay batch size")
     parser.add_argument(
@@ -2591,6 +2691,7 @@ def main() -> None:
         replay_source_mix_config,
         int(args.seed),
     )
+    dqn_action_filter_config = dqn_action_filter_config_from_args(args)
     reward_risk_config = reward_risk_config_from_args(args)
     reward_guard_config = reward_guard_config_from_args(args)
     reward_spacing_config = reward_spacing_config_from_args(args)
@@ -2621,6 +2722,7 @@ def main() -> None:
         reward_spacing_config,
         reward_position_config,
         engine_outcome_config,
+        dqn_action_filter_config,
     )
     if not experiences:
         raise SystemExit("No DQN experiences built from transition logs")
@@ -2682,6 +2784,7 @@ def main() -> None:
         "rows_read_before_source_mix": rows_read_before_source_mix,
         "replay_source_mix_config": replay_source_mix_config.as_metadata(),
         "replay_source_mix_stats": replay_source_mix_stats.as_metadata(),
+        "dqn_action_filter_config": dqn_action_filter_config.as_metadata(),
         "experiences": len(experiences),
         "actions_subset": list(actions),
         "actions_subset_size": len(actions),
@@ -2814,6 +2917,21 @@ def main() -> None:
         f"pre:{format_counts(replay_source_mix_stats.pre_counts, replay_source_mix_stats.raw_rows, args.diagnostic_top_n)} "
         f"post:{format_counts(replay_source_mix_stats.post_counts, replay_source_mix_stats.mixed_rows, args.diagnostic_top_n)} "
         f"target:{format_counts(replay_source_mix_stats.target_counts, sum(replay_source_mix_stats.target_counts.values()), args.diagnostic_top_n)}",
+        flush=True,
+    )
+    print(
+        "DQN diagnostics "
+        f"action_filter=movable_sources:{','.join(sorted(dqn_action_filter_config.require_movable_state_sources)) or 'none'} "
+        f"checked:{build_stats.movable_filter_checked_rows} "
+        f"included:{build_stats.movable_filter_included_rows} "
+        f"filtered:{build_stats.movable_filter_filtered_rows} "
+        f"reward_rows:{build_stats.movable_filter_reward_rows} "
+        f"reward_sum:{build_stats.movable_filter_reward_sum:.3f} "
+        f"delayed:{build_stats.movable_filter_delayed_rewards} "
+        f"uncredited:{build_stats.movable_filter_uncredited_reward_rows} "
+        f"by_source:{format_counts(build_stats.movable_filter_by_source, build_stats.movable_filter_filtered_rows, args.diagnostic_top_n)} "
+        f"by_action:{format_counts(build_stats.movable_filter_by_action, build_stats.movable_filter_filtered_rows, args.diagnostic_top_n)} "
+        f"by_reason:{format_counts(build_stats.movable_filter_by_reason, build_stats.movable_filter_filtered_rows, args.diagnostic_top_n)}",
         flush=True,
     )
     print(

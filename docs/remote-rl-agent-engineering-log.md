@@ -2,6 +2,71 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-30: Add DQN Action-Support Prior Reranking
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / DQN sparse-action overestimation control
+
+Files changed:
+- `tools/rl_probe_server.py`
+- `tools/compare_dqn_models.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- add an opt-in inference-time reranker that uses actor metadata action support without retraining model weights.
+- test whether a conservative support prior can reduce the v9 `stand-lp` / `crouch-hp` / `fireball-hp` sparse-action surface without creating a new guard, back, or fireball collapse.
+
+Implementation notes:
+- DQN actor loading now preserves manifest `metadata`, including trainer-written `action_counts` and `action_rewards`.
+- added `DQNSupportPriorConfig` and shared DQN ranking helpers in `tools/rl_probe_server.py`.
+- probe-side DQN inference can now subtract support penalties from raw Q scores with:
+  - `--dqn-support-prior-min-count`
+  - `--dqn-support-prior-count-penalty`
+  - `--dqn-support-prior-negative-mean-penalty`
+  - `--dqn-support-prior-exempt-actions`
+- default probe behavior remains unchanged because all support-prior flags default to off.
+- `tools/compare_dqn_models.py` can apply the same reranker to selected model labels with `--dqn-support-prior-models`, so raw v9 and reranked v9 can be compared on the same observation rows.
+
+Result:
+- default no-prior comparison stayed identical:
+  - raw v9 vs duplicate v9 on CPU/human rows: `changed=0/5000`
+- stronger priors were too aggressive on the CPU/human slice:
+  - `min=500,count=0.08,neg=0.04`: `fireball-hp=46.9%`, changed `2314/5000`
+  - `min=1000,count=0.08,neg=0.04`: `fireball-hp=47.0%`, changed `2457/5000`
+  - `min=500,count=0.12,neg=0.06`: `fireball-hp=50.0%`, changed `2879/5000`
+- medium priors reduced `crouch-hp` but still pushed too much toward fireball on live-v9 observations:
+  - `min=300,count=0.01,neg=0.005` on CPU/human: `stand-lp=34.2%`, `fireball-hp=31.8%`, `crouch-hp=20.3%`, changed `298/5000`
+  - the same setting on live-v9 rows: `fireball-hp=48.4%`, `crouch-hp=26.3%`, changed `213/1967`
+- the current conservative live-recording candidate is:
+  - `--dqn-support-prior-min-count 300 --dqn-support-prior-count-penalty 0.005 --dqn-support-prior-negative-mean-penalty 0.002`
+  - CPU/human rows: v9 `stand-lp=36.3%`, `fireball-hp=27.5%`, `crouch-hp=24.0%` -> reranked `stand-lp=35.6%`, `fireball-hp=29.5%`, `crouch-hp=22.2%`, changed `134/5000`
+  - live-v9 rows: v9 `fireball-hp=39.2%`, `crouch-hp=35.8%`, `stand-hk=16.6%`, `guard-crouch=2.3%` -> reranked `fireball-hp=42.2%`, `crouch-hp=32.6%`, `stand-hk=16.7%`, `guard-crouch=2.7%`, changed `74/1967`
+- an even milder count-only candidate is available if fireball increase must be minimized:
+  - `--dqn-support-prior-min-count 300 --dqn-support-prior-count-penalty 0.005 --dqn-support-prior-negative-mean-penalty 0.0`
+  - CPU/human rows: reranked `stand-lp=37.0%`, `fireball-hp=28.7%`, `crouch-hp=21.7%`, changed `120/5000`
+  - live-v9 rows: reranked `fireball-hp=41.6%`, `crouch-hp=32.3%`, changed `73/1967`
+- conclusion:
+  - the support-prior infrastructure is useful and safe to keep because it is fully opt-in.
+  - do not use the stronger settings for live collection; they shift the policy toward a fireball-heavy surface.
+  - the next clean live replay should start with the low prior above, short-smoke the action distribution, and only then use the resulting remote rows for another retrain.
+
+Validation:
+- Python compile passed:
+  - `python3 -m py_compile tools/rl_probe_server.py tools/compare_dqn_models.py`
+- whitespace check passed:
+  - `git diff --check -- tools/rl_probe_server.py tools/compare_dqn_models.py`
+- raw/no-prior compare passed:
+  - `python3 tools/compare_dqn_models.py logs/rl-transitions-cpu-demo-schema-v3-4-3-3.ndjson logs/rl-transitions-human-demo-schema-v3-4-3-3.ndjson --model v9=model/dqn-mixdemo-schema-v3-ground-specials-v9 --model v9copy=model/dqn-mixdemo-schema-v3-ground-specials-v9 --limit 5000 --top-n 5 --training-action-source auto`
+- conservative rerank compares passed:
+  - `python3 tools/compare_dqn_models.py logs/rl-transitions-cpu-demo-schema-v3-4-3-3.ndjson logs/rl-transitions-human-demo-schema-v3-4-3-3.ndjson --model v9=model/dqn-mixdemo-schema-v3-ground-specials-v9 --model v9r=model/dqn-mixdemo-schema-v3-ground-specials-v9 --limit 5000 --top-n 8 --training-action-source auto --dqn-support-prior-models v9r --dqn-support-prior-min-count 300 --dqn-support-prior-count-penalty 0.005 --dqn-support-prior-negative-mean-penalty 0.002`
+  - `python3 tools/compare_dqn_models.py logs/rl-transitions-live-dqn-ground-specials-v9-4-3-3.ndjson --model v9=model/dqn-mixdemo-schema-v3-ground-specials-v9 --model v9r=model/dqn-mixdemo-schema-v3-ground-specials-v9 --limit 5000 --top-n 8 --training-action-source auto --dqn-support-prior-models v9r --dqn-support-prior-min-count 300 --dqn-support-prior-count-penalty 0.005 --dqn-support-prior-negative-mean-penalty 0.002`
+
+Follow-up:
+- collect a short clean live replay with v9 plus the conservative support-prior flags before doing another source-mix retrain.
+- keep remote replay at a declared low ratio for the next candidate and compare it against both raw v9 and reranked v9 before live promotion.
+- do not treat v18 as a live candidate; its source-mix result has been reviewed and should not replace v9.
+
 ## 2026-04-30: Train And Compare V18 Source-Mixed DQN
 
 Milestone:

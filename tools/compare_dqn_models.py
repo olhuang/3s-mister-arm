@@ -85,24 +85,34 @@ def threat_dx_bucket(row: dict[str, object]) -> str:
     return f"atk{attack}_{dx_bucket(row)}"
 
 
-def greedy_action(model: dict[str, object], row: dict[str, object]) -> tuple[str, float]:
-    ranked = ranked_actions(model, row)
+def greedy_action(
+    model: dict[str, object],
+    row: dict[str, object],
+    support_prior_config: rl.DQNSupportPriorConfig = rl.DQNSupportPriorConfig(),
+) -> tuple[str, float]:
+    ranked = ranked_actions(model, row, support_prior_config)
     if not ranked:
         return "none", 0.0
     return ranked[0]
 
 
-def ranked_actions(model: dict[str, object], row: dict[str, object]) -> list[tuple[str, float]]:
+def ranked_actions(
+    model: dict[str, object],
+    row: dict[str, object],
+    support_prior_config: rl.DQNSupportPriorConfig = rl.DQNSupportPriorConfig(),
+) -> list[tuple[str, float]]:
     actions = [str(action) for action in model.get("actions", [])]
     dqn_model = model.get("dqn")
     if not isinstance(dqn_model, dict) or not actions:
         return []
-    values = rl.dqn_predict_values(dqn_model, row)
-    if not values:
-        return []
-    count = min(len(actions), len(values))
-    ranked = sorted(range(count), key=lambda index: (float(values[index]), actions[index]), reverse=True)
-    return [(actions[index], float(values[index])) for index in ranked]
+    metadata = model.get("metadata")
+    return rl.dqn_ranked_action_scores(
+        tuple(actions),
+        dqn_model,
+        metadata if isinstance(metadata, dict) else {},
+        row,
+        support_prior_config,
+    )
 
 
 def parse_focus_actions(value: str) -> tuple[str, ...]:
@@ -196,6 +206,7 @@ def print_focus_diagnostics(
     focus_actions: tuple[str, ...],
     focus_rank_limit: int,
     top_n: int,
+    support_prior_config: rl.DQNSupportPriorConfig,
 ) -> None:
     model_actions = {str(action) for action in model.get("actions", [])}
     available_actions = tuple(action for action in focus_actions if action in model_actions)
@@ -215,7 +226,7 @@ def print_focus_diagnostics(
     q_gaps: list[float] = []
 
     for row in rows:
-        ranked = ranked_actions(model, row)
+        ranked = ranked_actions(model, row, support_prior_config)
         if not ranked:
             continue
         top_action, top_value = ranked[0]
@@ -305,9 +316,54 @@ def main() -> int:
         default=0.70,
         help="Print WARN when one greedy action exceeds this fraction of evaluated rows",
     )
+    parser.add_argument(
+        "--dqn-support-prior-min-count",
+        type=int,
+        default=0,
+        help="Minimum replay action count before DQN support-prior count penalty is skipped; 0 disables count penalty",
+    )
+    parser.add_argument(
+        "--dqn-support-prior-count-penalty",
+        type=float,
+        default=0.0,
+        help="Q-score penalty applied proportionally to missing replay support below --dqn-support-prior-min-count",
+    )
+    parser.add_argument(
+        "--dqn-support-prior-negative-mean-penalty",
+        type=float,
+        default=0.0,
+        help="Q-score penalty applied when an action's replay mean reward is non-positive",
+    )
+    parser.add_argument(
+        "--dqn-support-prior-exempt-actions",
+        default="",
+        help="Comma-separated DQN actions exempt from support-prior penalties",
+    )
+    parser.add_argument(
+        "--dqn-support-prior-models",
+        default="",
+        help=(
+            "Comma-separated model labels to rerank with the support prior; "
+            "empty applies the prior to every model when prior flags are enabled"
+        ),
+    )
     args = parser.parse_args()
 
     models = [load_model(value) for value in args.model]
+    support_prior_config = rl.DQNSupportPriorConfig(
+        min_action_count=max(0, int(args.dqn_support_prior_min_count)),
+        count_penalty=max(0.0, float(args.dqn_support_prior_count_penalty)),
+        negative_mean_penalty=max(0.0, float(args.dqn_support_prior_negative_mean_penalty)),
+        exempt_actions=rl.parse_action_name_set(
+            str(args.dqn_support_prior_exempt_actions),
+            option_name="--dqn-support-prior-exempt-actions",
+        ),
+    )
+    prior_model_labels = {
+        item.strip()
+        for item in str(args.dqn_support_prior_models).split(",")
+        if item.strip()
+    }
     rows = read_rows(args.transition_logs, max(0, args.limit), max(0, args.tail_rows))
     if not rows:
         raise SystemExit("No evaluation rows loaded")
@@ -318,12 +374,17 @@ def main() -> int:
     first_label = models[0][0]
 
     for label, model in models:
+        model_support_prior_config = (
+            support_prior_config
+            if support_prior_config.enabled and (not prior_model_labels or label in prior_model_labels)
+            else rl.DQNSupportPriorConfig()
+        )
         counts: collections.Counter[str] = collections.Counter()
         by_threat_dx: dict[str, collections.Counter[str]] = collections.defaultdict(collections.Counter)
         q_sum: collections.Counter[str] = collections.Counter()
         choices: list[str] = []
         for row in rows:
-            action, value = greedy_action(model, row)
+            action, value = greedy_action(model, row, model_support_prior_config)
             choices.append(action)
             counts[action] += 1
             by_threat_dx[threat_dx_bucket(row)][action] += 1
@@ -344,7 +405,8 @@ def main() -> int:
             f"\nMODEL {label} version={model.get('version')} profile={profile} actions={action_count} rows={len(rows)} "
             f"attack_rate={100.0 * attack_total / len(rows):.1f}% "
             f"shoryuken_rate={100.0 * shoryuken_total / len(rows):.1f}% "
-            f"top={top_action}:{top_rate * 100.0:.1f}% collapse={collapse}"
+            f"top={top_action}:{top_rate * 100.0:.1f}% collapse={collapse} "
+            f"support_prior={model_support_prior_config.label()}"
         )
         print(f"  overall {format_counts(counts, len(rows), max(1, args.top_n))}")
         print(f"  selected_q_mean {format_selected_q(counts, q_sum, max(1, args.top_n))}")
@@ -358,6 +420,7 @@ def main() -> int:
             focus_actions,
             max(1, args.focus_rank_limit),
             max(1, args.top_n),
+            model_support_prior_config,
         )
 
     baseline_choices = choices_by_label[first_label]

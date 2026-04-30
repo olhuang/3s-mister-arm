@@ -2467,7 +2467,7 @@ Tasks:
 - [x] A/B test conservative DQN penalty against v9/v11-style ground-specials models before making it part of the default training recipe
 - [x] Review whether sparse-action overestimation still requires Double DQN / inference reranking after conservative-penalty A/B results
 - [x] Add offline Double DQN target mode and train v17 from the v9 ground-specials recipe
-- [ ] Add inference-time reranking / action-support priors after v17 Double DQN showed no material policy change
+- [x] Add inference-time reranking / action-support priors after v17 Double DQN showed no material policy change
 - [x] Run move-family validation passes with scripted policies such as `hp`, `throw`, `ryu-fireball`, `tatsu`, and `shoryuken`, then document which attack-outcome fields are trustworthy enough for learner use versus debug-only analysis
 - [x] Add a human-demo recording path so human-vs-CPU play can export learner-ingestible episodes for bootstrapping / behavior-cloning experiments
 - [x] Add a CPU-demo recording path so built-in CPU-vs-CPU play can export learner-ingestible bootstrap episodes
@@ -2486,7 +2486,9 @@ Tasks:
 - [x] Add opt-in DQN replay source-mix include / exclude / cap / ratio controls for v18 experiments
 - [ ] Define how replay-buffer import mixes human-demo episodes with remote-agent episodes, including metadata such as data source, control mode, and player side
 - [x] Train a v18 candidate from a declared source-mix recipe and compare against v9 before live use
-- [ ] Review v18 source-mix results before using live-policy replay as a default training input
+- [x] Review v18 source-mix results before using live-policy replay as a default training input
+- [ ] Collect a clean live replay with v9 plus a conservative action-support prior before the next live-replay retrain
+- [ ] Train the next live-replay candidate only from declared clean source ratios and compare it against raw v9 plus reranked v9 before live use
 - [ ] Add character curriculum
 - [ ] Add stage curriculum
 - [ ] Add automated reset loops
@@ -2707,7 +2709,11 @@ Implementation notes:
   - trains a small stdlib-only MLP with target-network DQN updates, so it does not require `numpy` / `torch` for first smoke tests
   - publishes `policy=dqn` actor manifests with `actions`, `epsilon`, `fallback_policy`, and serialized MLP weights under `dqn`
   - `tools/rl_probe_server.py --policy dqn --model-dir <dir>` can hot-load those manifests and run DQN inference from same-frame OBS payloads, then reuse the existing macro/fixed action adapter for `fireball-lp`, `fireball-mp`, `fireball-hp`, `guard-stand`, `guard-crouch`, all standing/crouching LP/MP/HP/LK/MK/HK normals, all forward/neutral/back jump LP/MP/HP/LK/MK/HK normals, `shoryuken-lp`, `shoryuken-mp`, `shoryuken-hp`, `tatsu-lk`, `tatsu-mk`, and `tatsu-hk`
+    - probe-side DQN inference can apply an opt-in action-support prior / reranker with `--dqn-support-prior-min-count`, `--dqn-support-prior-count-penalty`, `--dqn-support-prior-negative-mean-penalty`, and `--dqn-support-prior-exempt-actions`
+    - the reranker reads actor metadata `action_counts` / `action_rewards`, subtracts the configured support penalty from each action's Q score at inference time, and leaves model weights, transition schema, replay logs, and default behavior unchanged when the flags are empty
+    - the first conservative v9 live-recording candidate is `--dqn-support-prior-min-count 300 --dqn-support-prior-count-penalty 0.005 --dqn-support-prior-negative-mean-penalty 0.002`; stronger settings pushed the same v9 policy surface toward `fireball-hp` too aggressively
   - `tools/compare_dqn_models.py` compares A/B/C DQN manifests on the same transition observations and prints overall, distance/threat-bucketed, attack-rate, Shoryuken-rate, selected-Q, and collapse-warning greedy action distributions
+    - compare runs can apply the same support prior to selected model labels through `--dqn-support-prior-models`, which lets raw v9 and reranked v9 be evaluated on the exact same observation rows before live use
 - `docs/rl-policy-action-taxonomy.md` now records the first source-backed action registry:
   - universal actions use IDs below `1000`
   - character command actions use `1000 + character_id * 100 + source_command_slot`

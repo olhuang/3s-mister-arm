@@ -317,6 +317,7 @@ class ActorModel:
     version: int
     policy: str
     source: str
+    metadata: dict[str, object] = field(default_factory=dict)
     q_table: dict[str, dict[str, float]] = field(default_factory=dict)
     q_counts: dict[str, dict[str, int]] = field(default_factory=dict)
     dqn_model: dict[str, object] = field(default_factory=dict)
@@ -349,6 +350,32 @@ class ActionSelection:
     name: str | None
     step: int
     source: str
+
+
+@dataclass(frozen=True)
+class DQNSupportPriorConfig:
+    min_action_count: int = 0
+    count_penalty: float = 0.0
+    negative_mean_penalty: float = 0.0
+    exempt_actions: frozenset[str] = field(default_factory=frozenset)
+
+    @property
+    def enabled(self) -> bool:
+        return (
+            (self.min_action_count > 0 and self.count_penalty > 0.0)
+            or self.negative_mean_penalty > 0.0
+        )
+
+    def label(self) -> str:
+        if not self.enabled:
+            return "off"
+        exempt = ",".join(sorted(self.exempt_actions)) if self.exempt_actions else "none"
+        return (
+            f"min:{self.min_action_count}"
+            f"/count_penalty:{self.count_penalty:.3f}"
+            f"/negative_mean:{self.negative_mean_penalty:.3f}"
+            f"/exempt:{exempt}"
+        )
 
 
 @dataclass
@@ -407,6 +434,12 @@ def parse_action_names(value: str, *, option_name: str = "--actions") -> tuple[s
     return tuple(actions)
 
 
+def parse_action_name_set(value: str, *, option_name: str) -> frozenset[str]:
+    if not value.strip():
+        return frozenset()
+    return frozenset(parse_action_names(value, option_name=option_name))
+
+
 def canonical_tabular_action_name(policy: str) -> str | None:
     if policy in TABULAR_ACTION_NAMES:
         return policy
@@ -453,6 +486,36 @@ def _coerce_q_counts(value: object) -> dict[str, dict[str, int]]:
         if clean_counts:
             q_counts[str(state_key)] = clean_counts
     return q_counts
+
+
+def _coerce_action_count_map(value: object) -> dict[str, int]:
+    if not isinstance(value, dict):
+        return {}
+    counts: dict[str, int] = {}
+    for action_name, raw_count in value.items():
+        action = canonical_tabular_action_name(str(action_name))
+        if action is None or action not in TABULAR_ACTION_NAMES:
+            continue
+        try:
+            counts[action] = max(0, int(raw_count))
+        except (TypeError, ValueError):
+            continue
+    return counts
+
+
+def _coerce_action_reward_map(value: object) -> dict[str, float]:
+    if not isinstance(value, dict):
+        return {}
+    rewards: dict[str, float] = {}
+    for action_name, raw_reward in value.items():
+        action = canonical_tabular_action_name(str(action_name))
+        if action is None or action not in TABULAR_ACTION_NAMES:
+            continue
+        try:
+            rewards[action] = float(raw_reward)
+        except (TypeError, ValueError):
+            continue
+    return rewards
 
 
 def _coerce_dqn_model(value: object) -> dict[str, object]:
@@ -602,6 +665,8 @@ class ActorModelStore:
             self._current_mtime_ns = stat.st_mtime_ns
             return
         source = str(data.get("source", "file") or "file")
+        raw_metadata = data.get("metadata")
+        metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
         q_table = _coerce_q_table(data.get("q"))
         q_counts = _coerce_q_counts(data.get("q_counts"))
         dqn_model = _coerce_dqn_model(data.get("dqn"))
@@ -625,6 +690,7 @@ class ActorModelStore:
                     version,
                     policy,
                     source,
+                    metadata=metadata,
                     q_table=q_table,
                     q_counts=q_counts,
                     dqn_model=dqn_model,
@@ -715,6 +781,7 @@ class ActorModelStore:
                     next_version,
                     policy,
                     source,
+                    metadata=metadata or {},
                     q_table=q_table or {},
                     q_counts=q_counts or {},
                     dqn_model=dqn_model or {},
@@ -737,6 +804,7 @@ class ActorModelStore:
                 next_version,
                 policy,
                 source,
+                metadata=metadata or {},
                 q_table=q_table or {},
                 q_counts=q_counts or {},
                 dqn_model=dqn_model or {},
@@ -1214,6 +1282,49 @@ def dqn_predict_values(dqn_model: dict[str, object], row: dict[str, object]) -> 
             next_values = [max(0.0, value) for value in next_values]
         activations = next_values
     return activations
+
+
+def dqn_support_prior_penalty(
+    action: str,
+    action_counts: dict[str, int],
+    action_rewards: dict[str, float],
+    config: DQNSupportPriorConfig,
+) -> float:
+    if not config.enabled or action in config.exempt_actions or not action_counts:
+        return 0.0
+    count = int(action_counts.get(action, 0))
+    reward = float(action_rewards.get(action, 0.0))
+    penalty = 0.0
+    if config.min_action_count > 0 and config.count_penalty > 0.0 and count < config.min_action_count:
+        missing_ratio = (config.min_action_count - count) / max(1, config.min_action_count)
+        penalty += config.count_penalty * max(0.0, min(1.0, missing_ratio))
+    if config.negative_mean_penalty > 0.0 and count > 0:
+        mean_reward = reward / count
+        if mean_reward <= 0.0:
+            penalty += config.negative_mean_penalty
+    return penalty
+
+
+def dqn_ranked_action_scores(
+    actions: tuple[str, ...],
+    dqn_model: dict[str, object],
+    metadata: dict[str, object],
+    row: dict[str, object],
+    support_prior_config: DQNSupportPriorConfig = DQNSupportPriorConfig(),
+) -> list[tuple[str, float]]:
+    values = dqn_predict_values(dqn_model, row)
+    if not values:
+        return []
+    action_counts = _coerce_action_count_map(metadata.get("action_counts")) if support_prior_config.enabled else {}
+    action_rewards = _coerce_action_reward_map(metadata.get("action_rewards")) if support_prior_config.enabled else {}
+    scored_actions: list[tuple[str, float]] = []
+    for index, action in enumerate(actions):
+        if index >= len(values) or action not in TABULAR_ACTION_NAMES:
+            continue
+        score = float(values[index])
+        score -= dqn_support_prior_penalty(action, action_counts, action_rewards, support_prior_config)
+        scored_actions.append((action, score))
+    return sorted(scored_actions, key=lambda item: (item[1], item[0]), reverse=True)
 
 
 class TabularPolicyLearner:
@@ -2126,22 +2237,25 @@ def tabular_actor_action_name(actor: ActorModel, state_key: str | None) -> str |
     return max(eligible_actions, key=lambda action: (float(scores.get(action, 0.0)), action))
 
 
-def dqn_actor_action_name(actor: ActorModel, obs_row: dict[str, object] | None) -> str | None:
+def dqn_actor_action_name(
+    actor: ActorModel,
+    obs_row: dict[str, object] | None,
+    support_prior_config: DQNSupportPriorConfig = DQNSupportPriorConfig(),
+) -> str | None:
     if actor.policy != "dqn" or not obs_row or not actor.dqn_model:
         return None
     if random.random() < actor.epsilon:
         return random.choice(actor.actions)
-    values = dqn_predict_values(actor.dqn_model, obs_row)
-    if not values:
+    ranked_actions = dqn_ranked_action_scores(
+        actor.actions,
+        actor.dqn_model,
+        actor.metadata,
+        obs_row,
+        support_prior_config,
+    )
+    if not ranked_actions:
         return None
-    scored_actions = [
-        (action, float(values[index]))
-        for index, action in enumerate(actor.actions)
-        if index < len(values) and action in TABULAR_ACTION_NAMES
-    ]
-    if not scored_actions:
-        return None
-    return max(scored_actions, key=lambda item: (item[1], item[0]))[0]
+    return ranked_actions[0][0]
 
 
 def active_macro_action_frame(
@@ -2216,6 +2330,7 @@ def policy_action_frame(
     repeat_delay_ms: int,
     tabular_state_key_override: str | None = None,
     obs_row_override: dict[str, object] | None = None,
+    dqn_support_prior_config: DQNSupportPriorConfig = DQNSupportPriorConfig(),
 ) -> PolicyActionFrame:
     if actor.policy in MODEL_POLICY_CHOICES:
         macro_frame = active_macro_action_frame(macro_states, nonce, run_id, episode_id)
@@ -2226,7 +2341,7 @@ def policy_action_frame(
         tabular_state = tabular_state_key_override if tabular_state_key_override else model_store.latest_tabular_state()
         action_name = tabular_actor_action_name(actor, tabular_state)
     elif actor.policy == "dqn":
-        action_name = dqn_actor_action_name(actor, obs_row_override)
+        action_name = dqn_actor_action_name(actor, obs_row_override, dqn_support_prior_config)
     if action_name is not None:
         fixed = fixed_action_wire(action_name)
         if fixed is not None:
@@ -2249,6 +2364,7 @@ def policy_action_wire(
     repeat_delay_ms: int,
     tabular_state_key_override: str | None = None,
     obs_row_override: dict[str, object] | None = None,
+    dqn_support_prior_config: DQNSupportPriorConfig = DQNSupportPriorConfig(),
 ) -> int:
     return policy_action_frame(
         actor,
@@ -2261,6 +2377,7 @@ def policy_action_wire(
         repeat_delay_ms,
         tabular_state_key_override,
         obs_row_override,
+        dqn_support_prior_config,
     ).action_wire
 
 
@@ -2297,6 +2414,7 @@ def serve(
     tabular_fallback_policy: str,
     tabular_actions: tuple[str, ...],
     tabular_min_action_count: int,
+    dqn_support_prior_config: DQNSupportPriorConfig,
 ) -> None:
     inference_stats = InferenceStats()
     initial_actions = tabular_actions if policy == "tabular" else TABULAR_DEFAULT_ACTIONS
@@ -2347,6 +2465,8 @@ def serve(
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind((host, port))
     print(f"RL probe server listening on {host}:{port}")
+    if dqn_support_prior_config.enabled:
+        print(f"DQN support prior active {dqn_support_prior_config.label()}", flush=True)
     hello_count: dict[int, int] = {}
     policy_states: dict[tuple[int, int, int, str], dict[str, int]] = {}
     macro_states: dict[tuple[int, int, int], dict[str, int | str]] = {}
@@ -2407,6 +2527,7 @@ def serve(
                     policy_repeat_delay_ms,
                     obs_state_key,
                     obs_row,
+                    dqn_support_prior_config,
                 )
                 payload = make_action_packet(
                     nonce,
@@ -2644,6 +2765,29 @@ def main() -> None:
         default=8,
         help="Minimum state/action update count before a tabular q-score can drive greedy inference",
     )
+    parser.add_argument(
+        "--dqn-support-prior-min-count",
+        type=int,
+        default=0,
+        help="Minimum replay action count before DQN support-prior count penalty is skipped; 0 disables count penalty",
+    )
+    parser.add_argument(
+        "--dqn-support-prior-count-penalty",
+        type=float,
+        default=0.0,
+        help="Q-score penalty applied proportionally to missing replay support below --dqn-support-prior-min-count",
+    )
+    parser.add_argument(
+        "--dqn-support-prior-negative-mean-penalty",
+        type=float,
+        default=0.0,
+        help="Q-score penalty applied when an action's replay mean reward is non-positive",
+    )
+    parser.add_argument(
+        "--dqn-support-prior-exempt-actions",
+        default="",
+        help="Comma-separated DQN actions exempt from support-prior penalties",
+    )
     parser.add_argument("--verbose", action="store_true", help="Log every valid packet")
     args = parser.parse_args()
     transition_log = args.transition_log
@@ -2665,6 +2809,15 @@ def main() -> None:
                 f"--tabular-fallback-policy {args.tabular_fallback_policy} resolves to {fallback_action}, "
                 f"which is not in --tabular-actions"
             )
+    dqn_support_prior_config = DQNSupportPriorConfig(
+        min_action_count=max(0, int(args.dqn_support_prior_min_count)),
+        count_penalty=max(0.0, float(args.dqn_support_prior_count_penalty)),
+        negative_mean_penalty=max(0.0, float(args.dqn_support_prior_negative_mean_penalty)),
+        exempt_actions=parse_action_name_set(
+            str(args.dqn_support_prior_exempt_actions),
+            option_name="--dqn-support-prior-exempt-actions",
+        ),
+    )
     serve(
         args.host,
         args.port,
@@ -2698,6 +2851,7 @@ def main() -> None:
         args.tabular_fallback_policy,
         tabular_actions,
         args.tabular_min_action_count,
+        dqn_support_prior_config,
     )
 
 

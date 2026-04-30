@@ -2,6 +2,132 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-30: V37b / V38 Full-Action DQN Support-Prior Findings
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / full action-set DQN experiments
+
+Files changed:
+- `docs/remote-rl-agent-engineering-log.md`
+- `docs/plan-remote-rl-agent.md`
+
+Purpose:
+- record the reproducible V37b and V38 full-action training recipes and the
+  live/probe findings so later experiments do not repeat the same jump-collapse
+  and CPU-demo-only failure modes.
+
+Common training recipe:
+- full 45-action set from `rl_probe_server.TABULAR_ACTION_NAMES`, including
+  all stand/crouch normals, all jump-forward / jump-neutral / jump-back attacks,
+  fireball, throw, Shoryuken, and tatsu variants.
+- `--steps 2000`
+- `--batch-size 64`
+- `--learning-rate 0.0003`
+- `--gamma 0.9`
+- `--target-sync-steps 200`
+- `--dqn-target-mode standard`
+- `--hidden-sizes 64,64`
+- `--fallback-policy stand-mk`
+- `--training-action-source auto`
+- `--batch-sampling balanced`
+- `--balanced-batch-ratios movement=0.25,normal=0.45,special=0.30`
+- `--epsilon 0.05`
+- `--seed 7`
+- `--eval-limit 5000`
+- `--diagnostic-top-n 12`
+- reward/risk shape:
+  - `--reward-risk-profile all-attacks`
+  - `--reward-risk-window-decisions 15`
+  - `--reward-attack-no-damage-cost 0.3`
+  - `--reward-attack-punished-cost 1.0`
+  - `--reward-shoryuken-no-damage-extra-cost 0.0`
+  - `--reward-shoryuken-punished-extra-cost 0.5`
+  - `--reward-jump-attack-no-damage-extra-cost 1.0`
+  - `--reward-jump-attack-punished-extra-cost 2.0`
+  - `--reward-passive-guard-cost 0.4`
+  - `--reward-far-guard-cost 0.6`
+  - `--reward-guard-threat-max-dx 120`
+  - `--reward-spacing-target-min-dx 50`
+  - `--reward-spacing-target-max-dx 120`
+  - `--reward-spacing-improve-bonus 0.5`
+  - `--reward-spacing-worsen-cost 0.2`
+  - `--reward-spacing-maintain-bonus 0.1`
+  - `--reward-spacing-threat-back-bonus 0.3`
+- engine-outcome shape:
+  - `--engine-outcome-training-mode prefer-engine-action`
+  - `--engine-outcome-window-decisions 15`
+  - `--engine-outcome-action-windows fireball-lp=45,fireball-mp=45,fireball-hp=45,tatsu-lk=25,tatsu-mk=25,tatsu-hk=25,throw=8`
+  - `--engine-outcome-hit-bonus 1.0`
+  - `--engine-outcome-no-damage-cost 0.2`
+  - `--engine-outcome-punished-cost 1.0`
+  - `--engine-outcome-oversample 1`
+  - `--engine-outcome-action-oversamples fireball-lp=4,fireball-mp=4,fireball-hp=4,shoryuken-lp=8,shoryuken-mp=10,shoryuken-hp=12,tatsu-lk=6,tatsu-mk=6,tatsu-hk=6,throw=8`
+- conservative training penalty:
+  - `--conservative-min-action-count 300`
+  - `--conservative-action-penalty 2.0`
+  - `--conservative-negative-mean-extra 1.0`
+
+V37b training:
+- source log: `logs/rl-transitions-live-dqn-v36-20260430-212325.ndjson`
+- source filter: `--replay-source-ratios human-demo=1.0`
+- model dir: `model/dqn-human-demo-v36log-full-actions-v37b`
+- published version: `37`
+- replay rows: `25609` human-demo rows, `16985` DQN experiences.
+- conservative penalty: `7928` adjusted experiences, `11365.0` raw cost.
+- raw greedy still showed jump overestimation:
+  - `jump-neutral-mk: 60.1%`
+  - `jump-back-hk: 20.7%`
+  - `jump-neutral-mp: 6.5%`
+- conclusion from raw model: training-time reward/support penalty alone did not
+  fix full-action jump overestimation.
+
+V37b live/probe support-prior recipe:
+- model dir: `model/dqn-human-demo-v36log-full-actions-v37b`
+- use at probe time:
+  - `--dqn-support-prior-min-count 300`
+  - `--dqn-support-prior-count-penalty 0.15`
+  - `--dqn-support-prior-negative-mean-penalty 0.05`
+- offline sweep on the same human-demo observations showed this strong prior
+  moved the policy away from jump collapse:
+  - weak prior (`0.005/0.002`): `jump-neutral-mk 55.0%`,
+    `jump-back-hk 19.9%`, `jump-neutral-mp 7.0%`
+  - strong prior (`0.15/0.05`): `jump-neutral-mk 2.0%`,
+    `jump-back-hk` and `jump-neutral-mp` nearly disappeared
+- live finding from manual play: this V37b + strong-prior combination felt
+  substantially better and is the preferred full-action human-demo candidate.
+
+V38 training:
+- source log: `logs/rl-transitions-cpu-demo-schema-v3-4-3-3.ndjson`
+- source filter: `--replay-source-ratios cpu-demo=1.0`
+- model dir: `model/dqn-cpudemo-schema-v3-full-actions-v38`
+- published version: `38`
+- replay rows: `122276` CPU-demo rows, `45124` DQN experiences.
+- conservative penalty: `32317` adjusted experiences, `35084.0` raw cost.
+- raw greedy still collapsed:
+  - `jump-neutral-mk: 80.7%`
+  - `jump-back-hk: 8.9%`
+  - `forward-hp: 3.3%`
+  - `tatsu-hk: 2.8%`
+  - `jump-neutral-mp: 1.8%`
+- applying the same strong prior did reduce jump but caused a new collapse:
+  - `fireball-hp: 66.1%`
+  - `jump-neutral-mk: 12.6%`
+  - `shoryuken-hp: 8.9%`
+  - `tatsu-hk: 5.0%`
+
+Decision:
+- keep V37b + strong inference support-prior as the useful full-action result.
+- do not promote V38 CPU-demo-only; the same recipe does not transfer to
+  CPU-demo-only data and can shift into fireball/DP collapse under strong
+  support-prior reranking.
+
+Follow-up:
+- prefer human-demo-heavy or human+CPU mix experiments over CPU-demo-only for
+  the next full-action model.
+- if full-action DQN remains useful, implement a cleaner training-time
+  unsupported-action regularizer or self-routine features rather than relying
+  only on reward penalties.
+
 ## 2026-04-30: V35a Auto Retrain Preset
 
 Milestone:

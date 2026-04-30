@@ -2487,8 +2487,9 @@ Tasks:
 - [ ] Define how replay-buffer import mixes human-demo episodes with remote-agent episodes, including metadata such as data source, control mode, and player side
 - [x] Train a v18 candidate from a declared source-mix recipe and compare against v9 before live use
 - [x] Review v18 source-mix results before using live-policy replay as a default training input
-- [ ] Collect a clean live replay with v9 plus a conservative action-support prior before the next live-replay retrain
-- [ ] Train the next live-replay candidate only from declared clean source ratios and compare it against raw v9 plus reranked v9 before live use
+- [x] Collect a clean live replay with v9 plus a conservative action-support prior before the next live-replay retrain
+- [x] Train the next live-replay candidate only from declared clean source ratios and compare it against raw v9 plus reranked v9 before live use
+- [ ] Review lower remote-replay ratios or source-specific filtering before promoting a live-replay-trained DQN
 - [ ] Add character curriculum
 - [ ] Add stage curriculum
 - [ ] Add automated reset loops

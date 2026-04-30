@@ -2,6 +2,91 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-30: Train And Compare V19 Clean Live-Replay DQN
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / replay source mixing preparation
+
+Files changed:
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- train the next live-replay candidate from the cleaner v9 support-prior live log.
+- keep the source mix controlled against v18 by using the same row-level ratio and changing only the remote log source.
+
+Implementation notes:
+- source live log:
+  - `logs/rl-transitions-live-dqn-v9-support-prior-20260430-113010.ndjson`
+  - rows: `8081`
+  - episodes: `(12, 1)` through `(12, 12)`
+  - policy source rows: `8081`
+- live log action distribution from analyzer:
+  - `fireball-hp=3782`
+  - `crouch-hp=1472`
+  - `stand-hk=1180`
+  - `stand-lp=596`
+  - `guard-crouch=312`
+  - `tatsu-lk=138`
+  - `fireball-mp=106`
+- trained `model/dqn-mixdemo-schema-v3-ground-specials-v19`.
+- v19 uses the v9/v18 ground-specials recipe, standard DQN target mode, and:
+  - `--replay-source-ratios cpu-demo=0.6,human-demo=0.3,remote=0.1`
+- row-level source mix:
+  - before mix: `cpu-demo=122276`, `human-demo=18849`, `remote=8078`, `repeated-last-action=3`
+  - after mix: `cpu-demo=37698` / `60.0%`, `human-demo=18849` / `30.0%`, `remote=6283` / `10.0%`
+- built DQN experiences:
+  - `human-demo=14212` / `45.9%`
+  - `cpu-demo=13501` / `43.6%`
+  - `remote=3231` / `10.4%`
+
+Result:
+- v19 trained and published successfully:
+  - rows after source mix: `62830`
+  - experiences: `30944`
+  - last loss: `0.006458`
+  - avg loss: `0.007458`
+- saved v19 metadata greedy distribution over its 5000-row eval slice:
+  - `stand-lp=41.2%`
+  - `crouch-hp=22.5%`
+  - `fireball-mp=16.1%`
+  - `fireball-hp=15.3%`
+  - `stand-hk=4.2%`
+  - `guard-crouch=0.4%`
+- same-observation CPU/human slice compare:
+  - v9: `stand-lp=36.3%`, `fireball-hp=27.5%`, `crouch-hp=24.0%`, `stand-hk=9.3%`, `guard-crouch=1.7%`
+  - v9 with conservative support prior: `stand-lp=35.6%`, `fireball-hp=29.5%`, `crouch-hp=22.2%`, `stand-hk=9.3%`, `guard-crouch=2.1%`
+  - v18: `stand-lp=49.8%`, `crouch-hp=31.6%`, `fireball-hp=11.0%`, `stand-hk=5.7%`, `guard-crouch=0.4%`
+  - v19: `stand-lp=40.6%`, `fireball-hp=19.6%`, `fireball-mp=18.3%`, `crouch-hp=18.0%`, `stand-hk=2.5%`, `guard-crouch=0.6%`
+  - changed decisions: v9 -> v19 `1451/5000`
+- same-observation clean-live slice compare:
+  - v9: `fireball-hp=39.2%`, `crouch-hp=32.1%`, `stand-hk=16.7%`, `stand-lp=7.8%`, `guard-crouch=2.6%`
+  - v9 with conservative support prior: `fireball-hp=40.8%`, `crouch-hp=30.3%`, `stand-hk=16.8%`, `stand-lp=7.4%`, `guard-crouch=2.8%`
+  - v18: `crouch-hp=44.5%`, `stand-lp=20.5%`, `fireball-hp=19.5%`, `stand-hk=12.5%`, `guard-crouch=0.2%`
+  - v19: `fireball-hp=30.2%`, `crouch-hp=25.5%`, `fireball-mp=18.6%`, `stand-lp=15.4%`, `stand-hk=8.7%`, `guard-crouch=0.5%`
+  - changed decisions: v9 -> v19 `1539/5000`
+- conclusion:
+  - v19 is better than v18 on the clean-live slice because it avoids v18's `crouch-hp=44.5%` shift.
+  - v19 should not replace v9 yet: CPU/human rows still drift toward `stand-lp`, and far-range rows introduce a new `fireball-mp` preference.
+  - the clean support-prior replay is useful training signal, but 10% remote replay is still high enough to move the policy surface materially.
+
+Validation:
+- analyzer passed:
+  - `python3 tools/analyze_rl_transitions.py logs/rl-transitions-live-dqn-v9-support-prior-20260430-113010.ndjson --training-action-source auto`
+- full v19 training passed:
+  - `python3 tools/train_dqn_learner.py logs/rl-transitions-cpu-demo-schema-v3-4-3-3.ndjson logs/rl-transitions-human-demo-schema-v3-4-3-3.ndjson logs/rl-transitions-live-dqn-v9-support-prior-20260430-113010.ndjson --model-dir model/dqn-mixdemo-schema-v3-ground-specials-v19 --model-version 19 --steps 3000 --batch-size 64 --gamma 0.9 --learning-rate 0.001 --target-sync-steps 200 --dqn-target-mode standard --replay-source-ratios cpu-demo=0.6,human-demo=0.3,remote=0.1 --actions forward,back,guard-stand,guard-crouch,stand-lp,stand-mp,stand-hp,stand-lk,stand-mk,stand-hk,forward-hp,crouch-lp,crouch-mp,crouch-hp,crouch-lk,crouch-mk,crouch-hk,fireball-lp,fireball-mp,fireball-hp,throw,shoryuken-lp,shoryuken-mp,shoryuken-hp,tatsu-lk,tatsu-mk,tatsu-hk --fallback-policy stand-mk --training-action-source auto --reward-risk-profile all-attacks --reward-risk-window-decisions 15 --reward-attack-no-damage-cost 0.3 --reward-attack-punished-cost 1.0 --reward-shoryuken-no-damage-extra-cost 0.0 --reward-shoryuken-punished-extra-cost 0.5 --reward-jump-attack-no-damage-extra-cost 0.0 --reward-jump-attack-punished-extra-cost 0.0 --reward-guard-success-bonus 0.0 --reward-guard-success-window-decisions 6 --reward-guard-threat-max-dx 120 --reward-passive-guard-cost 0.3 --reward-far-guard-cost 0.5 --reward-spacing-target-min-dx 50 --reward-spacing-target-max-dx 120 --reward-spacing-improve-bonus 0.5 --reward-spacing-worsen-cost 0.2 --reward-spacing-maintain-bonus 0.1 --reward-spacing-threat-back-bonus 0.3 --engine-outcome-training-mode prefer-engine-action --engine-outcome-window-decisions 15 --engine-outcome-action-windows fireball-lp=45,fireball-mp=45,fireball-hp=45,tatsu-lk=25,tatsu-mk=25,tatsu-hk=25 --engine-outcome-hit-bonus 1.0 --engine-outcome-no-damage-cost 0.2 --engine-outcome-punished-cost 1.0 --engine-outcome-oversample 1 --engine-outcome-action-oversamples fireball-lp=10,fireball-mp=20,fireball-hp=8,shoryuken-lp=4,shoryuken-mp=6,shoryuken-hp=8,tatsu-lk=6,tatsu-mk=6,tatsu-hk=6 --batch-sampling balanced --balanced-batch-ratios movement=0.3,normal=0.3,special=0.4 --epsilon 0.05 --seed 7 --log-interval 500 --eval-limit 5000 --diagnostic-top-n 12`
+- metadata inspection passed:
+  - `jq '.metadata | {rows_read, rows_read_before_source_mix, experiences, replay_source_mix_stats, source_rows:.source_replay_diagnostics.row_counts, source_experiences:.source_replay_diagnostics.experience_counts, model_versions:.source_replay_diagnostics.experience_model_version_counts, greedy_counts, greedy_top_action, greedy_top_action_rate, dqn_target_mode, last_loss, avg_loss}' model/dqn-mixdemo-schema-v3-ground-specials-v19/current.json`
+- same-observation compares passed:
+  - `python3 tools/compare_dqn_models.py logs/rl-transitions-cpu-demo-schema-v3-4-3-3.ndjson logs/rl-transitions-human-demo-schema-v3-4-3-3.ndjson --model v9=model/dqn-mixdemo-schema-v3-ground-specials-v9 --model v9r=model/dqn-mixdemo-schema-v3-ground-specials-v9 --model v19=model/dqn-mixdemo-schema-v3-ground-specials-v19 --limit 5000 --top-n 10 --focus-actions crouch-hp,stand-lp,stand-hk,stand-mk,fireball-lp,fireball-mp,fireball-hp,guard-stand,guard-crouch --focus-rank-limit 3 --training-action-source auto --dqn-support-prior-models v9r --dqn-support-prior-min-count 300 --dqn-support-prior-count-penalty 0.005 --dqn-support-prior-negative-mean-penalty 0.002`
+  - `python3 tools/compare_dqn_models.py logs/rl-transitions-live-dqn-v9-support-prior-20260430-113010.ndjson --model v9=model/dqn-mixdemo-schema-v3-ground-specials-v9 --model v9r=model/dqn-mixdemo-schema-v3-ground-specials-v9 --model v19=model/dqn-mixdemo-schema-v3-ground-specials-v19 --limit 5000 --top-n 10 --focus-actions crouch-hp,stand-lp,stand-hk,stand-mk,fireball-lp,fireball-mp,fireball-hp,guard-stand,guard-crouch --focus-rank-limit 3 --training-action-source auto --dqn-support-prior-models v9r --dqn-support-prior-min-count 300 --dqn-support-prior-count-penalty 0.005 --dqn-support-prior-negative-mean-penalty 0.002`
+- Python compile passed:
+  - `python3 -m py_compile tools/train_dqn_learner.py tools/compare_dqn_models.py`
+
+Follow-up:
+- do not promote v19 to live use as-is.
+- next candidate should reduce the remote ratio below 10%, add source-specific filtering, or add a policy-improvement gate so remote rows teach negative outcomes without moving the whole policy toward `stand-lp` / `fireball-mp`.
+
 ## 2026-04-30: Add DQN Action-Support Prior Reranking
 
 Milestone:

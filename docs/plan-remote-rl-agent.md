@@ -2485,7 +2485,8 @@ Tasks:
 - [x] Add DQN replay diagnostics for `execution_source` and `model_version_executed` before changing source-mix ratios
 - [x] Add opt-in DQN replay source-mix include / exclude / cap / ratio controls for v18 experiments
 - [ ] Define how replay-buffer import mixes human-demo episodes with remote-agent episodes, including metadata such as data source, control mode, and player side
-- [ ] Train a v18 candidate from a declared source-mix recipe and compare against v9 / v17 before live use
+- [x] Train a v18 candidate from a declared source-mix recipe and compare against v9 before live use
+- [ ] Review v18 source-mix results before using live-policy replay as a default training input
 - [ ] Add character curriculum
 - [ ] Add stage curriculum
 - [ ] Add automated reset loops

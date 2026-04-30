@@ -2,6 +2,77 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-30: Train And Compare V18 Source-Mixed DQN
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / replay source mixing preparation
+
+Files changed:
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- train the first v18 candidate with an explicit row-level source mix.
+- test whether adding a small amount of v9 live-policy replay improves the v9 ground-specials policy surface without reinforcing sparse-action overestimation.
+
+Implementation notes:
+- trained `model/dqn-mixdemo-schema-v3-ground-specials-v18`.
+- v18 uses the v9 ground-specials recipe, standard DQN target mode, and the new source-mix control:
+  - `--replay-source-ratios cpu-demo=0.6,human-demo=0.3,remote=0.1`
+- row-level source mix was exactly:
+  - `cpu-demo=11682` / `60.0%`
+  - `human-demo=5841` / `30.0%`
+  - `remote=1947` / `10.0%`
+- `repeated-last-action=16` and `neutral-fallback=4` were dropped because they were not listed in the ratio.
+- built DQN experiences were:
+  - `human-demo=4405` / `45.3%`
+  - `cpu-demo=4227` / `43.5%`
+  - `remote=1083` / `11.1%`
+- experience mix differs from row mix because DQN replay is decision/macro based and engine-outcome oversampling changes source density.
+
+Result:
+- v18 trained and published successfully:
+  - rows: `19470`
+  - experiences: `9715`
+  - last loss: `0.004914`
+  - avg loss: `0.006962`
+- saved v18 metadata greedy distribution over its 5000-row eval slice:
+  - `stand-lp=48.6%`
+  - `crouch-hp=31.0%`
+  - `stand-hk=10.4%`
+  - `fireball-hp=8.7%`
+  - `guard-crouch=0.3%`
+- same-observation CPU/human slice compare against v9:
+  - v9: `stand-lp=36.3%`, `fireball-hp=27.5%`, `crouch-hp=24.0%`, `stand-hk=9.3%`, `guard-crouch=1.7%`
+  - v18: `stand-lp=49.8%`, `crouch-hp=31.6%`, `fireball-hp=11.0%`, `stand-hk=5.7%`, `guard-crouch=0.4%`
+  - changed decisions: `1249/5000`
+- same-observation v9-live-log compare:
+  - v9: `fireball-hp=39.2%`, `crouch-hp=35.8%`, `stand-hk=16.6%`, `stand-lp=5.8%`, `guard-crouch=2.3%`
+  - v18: `crouch-hp=49.2%`, `fireball-hp=19.3%`, `stand-lp=18.2%`, `stand-hk=11.5%`, `guard-crouch=0.5%`
+  - changed decisions: `589/1967`
+- conclusion:
+  - v18 does not create a guard collapse or LP/MP fireball collapse.
+  - v18 also does not improve the sparse-action overestimation problem.
+  - adding 10% v9 live replay mostly shifts probability away from `fireball-hp` into `stand-lp` and `crouch-hp`.
+  - v18 should not replace v9 for live use based on offline evidence.
+
+Validation:
+- Python compile passed:
+  - `python3 -m py_compile tools/train_dqn_learner.py tools/compare_dqn_models.py`
+- full v18 training passed:
+  - `python3 tools/train_dqn_learner.py logs/rl-transitions-cpu-demo-schema-v3-4-3-3.ndjson logs/rl-transitions-human-demo-schema-v3-4-3-3.ndjson logs/rl-transitions-live-dqn-ground-specials-v9-4-3-3.ndjson --model-dir model/dqn-mixdemo-schema-v3-ground-specials-v18 --model-version 18 --steps 3000 --batch-size 64 --gamma 0.9 --learning-rate 0.001 --target-sync-steps 200 --dqn-target-mode standard --replay-source-ratios cpu-demo=0.6,human-demo=0.3,remote=0.1 --actions forward,back,guard-stand,guard-crouch,stand-lp,stand-mp,stand-hp,stand-lk,stand-mk,stand-hk,forward-hp,crouch-lp,crouch-mp,crouch-hp,crouch-lk,crouch-mk,crouch-hk,fireball-lp,fireball-mp,fireball-hp,throw,shoryuken-lp,shoryuken-mp,shoryuken-hp,tatsu-lk,tatsu-mk,tatsu-hk --fallback-policy stand-mk --training-action-source auto --reward-risk-profile all-attacks --reward-risk-window-decisions 15 --reward-attack-no-damage-cost 0.3 --reward-attack-punished-cost 1.0 --reward-shoryuken-no-damage-extra-cost 0.0 --reward-shoryuken-punished-extra-cost 0.5 --reward-jump-attack-no-damage-extra-cost 0.0 --reward-jump-attack-punished-extra-cost 0.0 --reward-guard-success-bonus 0.0 --reward-guard-success-window-decisions 6 --reward-guard-threat-max-dx 120 --reward-passive-guard-cost 0.3 --reward-far-guard-cost 0.5 --reward-spacing-target-min-dx 50 --reward-spacing-target-max-dx 120 --reward-spacing-improve-bonus 0.5 --reward-spacing-worsen-cost 0.2 --reward-spacing-maintain-bonus 0.1 --reward-spacing-threat-back-bonus 0.3 --engine-outcome-training-mode prefer-engine-action --engine-outcome-window-decisions 15 --engine-outcome-action-windows fireball-lp=45,fireball-mp=45,fireball-hp=45,tatsu-lk=25,tatsu-mk=25,tatsu-hk=25 --engine-outcome-hit-bonus 1.0 --engine-outcome-no-damage-cost 0.2 --engine-outcome-punished-cost 1.0 --engine-outcome-oversample 1 --engine-outcome-action-oversamples fireball-lp=10,fireball-mp=20,fireball-hp=8,shoryuken-lp=4,shoryuken-mp=6,shoryuken-hp=8,tatsu-lk=6,tatsu-mk=6,tatsu-hk=6 --batch-sampling balanced --balanced-batch-ratios movement=0.3,normal=0.3,special=0.4 --epsilon 0.05 --seed 7 --log-interval 500 --eval-limit 5000 --diagnostic-top-n 12`
+- metadata inspection passed:
+  - `jq '.metadata | {rows_read, rows_read_before_source_mix, experiences, replay_source_mix_stats, source_rows:.source_replay_diagnostics.row_counts, source_experiences:.source_replay_diagnostics.experience_counts, model_versions:.source_replay_diagnostics.experience_model_version_counts, batch_sampling, greedy_counts, greedy_top_action, greedy_top_action_rate, dqn_target_mode, last_loss, avg_loss}' model/dqn-mixdemo-schema-v3-ground-specials-v18/current.json`
+- CPU/human same-observation compare passed:
+  - `python3 tools/compare_dqn_models.py logs/rl-transitions-cpu-demo-schema-v3-4-3-3.ndjson logs/rl-transitions-human-demo-schema-v3-4-3-3.ndjson --model v9=model/dqn-mixdemo-schema-v3-ground-specials-v9 --model v18=model/dqn-mixdemo-schema-v3-ground-specials-v18 --limit 5000 --top-n 8 --focus-actions crouch-hp,stand-lp,stand-hk,stand-mk,fireball-lp,fireball-mp,fireball-hp,guard-stand,guard-crouch --focus-rank-limit 3 --training-action-source auto`
+- v9-live-log same-observation compare passed:
+  - `python3 tools/compare_dqn_models.py logs/rl-transitions-live-dqn-ground-specials-v9-4-3-3.ndjson --model v9=model/dqn-mixdemo-schema-v3-ground-specials-v9 --model v18=model/dqn-mixdemo-schema-v3-ground-specials-v18 --limit 5000 --top-n 8 --focus-actions crouch-hp,stand-lp,stand-hk,stand-mk,fireball-lp,fireball-mp,fireball-hp,guard-stand,guard-crouch --focus-rank-limit 3 --training-action-source auto`
+
+Follow-up:
+- do not promote v18 to live testing as-is.
+- avoid using v9 live replay as a default positive training source until the trainer can apply stronger action-support priors, source-specific weights, or policy-improvement filtering.
+- next useful path is inference-time reranking / action-support prior, because source-mix retraining still shifts collapse among `stand-lp`, `crouch-hp`, and `fireball-hp` instead of adding a healthier tactical spread.
+
 ## 2026-04-30: Add Opt-In DQN Replay Source Mix Controls
 
 Milestone:

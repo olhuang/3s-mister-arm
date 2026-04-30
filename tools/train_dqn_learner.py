@@ -98,6 +98,7 @@ MOVEMENT_SPACING_ACTIONS = frozenset({"forward", "back"})
 BATCH_SAMPLING_MODES = ("uniform", "balanced")
 BATCH_GROUPS = ("movement", "normal", "special")
 SPECIAL_ACTION_PREFIXES = ("fireball-", "shoryuken-", "tatsu-")
+DQN_TARGET_MODES = ("standard", "double")
 
 
 @dataclass(frozen=True)
@@ -1525,6 +1526,7 @@ def train_dqn(
     seed: int,
     log_interval: int,
     batch_sampling_config: BatchSamplingConfig,
+    target_mode: str,
 ) -> tuple[list[dict[str, object]], dict[str, float]]:
     rng = random.Random(seed)
     layers = init_network(len(rl.DQN_FEATURE_NAMES), hidden_sizes, len(actions), rng)
@@ -1552,7 +1554,18 @@ def train_dqn(
         for exp in batch:
             values, activations, pre_activations = forward(layers, exp.state)
             next_values, _, _ = forward(target_layers, exp.next_state)
-            target = exp.reward if exp.done else exp.reward + gamma * max(next_values)
+            if exp.done:
+                target = exp.reward
+            elif target_mode == "double":
+                online_next_values, _, _ = forward(layers, exp.next_state)
+                next_count = min(len(actions), len(online_next_values), len(next_values))
+                best_next_index = max(
+                    range(next_count),
+                    key=lambda index: (online_next_values[index], actions[index]),
+                )
+                target = exp.reward + gamma * next_values[best_next_index]
+            else:
+                target = exp.reward + gamma * max(next_values)
             error = max(-10.0, min(10.0, values[exp.action_index] - target))
             loss += 0.5 * error * error
             output_grad = [0.0 for _ in values]
@@ -2098,6 +2111,12 @@ def main() -> None:
         ),
     )
     parser.add_argument("--target-sync-steps", type=int, default=200, help="Steps between target-network syncs")
+    parser.add_argument(
+        "--dqn-target-mode",
+        choices=DQN_TARGET_MODES,
+        default="standard",
+        help="DQN bootstrapping target: standard uses max target-network value; double selects with online network and evaluates with target network",
+    )
     parser.add_argument("--epsilon", type=float, default=0.05, help="Exploration probability stamped into the published actor")
     parser.add_argument(
         "--fallback-policy",
@@ -2179,6 +2198,7 @@ def main() -> None:
         args.seed,
         args.log_interval,
         batch_sampling_config,
+        args.dqn_target_mode,
     )
     batch_sampling_diag = batch_sampling_diagnostics(
         experiences,
@@ -2265,6 +2285,8 @@ def main() -> None:
         "batch_sampling": batch_sampling_diag.as_metadata(),
         "gamma": min(0.999, max(0.0, args.gamma)),
         "learning_rate": max(1e-8, args.learning_rate),
+        "target_sync_steps": max(1, args.target_sync_steps),
+        "dqn_target_mode": args.dqn_target_mode,
         "action_counts": action_counts,
         "action_rewards": action_rewards,
         "observed_action_counts": observed_action_counts,
@@ -2295,6 +2317,7 @@ def main() -> None:
         f"experiences={len(experiences)} "
         f"actions={len(actions)} "
         f"action_source={args.training_action_source} "
+        f"target_mode={args.dqn_target_mode} "
         f"batch_sampling={batch_sampling_diag.mode} "
         f"risk={reward_risk_config.profile} risk_cost={reward_risk_stats.total_cost:.1f} "
         f"guard_bonus={reward_guard_stats.total_bonus:.1f} "

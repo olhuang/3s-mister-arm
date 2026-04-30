@@ -2,6 +2,76 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-30: Add Double DQN Target Mode And Train V17
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / DQN sparse-action overestimation control
+
+Files changed:
+- `tools/train_dqn_learner.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- test whether Double DQN target construction reduces the ground-specials sparse-action overestimation seen in v9/v11/v16.
+- keep the experiment clean by using the v9 training recipe and changing only the DQN bootstrapping target mode.
+
+Implementation notes:
+- added `--dqn-target-mode standard|double` to `tools/train_dqn_learner.py`.
+- `standard` remains the default and preserves the previous target:
+  - `target = reward + gamma * max_a Q_target(next_state, a)`
+- `double` selects the next action with the online network and evaluates it with the target network:
+  - `best_next_action = argmax_a Q_online(next_state, a)`
+  - `target = reward + gamma * Q_target(next_state, best_next_action)`
+- published model metadata now records:
+  - `dqn_target_mode`
+  - `target_sync_steps`
+- trained `model/dqn-mixdemo-schema-v3-ground-specials-v17` with the v9 recipe plus `--dqn-target-mode double`:
+  - fresh schema-v3 CPU-demo + human-demo logs
+  - `3000` steps, batch size `64`, `gamma=0.9`, learning rate `0.001`, target sync `200`
+  - 27-action ground-specials action set
+  - `all-attacks` risk profile
+  - spacing and guard shaping matching v9
+  - engine-outcome replay matching v9
+  - no conservative action penalty
+- v17 metadata confirms `dqn_target_mode=double` and `target_sync_steps=200`.
+
+Result:
+- v17 trained successfully, but the policy surface is effectively unchanged from v9.
+- saved `5000`-row eval distribution:
+  - v17: `stand-lp=26.72%`, `crouch-hp=26.16%`, `fireball-hp=25.10%`, `stand-hk=19.44%`, `guard-crouch=2.00%`
+  - this matches the v9 metadata distribution to practical precision.
+- same-observation compare over `5000` rows:
+  - v9: `stand-lp=36.3%`, `fireball-hp=27.5%`, `crouch-hp=24.0%`, `stand-hk=9.3%`, `guard-crouch=1.7%`
+  - v17: `stand-lp=36.3%`, `fireball-hp=27.4%`, `crouch-hp=24.0%`, `stand-hk=9.3%`, `guard-crouch=1.7%`
+  - `COMPARE v9 -> v17 changed=1/5000`
+- conclusion:
+  - Double DQN support is useful to keep as an opt-in trainer mode.
+  - v17 should not replace v9 for live testing on offline evidence alone.
+  - the current sparse-action issue is not solved by Double DQN under the v9 recipe.
+  - next control should be inference-time reranking / action-support priors, or another explicit target-value control, not more conservative reward penalty tuning.
+
+Validation:
+- Python compile passed:
+  - `python3 -m py_compile tools/train_dqn_learner.py`
+- standard-target smoke passed:
+  - `python3 tools/train_dqn_learner.py logs/rl-transitions-cpu-demo-schema-v3-4-3-3.ndjson --model-dir /tmp/rl-dqn-target-standard-smoke --model-version 1 --limit 800 --steps 2 --batch-size 8 --hidden-sizes 8 --actions forward,back,guard-stand,guard-crouch,stand-mk,fireball-lp,fireball-mp,fireball-hp,shoryuken-hp --fallback-policy stand-mk --training-action-source auto --reward-risk-profile none --engine-outcome-training-mode prefer-engine-action --engine-outcome-window-decisions 15 --engine-outcome-action-windows fireball-lp=45,fireball-mp=45,fireball-hp=45 --dqn-target-mode standard --log-interval 1 --eval-limit 100 --diagnostic-top-n 8`
+  - reported `target_mode=standard` and published version `1`.
+- double-target smoke passed:
+  - `python3 tools/train_dqn_learner.py logs/rl-transitions-cpu-demo-schema-v3-4-3-3.ndjson --model-dir /tmp/rl-dqn-target-double-smoke --model-version 2 --limit 800 --steps 2 --batch-size 8 --hidden-sizes 8 --actions forward,back,guard-stand,guard-crouch,stand-mk,fireball-lp,fireball-mp,fireball-hp,shoryuken-hp --fallback-policy stand-mk --training-action-source auto --reward-risk-profile none --engine-outcome-training-mode prefer-engine-action --engine-outcome-window-decisions 15 --engine-outcome-action-windows fireball-lp=45,fireball-mp=45,fireball-hp=45 --dqn-target-mode double --log-interval 1 --eval-limit 100 --diagnostic-top-n 8`
+  - reported `target_mode=double` and published version `2`.
+- full v17 training passed:
+  - `python3 tools/train_dqn_learner.py logs/rl-transitions-cpu-demo-schema-v3-4-3-3.ndjson logs/rl-transitions-human-demo-schema-v3-4-3-3.ndjson --model-dir model/dqn-mixdemo-schema-v3-ground-specials-v17 --model-version 17 --steps 3000 --batch-size 64 --gamma 0.9 --learning-rate 0.001 --target-sync-steps 200 --dqn-target-mode double --actions forward,back,guard-stand,guard-crouch,stand-lp,stand-mp,stand-hp,stand-lk,stand-mk,stand-hk,forward-hp,crouch-lp,crouch-mp,crouch-hp,crouch-lk,crouch-mk,crouch-hk,fireball-lp,fireball-mp,fireball-hp,throw,shoryuken-lp,shoryuken-mp,shoryuken-hp,tatsu-lk,tatsu-mk,tatsu-hk --fallback-policy stand-mk --training-action-source auto --reward-risk-profile all-attacks --reward-risk-window-decisions 15 --reward-attack-no-damage-cost 0.3 --reward-attack-punished-cost 1.0 --reward-shoryuken-no-damage-extra-cost 0.0 --reward-shoryuken-punished-extra-cost 0.5 --reward-jump-attack-no-damage-extra-cost 0.0 --reward-jump-attack-punished-extra-cost 0.0 --reward-guard-success-bonus 0.0 --reward-guard-success-window-decisions 6 --reward-guard-threat-max-dx 120 --reward-passive-guard-cost 0.3 --reward-far-guard-cost 0.5 --reward-spacing-target-min-dx 50 --reward-spacing-target-max-dx 120 --reward-spacing-improve-bonus 0.5 --reward-spacing-worsen-cost 0.2 --reward-spacing-maintain-bonus 0.1 --reward-spacing-threat-back-bonus 0.3 --engine-outcome-training-mode prefer-engine-action --engine-outcome-window-decisions 15 --engine-outcome-action-windows fireball-lp=45,fireball-mp=45,fireball-hp=45,tatsu-lk=25,tatsu-mk=25,tatsu-hk=25 --engine-outcome-hit-bonus 1.0 --engine-outcome-no-damage-cost 0.2 --engine-outcome-punished-cost 1.0 --engine-outcome-oversample 1 --engine-outcome-action-oversamples fireball-lp=10,fireball-mp=20,fireball-hp=8,shoryuken-lp=4,shoryuken-mp=6,shoryuken-hp=8,tatsu-lk=6,tatsu-mk=6,tatsu-hk=6 --batch-sampling balanced --balanced-batch-ratios movement=0.3,normal=0.3,special=0.4 --epsilon 0.05 --seed 7 --log-interval 500 --eval-limit 5000 --diagnostic-top-n 12`
+  - reported `DQN published version=17`, `experiences=58719`, `target_mode=double`, and `loss=0.011467 avg_loss=0.011811`.
+- same-observation compare passed:
+  - `python3 tools/compare_dqn_models.py logs/rl-transitions-cpu-demo-schema-v3-4-3-3.ndjson logs/rl-transitions-human-demo-schema-v3-4-3-3.ndjson --model v9=model/dqn-mixdemo-schema-v3-ground-specials-v9 --model v11=model/dqn-mixdemo-schema-v3-ground-specials-v11 --model v16b=model/dqn-mixdemo-schema-v3-ground-specials-v16b --model v17=model/dqn-mixdemo-schema-v3-ground-specials-v17 --limit 5000 --top-n 8 --focus-actions crouch-hp,stand-mk,fireball-lp,fireball-mp,fireball-hp,guard-stand,guard-crouch --focus-rank-limit 3 --training-action-source auto`
+  - reported `COMPARE v9 -> v17 changed=1/5000`.
+
+Follow-up:
+- treat v9 as the stronger live candidate than v17 unless a separate live run contradicts the offline comparison.
+- implement an opt-in DQN inference reranker or action-support prior that can penalize low-support or context-inappropriate top actions without retraining.
+- compare any reranked policy against v9/v17 on the same observation slice before live testing.
+
 ## 2026-04-30: Review V16 Conservative Penalty A/B Results
 
 Milestone:

@@ -2465,7 +2465,9 @@ Tasks:
 - [x] Record the support-aware conservative DQN penalty plan for sparse-action overestimation
 - [x] Add an opt-in conservative action penalty to offline DQN replay rewards without changing transition schema or live inference
 - [x] A/B test conservative DQN penalty against v9/v11-style ground-specials models before making it part of the default training recipe
-- [ ] Review whether sparse-action overestimation still requires Double DQN / inference reranking after conservative-penalty A/B results
+- [x] Review whether sparse-action overestimation still requires Double DQN / inference reranking after conservative-penalty A/B results
+- [x] Add offline Double DQN target mode and train v17 from the v9 ground-specials recipe
+- [ ] Add inference-time reranking / action-support priors after v17 Double DQN showed no material policy change
 - [x] Run move-family validation passes with scripted policies such as `hp`, `throw`, `ryu-fireball`, `tatsu`, and `shoryuken`, then document which attack-outcome fields are trustworthy enough for learner use versus debug-only analysis
 - [x] Add a human-demo recording path so human-vs-CPU play can export learner-ingestible episodes for bootstrapping / behavior-cloning experiments
 - [x] Add a CPU-demo recording path so built-in CPU-vs-CPU play can export learner-ingestible bootstrap episodes

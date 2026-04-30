@@ -2,6 +2,59 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-30: Review V16 Conservative Penalty A/B Results
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / DQN sparse-action overestimation control
+
+Files changed:
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- record the completed v16a/v16b conservative-penalty A/B review.
+- decide whether the conservative penalty is enough to make the ground-specials DQN recipe a default.
+
+Implementation notes:
+- reviewed `model/dqn-mixdemo-schema-v3-ground-specials-v16a/current.json` and `model/dqn-mixdemo-schema-v3-ground-specials-v16b/current.json`.
+- both models used the same fresh schema-v3 mixed CPU-demo + human-demo logs, `3000` steps, balanced batch sampling, `all-attacks` risk shaping, engine-outcome oversampling, and the same 27-action ground-specials action set.
+- v16a conservative config:
+  - `action_penalty=0.3`, `min_action_count=300`, `negative_mean_extra=0.2`
+  - scaled conservative cost: `14.943`
+- v16b conservative config:
+  - `action_penalty=1.0`, `min_action_count=1000`, `negative_mean_extra=1.0`
+  - scaled conservative cost: `96.3`
+- metadata-level greedy comparison over the saved `5000` eval rows:
+  - v9 no-penalty baseline: top `stand-lp=26.72%`, `crouch-hp=26.16%`, `fireball-hp=25.10%`, `stand-hk=19.44%`, `guard-crouch=2.00%`
+  - v11 no-penalty baseline: top `stand-lp=26.48%`, `crouch-hp=26.26%`, `fireball-hp=25.14%`, `stand-hk=19.54%`, `guard-crouch=2.00%`
+  - v16a: top `crouch-hp=26.62%`, `stand-lp=25.72%`, `fireball-hp=25.42%`, `stand-hk=19.62%`, `guard-crouch=2.02%`
+  - v16b: top `crouch-hp=27.92%`, `fireball-hp=26.52%`, `stand-lp=22.58%`, `stand-hk=20.24%`, `guard-crouch=2.02%`
+- same-slice `compare_dqn_models.py --limit 5000` comparison:
+  - v9: `stand-lp=36.3%`, `fireball-hp=27.5%`, `crouch-hp=24.0%`, `stand-hk=9.3%`, `guard-crouch=1.7%`
+  - v11: `stand-lp=36.0%`, `fireball-hp=27.6%`, `crouch-hp=24.1%`, `stand-hk=9.3%`, `guard-crouch=1.7%`
+  - v16a: `stand-lp=35.4%`, `fireball-hp=28.1%`, `crouch-hp=24.2%`, `stand-hk=9.4%`, `guard-crouch=1.7%`
+  - v16b: `stand-lp=31.4%`, `fireball-hp=30.5%`, `crouch-hp=25.1%`, `stand-hk=9.5%`, `guard-crouch=1.7%`
+  - v9 -> v16a changed only `47/5000` rows; v9 -> v16b changed `263/5000` rows.
+- conclusion:
+  - conservative penalty does not create a new guard collapse; `guard-crouch` stays near `1.7%` on the same-slice compare and near `2%` in saved metadata.
+  - it also does not create an LP/MP fireball collapse; `fireball-lp` remains `0%` top1 and `fireball-mp` remains negligible.
+  - the stronger v16b setting mostly shifts probability away from `stand-lp` into `fireball-hp` and `crouch-hp`.
+  - `stand-mk` is not the active collapse in this run; it is `0%` top1 across the compared ground-specials models.
+  - v16a/v16b should not become the default recipe yet; sparse-action overestimation remains, with `crouch-hp`, `stand-lp`, `stand-hk`, and `fireball-hp` still dominating the policy surface.
+- marked the conservative-penalty A/B checklist item complete, but kept the Double DQN / inference-reranking review open.
+
+Validation:
+- metadata summary passed:
+  - `jq` summaries over v9, v11, v12, v16a, and v16b actor metadata.
+- same-observation compare passed:
+  - `python3 tools/compare_dqn_models.py logs/rl-transitions-cpu-demo-schema-v3-4-3-3.ndjson logs/rl-transitions-human-demo-schema-v3-4-3-3.ndjson --model v9=model/dqn-mixdemo-schema-v3-ground-specials-v9 --model v11=model/dqn-mixdemo-schema-v3-ground-specials-v11 --model v16a=model/dqn-mixdemo-schema-v3-ground-specials-v16a --model v16b=model/dqn-mixdemo-schema-v3-ground-specials-v16b --limit 5000 --top-n 8 --focus-actions crouch-hp,stand-mk,fireball-lp,fireball-mp,fireball-hp,guard-stand,guard-crouch --focus-rank-limit 3 --training-action-source auto`
+  - reported `COMPARE v9 -> v16a changed=47/5000` and `COMPARE v9 -> v16b changed=263/5000`.
+
+Follow-up:
+- keep conservative penalty opt-in rather than default for now.
+- review Double DQN, clipped target values, or inference-time reranking / priors as the next sparse-action-overestimation control.
+- avoid further tuning that only shifts collapse among `stand-lp`, `stand-hk`, `crouch-hp`, and `fireball-hp` without adding a clearer action-support prior or target-value correction.
+
 ## 2026-04-30: Validate Fresh Transition Schema V3 Demo Logs
 
 Milestone:

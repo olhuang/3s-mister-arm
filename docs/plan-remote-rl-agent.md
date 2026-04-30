@@ -2464,7 +2464,7 @@ Tasks:
 - [ ] Collect a targeted human-demo anti-air Shoryuken log before expecting offline DQN to learn jump-in punishment reliably
 - [x] Record the support-aware conservative DQN penalty plan for sparse-action overestimation
 - [x] Add an opt-in conservative action penalty to offline DQN replay rewards without changing transition schema or live inference
-- [ ] A/B test conservative DQN penalty against v9/v11-style ground-specials models before making it part of the default training recipe
+- [x] A/B test conservative DQN penalty against v9/v11-style ground-specials models before making it part of the default training recipe
 - [ ] Review whether sparse-action overestimation still requires Double DQN / inference reranking after conservative-penalty A/B results
 - [x] Run move-family validation passes with scripted policies such as `hp`, `throw`, `ryu-fireball`, `tatsu`, and `shoryuken`, then document which attack-outcome fields are trustworthy enough for learner use versus debug-only analysis
 - [x] Add a human-demo recording path so human-vs-CPU play can export learner-ingestible episodes for bootstrapping / behavior-cloning experiments

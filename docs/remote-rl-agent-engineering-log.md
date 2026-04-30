@@ -2,6 +2,54 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-30: Live Log Cursor And Retrain Chunk Snapshot
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / rolling live-replay retrain
+
+Files changed:
+- `tools/rl_retrain_chunk.py`
+- `docs/rl-incremental-retrain-plan.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- add the cursor/chunk stage needed before an auto retrain runner.
+- make append-only live logs retrainable without repeatedly consuming the same live rows.
+- avoid advancing the trained cursor until a retrain has successfully used and published the chunk.
+
+Implementation notes:
+- added `tools/rl_retrain_chunk.py`.
+- subcommands:
+  - `init`: initialize a source-log cursor at `start` or `eof`.
+  - `status`: print the cursor JSON for a source log.
+  - `snapshot`: read complete NDJSON rows after `last_trained_byte_offset`, write a chunk file, and store it as `pending_chunk`.
+  - `commit`: after successful train/publish, advance `last_trained_*` from `pending_chunk` and clear it.
+- `snapshot` refuses to overwrite an existing pending chunk unless `--replace-pending` is passed.
+- `snapshot` stops before an incomplete trailing line, so active append-only logs can be read without consuming a partially written row.
+- `snapshot` supports `--min-new-rows`, `--max-new-rows`, `--allow-truncate-reset`, `--chunk-prefix`, and `--label`.
+- cursor state uses a `sources` map keyed by resolved source log path.
+
+Validation:
+- `python3 -m py_compile tools/rl_retrain_chunk.py` passed.
+- `python3 tools/rl_retrain_chunk.py --help` passed.
+- snapshot smoke on `logs/rl-transitions-live-dqn-v23-20260430-135148.ndjson` passed:
+  - wrote a `25` row chunk under `/tmp/rl-retrain-chunk-smoke-20260430/chunks`.
+  - pending cursor had `start_byte_offset=0`, `end_byte_offset=34769`, `row_count=25`, `last_decision_id=24`.
+- not-enough-rows smoke passed:
+  - `--min-new-rows 100 --max-new-rows 25` reported `status=not-enough-rows`.
+- pending-protection smoke passed:
+  - a second `snapshot` before `commit` returned `status=pending-exists`.
+- commit smoke passed:
+  - `commit` advanced `last_trained_byte_offset` to `34769` and `last_trained_row_count` to `25`.
+  - the next `snapshot` started at byte `34769`.
+- EOF init smoke passed:
+  - `init --at eof` set the offset to the current source size.
+  - a following `snapshot --min-new-rows 1` reported `status=not-enough-rows`.
+
+Follow-up:
+- implement the auto retrain runner that calls `snapshot`, trains with `--init-model`, publishes, then calls `commit`.
+
 ## 2026-04-30: Incremental Retrain Plan And DQN Warm-Start
 
 Milestone:

@@ -2501,7 +2501,7 @@ Tasks:
 - [x] Train v24 from CPU/human demo plus v21a-live and v23-live replay with a declared `55/30/15` source mix
 - [x] Document the rolling incremental retrain plan
 - [x] Add DQN trainer `--init-model` warm-start and replay recipe metadata
-- [ ] Add live-log cursor / chunk snapshot support for incremental retrain
+- [x] Add live-log cursor / chunk snapshot support for incremental retrain
 - [ ] Add auto retrain runner for timed/row-count triggered warm-start training and publish
 - [ ] Review v24 live behavior before promoting it over v23; same-observation compare kept `stand-hk` suppressed but did not reduce the `tatsu-lk` replacement shift
 - [ ] Review v23's `tatsu-lk` / `crouch-mk` policy shift before any live promotion; `stand-hk` was suppressed, but the replacement action is not yet validated

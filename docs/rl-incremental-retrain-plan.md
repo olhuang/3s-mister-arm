@@ -79,7 +79,7 @@ with a cursor.
 ## Stage 3: Live Cursor And Chunk Snapshot
 
 Auto retrain should not reread the same append-only live log rows forever.
-It should keep a cursor such as:
+Use `tools/rl_retrain_chunk.py` to keep a cursor such as:
 
 ```json
 {
@@ -92,16 +92,44 @@ It should keep a cursor such as:
 }
 ```
 
+The tool has four subcommands:
+
+```bash
+python3 tools/rl_retrain_chunk.py init \
+  --source-log logs/rl-transitions-live-dqn-v24-....ndjson \
+  --state-path model/dqn-live-ground-specials-current/retrain-cursor.json \
+  --at eof
+
+python3 tools/rl_retrain_chunk.py snapshot \
+  --source-log logs/rl-transitions-live-dqn-v24-....ndjson \
+  --state-path model/dqn-live-ground-specials-current/retrain-cursor.json \
+  --chunk-dir logs/retrain-chunks \
+  --label v25 \
+  --min-new-rows 5000
+
+python3 tools/rl_retrain_chunk.py commit \
+  --source-log logs/rl-transitions-live-dqn-v24-....ndjson \
+  --state-path model/dqn-live-ground-specials-current/retrain-cursor.json
+
+python3 tools/rl_retrain_chunk.py status \
+  --source-log logs/rl-transitions-live-dqn-v24-....ndjson \
+  --state-path model/dqn-live-ground-specials-current/retrain-cursor.json
+```
+
 On each retrain:
 
 1. Read only rows after the cursor.
 2. Write those rows to a stable chunk file, for example:
    `logs/retrain-chunks/rl-retrain-chunk-v25-20260430-143000.ndjson`.
-3. Train on `base_logs + newest chunk`.
-4. Update the cursor after a successful publish.
+3. Leave the chunk in `pending_chunk` without advancing `last_trained_*`.
+4. Train on `base_logs + newest chunk`.
+5. After the trainer successfully publishes, run `commit` to advance the cursor.
 
 Do not automatically add every chunk to `base_logs`. A chunk should become a
 base log only after a manual quality review.
+
+This two-phase snapshot/commit flow avoids losing live rows if training fails
+after a chunk is created.
 
 ## Stage 4: Auto Retrain Runner
 

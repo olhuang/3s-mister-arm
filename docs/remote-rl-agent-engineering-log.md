@@ -2,6 +2,59 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-30: Validate Fresh Transition Schema V3 Demo Logs
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / transition action-label cleanup
+
+Files changed:
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- record that fresh schema-v3 CPU-demo and human-demo transition logs are valid enough to use as the next retraining baseline.
+- close the post-schema-v3 validation checklist item before long-run DQN retraining.
+
+Implementation notes:
+- telemetry build, deployment, CPU-demo collection, human-demo collection, and first-pass validation were completed before this documentation sync.
+- validated `logs/rl-transitions-cpu-demo-schema-v3-4-3-3.ndjson`:
+  - rows: `122276`
+  - schema versions: `{3: 122276}`
+  - demo policy rows: `policy_nonzero_rows=0`
+  - analyzer source breakdown: `none:83991,input:36708,engine:1577`
+  - engine labels include Ryu Hadouken, Shoryuken, Tatsumaki, throw, Shinkuu Hadouken, crouch normals, Joudan, and jump attacks.
+  - input labels include guard, walk/back, jump, normals, and throw intent.
+- validated `logs/rl-transitions-human-demo-schema-v3-4-3-3.ndjson`:
+  - rows: `18849`
+  - schema versions: `{3: 18849}`
+  - demo policy rows: `policy_nonzero_rows=0`
+  - analyzer source breakdown: `input:9682,none:8697,engine:470`
+  - engine labels include Ryu Hadouken, Shoryuken, Tatsumaki, throw, Shinkuu Hadouken, normals, and jump attacks.
+  - input labels include walk/back, stand/crouch normals, guard, jump, throw, and back-jump attack intent.
+- marked the Milestone 6 schema-v3 fresh-log validation checklist item complete.
+
+Validation:
+- CPU-demo analyzer passed:
+  - `python3 tools/analyze_rl_transitions.py logs/rl-transitions-cpu-demo-schema-v3-4-3-3.ndjson --training-action-source auto --limit 12`
+  - reported `action_label_source training_action_source=auto counts=none:83991,input:36708,engine:1577`.
+  - reported `ENGINE_OUTCOME_SUMMARY ... events=1577`.
+- human-demo analyzer passed:
+  - `python3 tools/analyze_rl_transitions.py logs/rl-transitions-human-demo-schema-v3-4-3-3.ndjson --training-action-source auto --limit 12`
+  - reported `action_label_source training_action_source=auto counts=input:9682,none:8697,engine:470`.
+  - reported `ENGINE_OUTCOME_SUMMARY ... events=470`.
+- direct schema / policy-family check passed:
+  - `python3 -c '<schema and action-label summary over CPU-demo and human-demo logs>'`
+  - reported schema v3 only and `policy_nonzero_rows=0` for both demo logs.
+- fresh CPU-demo DQN smoke passed:
+  - `python3 tools/train_dqn_learner.py logs/rl-transitions-cpu-demo-schema-v3-4-3-3.ndjson --model-dir /tmp/rl-dqn-fresh-schema-v3-smoke --model-version 16 --limit 1200 --steps 2 --batch-size 16 --hidden-sizes 8 --actions forward,back,guard-stand,guard-crouch,stand-mk,crouch-hp,fireball-lp,fireball-mp,fireball-hp,shoryuken-hp --fallback-policy stand-mk --training-action-source auto --reward-risk-profile none --engine-outcome-training-mode prefer-engine-action --engine-outcome-window-decisions 15 --engine-outcome-action-windows fireball-lp=45,fireball-mp=45,fireball-hp=45 --log-interval 1 --eval-limit 200 --diagnostic-top-n 10`
+  - reported `DQN published version=16`, `experiences=237`, `engine_outcome=prefer-engine-action:16/24`, `included=221 excluded=21`, and `engine_input_fallback=8`.
+  - smoke emitted a greedy collapse warning for `fireball-lp 80.5%`; this is a policy-quality signal for later A/B work, not a schema validation blocker.
+
+Follow-up:
+- use only fresh schema-v3 logs for the next long-run DQN retraining pass.
+- run the planned v16-style ground-specials conservative-penalty A/B comparison.
+- define replay-buffer mixing metadata for human-demo, CPU-demo, and remote-agent episodes before treating mixed replay import as settled.
+
 ## 2026-04-29: Add Conservative Action Penalty Plan And Trainer Flags
 
 Milestone:

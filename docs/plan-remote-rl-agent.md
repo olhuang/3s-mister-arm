@@ -2479,7 +2479,7 @@ Tasks:
 - [x] Update Python replay ingestion to require schema v3 and remove schema 1/2 fallback
 - [x] Keep DQN `--training-action-source auto|policy|input|engine|prefer-engine`
 - [x] Update analyzer / compare source breakdown for strict v3 canonical action labels (`policy`, `input`, `engine`, `none`)
-- [ ] Validate schema v3 with fresh CPU-demo and human-demo logs before long-run retraining
+- [x] Validate schema v3 with fresh CPU-demo and human-demo logs before long-run retraining
 - [ ] Define how replay-buffer import mixes human-demo episodes with remote-agent episodes, including metadata such as data source, control mode, and player side
 - [ ] Add character curriculum
 - [ ] Add stage curriculum

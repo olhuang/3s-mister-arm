@@ -2492,7 +2492,9 @@ Tasks:
 - [x] Add opt-in movable action-start filtering for selected DQN replay sources so recovery-state policy selections do not become valid action samples
 - [x] Train v20 from the clean support-prior live replay with remote-only movable action-start filtering and compare it against v9/v18/v19 before live use
 - [x] Review lower remote-replay ratios or source-specific filtering before promoting a live-replay-trained DQN
-- [ ] Treat v20's remaining far-range `fireball-mp` shift as a separate issue from recovery-state action pollution before promoting a live-replay-trained DQN
+- [x] Treat v20's remaining far-range `fireball-mp` shift as a separate issue from recovery-state action pollution before promoting a live-replay-trained DQN
+- [x] Train v21a/v21b fireball oversample A/B candidates and compare them against v9/v19/v20
+- [ ] Run a short live smoke with v21a before treating it as the next live baseline
 - [ ] Add character curriculum
 - [ ] Add stage curriculum
 - [ ] Add automated reset loops

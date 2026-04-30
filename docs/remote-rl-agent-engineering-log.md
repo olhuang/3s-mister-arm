@@ -2,6 +2,91 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-30: Train And Compare V21a/V21b Fireball Oversample A/B
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / clean live-replay retrain cleanup
+
+Files changed:
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- test whether v20's remaining far-range `fireball-mp` shift was caused by fireball engine-outcome oversampling rather than remote replay pollution.
+- keep the v20 source mix and movable action-start filter fixed while changing only fireball oversample ratios.
+
+Implementation notes:
+- both candidates use the same live log and source mix as v20:
+  - `logs/rl-transitions-live-dqn-v9-support-prior-20260430-113010.ndjson`
+  - `--replay-source-ratios cpu-demo=0.6,human-demo=0.3,remote=0.1`
+  - `--dqn-require-movable-state-sources remote`
+- v20 fireball oversamples were `fireball-lp=10,fireball-mp=20,fireball-hp=8`.
+- v21a uses balanced fireball oversamples:
+  - `fireball-lp=8,fireball-mp=8,fireball-hp=8`
+- v21b lowers MP further while keeping LP/HP equal:
+  - `fireball-lp=8,fireball-mp=4,fireball-hp=8`
+- v21a was published as `model/dqn-mixdemo-schema-v3-ground-specials-v21a` with model version `21`.
+- v21b was published as `model/dqn-mixdemo-schema-v3-ground-specials-v21b` with model version `22`.
+
+Training result:
+- v21a:
+  - experiences: `26317`
+  - engine-outcome training experiences: `5119`
+  - last loss: `0.008486`
+  - avg loss: `0.008943`
+  - train eval greedy: `stand-lp=29.5%`, `fireball-hp=28.5%`, `crouch-hp=24.4%`, `stand-hk=16.8%`, `fireball-mp=0.0%`
+- v21b:
+  - experiences: `25953`
+  - engine-outcome training experiences: `4755`
+  - last loss: `0.009981`
+  - avg loss: `0.009018`
+  - train eval greedy: `fireball-hp=31.7%`, `stand-lp=29.7%`, `crouch-hp=22.0%`, `stand-hk=15.6%`, `fireball-mp=0.0%`
+
+Same-observation CPU/human slice compare:
+- v9: `stand-lp=36.3%`, `fireball-hp=27.5%`, `crouch-hp=24.0%`, `stand-hk=9.3%`, `fireball-mp=0.1%`
+- v19: `stand-lp=40.6%`, `fireball-hp=19.6%`, `fireball-mp=18.3%`, `crouch-hp=18.0%`, `stand-hk=2.5%`
+- v20: `stand-lp=35.8%`, `fireball-mp=19.6%`, `crouch-hp=17.0%`, `fireball-hp=16.1%`, `stand-hk=10.4%`
+- v21a: `stand-lp=33.7%`, `fireball-hp=32.9%`, `crouch-hp=22.8%`, `stand-hk=9.4%`, `fireball-mp=0.1%`
+- v21b: `fireball-hp=40.6%`, `stand-lp=32.0%`, `crouch-hp=17.2%`, `stand-hk=8.7%`, `fireball-mp=0.0%`
+- changed decisions against v9:
+  - v19: `1451/5000`
+  - v20: `1255/5000`
+  - v21a: `414/5000`
+  - v21b: `810/5000`
+
+Same-observation clean-live slice compare:
+- v9: `fireball-hp=39.2%`, `crouch-hp=32.1%`, `stand-hk=16.7%`, `stand-lp=7.8%`, `fireball-mp=0.3%`
+- v19: `fireball-hp=30.2%`, `crouch-hp=25.5%`, `fireball-mp=18.6%`, `stand-lp=15.4%`, `stand-hk=8.7%`
+- v20: `fireball-hp=26.9%`, `crouch-hp=24.8%`, `fireball-mp=20.8%`, `stand-hk=18.4%`, `stand-lp=7.5%`
+- v21a: `fireball-hp=42.6%`, `crouch-hp=31.0%`, `stand-hk=17.0%`, `stand-lp=7.4%`, `fireball-mp=0.2%`
+- v21b: `fireball-hp=47.8%`, `crouch-hp=26.1%`, `stand-hk=16.5%`, `stand-lp=7.7%`, `fireball-mp=0.0%`
+- changed decisions against v9:
+  - v19: `1539/5000`
+  - v20: `1290/5000`
+  - v21a: `347/5000`
+  - v21b: `611/5000`
+
+Conclusion:
+- v20's `fireball-mp` shift was primarily caused by the `fireball-mp=20` engine-outcome oversample setting.
+- v21a is the better candidate:
+  - it removes the `fireball-mp` shift while staying closest to v9 on both CPU/human and clean-live slices.
+  - it keeps `stand-lp`, `crouch-hp`, and `stand-hk` near the v9 surface.
+- v21b also removes `fireball-mp`, but it pushes too much mass into `fireball-hp`, especially on clean-live rows.
+- do not promote v21b over v21a based on this evidence.
+- the next live smoke should use v21a, first without support-prior reranking, then optionally with the conservative support prior if live action distribution still looks too sparse-action heavy.
+
+Validation:
+- full v21a/v21b training passed.
+- metadata inspection passed:
+  - `jq '.metadata | {version, rows_read, experiences, engine_outcome_action_oversamples, engine_outcome_stats, source_experiences: .source_replay_diagnostics.experience_counts, source_actions: .source_replay_diagnostics.experience_action_counts, greedy_counts, greedy_top_action, greedy_top_action_rate, last_loss, avg_loss}' model/dqn-mixdemo-schema-v3-ground-specials-v21a/current.json model/dqn-mixdemo-schema-v3-ground-specials-v21b/current.json`
+- same-observation compares passed:
+  - `python3 tools/compare_dqn_models.py logs/rl-transitions-cpu-demo-schema-v3-4-3-3.ndjson logs/rl-transitions-human-demo-schema-v3-4-3-3.ndjson --model v9=model/dqn-mixdemo-schema-v3-ground-specials-v9 --model v19=model/dqn-mixdemo-schema-v3-ground-specials-v19 --model v20=model/dqn-mixdemo-schema-v3-ground-specials-v20 --model v21a=model/dqn-mixdemo-schema-v3-ground-specials-v21a --model v21b=model/dqn-mixdemo-schema-v3-ground-specials-v21b --limit 5000 --top-n 10 --focus-actions crouch-hp,stand-lp,stand-hk,stand-mk,fireball-lp,fireball-mp,fireball-hp,guard-stand,guard-crouch --focus-rank-limit 3 --training-action-source auto`
+  - `python3 tools/compare_dqn_models.py logs/rl-transitions-live-dqn-v9-support-prior-20260430-113010.ndjson --model v9=model/dqn-mixdemo-schema-v3-ground-specials-v9 --model v19=model/dqn-mixdemo-schema-v3-ground-specials-v19 --model v20=model/dqn-mixdemo-schema-v3-ground-specials-v20 --model v21a=model/dqn-mixdemo-schema-v3-ground-specials-v21a --model v21b=model/dqn-mixdemo-schema-v3-ground-specials-v21b --limit 5000 --top-n 10 --focus-actions crouch-hp,stand-lp,stand-hk,stand-mk,fireball-lp,fireball-mp,fireball-hp,guard-stand,guard-crouch --focus-rank-limit 3 --training-action-source auto`
+
+Follow-up:
+- run a short live smoke with `model/dqn-mixdemo-schema-v3-ground-specials-v21a`.
+- if v21a live smoke looks stable, collect a clean v21a live replay before any further retrain.
+
 ## 2026-04-30: Add Movable Action-Start Filtering And Train V20
 
 Milestone:

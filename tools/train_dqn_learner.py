@@ -26,6 +26,94 @@ class Experience:
     reward: float
     next_state: list[float]
     done: bool
+    source_name: str = "unknown"
+    model_version: int = 0
+
+
+EXECUTION_SOURCE_NAMES = {
+    0: "none",
+    1: "remote",
+    2: "repeated-last-action",
+    3: "neutral-fallback",
+    4: "human-demo",
+    5: "cpu-demo",
+}
+
+
+@dataclass
+class SourceReplayDiagnostics:
+    row_counts: dict[str, int] = field(default_factory=dict)
+    row_model_version_counts: dict[str, int] = field(default_factory=dict)
+    row_model_version_counts_by_source: dict[str, dict[str, int]] = field(default_factory=dict)
+    experience_counts: dict[str, int] = field(default_factory=dict)
+    experience_reward_sum: dict[str, float] = field(default_factory=dict)
+    experience_model_version_counts: dict[str, int] = field(default_factory=dict)
+    experience_model_version_counts_by_source: dict[str, dict[str, int]] = field(default_factory=dict)
+    experience_action_counts: dict[str, dict[str, int]] = field(default_factory=dict)
+    experience_action_reward_sum: dict[str, dict[str, float]] = field(default_factory=dict)
+
+    def add_row(self, source_name: str, model_version: int) -> None:
+        version_key = str(model_version)
+        self.row_counts[source_name] = self.row_counts.get(source_name, 0) + 1
+        self.row_model_version_counts[version_key] = self.row_model_version_counts.get(version_key, 0) + 1
+        source_versions = self.row_model_version_counts_by_source.setdefault(source_name, {})
+        source_versions[version_key] = source_versions.get(version_key, 0) + 1
+
+    def add_experience(
+        self,
+        source_name: str,
+        model_version: int,
+        action_name: str,
+        reward: float,
+        count: int = 1,
+    ) -> None:
+        safe_count = max(0, int(count))
+        if safe_count <= 0:
+            return
+        version_key = str(model_version)
+        scaled_reward = reward * safe_count
+        self.experience_counts[source_name] = self.experience_counts.get(source_name, 0) + safe_count
+        self.experience_reward_sum[source_name] = self.experience_reward_sum.get(source_name, 0.0) + scaled_reward
+        self.experience_model_version_counts[version_key] = (
+            self.experience_model_version_counts.get(version_key, 0) + safe_count
+        )
+        source_versions = self.experience_model_version_counts_by_source.setdefault(source_name, {})
+        source_versions[version_key] = source_versions.get(version_key, 0) + safe_count
+        source_actions = self.experience_action_counts.setdefault(source_name, {})
+        source_actions[action_name] = source_actions.get(action_name, 0) + safe_count
+        source_rewards = self.experience_action_reward_sum.setdefault(source_name, {})
+        source_rewards[action_name] = source_rewards.get(action_name, 0.0) + scaled_reward
+
+    def add_reward(self, source_name: str, action_name: str, reward: float) -> None:
+        self.experience_reward_sum[source_name] = self.experience_reward_sum.get(source_name, 0.0) + reward
+        source_rewards = self.experience_action_reward_sum.setdefault(source_name, {})
+        source_rewards[action_name] = source_rewards.get(action_name, 0.0) + reward
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "execution_source_labels": {str(key): value for key, value in sorted(EXECUTION_SOURCE_NAMES.items())},
+            "row_counts": dict(sorted(self.row_counts.items())),
+            "row_model_version_counts": dict(sorted(self.row_model_version_counts.items())),
+            "row_model_version_counts_by_source": {
+                source: dict(sorted(counts.items()))
+                for source, counts in sorted(self.row_model_version_counts_by_source.items())
+            },
+            "experience_counts": dict(sorted(self.experience_counts.items())),
+            "experience_reward_sum": dict(sorted(self.experience_reward_sum.items())),
+            "experience_model_version_counts": dict(sorted(self.experience_model_version_counts.items())),
+            "experience_model_version_counts_by_source": {
+                source: dict(sorted(counts.items()))
+                for source, counts in sorted(self.experience_model_version_counts_by_source.items())
+            },
+            "experience_action_counts": {
+                source: dict(sorted(counts.items()))
+                for source, counts in sorted(self.experience_action_counts.items())
+            },
+            "experience_action_reward_sum": {
+                source: dict(sorted(rewards.items()))
+                for source, rewards in sorted(self.experience_action_reward_sum.items())
+            },
+        }
 
 
 @dataclass
@@ -490,6 +578,15 @@ def int_field(row: dict[str, object], name: str) -> int:
     return int(row.get(name, 0) or 0)
 
 
+def execution_source_name(row: dict[str, object]) -> str:
+    source = int_field(row, "execution_source")
+    return EXECUTION_SOURCE_NAMES.get(source, f"unknown-{source}")
+
+
+def model_version_executed(row: dict[str, object]) -> int:
+    return int_field(row, "model_version_executed")
+
+
 def is_action_start(row: dict[str, object]) -> bool:
     if is_demo_row(row):
         return int_field(row, "input_action_step") == 0
@@ -950,11 +1047,16 @@ def add_delayed_reward(
     reward: float,
     actions: tuple[str, ...],
     action_rewards: dict[str, float],
+    source_stats: SourceReplayDiagnostics | None = None,
 ) -> bool:
     if exp_index is None:
         return False
     experiences[exp_index].reward += reward
-    action_rewards[actions[experiences[exp_index].action_index]] += reward
+    exp = experiences[exp_index]
+    action_name = actions[exp.action_index]
+    action_rewards[action_name] += reward
+    if source_stats is not None:
+        source_stats.add_reward(exp.source_name, action_name, reward)
     return True
 
 
@@ -989,6 +1091,9 @@ def add_engine_outcome_experience(
     experiences: list[Experience],
     action_counts: dict[str, int],
     action_rewards: dict[str, float],
+    source_stats: SourceReplayDiagnostics,
+    source_name: str,
+    model_version: int,
 ) -> bool:
     if config.training_mode == "off":
         return False
@@ -1064,6 +1169,8 @@ def add_engine_outcome_experience(
                 reward=reward,
                 next_state=list(next_state),
                 done=done,
+                source_name=source_name,
+                model_version=model_version,
             )
         )
     stats.included_events += 1
@@ -1076,6 +1183,7 @@ def add_engine_outcome_experience(
     stats.training_scaled_reward_sum += reward * multiplier
     action_counts[action_name] += multiplier
     action_rewards[action_name] += reward * multiplier
+    source_stats.add_experience(source_name, model_version, action_name, reward, multiplier)
     return True
 
 
@@ -1096,6 +1204,7 @@ def build_experiences(
     dict[str, int],
     dict[str, float],
     BuildDiagnostics,
+    SourceReplayDiagnostics,
     RewardRiskStats,
     RewardGuardStats,
     RewardSpacingStats,
@@ -1113,6 +1222,7 @@ def build_experiences(
     observed_action_counts = {action: 0 for action in rl.TABULAR_ACTION_NAMES}
     observed_action_rewards = {action: 0.0 for action in rl.TABULAR_ACTION_NAMES}
     build_stats = BuildDiagnostics()
+    source_stats = SourceReplayDiagnostics()
     risk_stats = RewardRiskStats()
     guard_stats = RewardGuardStats()
     spacing_stats = RewardSpacingStats()
@@ -1123,6 +1233,9 @@ def build_experiences(
         episode_rows.sort(key=row_order_key)
         last_exp_index: int | None = None
         for index, row in enumerate(episode_rows):
+            source_name = execution_source_name(row)
+            model_version = model_version_executed(row)
+            source_stats.add_row(source_name, model_version)
             force_input_after_engine_outcome_excluded = False
             if (
                 engine_outcome_config.training_mode == "prefer-engine-action"
@@ -1140,6 +1253,9 @@ def build_experiences(
                     experiences,
                     action_counts,
                     action_rewards,
+                    source_stats,
+                    source_name,
+                    model_version,
                 )
                 if engine_outcome_added:
                     set_experience_next_state(experiences, last_exp_index, row, bool(row.get("done", False)))
@@ -1186,7 +1302,7 @@ def build_experiences(
             ) * reward_scale
             if action_name is None:
                 if reward != 0.0:
-                    if add_delayed_reward(experiences, last_exp_index, reward, actions, action_rewards):
+                    if add_delayed_reward(experiences, last_exp_index, reward, actions, action_rewards, source_stats):
                         build_stats.unrecognized_delayed_rewards += 1
                     else:
                         build_stats.unrecognized_uncredited_reward_rows += 1
@@ -1212,7 +1328,7 @@ def build_experiences(
                 if reward != 0.0:
                     build_stats.macro_continuation_reward_rows += 1
                     build_stats.macro_continuation_reward_sum += reward
-                    if add_delayed_reward(experiences, last_exp_index, reward, actions, action_rewards):
+                    if add_delayed_reward(experiences, last_exp_index, reward, actions, action_rewards, source_stats):
                         build_stats.macro_continuation_delayed_rewards += 1
                     else:
                         build_stats.macro_continuation_uncredited_reward_rows += 1
@@ -1224,12 +1340,15 @@ def build_experiences(
                 reward=reward,
                 next_state=rl.dqn_feature_vector(row),
                 done=bool(row.get("done", False)),
+                source_name=source_name,
+                model_version=model_version,
             )
             experiences.append(exp)
             last_exp_index = len(experiences) - 1
             build_stats.included_action_rows += 1
             action_counts[action_name] += 1
             action_rewards[action_name] += reward
+            source_stats.add_experience(source_name, model_version, action_name, reward)
 
         if episode_rows:
             set_experience_next_state(experiences, last_exp_index, episode_rows[-1], True)
@@ -1241,6 +1360,7 @@ def build_experiences(
         observed_action_counts,
         observed_action_rewards,
         build_stats,
+        source_stats,
         risk_stats,
         guard_stats,
         spacing_stats,
@@ -1258,6 +1378,7 @@ def apply_conservative_action_penalty(
     observed_action_rewards: dict[str, float],
     reward_scale: float,
     config: ConservativeActionPenaltyConfig,
+    source_stats: SourceReplayDiagnostics | None = None,
 ) -> ConservativeActionPenaltyStats:
     stats = ConservativeActionPenaltyStats()
     if not config.enabled:
@@ -1302,6 +1423,8 @@ def apply_conservative_action_penalty(
         exp.reward -= scaled_penalty
         action = actions[exp.action_index]
         action_rewards[action] -= scaled_penalty
+        if source_stats is not None:
+            source_stats.add_reward(exp.source_name, action, -scaled_penalty)
         stats.adjusted_experiences += 1
         stats.raw_cost_total += raw_penalty
         stats.scaled_cost_total += scaled_penalty
@@ -1706,6 +1829,57 @@ def format_counts(counts: dict[str, int], total: int, limit: int) -> str:
         if remaining > 0:
             parts.append(f"...+{remaining}")
     return ",".join(parts) if parts else "none"
+
+
+def format_source_action_scores(
+    source_stats: SourceReplayDiagnostics,
+    actions: tuple[str, ...],
+    source_limit: int,
+    action_limit: int,
+) -> str:
+    source_count_limit = max(1, source_limit)
+    ordered_sources = sorted(
+        source_stats.experience_counts.items(),
+        key=lambda item: (item[1], item[0]),
+        reverse=True,
+    )
+    parts: list[str] = []
+    for source_name, count in ordered_sources[:source_count_limit]:
+        if count <= 0:
+            continue
+        counts = source_stats.experience_action_counts.get(source_name, {})
+        rewards = source_stats.experience_action_reward_sum.get(source_name, {})
+        parts.append(f"{source_name}{{{format_action_scores(counts, rewards, actions, action_limit)}}}")
+    if len(ordered_sources) > source_count_limit:
+        remaining = sum(count for _, count in ordered_sources[source_count_limit:])
+        if remaining > 0:
+            parts.append(f"...+{remaining}")
+    return " ".join(parts) if parts else "none"
+
+
+def format_source_model_versions(
+    counts_by_source: dict[str, dict[str, int]],
+    total_counts_by_source: dict[str, int],
+    source_limit: int,
+    version_limit: int,
+) -> str:
+    source_count_limit = max(1, source_limit)
+    ordered_sources = sorted(
+        total_counts_by_source.items(),
+        key=lambda item: (item[1], item[0]),
+        reverse=True,
+    )
+    parts: list[str] = []
+    for source_name, count in ordered_sources[:source_count_limit]:
+        if count <= 0:
+            continue
+        version_counts = counts_by_source.get(source_name, {})
+        parts.append(f"{source_name}{{{format_counts(version_counts, count, version_limit)}}}")
+    if len(ordered_sources) > source_count_limit:
+        remaining = sum(count for _, count in ordered_sources[source_count_limit:])
+        if remaining > 0:
+            parts.append(f"...+{remaining}")
+    return " ".join(parts) if parts else "none"
 
 
 def evaluate_greedy_actions(
@@ -2157,6 +2331,7 @@ def main() -> None:
         observed_action_counts,
         observed_action_rewards,
         build_stats,
+        source_stats,
         reward_risk_stats,
         reward_guard_stats,
         reward_spacing_stats,
@@ -2184,6 +2359,7 @@ def main() -> None:
         observed_action_rewards,
         args.reward_scale,
         conservative_action_penalty_config,
+        source_stats,
     )
 
     layers, train_stats = train_dqn(
@@ -2233,6 +2409,7 @@ def main() -> None:
         "actions_subset": list(actions),
         "actions_subset_size": len(actions),
         "build_diagnostics": build_stats.as_metadata(),
+        "source_replay_diagnostics": source_stats.as_metadata(),
         "delayed_rewards": build_stats.unrecognized_delayed_rewards + build_stats.macro_continuation_delayed_rewards,
         "reward_source": reward_source,
         "reward_scale": args.reward_scale,
@@ -2349,6 +2526,29 @@ def main() -> None:
         "DQN diagnostics "
         f"action_source_counts="
         f"{','.join(f'{key}:{value}' for key, value in sorted(build_stats.action_source_counts.items()))}",
+        flush=True,
+    )
+    print(
+        "DQN diagnostics "
+        f"replay_sources=rows:{format_counts(source_stats.row_counts, len(rows), args.diagnostic_top_n)} "
+        f"experiences:{format_counts(source_stats.experience_counts, len(experiences), args.diagnostic_top_n)} "
+        f"row_model_versions:{format_counts(source_stats.row_model_version_counts, len(rows), args.diagnostic_top_n)} "
+        f"experience_model_versions:"
+        f"{format_counts(source_stats.experience_model_version_counts, len(experiences), args.diagnostic_top_n)}",
+        flush=True,
+    )
+    print(
+        "DQN diagnostics "
+        f"replay_source_versions=rows "
+        f"{format_source_model_versions(source_stats.row_model_version_counts_by_source, source_stats.row_counts, args.diagnostic_top_n, args.diagnostic_top_n)} "
+        f"experiences "
+        f"{format_source_model_versions(source_stats.experience_model_version_counts_by_source, source_stats.experience_counts, args.diagnostic_top_n, args.diagnostic_top_n)}",
+        flush=True,
+    )
+    print(
+        "DQN diagnostics "
+        f"replay_source_actions=count/reward/mean "
+        f"{format_source_action_scores(source_stats, actions, args.diagnostic_top_n, args.diagnostic_top_n)}",
         flush=True,
     )
     print(

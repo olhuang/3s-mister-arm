@@ -2482,6 +2482,7 @@ Tasks:
 - [x] Keep DQN `--training-action-source auto|policy|input|engine|prefer-engine`
 - [x] Update analyzer / compare source breakdown for strict v3 canonical action labels (`policy`, `input`, `engine`, `none`)
 - [x] Validate schema v3 with fresh CPU-demo and human-demo logs before long-run retraining
+- [x] Add DQN replay diagnostics for `execution_source` and `model_version_executed` before changing source-mix ratios
 - [ ] Define how replay-buffer import mixes human-demo episodes with remote-agent episodes, including metadata such as data source, control mode, and player side
 - [ ] Add character curriculum
 - [ ] Add stage curriculum
@@ -2497,7 +2498,7 @@ Done when:
 - [ ] Control timing improvements are backed by telemetry
 - [ ] Any promoted derived observation features have schema-versioned docs and validation notes
 - [ ] Any promoted attack-outcome labels have move-family validation notes showing how normals, specials, projectiles, throws, and multistage moves were checked
-- [ ] Any human-demo ingest path has documented replay-buffer metadata and a clear statement of whether it is used for bootstrapping, behavior cloning, evaluation, or mixed training
+- [ ] Any human-demo ingest path has documented replay-buffer metadata, source-mix diagnostics, and a clear statement of whether it is used for bootstrapping, behavior cloning, evaluation, or mixed training
 - [ ] Curriculum changes are reflected in logs and reproducible configs
 - [ ] Policy strength improves without destabilizing the transport/control path
 
@@ -2640,6 +2641,7 @@ Implementation notes:
     - `--engine-outcome-hit-bonus`, `--engine-outcome-no-damage-cost`, and `--engine-outcome-punished-cost` are raw reward adjustments applied before `--reward-scale`
     - `--engine-outcome-oversample N` and `--engine-outcome-action-oversamples action=N,...` can duplicate included engine-outcome experiences in replay so low-frequency engine-labeled specials can be A/B tested without changing raw logs or normal input replay rows
     - stdout and model metadata record `engine_outcome=...` / `engine_outcome_stats` so CPU-demo training can be audited for included/excluded events, hit/no-damage/punished/trade counts, HP sums, reward adjustment totals, and oversampled replay experience counts
+    - stdout and model metadata also record `source_replay_diagnostics`, splitting replay rows and built experiences by `execution_source`, `model_version_executed`, and per-source action reward/counts; this is diagnostics-only and does not change replay sampling
     - deprecated hidden aliases for the old `--demo-attribution-*` flag names still map to the new engine-outcome config for short-term command compatibility; removed schema-v2 modes `augment` and `replace-demo` now fail fast
   - can train with balanced replay batches:
     - `--batch-sampling uniform|balanced`

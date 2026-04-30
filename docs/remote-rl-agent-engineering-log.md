@@ -2,6 +2,54 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-30: Add Source-Aware DQN Replay Diagnostics
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / replay source mixing preparation
+
+Files changed:
+- `tools/train_dqn_learner.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- make source composition visible before training a v18-style model from mixed demo plus live policy logs.
+- keep this as a diagnostics-only step so existing v9/v17 training comparisons are not confounded by a hidden replay sampling change.
+
+Implementation notes:
+- added `source_replay_diagnostics` to DQN actor metadata.
+- diagnostics split both raw replay rows and built DQN experiences by:
+  - `execution_source`: `none`, `remote`, `repeated-last-action`, `neutral-fallback`, `human-demo`, `cpu-demo`
+  - `model_version_executed`
+  - per-source action count / reward / mean reward
+- `Experience` now carries `source_name` and `model_version` metadata for diagnostics, but training inputs, targets, batch sampling, and greedy inference behavior are unchanged.
+- macro delayed rewards and conservative action penalties update the per-source reward sums, so source reward diagnostics match the final replay rewards used by the trainer.
+
+Result:
+- CPU-demo smoke correctly reported `cpu-demo` as 100% of rows and experiences, with `model_version_executed = 0`.
+- mixed live-v9 + human-demo smoke reported:
+  - rows: `remote=1947`, `human-demo=1033`, `repeated-last-action=16`, `neutral-fallback=4`
+  - row model versions: `9=1967`, `0=1033`
+  - experiences: `remote=1041`, `human-demo=422`, `repeated-last-action=11`
+  - experience model versions: `9=1052`, `0=422`
+- this confirms the trainer can now audit live-policy rows separately from demo rows before choosing v18 source-mix ratios.
+
+Validation:
+- Python compile passed:
+  - `python3 -m py_compile tools/train_dqn_learner.py`
+- CPU-demo source diagnostics smoke passed:
+  - `python3 tools/train_dqn_learner.py logs/rl-transitions-cpu-demo-schema-v3-4-3-3.ndjson logs/rl-transitions-human-demo-schema-v3-4-3-3.ndjson --model-dir /tmp/rl-dqn-source-diag-smoke --model-version 1 --limit 1200 --steps 2 --batch-size 16 --hidden-sizes 8 --actions forward,back,guard-stand,guard-crouch,stand-mk,crouch-hp,fireball-lp,fireball-mp,fireball-hp --fallback-policy stand-mk --training-action-source auto --reward-risk-profile none --engine-outcome-training-mode prefer-engine-action --engine-outcome-window-decisions 15 --engine-outcome-action-windows fireball-lp=45,fireball-mp=45,fireball-hp=45 --log-interval 1 --eval-limit 200 --diagnostic-top-n 8`
+  - reported `replay_sources=rows:cpu-demo:1200/100.0% experiences:cpu-demo:236/100.0% row_model_versions:0:1200/100.0% experience_model_versions:0:236/100.0%`.
+- live-v9 plus human-demo source diagnostics smoke passed:
+  - `python3 tools/train_dqn_learner.py logs/rl-transitions-live-dqn-ground-specials-v9-4-3-3.ndjson logs/rl-transitions-human-demo-schema-v3-4-3-3.ndjson --model-dir /tmp/rl-dqn-source-diag-live-smoke --model-version 2 --limit 3000 --steps 2 --batch-size 16 --hidden-sizes 8 --actions forward,back,guard-stand,guard-crouch,stand-lp,stand-hk,crouch-hp,fireball-hp --fallback-policy stand-mk --training-action-source auto --reward-risk-profile none --engine-outcome-training-mode prefer-engine-action --engine-outcome-window-decisions 15 --log-interval 1 --eval-limit 200 --diagnostic-top-n 8`
+  - reported live source rows at model version `9` and demo rows at model version `0`.
+- metadata spot-check passed:
+  - `jq '.metadata.source_replay_diagnostics | {row_counts, row_model_version_counts, experience_counts, experience_model_version_counts}' /tmp/rl-dqn-source-diag-live-smoke/current.json`
+
+Follow-up:
+- define the actual replay source mixing policy before v18 training, including source caps or ratios for `human-demo`, `cpu-demo`, `remote`, `repeated-last-action`, and `neutral-fallback`.
+- do not treat `model_version_executed = 0` demo rows as a model quality signal; version `0` means no remote actor produced that action.
+
 ## 2026-04-30: Add Double DQN Target Mode And Train V17
 
 Milestone:

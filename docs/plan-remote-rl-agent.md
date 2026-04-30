@@ -2505,6 +2505,8 @@ Tasks:
 - [x] Add auto retrain runner for timed/row-count triggered warm-start training and publish
 - [x] Add a v35a auto-retrain preset so close-pressure / anti-air tuning can be reused without long extra-arg commands
 - [x] Record V37b / V38 full-action support-prior training parameters and findings before continuing full action-set experiments
+- [ ] Add DQN zero-sample / low-support action regularization so full-action output heads with no replay support cannot become top greedy actions
+- [ ] Add a shared DQN valid-action mask for train-time target selection and probe-time inference, starting with self-routine-aware jump-action gating
 - [ ] Review v24 live behavior before promoting it over v23; same-observation compare kept `stand-hk` suppressed but did not reduce the `tatsu-lk` replacement shift
 - [ ] Review v23's `tatsu-lk` / `crouch-mk` policy shift before any live promotion; `stand-hk` was suppressed, but the replacement action is not yet validated
 - [ ] Add stronger source/action-specific live negative replay handling before expecting v21a-live punish data to move `stand-hk` / mid-fireball behavior
@@ -2525,6 +2527,69 @@ Done when:
 - [ ] Any human-demo ingest path has documented replay-buffer metadata, source-mix diagnostics, and a clear statement of whether it is used for bootstrapping, behavior cloning, evaluation, or mixed training
 - [ ] Curriculum changes are reflected in logs and reproducible configs
 - [ ] Policy strength improves without destabilizing the transport/control path
+
+Full-action DQN sparse-action plan:
+
+- Problem statement:
+  - V37b / V38 full-action models showed that raw DQN can rank actions with
+    zero replay support as the top action.
+  - CPU-demo V38 is the clearest failure: `jump-neutral-mk`,
+    `jump-back-hk`, and `jump-neutral-mp` had `0` training experiences but raw
+    greedy inference selected them for most evaluation rows.
+  - Current conservative action penalties only modify existing experiences, so
+    an action with `count == 0` receives no gradient and can remain an
+    uncalibrated high-Q output head.
+
+- Step 1: zero-sample / low-support action regularization.
+  - Add opt-in trainer flags for unsupported-action Q regularization. Candidate
+    shape:
+    - `--dqn-unsupported-action-regularization`
+    - `--dqn-unsupported-action-min-count <N>`
+    - `--dqn-unsupported-action-q-ceiling <value>`
+    - `--dqn-unsupported-action-loss-weight <value>`
+  - For each training state, add an auxiliary loss for actions with replay
+    support below the configured minimum, including `count == 0`, so their
+    predicted Q is pushed below the ceiling.
+  - Keep this separate from reward shaping; it should constrain output heads,
+    not depend on an action having an experience row.
+  - Metadata must record the regularization config and diagnostics:
+    `unsupported_action_count`, per-action regularized events/loss, and the
+    zero-sample actions that were affected.
+  - Validation:
+    - retrain CPU-demo full-action from the V38 recipe with regularization.
+    - require `jump-neutral-mk`, `jump-back-hk`, and `jump-neutral-mp` to lose
+      raw greedy dominance without collapsing into a new single fireball/guard
+      action.
+    - compare raw greedy and strong support-prior greedy distributions.
+
+- Step 2: shared valid-action mask.
+  - Add a shared helper used by both trainer and probe inference:
+    `dqn_valid_actions_for_row(row, actions, mode)`.
+  - Initial conservative mask should use already-exported row fields:
+    `obs_self_routine_1`, `obs_self_routine_2`,
+    `obs_self_routine_attack_state`, and
+    `obs_self_contact_reaction_state`.
+  - First mask rule set:
+    - when self is in ordinary grounded/movable states, exclude `jump-*`
+      attack actions from DQN ranking.
+    - when self is in jump-air ordinary states (`R1=0`, `R2=18..26`), allow
+      jump attacks and optionally suppress new grounded specials/normals.
+    - when self is in attack, damage/contact, caught/catch, or other
+      non-movable states, avoid treating a newly selected action as a valid
+      action-start and keep target/inference max from using impossible actions.
+  - Apply the mask in two places:
+    - train-time DQN bootstrapping: the target max action should only consider
+      valid next-state actions.
+    - probe-time DQN ranking: invalid actions should not be candidates before
+      support-prior reranking.
+  - Keep the first implementation opt-in, with metadata recording mask mode,
+    masked action counts, and fallback behavior when a mask removes every
+    action.
+  - Validation:
+    - rerun same-observation comparison on V37b/V38-style logs with and without
+      the mask.
+    - run a live probe only after offline diagnostics show jump-action collapse
+      is fixed without introducing guard/fireball collapse.
 
 Implementation notes:
 

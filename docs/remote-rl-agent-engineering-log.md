@@ -2,6 +2,42 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-01: Full-Action DQN Sparse-Action Fix Plan
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / full action-set DQN experiments
+
+Files changed:
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- record the next implementation plan after V37b/V38 showed that full-action
+  DQN can assign dominant Q-values to zero-sample jump actions.
+
+Plan summary:
+- add opt-in zero-sample / low-support action regularization in the offline DQN
+  trainer.
+  - This must affect actions with `count == 0`, not only actions that already
+    have replay experiences.
+  - The intended mechanism is an auxiliary Q regularization loss that pushes
+    unsupported action heads below a configured ceiling.
+- add a shared valid-action mask for DQN train-time bootstrapping and
+  probe-time inference.
+  - Use existing row fields first: `obs_self_routine_1`,
+    `obs_self_routine_2`, `obs_self_routine_attack_state`, and
+    `obs_self_contact_reaction_state`.
+  - Initial target: prevent ground-state inference / target max from selecting
+    jump attacks, while allowing jump attacks in ordinary jump-air states
+    (`R1=0`, `R2=18..26`).
+
+Validation target:
+- retrain a CPU-demo full-action candidate from the V38 recipe.
+- require zero-sample actions such as `jump-neutral-mk`, `jump-back-hk`, and
+  `jump-neutral-mp` to lose raw greedy dominance.
+- verify the fix does not simply move collapse into guard, fireball, or another
+  single high-support action.
+
 ## 2026-04-30: V37b / V38 Full-Action DQN Support-Prior Findings
 
 Milestone:

@@ -133,24 +133,42 @@ after a chunk is created.
 
 ## Stage 4: Auto Retrain Runner
 
-Add a future tool:
+`tools/rl_auto_retrain.py` wires the cursor/chunk tool to the DQN trainer:
 
 ```bash
-tools/rl_auto_retrain.py
+python3 tools/rl_auto_retrain.py \
+  --model-dir model/dqn-live-ground-specials-current \
+  --source-log logs/rl-transitions-live-dqn-v24-....ndjson \
+  --base-log logs/rl-transitions-cpu-demo-schema-v3-4-3-3.ndjson \
+  --base-log logs/rl-transitions-human-demo-schema-v3-4-3-3.ndjson \
+  --replay-source-ratios cpu-demo=0.50,human-demo=0.30,remote=0.20 \
+  --min-new-rows 5000 \
+  --steps 800
 ```
 
-The runner should:
+The runner:
 
 1. Read the current model metadata.
 2. Resolve `replay_recipe.base_logs`.
 3. Resolve the live append-only log and cursor.
-4. Trigger after enough new rows or enough time has passed.
-5. Snapshot new rows into a chunk.
-6. Invoke `tools/train_dqn_learner.py --init-model <current.json>`.
-7. Let the trainer publish a new `current.json`.
+4. Snapshot new rows into a chunk when `--min-new-rows` is satisfied.
+5. Invoke `tools/train_dqn_learner.py --init-model <current.json>`.
+6. Let the trainer publish a new `current.json`.
+7. Annotate the new model with `metadata.auto_retrain`.
+8. Commit the cursor only after train and annotation succeed.
 
 The existing probe server already watches `model-dir/current.json`, so a
 published model can be hot-swapped without restarting the probe server.
+
+Useful options:
+
+- `--cycles 0 --interval-sec 600` keeps polling forever.
+- `--dry-run` prints the resolved training command without snapshotting.
+- `--no-commit` leaves the chunk pending after publish for manual inspection.
+- `--reward-preset ground-specials-v24` applies the current v24-style reward
+  and engine-outcome knobs.
+- `--trainer-extra-args "..."` appends advanced trainer flags without changing
+  the runner.
 
 ## First Suggested Auto-Retrain Parameters
 
@@ -173,4 +191,14 @@ for action collapse, `stand-hk` regression, or unwanted replacement actions.
 3. Warm-start smoke from a schema-compatible model such as v24.
 4. Negative warm-start smoke from an incompatible model such as v9; this should
    fail because the feature schema differs.
-5. Compare base and warm-start candidate on CPU/human and live replay slices.
+5. Cursor/chunk smoke:
+   - snapshot writes a chunk without advancing the cursor.
+   - `not-enough-rows` exits without training.
+   - commit advances the cursor only after a pending chunk is accepted.
+6. Auto retrain smoke:
+   - `--dry-run` prints the intended command.
+   - a tiny warm-start train publishes the next model version.
+   - `metadata.auto_retrain` records base version, new version, source log,
+     chunk log, row count, source ratios, and duration.
+   - cursor `pending_chunk` is cleared only after successful publish.
+7. Compare base and warm-start candidate on CPU/human and live replay slices.

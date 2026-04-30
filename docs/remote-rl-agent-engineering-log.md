@@ -2,6 +2,58 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-30: Auto Retrain Runner
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / rolling live-replay retrain
+
+Files changed:
+- `tools/rl_auto_retrain.py`
+- `docs/rl-incremental-retrain-plan.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- add the first end-to-end rolling retrain runner.
+- connect live-log chunk snapshotting to DQN warm-start training.
+- publish a new `current.json` only after the trainer succeeds.
+- advance the live-log cursor only after publish and metadata annotation succeed.
+
+Implementation notes:
+- added `tools/rl_auto_retrain.py`.
+- the runner resolves base logs, live incremental log, source ratios, and recipe name from CLI args or `metadata.replay_recipe`.
+- each cycle runs:
+  - `rl_retrain_chunk.py snapshot`
+  - `train_dqn_learner.py --init-model <model-dir>/current.json`
+  - `metadata.auto_retrain` annotation on `current.json` and matching `actor-vN.json`
+  - `rl_retrain_chunk.py commit`
+- supports one-shot mode, polling mode via `--cycles 0 --interval-sec`, `--dry-run`, `--no-commit`, and pending-chunk reuse.
+- first version records retrain metadata and diagnostics only; hard behavior gates remain intentionally off.
+- reward presets:
+  - `none` for tiny smoke tests.
+  - `ground-specials-v24` for the current v24-style recipe.
+
+Validation:
+- `python3 -m py_compile tools/rl_auto_retrain.py` passed.
+- `python3 tools/rl_auto_retrain.py --help` passed.
+- dry-run smoke from a copied v24 model under `/tmp/rl-auto-retrain-smoke-model-a` passed:
+  - resolved the expected train command.
+  - used CPU demo, human demo, and the pending live chunk with `cpu-demo=0.50,human-demo=0.30,remote=0.20`.
+- not-enough-rows smoke passed:
+  - `--min-new-rows 100 --max-new-rows 25` returned `status=not-enough-rows`.
+  - no trainer run was started.
+- two-step auto retrain smoke passed:
+  - source log: `logs/rl-transitions-live-dqn-v23-20260430-135148.ndjson`.
+  - chunk rows: `25`.
+  - warm-started from copied v24 model version `25`.
+  - trainer published version `26`.
+  - `metadata.auto_retrain` recorded base version, new version, source log, chunk log, row count, source ratios, reward preset, and duration.
+  - cursor commit advanced `last_trained_row_count` to `25` and cleared `pending_chunk`.
+
+Follow-up:
+- use this runner with a real v24/v23 live probe log after the next controlled live collection.
+- add optional promotion gates later if live behavior diagnostics show regressions.
+
 ## 2026-04-30: Live Log Cursor And Retrain Chunk Snapshot
 
 Milestone:

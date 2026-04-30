@@ -2,6 +2,68 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-30: Incremental Retrain Plan And DQN Warm-Start
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / rolling live-replay retrain
+
+Files changed:
+- `docs/rl-incremental-retrain-plan.md`
+- `tools/train_dqn_learner.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- document the full rolling incremental retrain design before adding an auto retrain runner.
+- implement the first concrete step: DQN warm-start training from an existing actor manifest.
+- record replay recipe metadata so later auto retrain can discover stable base replay logs and source ratios from the current model.
+
+Implementation notes:
+- added `docs/rl-incremental-retrain-plan.md`.
+- added `tools/train_dqn_learner.py --init-model`.
+- `--init-model` accepts either an actor JSON path or a model directory containing `current.json`.
+- warm-start validation requires:
+  - `policy == dqn`
+  - current `ACTION_SET_VERSION`
+  - exact action list and order match
+  - exact DQN feature-name schema match
+  - layer count, input widths, output widths, bias lengths, and activation kinds match the requested network shape
+- without `--init-model`, trainer behavior remains random `init_network(...)` full retrain.
+- added metadata:
+  - `incremental_training`
+  - `init_model_path`
+  - `init_model_version`
+  - `init_model_source`
+  - `init_model_feature_count`
+  - `init_model_action_count`
+  - `init_model_validation`
+  - `hidden_sizes`
+- added replay recipe metadata flags:
+  - `--replay-recipe-name`
+  - `--replay-recipe-base-logs`
+  - `--replay-recipe-live-log`
+- when a warm-start model already has `metadata.replay_recipe`, omitted replay-recipe flags inherit from the init model.
+
+Validation:
+- `python3 -m py_compile tools/train_dqn_learner.py` passed.
+- full-retrain smoke without `--init-model` passed:
+  - published `/tmp/rl-dqn-incremental-full-smoke/current.json`
+  - output showed `init=random`
+  - metadata recorded `incremental_training=false` and replay recipe fields
+- warm-start smoke from v24 passed:
+  - init model: `model/dqn-mixdemo-schema-v3-ground-specials-v24/current.json`
+  - published `/tmp/rl-dqn-incremental-warm-smoke/current.json`
+  - output showed `init=warm-start:25`
+  - metadata recorded `incremental_training=true`, `init_model_version=25`, `init_model_feature_count=33`, `init_model_action_count=27`
+- incompatible warm-start smoke from v9 failed as expected:
+  - command rejected `model/dqn-mixdemo-schema-v3-ground-specials-v9/current.json`
+  - reason: `feature schema mismatch got=8 expected=33`
+- `git diff --check` passed.
+
+Follow-up:
+- implement live-log cursor and chunk snapshot support.
+- implement `tools/rl_auto_retrain.py` after manual warm-start runs are satisfactory.
+
 ## 2026-04-30: Train V24 From V21a And V23 Live Replay
 
 Milestone:

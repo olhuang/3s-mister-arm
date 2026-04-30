@@ -160,6 +160,17 @@ class ReplaySourceMixConfig:
 
 
 @dataclass(frozen=True)
+class InitDQNModel:
+    path: str
+    version: int
+    source: str
+    metadata: dict[str, object]
+    actions: tuple[str, ...]
+    feature_names: tuple[str, ...]
+    layers: list[dict[str, object]]
+
+
+@dataclass(frozen=True)
 class ReplaySourceMixStats:
     mode: str
     raw_rows: int
@@ -1872,6 +1883,54 @@ def init_network(input_dim: int, hidden_sizes: list[int], output_dim: int, rng: 
     return layers
 
 
+def validate_dqn_layers(
+    raw_layers: object,
+    input_dim: int,
+    hidden_sizes: list[int],
+    output_dim: int,
+    context: str,
+) -> list[dict[str, object]]:
+    if not isinstance(raw_layers, list):
+        raise SystemExit(f"{context}: missing DQN layer list")
+    expected_sizes = hidden_sizes + [output_dim]
+    if len(raw_layers) != len(expected_sizes):
+        raise SystemExit(f"{context}: layer count {len(raw_layers)} does not match expected {len(expected_sizes)}")
+    clean_layers: list[dict[str, object]] = []
+    prev_dim = input_dim
+    for index, (raw_layer, expected_size) in enumerate(zip(raw_layers, expected_sizes)):
+        if not isinstance(raw_layer, dict):
+            raise SystemExit(f"{context}: layer {index} is not an object")
+        weights = raw_layer.get("weights")
+        bias = raw_layer.get("bias")
+        expected_activation = "relu" if index + 1 < len(expected_sizes) else "linear"
+        activation = str(raw_layer.get("activation", expected_activation) or expected_activation)
+        if activation != expected_activation:
+            raise SystemExit(
+                f"{context}: layer {index} activation {activation!r} does not match expected {expected_activation!r}"
+            )
+        if not isinstance(weights, list) or len(weights) != expected_size:
+            raise SystemExit(f"{context}: layer {index} output rows do not match expected {expected_size}")
+        if not isinstance(bias, list) or len(bias) != expected_size:
+            raise SystemExit(f"{context}: layer {index} bias length does not match expected {expected_size}")
+        clean_weights: list[list[float]] = []
+        for row_index, raw_row in enumerate(weights):
+            if not isinstance(raw_row, list) or len(raw_row) != prev_dim:
+                raise SystemExit(
+                    f"{context}: layer {index} row {row_index} input width does not match expected {prev_dim}"
+                )
+            try:
+                clean_weights.append([float(value) for value in raw_row])
+            except (TypeError, ValueError) as exc:
+                raise SystemExit(f"{context}: layer {index} row {row_index} contains a non-numeric weight") from exc
+        try:
+            clean_bias = [float(value) for value in bias]
+        except (TypeError, ValueError) as exc:
+            raise SystemExit(f"{context}: layer {index} contains a non-numeric bias") from exc
+        clean_layers.append({"weights": clean_weights, "bias": clean_bias, "activation": activation})
+        prev_dim = expected_size
+    return clean_layers
+
+
 def forward(layers: list[dict[str, object]], inputs: list[float]) -> tuple[list[float], list[list[float]], list[list[float]]]:
     activations = [inputs]
     pre_activations: list[list[float]] = []
@@ -1976,9 +2035,15 @@ def train_dqn(
     log_interval: int,
     batch_sampling_config: BatchSamplingConfig,
     target_mode: str,
+    initial_layers: list[dict[str, object]] | None = None,
 ) -> tuple[list[dict[str, object]], dict[str, float]]:
     rng = random.Random(seed)
-    layers = init_network(len(rl.DQN_FEATURE_NAMES), hidden_sizes, len(actions), rng)
+    layers = copy.deepcopy(initial_layers) if initial_layers is not None else init_network(
+        len(rl.DQN_FEATURE_NAMES),
+        hidden_sizes,
+        len(actions),
+        rng,
+    )
     target_layers = copy.deepcopy(layers)
     batch_pools = build_batch_pools(experiences, actions)
     batch_target_counts = (
@@ -2128,6 +2193,117 @@ def parse_action_subset(value: str) -> tuple[str, ...]:
     return tuple(actions)
 
 
+def parse_path_list(value: str) -> list[str]:
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def actor_model_path(value: str) -> Path:
+    path = Path(value)
+    if path.is_dir():
+        return path / "current.json"
+    return path
+
+
+def load_init_dqn_model(value: str, actions: tuple[str, ...], hidden_sizes: list[int]) -> InitDQNModel:
+    path = actor_model_path(value)
+    try:
+        with path.open("r", encoding="utf-8") as stream:
+            payload = json.load(stream)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"--init-model failed to read {path}: {exc}") from exc
+
+    policy = str(payload.get("policy", "") or "")
+    if policy != "dqn":
+        raise SystemExit(f"--init-model {path}: expected policy=dqn, got {policy or 'missing'}")
+    try:
+        action_set_version = int(payload.get("action_set_version", 0) or 0)
+    except (TypeError, ValueError):
+        action_set_version = 0
+    if action_set_version != rl.ACTION_SET_VERSION:
+        raise SystemExit(
+            f"--init-model {path}: action_set_version={action_set_version} expected={rl.ACTION_SET_VERSION}"
+        )
+    raw_actions = payload.get("actions")
+    if not isinstance(raw_actions, list):
+        raise SystemExit(f"--init-model {path}: missing actions list")
+    init_actions = tuple(str(action) for action in raw_actions)
+    if init_actions != actions:
+        raise SystemExit("--init-model actions do not exactly match --actions order")
+
+    raw_dqn = payload.get("dqn")
+    if not isinstance(raw_dqn, dict):
+        raise SystemExit(f"--init-model {path}: missing dqn payload")
+    raw_feature_names = raw_dqn.get("feature_names")
+    if not isinstance(raw_feature_names, list):
+        raise SystemExit(f"--init-model {path}: missing dqn.feature_names")
+    feature_names = tuple(str(name) for name in raw_feature_names)
+    expected_feature_names = tuple(rl.DQN_FEATURE_NAMES)
+    if feature_names != expected_feature_names:
+        raise SystemExit(
+            f"--init-model {path}: feature schema mismatch "
+            f"got={len(feature_names)} expected={len(expected_feature_names)}"
+        )
+    layers = validate_dqn_layers(
+        raw_dqn.get("layers"),
+        len(expected_feature_names),
+        hidden_sizes,
+        len(actions),
+        f"--init-model {path}",
+    )
+    try:
+        version = max(0, int(payload.get("version", 0) or 0))
+    except (TypeError, ValueError):
+        version = 0
+    metadata = payload.get("metadata")
+    return InitDQNModel(
+        path=str(path),
+        version=version,
+        source=str(payload.get("source", "") or ""),
+        metadata=metadata if isinstance(metadata, dict) else {},
+        actions=init_actions,
+        feature_names=feature_names,
+        layers=layers,
+    )
+
+
+def build_replay_recipe_metadata(
+    args: argparse.Namespace,
+    replay_source_mix_config: ReplaySourceMixConfig,
+    init_model: InitDQNModel | None,
+) -> dict[str, object]:
+    inherited = init_model.metadata.get("replay_recipe") if init_model is not None else None
+    inherited_recipe = inherited if isinstance(inherited, dict) else {}
+    base_logs = parse_path_list(str(args.replay_recipe_base_logs))
+    if not base_logs:
+        raw_base_logs = inherited_recipe.get("base_logs")
+        if isinstance(raw_base_logs, list):
+            base_logs = [str(path) for path in raw_base_logs if str(path)]
+    live_log = str(args.replay_recipe_live_log).strip()
+    if not live_log:
+        live_log = str(inherited_recipe.get("live_incremental_log", "") or "")
+    recipe_name = str(args.replay_recipe_name).strip()
+    if not recipe_name:
+        recipe_name = str(inherited_recipe.get("training_recipe", "") or "")
+    source_ratios = dict(sorted(replay_source_mix_config.target_ratios.items()))
+    if not source_ratios:
+        raw_source_ratios = inherited_recipe.get("source_ratios")
+        if isinstance(raw_source_ratios, dict):
+            try:
+                source_ratios = {
+                    str(source): float(ratio)
+                    for source, ratio in raw_source_ratios.items()
+                    if isinstance(source, str)
+                }
+            except (TypeError, ValueError):
+                source_ratios = {}
+    return {
+        "training_recipe": recipe_name,
+        "base_logs": base_logs,
+        "live_incremental_log": live_log,
+        "source_ratios": source_ratios,
+    }
+
+
 def format_action_scores(counts: dict[str, int], rewards: dict[str, float], actions: tuple[str, ...], limit: int) -> str:
     rows: list[tuple[str, int, float, float]] = []
     for action in actions:
@@ -2261,6 +2437,32 @@ def main() -> None:
     parser.add_argument("transition_logs", nargs="+", help="Transition NDJSON logs used as offline replay data")
     parser.add_argument("--model-dir", required=True, help="Directory where DQN actor manifests will be published")
     parser.add_argument("--model-version", type=int, default=None, help="Explicit model version; defaults to current+1")
+    parser.add_argument(
+        "--init-model",
+        default="",
+        help="Optional DQN actor JSON or model directory whose layers are used as the training warm-start",
+    )
+    parser.add_argument(
+        "--replay-recipe-name",
+        default="",
+        help="Optional stable name written to metadata.replay_recipe.training_recipe",
+    )
+    parser.add_argument(
+        "--replay-recipe-base-logs",
+        default="",
+        help=(
+            "Comma-separated replay anchor logs written to metadata.replay_recipe.base_logs; "
+            "when omitted during --init-model training, the value is inherited from the init model"
+        ),
+    )
+    parser.add_argument(
+        "--replay-recipe-live-log",
+        default="",
+        help=(
+            "Optional append-only live log path written to metadata.replay_recipe.live_incremental_log; "
+            "cursor-based auto retrain will use this later"
+        ),
+    )
     parser.add_argument("--limit", type=int, default=0, help="Maximum rows to read across all transition logs; 0 means all")
     parser.add_argument(
         "--drop-initial-episodes-per-run",
@@ -2678,6 +2880,8 @@ def main() -> None:
     args = parser.parse_args()
 
     actions = parse_action_subset(args.actions)
+    hidden_sizes = parse_hidden_sizes(args.hidden_sizes)
+    init_model = load_init_dqn_model(str(args.init_model), actions, hidden_sizes) if str(args.init_model).strip() else None
     rows = read_transition_rows(args.transition_logs, args.limit)
     rows_read_before_episode_drop = len(rows)
     rows, dropped_initial_episode_rows, dropped_initial_episodes = drop_initial_episodes_per_run(
@@ -2741,7 +2945,7 @@ def main() -> None:
     layers, train_stats = train_dqn(
         experiences,
         actions,
-        parse_hidden_sizes(args.hidden_sizes),
+        hidden_sizes,
         max(1, args.steps),
         max(1, args.batch_size),
         max(1e-8, args.learning_rate),
@@ -2751,6 +2955,7 @@ def main() -> None:
         args.log_interval,
         batch_sampling_config,
         args.dqn_target_mode,
+        init_model.layers if init_model is not None else None,
     )
     batch_sampling_diag = batch_sampling_diagnostics(
         experiences,
@@ -2776,6 +2981,14 @@ def main() -> None:
     reward_source = "+".join(reward_sources)
     metadata = {
         "transition_logs": args.transition_logs,
+        "incremental_training": init_model is not None,
+        "init_model_path": init_model.path if init_model is not None else "",
+        "init_model_version": init_model.version if init_model is not None else 0,
+        "init_model_source": init_model.source if init_model is not None else "",
+        "init_model_feature_count": len(init_model.feature_names) if init_model is not None else 0,
+        "init_model_action_count": len(init_model.actions) if init_model is not None else 0,
+        "init_model_validation": "exact-action-feature-layer-match" if init_model is not None else "none",
+        "replay_recipe": build_replay_recipe_metadata(args, replay_source_mix_config, init_model),
         "rows_read": len(rows),
         "rows_read_before_episode_drop": rows_read_before_episode_drop,
         "drop_initial_episodes_per_run": max(0, int(args.drop_initial_episodes_per_run)),
@@ -2839,6 +3052,7 @@ def main() -> None:
         "engine_outcome_stats": engine_outcome_stats.as_metadata(),
         "steps": max(1, args.steps),
         "batch_size": max(1, args.batch_size),
+        "hidden_sizes": hidden_sizes,
         "batch_sampling": batch_sampling_diag.as_metadata(),
         "gamma": min(0.999, max(0.0, args.gamma)),
         "learning_rate": max(1e-8, args.learning_rate),
@@ -2876,6 +3090,7 @@ def main() -> None:
         f"actions={len(actions)} "
         f"action_source={args.training_action_source} "
         f"target_mode={args.dqn_target_mode} "
+        f"init={'warm-start:' + str(init_model.version) if init_model is not None else 'random'} "
         f"batch_sampling={batch_sampling_diag.mode} "
         f"risk={reward_risk_config.profile} risk_cost={reward_risk_stats.total_cost:.1f} "
         f"guard_bonus={reward_guard_stats.total_bonus:.1f} "

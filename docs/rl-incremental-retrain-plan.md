@@ -167,6 +167,11 @@ Useful options:
 - `--no-commit` leaves the chunk pending after publish for manual inspection.
 - `--reward-preset ground-specials-v24` applies the current v24-style reward
   and engine-outcome knobs.
+- `--reward-preset ground-specials-v35a` applies the v35a close-pressure /
+  anti-air tuning:
+  `movement=0.25,normal=0.45,special=0.30`, passive/far guard costs
+  `0.4/0.6`, reduced fireball oversample, stronger Shoryuken oversample, and
+  throw engine-outcome support.
 - `--trainer-extra-args "..."` appends advanced trainer flags without changing
   the runner.
 

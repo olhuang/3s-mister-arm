@@ -2,6 +2,46 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-30: V35a Auto Retrain Preset
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / rolling live-replay retrain
+
+Files changed:
+- `tools/rl_auto_retrain.py`
+- `docs/rl-incremental-retrain-plan.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- make v35a follow-up auto retraining reproducible without a long
+  `--trainer-extra-args` override string.
+- keep the v35a close-pressure / anti-air recipe attached to a named runner
+  preset.
+
+Implementation notes:
+- added `--reward-preset ground-specials-v35a`.
+- the preset keeps the ground-specials reward/risk shape but changes the
+  training recipe to match v35a:
+  - `movement=0.25,normal=0.45,special=0.30`
+  - passive/far guard cost `0.4/0.6`
+  - fireball oversamples `4/4/4`
+  - Shoryuken oversamples `8/10/12`
+  - throw engine-outcome window `8` and oversample `8`
+- `--trainer-extra-args` still appends after the preset and can override it
+  for experiments.
+
+Validation:
+- `python3 tools/rl_auto_retrain.py --help` showed
+  `--reward-preset {none,ground-specials-v24,ground-specials-v35a}`.
+- dry-run validation confirmed the generated train command includes the v35a
+  batch ratio, guard costs, reduced fireball oversamples, stronger Shoryuken
+  oversamples, and throw engine-outcome support.
+
+Follow-up:
+- run the next v35a live auto-retrain with `--reward-preset ground-specials-v35a`
+  and `--replay-source-ratios cpu-demo=0.40,human-demo=0.25,remote=0.35`.
+
 ## 2026-04-30: Auto Retrain Runner
 
 Milestone:

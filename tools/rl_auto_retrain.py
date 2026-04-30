@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 
 
-REWARD_PRESETS = ("none", "ground-specials-v24")
+REWARD_PRESETS = ("none", "ground-specials-v24", "ground-specials-v35a")
 
 
 def atomic_write_json(path: Path, payload: dict[str, object]) -> None:
@@ -99,9 +99,33 @@ def reward_preset_args(name: str) -> list[str]:
             "--engine-outcome-training-mode",
             "off",
         ]
-    if name != "ground-specials-v24":
+    if name not in {"ground-specials-v24", "ground-specials-v35a"}:
         raise SystemExit(f"unknown reward preset: {name}")
+    if name == "ground-specials-v35a":
+        guard_costs = ("0.4", "0.6")
+        engine_action_windows = "fireball-lp=45,fireball-mp=45,fireball-hp=45,tatsu-lk=25,tatsu-mk=25,tatsu-hk=25,throw=8"
+        engine_action_oversamples = (
+            "fireball-lp=4,fireball-mp=4,fireball-hp=4,"
+            "shoryuken-lp=8,shoryuken-mp=10,shoryuken-hp=12,"
+            "tatsu-lk=6,tatsu-mk=6,tatsu-hk=6,throw=8"
+        )
+        preset_args = [
+            "--batch-sampling",
+            "balanced",
+            "--balanced-batch-ratios",
+            "movement=0.25,normal=0.45,special=0.30",
+        ]
+    else:
+        guard_costs = ("0.3", "0.5")
+        engine_action_windows = "fireball-lp=45,fireball-mp=45,fireball-hp=45,tatsu-lk=25,tatsu-mk=25,tatsu-hk=25"
+        engine_action_oversamples = (
+            "fireball-lp=8,fireball-mp=8,fireball-hp=8,"
+            "shoryuken-lp=4,shoryuken-mp=6,shoryuken-hp=8,"
+            "tatsu-lk=6,tatsu-mk=6,tatsu-hk=6"
+        )
+        preset_args = []
     return [
+        *preset_args,
         "--reward-risk-profile",
         "all-attacks",
         "--reward-risk-window-decisions",
@@ -125,9 +149,9 @@ def reward_preset_args(name: str) -> list[str]:
         "--reward-guard-threat-max-dx",
         "120",
         "--reward-passive-guard-cost",
-        "0.3",
+        guard_costs[0],
         "--reward-far-guard-cost",
-        "0.5",
+        guard_costs[1],
         "--reward-spacing-target-min-dx",
         "50",
         "--reward-spacing-target-max-dx",
@@ -145,7 +169,7 @@ def reward_preset_args(name: str) -> list[str]:
         "--engine-outcome-window-decisions",
         "15",
         "--engine-outcome-action-windows",
-        "fireball-lp=45,fireball-mp=45,fireball-hp=45,tatsu-lk=25,tatsu-mk=25,tatsu-hk=25",
+        engine_action_windows,
         "--engine-outcome-hit-bonus",
         "1.0",
         "--engine-outcome-no-damage-cost",
@@ -155,7 +179,7 @@ def reward_preset_args(name: str) -> list[str]:
         "--engine-outcome-oversample",
         "1",
         "--engine-outcome-action-oversamples",
-        "fireball-lp=8,fireball-mp=8,fireball-hp=8,shoryuken-lp=4,shoryuken-mp=6,shoryuken-hp=8,tatsu-lk=6,tatsu-mk=6,tatsu-hk=6",
+        engine_action_oversamples,
     ]
 
 

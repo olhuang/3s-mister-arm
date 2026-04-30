@@ -2503,6 +2503,7 @@ Tasks:
 - [x] Add DQN trainer `--init-model` warm-start and replay recipe metadata
 - [x] Add live-log cursor / chunk snapshot support for incremental retrain
 - [x] Add auto retrain runner for timed/row-count triggered warm-start training and publish
+- [x] Add a v35a auto-retrain preset so close-pressure / anti-air tuning can be reused without long extra-arg commands
 - [ ] Review v24 live behavior before promoting it over v23; same-observation compare kept `stand-hk` suppressed but did not reduce the `tatsu-lk` replacement shift
 - [ ] Review v23's `tatsu-lk` / `crouch-mk` policy shift before any live promotion; `stand-hk` was suppressed, but the replacement action is not yet validated
 - [ ] Add stronger source/action-specific live negative replay handling before expecting v21a-live punish data to move `stand-hk` / mid-fireball behavior

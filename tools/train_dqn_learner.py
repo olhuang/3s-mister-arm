@@ -311,6 +311,27 @@ class ConservativeActionPenaltyConfig:
 
 
 @dataclass(frozen=True)
+class DQNUnsupportedActionRegularizationConfig:
+    requested: bool
+    min_action_count: int
+    q_ceiling: float
+    loss_weight: float
+
+    @property
+    def enabled(self) -> bool:
+        return self.requested and self.min_action_count > 0 and self.loss_weight > 0.0
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "requested": self.requested,
+            "enabled": self.enabled,
+            "min_action_count": self.min_action_count,
+            "q_ceiling": self.q_ceiling,
+            "loss_weight": self.loss_weight,
+        }
+
+
+@dataclass(frozen=True)
 class DQNActionFilterConfig:
     require_movable_state_sources: frozenset[str] = field(default_factory=frozenset)
 
@@ -346,6 +367,40 @@ class ConservativeActionPenaltyStats:
             "per_action_raw_cost": self.per_action_raw_cost,
             "low_count_actions": self.low_count_actions,
             "nonpositive_mean_actions": self.nonpositive_mean_actions,
+        }
+
+
+@dataclass
+class DQNUnsupportedActionRegularizationStats:
+    eligible_action_count: int = 0
+    zero_sample_actions: list[str] = field(default_factory=list)
+    low_sample_actions: list[str] = field(default_factory=list)
+    regularized_events: int = 0
+    regularized_loss_total: float = 0.0
+    last_loss: float = 0.0
+    avg_loss: float = 0.0
+    per_action_events: dict[str, int] = field(default_factory=dict)
+    per_action_loss: dict[str, float] = field(default_factory=dict)
+
+    def as_metadata(self) -> dict[str, object]:
+        regularized_zero_sample_actions = [
+            action for action in self.zero_sample_actions if self.per_action_events.get(action, 0) > 0
+        ]
+        regularized_low_sample_actions = [
+            action for action in self.low_sample_actions if self.per_action_events.get(action, 0) > 0
+        ]
+        return {
+            "eligible_action_count": self.eligible_action_count,
+            "zero_sample_actions": self.zero_sample_actions,
+            "low_sample_actions": self.low_sample_actions,
+            "regularized_zero_sample_actions": regularized_zero_sample_actions,
+            "regularized_low_sample_actions": regularized_low_sample_actions,
+            "regularized_events": self.regularized_events,
+            "regularized_loss_total": self.regularized_loss_total,
+            "last_loss": self.last_loss,
+            "avg_loss": self.avg_loss,
+            "per_action_events": self.per_action_events,
+            "per_action_loss": self.per_action_loss,
         }
 
 
@@ -1022,6 +1077,17 @@ def conservative_action_penalty_config_from_args(args: argparse.Namespace) -> Co
         min_action_count=max(0, int(args.conservative_min_action_count)),
         negative_mean_extra=max(0.0, float(args.conservative_negative_mean_extra)),
         exempt_actions=parse_action_name_set(str(args.conservative_exempt_actions), "--conservative-exempt-actions"),
+    )
+
+
+def dqn_unsupported_action_regularization_config_from_args(
+    args: argparse.Namespace,
+) -> DQNUnsupportedActionRegularizationConfig:
+    return DQNUnsupportedActionRegularizationConfig(
+        requested=bool(args.dqn_unsupported_action_regularization),
+        min_action_count=max(0, int(args.dqn_unsupported_action_min_count)),
+        q_ceiling=float(args.dqn_unsupported_action_q_ceiling),
+        loss_weight=max(0.0, float(args.dqn_unsupported_action_loss_weight)),
     )
 
 
@@ -2022,9 +2088,33 @@ def apply_grads(layers: list[dict[str, object]], grads: list[dict[str, object]],
                 weights[out_index][in_index] = float(weights[out_index][in_index]) - scale * grad
 
 
+def dqn_unsupported_action_indices(
+    actions: tuple[str, ...],
+    action_counts: dict[str, int],
+    config: DQNUnsupportedActionRegularizationConfig,
+) -> tuple[list[int], DQNUnsupportedActionRegularizationStats]:
+    stats = DQNUnsupportedActionRegularizationStats()
+    if not config.enabled:
+        return [], stats
+
+    indices: list[int] = []
+    for index, action in enumerate(actions):
+        count = int(action_counts.get(action, 0))
+        if count >= config.min_action_count:
+            continue
+        indices.append(index)
+        if count <= 0:
+            stats.zero_sample_actions.append(action)
+        else:
+            stats.low_sample_actions.append(action)
+    stats.eligible_action_count = len(indices)
+    return indices, stats
+
+
 def train_dqn(
     experiences: list[Experience],
     actions: tuple[str, ...],
+    action_counts: dict[str, int],
     hidden_sizes: list[int],
     steps: int,
     batch_size: int,
@@ -2035,8 +2125,9 @@ def train_dqn(
     log_interval: int,
     batch_sampling_config: BatchSamplingConfig,
     target_mode: str,
+    unsupported_action_regularization_config: DQNUnsupportedActionRegularizationConfig,
     initial_layers: list[dict[str, object]] | None = None,
-) -> tuple[list[dict[str, object]], dict[str, float]]:
+) -> tuple[list[dict[str, object]], dict[str, object], DQNUnsupportedActionRegularizationStats]:
     rng = random.Random(seed)
     layers = copy.deepcopy(initial_layers) if initial_layers is not None else init_network(
         len(rl.DQN_FEATURE_NAMES),
@@ -2053,6 +2144,13 @@ def train_dqn(
     )
     last_loss = 0.0
     avg_loss = 0.0
+    last_unsupported_regularization_loss = 0.0
+    avg_unsupported_regularization_loss = 0.0
+    unsupported_action_indices, unsupported_action_regularization_stats = dqn_unsupported_action_indices(
+        actions,
+        action_counts,
+        unsupported_action_regularization_config,
+    )
 
     for step in range(1, steps + 1):
         batch = sample_training_batch(
@@ -2065,6 +2163,7 @@ def train_dqn(
         )
         grads = zero_grads(layers)
         loss = 0.0
+        unsupported_regularization_loss = 0.0
         for exp in batch:
             values, activations, pre_activations = forward(layers, exp.state)
             next_values, _, _ = forward(target_layers, exp.next_state)
@@ -2084,14 +2183,55 @@ def train_dqn(
             loss += 0.5 * error * error
             output_grad = [0.0 for _ in values]
             output_grad[exp.action_index] = error
+            if unsupported_action_indices:
+                regularization_denom = max(1, len(unsupported_action_indices))
+                for action_index in unsupported_action_indices:
+                    if action_index >= len(values):
+                        continue
+                    excess_q = float(values[action_index]) - unsupported_action_regularization_config.q_ceiling
+                    if excess_q <= 0.0:
+                        continue
+                    weighted_loss = (
+                        unsupported_action_regularization_config.loss_weight
+                        * 0.5
+                        * excess_q
+                        * excess_q
+                        / regularization_denom
+                    )
+                    output_grad[action_index] += (
+                        unsupported_action_regularization_config.loss_weight
+                        * excess_q
+                        / regularization_denom
+                    )
+                    loss += weighted_loss
+                    unsupported_regularization_loss += weighted_loss
+                    action = actions[action_index]
+                    unsupported_action_regularization_stats.regularized_events += 1
+                    unsupported_action_regularization_stats.regularized_loss_total += weighted_loss
+                    unsupported_action_regularization_stats.per_action_events[action] = (
+                        unsupported_action_regularization_stats.per_action_events.get(action, 0) + 1
+                    )
+                    unsupported_action_regularization_stats.per_action_loss[action] = (
+                        unsupported_action_regularization_stats.per_action_loss.get(action, 0.0) + weighted_loss
+                    )
             add_backward_grads(layers, grads, activations, pre_activations, output_grad)
         apply_grads(layers, grads, learning_rate, batch_size)
         last_loss = loss / max(1, batch_size)
         avg_loss = last_loss if step == 1 else (0.98 * avg_loss + 0.02 * last_loss)
+        last_unsupported_regularization_loss = unsupported_regularization_loss / max(1, batch_size)
+        avg_unsupported_regularization_loss = (
+            last_unsupported_regularization_loss
+            if step == 1
+            else (0.98 * avg_unsupported_regularization_loss + 0.02 * last_unsupported_regularization_loss)
+        )
         if target_sync_steps > 0 and step % target_sync_steps == 0:
             target_layers = copy.deepcopy(layers)
         if log_interval > 0 and (step == 1 or step % log_interval == 0 or step == steps):
-            print(f"TRAIN step={step} loss={last_loss:.6f} avg_loss={avg_loss:.6f}", flush=True)
+            print(
+                f"TRAIN step={step} loss={last_loss:.6f} avg_loss={avg_loss:.6f} "
+                f"unsupported_reg={last_unsupported_regularization_loss:.6f}",
+                flush=True,
+            )
 
     batch_diag = BatchSamplingDiagnostics(
         mode=batch_sampling_config.mode,
@@ -2099,7 +2239,17 @@ def train_dqn(
         pool_counts={group: len(batch_pools[group]) for group in BATCH_GROUPS},
         target_counts=dict(batch_target_counts),
     )
-    return layers, {"last_loss": last_loss, "avg_loss": avg_loss, "batch_sampling": batch_diag.as_metadata()}
+    unsupported_action_regularization_stats.last_loss = last_unsupported_regularization_loss
+    unsupported_action_regularization_stats.avg_loss = avg_unsupported_regularization_loss
+    return (
+        layers,
+        {
+            "last_loss": last_loss,
+            "avg_loss": avg_loss,
+            "batch_sampling": batch_diag.as_metadata(),
+        },
+        unsupported_action_regularization_stats,
+    )
 
 
 def count_greedy_actions(layers: list[dict[str, object]], experiences: list[Experience], actions: tuple[str, ...], limit: int) -> dict[str, int]:
@@ -2567,6 +2717,36 @@ def main() -> None:
         help="Comma-separated action names exempt from conservative action penalties",
     )
     parser.add_argument(
+        "--dqn-unsupported-action-regularization",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Add an auxiliary DQN loss that pushes zero/low replay-support action heads below "
+            "--dqn-unsupported-action-q-ceiling; disabled by default"
+        ),
+    )
+    parser.add_argument(
+        "--dqn-unsupported-action-min-count",
+        type=int,
+        default=1,
+        help=(
+            "Actions with fewer than this many post-build DQN training examples are regularized when "
+            "--dqn-unsupported-action-regularization is enabled; 1 targets only zero-sample actions"
+        ),
+    )
+    parser.add_argument(
+        "--dqn-unsupported-action-q-ceiling",
+        type=float,
+        default=0.0,
+        help="Scaled-Q ceiling used by --dqn-unsupported-action-regularization",
+    )
+    parser.add_argument(
+        "--dqn-unsupported-action-loss-weight",
+        type=float,
+        default=0.1,
+        help="Auxiliary loss weight used by --dqn-unsupported-action-regularization",
+    )
+    parser.add_argument(
         "--reward-risk-profile",
         choices=REWARD_RISK_PROFILES,
         default="none",
@@ -2902,6 +3082,7 @@ def main() -> None:
     reward_position_config = reward_position_config_from_args(args)
     engine_outcome_config = engine_outcome_config_from_args(args)
     conservative_action_penalty_config = conservative_action_penalty_config_from_args(args)
+    unsupported_action_regularization_config = dqn_unsupported_action_regularization_config_from_args(args)
     batch_sampling_config = batch_sampling_config_from_args(args)
     (
         experiences,
@@ -2942,9 +3123,10 @@ def main() -> None:
         source_stats,
     )
 
-    layers, train_stats = train_dqn(
+    layers, train_stats, unsupported_action_regularization_stats = train_dqn(
         experiences,
         actions,
+        action_counts,
         hidden_sizes,
         max(1, args.steps),
         max(1, args.batch_size),
@@ -2955,6 +3137,7 @@ def main() -> None:
         args.log_interval,
         batch_sampling_config,
         args.dqn_target_mode,
+        unsupported_action_regularization_config,
         init_model.layers if init_model is not None else None,
     )
     batch_sampling_diag = batch_sampling_diagnostics(
@@ -3010,6 +3193,8 @@ def main() -> None:
         "reward_scale_applied_after_raw_adjustments": True,
         "conservative_action_penalty_config": conservative_action_penalty_config.as_metadata(),
         "conservative_action_penalty_stats": conservative_action_penalty_stats.as_metadata(),
+        "dqn_unsupported_action_regularization_config": unsupported_action_regularization_config.as_metadata(),
+        "dqn_unsupported_action_regularization_stats": unsupported_action_regularization_stats.as_metadata(),
         "training_action_source": str(args.training_action_source),
         "reward_risk_profile": reward_risk_config.profile,
         "reward_risk_window_decisions": reward_risk_config.window_decisions,
@@ -3108,6 +3293,9 @@ def main() -> None:
         f"engine_oversample={engine_outcome_stats.training_experiences}/"
         f"+{engine_outcome_stats.oversample_extra_experiences} "
         f"conservative_cost={conservative_action_penalty_stats.raw_cost_total:.1f} "
+        f"unsupported_reg={unsupported_action_regularization_stats.regularized_events}/"
+        f"{unsupported_action_regularization_stats.eligible_action_count} "
+        f"unsupported_loss={unsupported_action_regularization_stats.last_loss:.6f} "
         f"loss={train_stats['last_loss']:.6f} avg_loss={train_stats['avg_loss']:.6f} "
         f"included={build_stats.included_action_rows} excluded={build_stats.excluded_action_rows} "
         f"engine_input_fallback={build_stats.engine_outcome_input_fallback_rows} "
@@ -3200,6 +3388,23 @@ def main() -> None:
         f"nonpositive_mean:{','.join(conservative_action_penalty_stats.nonpositive_mean_actions) or 'none'} "
         f"by_action=count/raw/mean "
         f"{format_action_scores(conservative_action_penalty_stats.per_action_events, conservative_action_penalty_stats.per_action_raw_cost, actions, args.diagnostic_top_n)}",
+        flush=True,
+    )
+    print(
+        "DQN diagnostics "
+        f"unsupported_action_regularization=enabled:{int(unsupported_action_regularization_config.enabled)} "
+        f"min_count:{unsupported_action_regularization_config.min_action_count} "
+        f"q_ceiling:{unsupported_action_regularization_config.q_ceiling:.6f} "
+        f"loss_weight:{unsupported_action_regularization_config.loss_weight:.6f} "
+        f"eligible:{unsupported_action_regularization_stats.eligible_action_count} "
+        f"zero_sample:{','.join(unsupported_action_regularization_stats.zero_sample_actions) or 'none'} "
+        f"low_sample:{','.join(unsupported_action_regularization_stats.low_sample_actions) or 'none'} "
+        f"events:{unsupported_action_regularization_stats.regularized_events} "
+        f"loss:{unsupported_action_regularization_stats.regularized_loss_total:.6f} "
+        f"last:{unsupported_action_regularization_stats.last_loss:.6f} "
+        f"avg:{unsupported_action_regularization_stats.avg_loss:.6f} "
+        f"by_action=count/loss/mean "
+        f"{format_action_scores(unsupported_action_regularization_stats.per_action_events, unsupported_action_regularization_stats.per_action_loss, actions, args.diagnostic_top_n)}",
         flush=True,
     )
     print(

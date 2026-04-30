@@ -2,6 +2,62 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-01: DQN Unsupported-Action Regularization
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / full action-set DQN experiments
+
+Files changed:
+- `tools/train_dqn_learner.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- add the first trainer-side fix for full-action DQN sparse-action
+  overestimation.
+- make zero-sample and low-support action heads receive an opt-in auxiliary
+  Q-value loss even when they have no replay experiences of their own.
+
+Implementation notes:
+- added `--dqn-unsupported-action-regularization`, disabled by default.
+- added `--dqn-unsupported-action-min-count`, default `1`, so enabling the
+  feature without extra knobs targets only `count == 0` actions.
+- added `--dqn-unsupported-action-q-ceiling` and
+  `--dqn-unsupported-action-loss-weight`.
+- the trainer computes eligible actions from post-build DQN `action_counts`;
+  any action with `count < min_count` is regularized.
+- for each training state, eligible action heads above the ceiling add a
+  normalized auxiliary loss:
+  `loss_weight * 0.5 * (q - q_ceiling)^2 / eligible_action_count`.
+- the auxiliary gradient is added to the existing output gradient before the
+  current stdlib backprop pass.
+- model metadata now records:
+  - `dqn_unsupported_action_regularization_config`
+  - `dqn_unsupported_action_regularization_stats`
+  - eligible actions, zero-sample actions, low-sample actions, regularized
+    zero/low-sample actions, regularized event counts, and per-action loss.
+- stdout diagnostics now include `unsupported_action_regularization=...`.
+
+Validation:
+- `python3 -m py_compile tools/train_dqn_learner.py` passed.
+- `python3 tools/train_dqn_learner.py --help` passed and showed the new flags.
+- smoke command passed:
+  ```sh
+  python3 tools/train_dqn_learner.py logs/rl-transitions-human-demo-schema-v3-4-3-3.ndjson --model-dir /tmp/rl-dqn-unsupported-reg-smoke --limit 300 --steps 3 --batch-size 8 --hidden-sizes 8 --dqn-unsupported-action-regularization --dqn-unsupported-action-min-count 999 --dqn-unsupported-action-q-ceiling -100 --dqn-unsupported-action-loss-weight 0.0001 --eval-limit 50 --log-interval 1 --diagnostic-top-n 12
+  ```
+- smoke output included `eligible_action_count=45`,
+  `regularized_events=1080`, and `31` zero-sample actions in
+  `regularized_zero_sample_actions` metadata.
+
+Follow-up:
+- retrain a V38-style CPU-demo full-action candidate with realistic
+  regularization settings.
+- compare raw greedy and support-prior greedy distributions against V38, and
+  confirm that jump collapse does not shift into a single guard/fireball/DP
+  action.
+- implement the separate shared valid-action mask for train-time target max
+  and probe-time DQN ranking.
+
 ## 2026-05-01: Full-Action DQN Sparse-Action Fix Plan
 
 Milestone:

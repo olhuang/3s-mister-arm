@@ -2505,7 +2505,7 @@ Tasks:
 - [x] Add auto retrain runner for timed/row-count triggered warm-start training and publish
 - [x] Add a v35a auto-retrain preset so close-pressure / anti-air tuning can be reused without long extra-arg commands
 - [x] Record V37b / V38 full-action support-prior training parameters and findings before continuing full action-set experiments
-- [ ] Add DQN zero-sample / low-support action regularization so full-action output heads with no replay support cannot become top greedy actions
+- [x] Add DQN zero-sample / low-support action regularization so full-action output heads with no replay support cannot become top greedy actions
 - [ ] Add a shared DQN valid-action mask for train-time target selection and probe-time inference, starting with self-routine-aware jump-action gating
 - [ ] Review v24 live behavior before promoting it over v23; same-observation compare kept `stand-hk` suppressed but did not reduce the `tatsu-lk` replacement shift
 - [ ] Review v23's `tatsu-lk` / `crouch-mk` policy shift before any live promotion; `stand-hk` was suppressed, but the replacement action is not yet validated
@@ -2541,8 +2541,7 @@ Full-action DQN sparse-action plan:
     uncalibrated high-Q output head.
 
 - Step 1: zero-sample / low-support action regularization.
-  - Add opt-in trainer flags for unsupported-action Q regularization. Candidate
-    shape:
+  - Added opt-in trainer flags for unsupported-action Q regularization:
     - `--dqn-unsupported-action-regularization`
     - `--dqn-unsupported-action-min-count <N>`
     - `--dqn-unsupported-action-q-ceiling <value>`
@@ -2552,9 +2551,20 @@ Full-action DQN sparse-action plan:
     predicted Q is pushed below the ceiling.
   - Keep this separate from reward shaping; it should constrain output heads,
     not depend on an action having an experience row.
-  - Metadata must record the regularization config and diagnostics:
-    `unsupported_action_count`, per-action regularized events/loss, and the
+  - Metadata records the regularization config and diagnostics:
+    `eligible_action_count`, per-action regularized events/loss, and the
     zero-sample actions that were affected.
+  - Local validation:
+    - `python3 -m py_compile tools/train_dqn_learner.py`
+    - `python3 tools/train_dqn_learner.py --help`
+    - small DQN smoke on `logs/rl-transitions-human-demo-schema-v3-4-3-3.ndjson`
+      with `--limit 300`, `--steps 3`, `--batch-size 8`,
+      `--dqn-unsupported-action-regularization`,
+      `--dqn-unsupported-action-min-count 999`,
+      `--dqn-unsupported-action-q-ceiling -100`, and
+      `--dqn-unsupported-action-loss-weight 0.0001` emitted
+      `eligible_action_count=45`, `regularized_events=1080`, and zero-sample
+      actions in `regularized_zero_sample_actions`.
   - Validation:
     - retrain CPU-demo full-action from the V38 recipe with regularization.
     - require `jump-neutral-mk`, `jump-back-hk`, and `jump-neutral-mp` to lose

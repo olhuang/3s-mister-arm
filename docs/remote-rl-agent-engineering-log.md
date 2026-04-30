@@ -2,6 +2,65 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-01: Train V39 CPU-Demo Full-Action With Unsupported Regularization
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / full action-set DQN experiments
+
+Files changed:
+- `model/dqn-cpudemo-schema-v3-full-actions-v39/` (generated, untracked)
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- test whether the first opt-in unsupported-action regularization is enough to
+  fix the V38 CPU-demo full-action jump-collapse failure.
+
+Training recipe:
+- V38 CPU-demo full-action recipe, plus:
+  - `--model-dir model/dqn-cpudemo-schema-v3-full-actions-v39`
+  - `--model-version 39`
+  - `--dqn-unsupported-action-regularization`
+  - `--dqn-unsupported-action-min-count 300`
+  - `--dqn-unsupported-action-q-ceiling 0.0`
+  - `--dqn-unsupported-action-loss-weight 0.1`
+
+Validation result:
+- training completed and published version `39`.
+- replay rows / experiences matched V38:
+  - rows: `122276`
+  - experiences: `45124`
+- regularization did run:
+  - eligible actions: `34`
+  - zero-sample actions: `13`
+  - regularized events: `2303866`
+  - total regularization loss: `23.706095642724385`
+- raw greedy did not materially improve versus V38:
+  - V38: `jump-neutral-mk 4037/5000 = 80.7%`
+  - V39: `jump-neutral-mk 4031/5000 = 80.6%`
+  - V38: `jump-back-hk 444/5000 = 8.9%`
+  - V39: `jump-back-hk 444/5000 = 8.9%`
+  - V38: `jump-neutral-mp 91/5000 = 1.8%`
+  - V39: `jump-neutral-mp 92/5000 = 1.8%`
+- q-mean moved only slightly:
+  - `jump-neutral-mk`: `0.1867678145 -> 0.1858812352`
+  - `jump-back-hk`: `0.1071111589 -> 0.1065539107`
+  - `jump-neutral-mp`: `0.1154654855 -> 0.1149702650`
+
+Decision:
+- do not promote V39.
+- the feature is wired and diagnostic metadata is useful, but the first
+  realistic setting is far too weak to affect V38's zero-sample jump-head
+  overestimation.
+
+Follow-up:
+- try a stronger auxiliary constraint only as an offline experiment, for
+  example higher `--dqn-unsupported-action-loss-weight`, a lower
+  `--dqn-unsupported-action-q-ceiling`, or both.
+- prioritize the planned shared valid-action mask, because this V39 result
+  suggests regularization alone may not be enough for full-action CPU-demo-only
+  data.
+
 ## 2026-05-01: DQN Unsupported-Action Regularization
 
 Milestone:

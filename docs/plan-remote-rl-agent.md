@@ -2567,6 +2567,9 @@ Full-action DQN sparse-action plan:
       actions in `regularized_zero_sample_actions`.
   - Validation:
     - retrain CPU-demo full-action from the V38 recipe with regularization.
+    - first V39 validation with `min_count=300`, `q_ceiling=0.0`, and
+      `loss_weight=0.1` did not materially improve raw greedy collapse:
+      `jump-neutral-mk` moved only from `80.7%` to `80.6%`.
     - require `jump-neutral-mk`, `jump-back-hk`, and `jump-neutral-mp` to lose
       raw greedy dominance without collapsing into a new single fireball/guard
       action.

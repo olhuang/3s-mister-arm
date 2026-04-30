@@ -2,6 +2,89 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-30: Train V24 From V21a And V23 Live Replay
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / clean live-replay retrain cleanup
+
+Files changed:
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- train a v24 candidate that keeps the v23 `r1/r2` observation feature path and adds the new v23 live replay to the earlier v21a live replay.
+- test whether mixing the improved v23 live data can keep the live `stand-hk` / `crouch-hp` fixes while reducing v23's replacement shift toward `tatsu-lk` / `crouch-mk`.
+
+Training:
+- trained `model/dqn-mixdemo-schema-v3-ground-specials-v24`.
+- v24 model manifest version is `25`.
+- source logs:
+  - `logs/rl-transitions-cpu-demo-schema-v3-4-3-3.ndjson`
+  - `logs/rl-transitions-human-demo-schema-v3-4-3-3.ndjson`
+  - `logs/rl-transitions-live-dqn-v21a-20260430-124456.ndjson`
+  - `logs/rl-transitions-live-dqn-v23-20260430-135148.ndjson`
+- source mix:
+  - `cpu-demo=0.55`
+  - `human-demo=0.30`
+  - `remote=0.15`
+- kept the v23/v21a fireball recipe:
+  - `fireball-lp=8,fireball-mp=8,fireball-hp=8`
+  - `--dqn-require-movable-state-sources remote`
+
+Training diagnostics:
+- rows after source mix: `62829`
+- experiences: `25374`
+- feature count: `33`
+- remote rows after source mix:
+  - v23 live model-version `24`: `5504` rows / `58.4%`
+  - v21a live model-version `21`: `3920` rows / `41.6%`
+- effective remote experiences:
+  - total: `239`
+  - v23 live model-version `24`: `159` / `66.5%`
+  - v21a live model-version `21`: `80` / `33.5%`
+- remote action-start rows checked: `4206`
+- remote action-start rows included: `239`
+- remote action-start rows filtered: `3967`
+- remote experience action means:
+  - `fireball-hp=66`, mean `-0.006`
+  - `crouch-hp=59`, mean `-0.015`
+  - `crouch-mk=34`, mean `+0.012`
+  - `tatsu-lk=20`, mean `-0.030`
+  - `stand-hk=17`, mean `-0.027`
+- final loss:
+  - `last_loss=0.005647`
+  - `avg_loss=0.006919`
+
+Same-observation compare summary:
+- CPU/human slice:
+  - v23: `fireball-hp=40.6%`, `tatsu-lk=18.4%`, `crouch-mk=6.1%`, `guard-crouch=4.4%`, `crouch-hp=2.5%`, `stand-hk=0.0%`
+  - v24: `fireball-hp=38.1%`, `tatsu-lk=19.2%`, `crouch-mk=6.3%`, `guard-crouch=4.7%`, `crouch-hp=2.4%`, `stand-hk=0.1%`
+- v21a-live slice:
+  - v23: `fireball-hp=34.1%`, `tatsu-lk=23.6%`, `crouch-mk=11.4%`, `guard-crouch=5.7%`, `crouch-hp=4.0%`, `stand-hk=0.0%`
+  - v24: `fireball-hp=32.7%`, `tatsu-lk=24.1%`, `crouch-mk=11.5%`, `guard-crouch=5.7%`, `crouch-hp=3.9%`, `stand-hk=0.0%`
+- v23-live slice:
+  - v23: `fireball-hp=36.1%`, `crouch-mk=13.5%`, `guard-crouch=10.9%`, `crouch-hp=10.2%`, `stand-lp=9.2%`, `tatsu-lk=7.5%`, `stand-hk=0.1%`
+  - v24: `fireball-hp=33.4%`, `crouch-mk=14.5%`, `guard-crouch=11.2%`, `crouch-hp=10.0%`, `stand-lp=9.3%`, `tatsu-lk=8.2%`, `stand-hk=0.1%`
+
+Focused pockets:
+- v21a-live `opp_attack_close_mid`:
+  - v23: `tatsu-lk=50.7%`, `crouch-hp=18.4%`, `fireball-hp=16.1%`, `stand-hk=0.0%`
+  - v24: `tatsu-lk=51.8%`, `crouch-hp=17.9%`, `fireball-hp=15.4%`, `stand-hk=0.0%`
+- v23-live `opp_attack_close_mid`:
+  - v23: `fireball-hp=40.6%`, `crouch-hp=31.6%`, `tatsu-lk=21.4%`, `stand-hk=0.0%`
+  - v24: `fireball-hp=39.1%`, `crouch-hp=30.8%`, `tatsu-lk=23.6%`, `stand-hk=0.0%`
+
+Conclusion:
+- v24 keeps the important v23 improvement: `stand-hk` remains suppressed in the live replay slices.
+- v24 is not a clear improvement over v23 in same-observation compare.
+- adding the v23 live replay and raising remote ratio to `15%` did not reduce the v23 replacement shift; `tatsu-lk` is slightly higher on the key v21a-live and v23-live pockets.
+- v24 can be live-probed, but it should not be assumed better than v23 until live behavior confirms it.
+
+Validation:
+- full v24 training passed.
+- metadata inspection passed.
+- same-observation compare passed for CPU/human, v21a-live, and v23-live slices.
+
 ## 2026-04-30: OBS Payload V3 Opponent Routine Features And V23 Retrain
 
 Milestone:

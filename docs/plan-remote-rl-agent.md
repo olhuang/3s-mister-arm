@@ -2498,6 +2498,8 @@ Tasks:
 - [x] Train v22 from v21a live replay with the v21a fireball-oversample recipe and remote movable filtering
 - [x] Add OBS payload v3 raw routine ids and DQN opponent routine one-hot features for the v23 feature-slice experiment
 - [x] Train v23 from the v21a live replay with the v21a fireball-oversample recipe and remote movable filtering
+- [x] Train v24 from CPU/human demo plus v21a-live and v23-live replay with a declared `55/30/15` source mix
+- [ ] Review v24 live behavior before promoting it over v23; same-observation compare kept `stand-hk` suppressed but did not reduce the `tatsu-lk` replacement shift
 - [ ] Review v23's `tatsu-lk` / `crouch-mk` policy shift before any live promotion; `stand-hk` was suppressed, but the replacement action is not yet validated
 - [ ] Add stronger source/action-specific live negative replay handling before expecting v21a-live punish data to move `stand-hk` / mid-fireball behavior
 - [ ] Add character curriculum

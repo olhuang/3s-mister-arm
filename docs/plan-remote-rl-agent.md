@@ -2496,6 +2496,9 @@ Tasks:
 - [x] Train v21a/v21b fireball oversample A/B candidates and compare them against v9/v19/v20
 - [x] Run a short live smoke with v21a before treating it as the next live baseline
 - [x] Train v22 from v21a live replay with the v21a fireball-oversample recipe and remote movable filtering
+- [x] Add OBS payload v3 raw routine ids and DQN opponent routine one-hot features for the v23 feature-slice experiment
+- [x] Train v23 from the v21a live replay with the v21a fireball-oversample recipe and remote movable filtering
+- [ ] Review v23's `tatsu-lk` / `crouch-mk` policy shift before any live promotion; `stand-hk` was suppressed, but the replacement action is not yet validated
 - [ ] Add stronger source/action-specific live negative replay handling before expecting v21a-live punish data to move `stand-hk` / mid-fireball behavior
 - [ ] Add character curriculum
 - [ ] Add stage curriculum
@@ -2602,12 +2605,15 @@ Implementation notes:
   - `src/rl/rl_net.c` now protects the transition sender running-state with the transition queue mutex, clears it while observing an empty queue, reaps completed thread handles before replacement, and avoids clearing the shutdown handle until after the sender is joined
   - learner auto-publish skips duplicate tabular actor publication when `tab_updates` has not increased since the previous publish
   - `tools/analyze_rl_transitions.py <transition-log>` summarizes direct and delayed-credited HP-delta reward by action and `obs_abs_dx` bucket; use it before changing action sets or reward rules
-  - transition rows now include raw diagnostic routine ids for analyzer-only engine-state mapping:
+  - transition rows include raw diagnostic routine ids for analyzer and learner-visible engine-state mapping:
     - `obs_self_routine_1`, `obs_self_routine_2`
     - `obs_opp_routine_1`, `obs_opp_routine_2`
-    - these are not included in UDP OBS payloads, tabular state keys, or DQN feature vectors by default
+    - as of the v23 feature-slice experiment, UDP OBS payload v3 also carries these raw ids.
+    - tabular state keys still do not consume raw routine ids.
+    - DQN v23 consumes opponent routine ids only through categorical one-hot features, not as continuous numeric features.
   - first full-log analyzer pass on `logs/rl-transitions-tabular-4-3-3.ndjson` (`383918` rows, `448` done rows) showed far fireball as the cleanest positive signal (`direct fireball dx=far reward=+1625`, credited fireball `reward=+2391`) while throw was negative in credited view (`reward=-3435`), so throw should not be treated as learner-safe strength until move-level labels or cleaner credit confirm it
-  - UDP OBS packets now carry a schema-versioned compact spacing/state payload (`payload_version=2`) with the same bucket inputs used by transition replay: `obs_abs_dx`, `obs_abs_dy`, front/back edge distances, `obs_opp_in_front`, plus routine flags for `routine_no[1] == 4` attack state and `routine_no[1] == 1` contact/defensive reaction state; only opponent attack state is currently promoted to the learner state key
+  - UDP OBS packets now carry a schema-versioned compact spacing/state payload (`payload_version=3`) with the same bucket inputs used by transition replay: `obs_abs_dx`, `obs_abs_dy`, front/back edge distances, `obs_opp_in_front`, raw self/opponent routine ids, plus routine flags for `routine_no[1] == 4` attack state and `routine_no[1] == 1` contact/defensive reaction state.
+  - only opponent attack state is promoted to the tabular learner state key; DQN v23 additionally uses opponent routine one-hot features.
   - Python-side tabular inference prefers the same-frame OBS spacing bucket and falls back to the latest replay-imported bucket only when an old header-only OBS packet or invalid payload is seen
   - learner stats print `obs=<payload>/<header-only>` and `tab_state=obs:<n>/latest:<n>` so live runs can confirm whether tabular inference is using same-frame OBS state
 - Anti-air Shoryuken feature plan:
@@ -2620,7 +2626,7 @@ Implementation notes:
     - `obs_opp_jump_toward`: opponent airborne movement is closing horizontal distance or is otherwise identified as a forward jump-in.
     - `obs_opp_above_self`: opponent has vertical separation consistent with a jump-in threat.
     - `obs_anti_air_threat`: compact boolean derived from airborne + closing/jump-in + Shoryuken-relevant distance/height.
-    - raw routine ids may remain analyzer-only or auxiliary manifest/debug fields until the derived flags are validated.
+    - raw routine ids are live-visible as of OBS payload v3, but higher-level derived flags are still preferred for anti-air-specific policy work.
   - Implementation sequence:
     - validate Ryu / opponent jump-in routine states with fresh schema-v3 logs and analyzer summaries.
     - bump the OBS spacing/state payload version and add the derived anti-air fields to both C-side OBS packets and Python `parse_obs_spacing_payload()`.

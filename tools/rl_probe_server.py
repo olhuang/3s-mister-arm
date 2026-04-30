@@ -28,8 +28,8 @@ TYPE_OBS = 5
 PACKET = struct.Struct("<IHHQIIQ")
 ACTION_PACKET = struct.Struct("<IHHQQIIIHHHHI")
 OBS_HEADER = struct.Struct("<IHHQQIIIIHHI")
-OBS_SPACING_PAYLOAD = struct.Struct("<HHhhhhhhBBBBB3x")
-OBS_SPACING_PAYLOAD_VERSION = 2
+OBS_SPACING_PAYLOAD = struct.Struct("<HHhhhhhhHHHHBBBBB3x")
+OBS_SPACING_PAYLOAD_VERSION = 3
 TRANSITION_BATCH_HEADER = struct.Struct("<IHHQQIII")
 TRANSITION_BATCH_ACK = struct.Struct("<IHHQQII")
 ACTION_SET_VERSION = 4
@@ -290,7 +290,7 @@ TABULAR_ACTION_NAMES_BY_POLICY_META.update(
     }
 )
 
-DQN_FEATURE_NAMES = (
+DQN_BASE_FEATURE_NAMES = (
     "obs_abs_dx",
     "obs_abs_dy",
     "obs_self_front_edge_dist",
@@ -300,6 +300,12 @@ DQN_FEATURE_NAMES = (
     "obs_opp_in_front",
     "obs_opp_routine_attack_state",
 )
+DQN_OPP_ROUTINE_1_VALUES = (0, 1, 2, 3, 4)
+DQN_OPP_ROUTINE_2_VALUES = (0, 1, 3, 4, 5, 6, 7, 8, 12, 13, 16, 17, 18, 19, 21, 24, 28, 32, 36, 37)
+DQN_OPP_ROUTINE_FEATURE_NAMES = tuple(
+    f"obs_opp_routine_1_is_{value}" for value in DQN_OPP_ROUTINE_1_VALUES
+) + tuple(f"obs_opp_routine_2_is_{value}" for value in DQN_OPP_ROUTINE_2_VALUES)
+DQN_FEATURE_NAMES = DQN_BASE_FEATURE_NAMES + DQN_OPP_ROUTINE_FEATURE_NAMES
 DQN_FEATURE_SCALES = {
     "obs_abs_dx": 384.0,
     "obs_abs_dy": 192.0,
@@ -310,6 +316,7 @@ DQN_FEATURE_SCALES = {
     "obs_opp_in_front": 1.0,
     "obs_opp_routine_attack_state": 1.0,
 }
+DQN_FEATURE_SCALES.update({name: 1.0 for name in DQN_OPP_ROUTINE_FEATURE_NAMES})
 
 
 @dataclass(frozen=True)
@@ -1077,6 +1084,10 @@ def parse_obs_spacing_payload(payload: bytes) -> dict[str, object] | None:
         obs_self_back_edge_dist,
         obs_opp_front_edge_dist,
         obs_opp_back_edge_dist,
+        obs_self_routine_1,
+        obs_self_routine_2,
+        obs_opp_routine_1,
+        obs_opp_routine_2,
         obs_opp_in_front,
         obs_self_routine_attack_state,
         obs_opp_routine_attack_state,
@@ -1092,6 +1103,10 @@ def parse_obs_spacing_payload(payload: bytes) -> dict[str, object] | None:
         "obs_self_back_edge_dist": obs_self_back_edge_dist,
         "obs_opp_front_edge_dist": obs_opp_front_edge_dist,
         "obs_opp_back_edge_dist": obs_opp_back_edge_dist,
+        "obs_self_routine_1": obs_self_routine_1,
+        "obs_self_routine_2": obs_self_routine_2,
+        "obs_opp_routine_1": obs_opp_routine_1,
+        "obs_opp_routine_2": obs_opp_routine_2,
         "obs_opp_in_front": obs_opp_in_front,
         "obs_self_routine_attack_state": obs_self_routine_attack_state,
         "obs_opp_routine_attack_state": obs_opp_routine_attack_state,
@@ -1233,6 +1248,25 @@ def tabular_training_reward(row: dict[str, object]) -> float:
     return float(int(row.get("delta_opp_hp", 0) or 0) - int(row.get("delta_self_hp", 0) or 0))
 
 
+def dqn_feature_value(row: dict[str, object], name: str) -> float:
+    if name.startswith("obs_opp_routine_1_is_"):
+        try:
+            value = int(name.rsplit("_", 1)[1])
+        except ValueError:
+            return 0.0
+        return 1.0 if row_int_field(row, "obs_opp_routine_1") == value else 0.0
+    if name.startswith("obs_opp_routine_2_is_"):
+        try:
+            value = int(name.rsplit("_", 1)[1])
+        except ValueError:
+            return 0.0
+        return 1.0 if row_int_field(row, "obs_opp_routine_2") == value else 0.0
+    try:
+        return float(row.get(name, 0.0) or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def dqn_feature_vector(
     row: dict[str, object],
     feature_names: tuple[str, ...] | list[str] = DQN_FEATURE_NAMES,
@@ -1241,10 +1275,7 @@ def dqn_feature_vector(
     scales = feature_scales or DQN_FEATURE_SCALES
     features: list[float] = []
     for name in feature_names:
-        try:
-            value = float(row.get(str(name), 0.0) or 0.0)
-        except (TypeError, ValueError):
-            value = 0.0
+        value = dqn_feature_value(row, str(name))
         scale = max(1e-6, float(scales.get(str(name), 1.0) or 1.0))
         normalized = value / scale
         features.append(max(-4.0, min(4.0, normalized)))

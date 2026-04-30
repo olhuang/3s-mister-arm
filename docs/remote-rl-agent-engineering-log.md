@@ -2,6 +2,108 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-30: OBS Payload V3 Opponent Routine Features And V23 Retrain
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / clean live-replay retrain cleanup
+
+Files changed:
+- `src/rl/rl_protocol.h`
+- `src/rl/rl_session.c`
+- `tools/rl_probe_server.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- let live DQN inference observe the same raw routine ids already present in transition rows.
+- test whether opponent routine one-hot features let the model learn the repeated live failure pattern where close/mid `stand-hk` is punished when the opponent is already in an attack/crouch state.
+
+Implementation notes:
+- bumped `RL_OBSERVATION_SCHEMA_VERSION` and Python `OBS_SPACING_PAYLOAD_VERSION` from `2` to `3`.
+- expanded `RLObsSpacingPayloadV1` / Python `OBS_SPACING_PAYLOAD` from `24` to `32` bytes by adding:
+  - `obs_self_routine_1`
+  - `obs_self_routine_2`
+  - `obs_opp_routine_1`
+  - `obs_opp_routine_2`
+- added DQN categorical opponent routine features:
+  - `obs_opp_routine_1_is_*` for `0,1,2,3,4`
+  - `obs_opp_routine_2_is_*` for common observed values `0,1,3,4,5,6,7,8,12,13,16,17,18,19,21,24,28,32,36,37`
+- DQN feature count is now `33` for newly trained models.
+- old DQN manifests still load because the saved `feature_names` list is honored.
+
+Training:
+- trained `model/dqn-mixdemo-schema-v3-ground-specials-v23`.
+- v23 model manifest version is `24` because v22 already used model version `23`.
+- source live log:
+  - `logs/rl-transitions-live-dqn-v21a-20260430-124456.ndjson`
+- recipe kept from v22/v21a:
+  - `--replay-source-ratios cpu-demo=0.6,human-demo=0.3,remote=0.1`
+  - `--dqn-require-movable-state-sources remote`
+  - `fireball-lp=8,fireball-mp=8,fireball-hp=8`
+
+Training diagnostics:
+- rows after source mix: `62830`
+- experiences: `26329`
+- feature count: `33`
+- remote action-start rows checked: `3666`
+- remote action-start rows included: `142`
+- remote action-start rows filtered: `3524`
+- source experiences:
+  - `cpu-demo=13377`
+  - `human-demo=12810`
+  - `remote=142`
+- remote experience action means:
+  - `crouch-hp=59`, mean `-0.005`
+  - `fireball-hp=39`, mean `-0.016`
+  - `stand-hk=28`, mean `-0.027`
+- final loss:
+  - `last_loss=0.006210`
+  - `avg_loss=0.006801`
+
+Same-observation compare summary:
+- CPU/human slice:
+  - v21a: `stand-lp=33.7%`, `fireball-hp=32.9%`, `crouch-hp=22.8%`, `stand-hk=9.4%`, `fireball-mp=0.1%`
+  - v22: `stand-lp=34.6%`, `fireball-hp=32.8%`, `crouch-hp=22.1%`, `stand-hk=9.3%`, `fireball-mp=0.1%`
+  - v23: `fireball-hp=40.6%`, `tatsu-lk=18.4%`, `crouch-mk=6.1%`, `guard-crouch=4.4%`, `crouch-hp=2.5%`, `stand-hk=0.0%`, `fireball-mp=0.3%`
+- old clean-live slice:
+  - v21a: `fireball-hp=42.6%`, `crouch-hp=31.0%`, `stand-hk=17.0%`, `stand-lp=7.4%`, `fireball-mp=0.2%`
+  - v22: `fireball-hp=42.8%`, `crouch-hp=30.6%`, `stand-hk=17.0%`, `stand-lp=7.7%`, `fireball-mp=0.2%`
+  - v23: `fireball-hp=31.1%`, `tatsu-lk=21.8%`, `crouch-mk=11.2%`, `guard-crouch=7.6%`, `crouch-hp=3.7%`, `stand-hk=0.0%`, `fireball-mp=0.4%`
+- v21a-live slice:
+  - v21a: `crouch-hp=37.5%`, `fireball-hp=35.9%`, `stand-hk=16.5%`, `stand-lp=8.2%`, `fireball-mp=0.3%`
+  - v22: `crouch-hp=36.6%`, `fireball-hp=36.3%`, `stand-hk=16.9%`, `stand-lp=8.3%`, `fireball-mp=0.3%`
+  - v23: `fireball-hp=34.1%`, `tatsu-lk=23.6%`, `crouch-mk=11.4%`, `guard-crouch=5.7%`, `crouch-hp=4.0%`, `stand-hk=0.0%`, `fireball-mp=0.0%`
+
+Focused live-failure analysis:
+- in the first `5000` rows of the v21a-live log, actual `stand-hk` was most often punished in opponent attack close/mid states:
+  - `(opp_r1=4, opp_r2=8, close)` had `77` actual `stand-hk` rows, net `-198`, mean `-2.571`.
+  - `(opp_r1=4, opp_r2=8, mid)` had `123` actual `stand-hk` rows, net `-60`, mean `-0.488`.
+- on `opp_attack_close_mid` rows:
+  - v21a: `stand-hk=76.6%`
+  - v22: `stand-hk=78.4%`
+  - v23: `tatsu-lk=50.7%`, `crouch-hp=18.4%`, `fireball-hp=16.1%`, `stand-lp=9.2%`
+- on `opp_r2=8` close/mid rows:
+  - v21a: `stand-hk=58.9%`
+  - v22: `stand-hk=63.3%`
+  - v23: `tatsu-lk=98.2%`
+
+Conclusion:
+- v23 proves the feature path works: opponent routine one-hot features can strongly move the DQN surface, and `stand-hk` is suppressed on the same-observation replay slices.
+- v23 should not be promoted as-is.
+- the replacement behavior is a new sparse-action shift toward `tatsu-lk` / `crouch-mk`, not a clean defensive or low-risk punish response.
+- the next candidate should constrain or penalize the replacement action in the same opponent routine/spacing pockets, or use a more targeted source/action-specific live-negative replay treatment instead of raw routine one-hot alone.
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py tools/train_dqn_learner.py tools/compare_dqn_models.py`
+- OBS payload smoke passed:
+  - payload size: `32`
+  - feature count: `33`
+- DQN mini-train smoke passed with the new feature vector.
+- full v23 training passed.
+- same-observation compares passed for CPU/human, old clean-live, and v21a-live slices.
+- `git diff --check` passed.
+- telemetry C build was attempted with `tools/mister/build-game.sh --flavor telemetry`, but this WSL environment has no available `docker`; a MiSTer build still needs to be run in a Docker-enabled environment before deploying OBS payload v3 live.
+
 ## 2026-04-30: Train And Compare V22 From V21a Live Replay
 
 Milestone:

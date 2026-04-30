@@ -1130,6 +1130,10 @@ static void RLSession_FillObsSpacingPayload(RLObsSpacingPayloadV1* payload, cons
     payload->obs_self_back_edge_dist = RLSession_BackEdgeDistance(obs->self_facing_sign, self_x);
     payload->obs_opp_front_edge_dist = RLSession_FrontEdgeDistance(obs->opp_facing_sign, opp_x);
     payload->obs_opp_back_edge_dist = RLSession_BackEdgeDistance(obs->opp_facing_sign, opp_x);
+    payload->obs_self_routine_1 = obs->self_routine[1];
+    payload->obs_self_routine_2 = obs->self_routine[2];
+    payload->obs_opp_routine_1 = obs->opp_routine[1];
+    payload->obs_opp_routine_2 = obs->opp_routine[2];
     payload->obs_opp_in_front = obs->opp_in_front ? 1u : 0u;
     payload->obs_self_routine_attack_state = obs->self_routine_attack_state ? 1u : 0u;
     payload->obs_opp_routine_attack_state = obs->opp_routine_attack_state ? 1u : 0u;

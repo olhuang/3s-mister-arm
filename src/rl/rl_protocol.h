@@ -7,7 +7,7 @@
 #include <stddef.h>
 
 #define RL_PROTOCOL_VERSION 3u
-#define RL_OBSERVATION_SCHEMA_VERSION 2u
+#define RL_OBSERVATION_SCHEMA_VERSION 3u
 #define RL_ACTION_SCHEMA_VERSION 2u
 #define RL_PROTOCOL_MAGIC 0x33524C41u /* 3RLA */
 #define RL_PROTOCOL_FEATURE_RELATIVE_MOVEMENT 0x00000001u
@@ -112,6 +112,10 @@ typedef struct RL_PROTOCOL_PACKED RLObsSpacingPayloadV1 {
     s16 obs_self_back_edge_dist;
     s16 obs_opp_front_edge_dist;
     s16 obs_opp_back_edge_dist;
+    u16 obs_self_routine_1;
+    u16 obs_self_routine_2;
+    u16 obs_opp_routine_1;
+    u16 obs_opp_routine_2;
     u8 obs_opp_in_front;
     u8 obs_self_routine_attack_state;
     u8 obs_opp_routine_attack_state;

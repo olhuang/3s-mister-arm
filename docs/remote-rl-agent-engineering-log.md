@@ -2,6 +2,116 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-04-30: Train And Compare V22 From V21a Live Replay
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / clean live-replay retrain cleanup
+
+Files changed:
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- test whether adding the v21a live-smoke replay can reduce the observed live punish problems, especially `stand-hk` and mid-range `fireball-hp`.
+- keep the v21a fireball oversample recipe while swapping the remote replay source from the earlier v9 support-prior log to the v21a live log.
+
+Implementation notes:
+- source live log:
+  - `logs/rl-transitions-live-dqn-v21a-20260430-124456.ndjson`
+  - rows: `8209`
+  - episodes: `17`
+  - model version in rows: `21`
+- trained `model/dqn-mixdemo-schema-v3-ground-specials-v22`.
+- v22 model manifest version is `23` because v21b already used model version `22`.
+- v22 keeps:
+  - `--replay-source-ratios cpu-demo=0.6,human-demo=0.3,remote=0.1`
+  - `--dqn-require-movable-state-sources remote`
+  - `fireball-lp=8,fireball-mp=8,fireball-hp=8`
+
+Training diagnostics:
+- row-level source mix:
+  - `cpu-demo=37698` / `60.0%`
+  - `human-demo=18849` / `30.0%`
+  - `remote=6283` / `10.0%`
+- remote action-start rows checked: `3666`
+- remote action-start rows included: `142`
+- remote action-start rows filtered: `3524`
+- filtered reasons:
+  - `self_routine_1:4=2116`
+  - `self_routine_1:1=1236`
+  - `self_routine_1:3=172`
+- top filtered actions:
+  - `crouch-hp=1404`
+  - `stand-hk=1171`
+  - `fireball-hp=418`
+  - `stand-lp=369`
+- built DQN experiences:
+  - `cpu-demo=13377`
+  - `human-demo=12810`
+  - `remote=142`
+- remote experience action means:
+  - `crouch-hp=59`, mean `-0.005`
+  - `fireball-hp=39`, mean `-0.016`
+  - `stand-hk=28`, mean `-0.027`
+
+Result:
+- v22 trained and published successfully:
+  - rows after source mix: `62830`
+  - experiences: `26329`
+  - last loss: `0.008240`
+  - avg loss: `0.008747`
+- train eval greedy:
+  - `stand-lp=30.7%`
+  - `fireball-hp=28.5%`
+  - `crouch-hp=23.3%`
+  - `stand-hk=16.7%`
+  - `fireball-mp=0.0%`
+
+Same-observation CPU/human slice compare:
+- v9: `stand-lp=36.3%`, `fireball-hp=27.5%`, `crouch-hp=24.0%`, `stand-hk=9.3%`, `fireball-mp=0.1%`
+- v21a: `stand-lp=33.7%`, `fireball-hp=32.9%`, `crouch-hp=22.8%`, `stand-hk=9.4%`, `fireball-mp=0.1%`
+- v22: `stand-lp=34.6%`, `fireball-hp=32.8%`, `crouch-hp=22.1%`, `stand-hk=9.3%`, `fireball-mp=0.1%`
+- changed decisions against v9:
+  - v21a: `414/5000`
+  - v22: `412/5000`
+
+Same-observation old clean-live slice compare:
+- v9: `fireball-hp=39.2%`, `crouch-hp=32.1%`, `stand-hk=16.7%`, `stand-lp=7.8%`, `fireball-mp=0.3%`
+- v21a: `fireball-hp=42.6%`, `crouch-hp=31.0%`, `stand-hk=17.0%`, `stand-lp=7.4%`, `fireball-mp=0.2%`
+- v22: `fireball-hp=42.8%`, `crouch-hp=30.6%`, `stand-hk=17.0%`, `stand-lp=7.7%`, `fireball-mp=0.2%`
+- changed decisions against v9:
+  - v21a: `347/5000`
+  - v22: `354/5000`
+
+Same-observation v21a-live slice compare:
+- v9: `crouch-hp=39.6%`, `fireball-hp=31.9%`, `stand-hk=16.2%`, `stand-lp=8.7%`, `fireball-mp=0.4%`
+- v21a: `crouch-hp=37.5%`, `fireball-hp=35.9%`, `stand-hk=16.5%`, `stand-lp=8.2%`, `fireball-mp=0.3%`
+- v22: `crouch-hp=36.6%`, `fireball-hp=36.3%`, `stand-hk=16.9%`, `stand-lp=8.3%`, `fireball-mp=0.3%`
+- changed decisions against v9:
+  - v21a: `312/5000`
+  - v22: `348/5000`
+
+Conclusion:
+- v22 is not a meaningful improvement over v21a.
+- the v21a live replay contains the expected negative signal, but remote effective replay is only `142/26329` experiences, so the policy surface barely moves.
+- the specific `stand-hk` problem is not fixed: on the v21a-live observation slice, `stand-hk` top-1 rises from v21a `16.5%` to v22 `16.9%`.
+- the `fireball-mp` fix stays intact.
+- do not promote v22 over v21a.
+- the next change should be a trainer/inference change that gives live negative replay more targeted leverage, such as source/action-specific penalty or distance-aware reranking for `stand-hk` and close/mid `fireball-hp`.
+
+Validation:
+- full v22 training passed.
+- metadata inspection passed:
+  - `jq '.metadata | {rows_read, experiences, dqn_action_filter_config, replay_source_mix_stats, build: .build_diagnostics, source_experiences: .source_replay_diagnostics.experience_counts, source_actions_remote: .source_replay_diagnostics.experience_action_counts.remote, greedy_counts, greedy_top_action, greedy_top_action_rate, last_loss, avg_loss}' model/dqn-mixdemo-schema-v3-ground-specials-v22/current.json`
+- same-observation compares passed:
+  - `python3 tools/compare_dqn_models.py logs/rl-transitions-cpu-demo-schema-v3-4-3-3.ndjson logs/rl-transitions-human-demo-schema-v3-4-3-3.ndjson --model v9=model/dqn-mixdemo-schema-v3-ground-specials-v9 --model v21a=model/dqn-mixdemo-schema-v3-ground-specials-v21a --model v21b=model/dqn-mixdemo-schema-v3-ground-specials-v21b --model v22=model/dqn-mixdemo-schema-v3-ground-specials-v22 --limit 5000 --top-n 10 --focus-actions crouch-hp,stand-lp,stand-hk,stand-mk,fireball-lp,fireball-mp,fireball-hp,guard-stand,guard-crouch --focus-rank-limit 3 --training-action-source auto`
+  - `python3 tools/compare_dqn_models.py logs/rl-transitions-live-dqn-v9-support-prior-20260430-113010.ndjson --model v9=model/dqn-mixdemo-schema-v3-ground-specials-v9 --model v21a=model/dqn-mixdemo-schema-v3-ground-specials-v21a --model v21b=model/dqn-mixdemo-schema-v3-ground-specials-v21b --model v22=model/dqn-mixdemo-schema-v3-ground-specials-v22 --limit 5000 --top-n 10 --focus-actions crouch-hp,stand-lp,stand-hk,stand-mk,fireball-lp,fireball-mp,fireball-hp,guard-stand,guard-crouch --focus-rank-limit 3 --training-action-source auto`
+  - `python3 tools/compare_dqn_models.py logs/rl-transitions-live-dqn-v21a-20260430-124456.ndjson --model v9=model/dqn-mixdemo-schema-v3-ground-specials-v9 --model v21a=model/dqn-mixdemo-schema-v3-ground-specials-v21a --model v21b=model/dqn-mixdemo-schema-v3-ground-specials-v21b --model v22=model/dqn-mixdemo-schema-v3-ground-specials-v22 --limit 5000 --top-n 10 --focus-actions crouch-hp,stand-lp,stand-hk,stand-mk,fireball-lp,fireball-mp,fireball-hp,guard-stand,guard-crouch --focus-rank-limit 3 --training-action-source auto`
+
+Follow-up:
+- keep v21a as the better candidate between v21a and v22.
+- implement stronger live-negative replay handling before another retrain that expects stand-hk / mid-fireball risk to move.
+
 ## 2026-04-30: Train And Compare V21a/V21b Fireball Oversample A/B
 
 Milestone:

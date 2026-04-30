@@ -2494,7 +2494,9 @@ Tasks:
 - [x] Review lower remote-replay ratios or source-specific filtering before promoting a live-replay-trained DQN
 - [x] Treat v20's remaining far-range `fireball-mp` shift as a separate issue from recovery-state action pollution before promoting a live-replay-trained DQN
 - [x] Train v21a/v21b fireball oversample A/B candidates and compare them against v9/v19/v20
-- [ ] Run a short live smoke with v21a before treating it as the next live baseline
+- [x] Run a short live smoke with v21a before treating it as the next live baseline
+- [x] Train v22 from v21a live replay with the v21a fireball-oversample recipe and remote movable filtering
+- [ ] Add stronger source/action-specific live negative replay handling before expecting v21a-live punish data to move `stand-hk` / mid-fireball behavior
 - [ ] Add character curriculum
 - [ ] Add stage curriculum
 - [ ] Add automated reset loops

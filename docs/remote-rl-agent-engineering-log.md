@@ -2,6 +2,53 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-02: Document Full-Retrain Data Collection Curriculum
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / controlled full
+  retrain data collection
+
+Files changed:
+- `docs/agent-memory/remote-rl-retrain-data-collection-plan.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- record a from-scratch data collection plan for training a complete base DQN
+  model with movement, attacks, specials, defense, jumping, anti-air,
+  projectile timing, corner behavior, and natural match integration.
+- avoid repeating the V41-V62 failure mode where sparse free-form gameplay logs
+  underrepresent key defensive/projectile choices and reward shaping has to
+  compensate for missing data.
+
+Implementation:
+- added an agent-memory plan that uses effective experiences rather than raw
+  rows as the collection quota.
+- split the reboot collection into phases:
+  - schema and label sanity.
+  - movement and spacing.
+  - basic normals.
+  - specials.
+  - basic defense.
+  - projectile defense timing.
+  - anti-air and jump defense.
+  - corner and pressure.
+  - natural match integration and on-policy correction.
+- recorded the V61/V62 projectile timing lesson directly in the projectile
+  phase:
+  - `0-12`: prefer guard/back.
+  - `13-22`: still risky, not a universal safe-jump window.
+  - `23-30`: current best live safe-jump window.
+  - `31-48`: too-early jump risk.
+
+Validation:
+- documentation-only change.
+- checked the new plan is linked from the Milestone 6 plan.
+
+Follow-up:
+- if the reboot is started, collect Phase 0 sanity logs first, then Phase 1
+  movement data before attack or projectile-heavy logs.
+
 ## 2026-05-01: Add Training Mode Demo Transition Logging
 
 Milestone:

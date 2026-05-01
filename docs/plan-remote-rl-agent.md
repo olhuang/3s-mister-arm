@@ -2460,6 +2460,7 @@ Tasks:
 - [x] V61b live probe: use V60 weights plus timing-window prior controls, then re-check `7-12`, `19-30`, `31-48`, non-projectile behavior, and HP outcome before retraining; result: `31-48` jump disappeared but `19-22` was still slightly early
 - [x] V61c live probe: move the safe jump window down to roughly `23-30`; result: `19-22` jump almost disappeared, `23-30` jump stayed mostly clean, and combined V61b/V61c data is enough for a V62 filtered retrain experiment
 - [ ] V62 direction: retrain with filtered V61b/V61c on-policy rows, preserving clean `23-30` jump and teaching defensive behavior for `<=22` and `31-48`; use filtered BC/classification only if margin/replay still cannot internalize the prior
+- [x] Document the from-scratch full-retrain data collection curriculum in [docs/agent-memory/remote-rl-retrain-data-collection-plan.md](agent-memory/remote-rl-retrain-data-collection-plan.md)
 - [ ] Fix `rl_auto_retrain.py` replay planning for human-demo incremental retrain: add auto-available source ratios, log-level boost inputs, and replay-plan metadata
 - [ ] Review walk-forward/back macro actions after spacing-shaping A/B results
 - [ ] Review finer distance buckets after spacing-shaping sample-volume checks
@@ -3560,6 +3561,33 @@ Next probe recommendation:
 - keep `--dqn-projectile-timing-prior` enabled, but reduce jump penalties to
   around `0.02-0.03` for `0-22` and `31-48`.
 - leave `23-30` unpenalized so safe jump remains available.
+
+### Milestone 6 Full-Retrain Collection Plan
+
+If the DQN line is restarted from scratch, use
+[docs/agent-memory/remote-rl-retrain-data-collection-plan.md](agent-memory/remote-rl-retrain-data-collection-plan.md)
+as the source of truth for data collection.
+
+The plan changes the default collection strategy from "record a few free-form
+gameplay logs and rely on reward shaping" to "collect a staged curriculum with
+effective-experience quotas":
+
+- Phase 0: schema and label sanity.
+- Phase 1: movement and spacing.
+- Phase 2: basic normals.
+- Phase 3: specials.
+- Phase 4: basic defense.
+- Phase 5: projectile defense timing.
+- Phase 6: anti-air and jump defense.
+- Phase 7: corner and pressure.
+- Phase 8: natural match integration and on-policy correction.
+
+Minimum useful reboot target:
+
+- about `60K` effective experiences.
+- preferred target: `80K-120K` effective experiences.
+- use effective action-start and outcome counts as collection gates, not raw row
+  counts alone.
 
 ### Milestone 6 Move-Family Validation Table
 

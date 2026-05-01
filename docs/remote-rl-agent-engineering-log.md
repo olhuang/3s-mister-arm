@@ -2,6 +2,54 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-01: Record Post-Mask Jump-In Action Split Plan
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / full action-set DQN experiments
+
+Files changed:
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- record the next action-taxonomy direction after shared valid-action mask
+  validation.
+- avoid mixing "start a jump from the ground" and "press an attack button while
+  already airborne" inside the same `jump-*` DQN action heads.
+
+Plan notes:
+- first validate the shared valid-action mask using current routine-state
+  fields.
+- after that validation, split the current direction-specific jump attack
+  actions into:
+  - ground jump-start actions: `jump-forward-start`, `jump-neutral-start`,
+    `jump-back-start`
+  - airborne attack actions: `air-lp`, `air-mp`, `air-hp`, `air-lk`,
+    `air-mk`, `air-hk`
+- intended mask semantics after the split:
+  - grounded ordinary/movable state can choose jump-start actions, but not
+    `air-*` attacks.
+  - ordinary jump-air state (`R1=0`, `R2=18..26`) can choose `air-*` attacks,
+    but not new grounded normals/specials or new jump-start actions.
+  - attack/contact/damage/caught and other non-movable states avoid new
+    action-start choices and fall back to configured hold/fallback behavior.
+
+Observation-schema follow-up:
+- add schema-versioned support before relying on the split in train/live DQN:
+  - `obs_self_airborne`
+  - `obs_self_jump_phase` or a compact equivalent
+  - `obs_self_can_start_jump`
+  - `obs_self_can_air_attack`
+  - optional opponent counterparts for anti-air and jump-in curriculum.
+- update C OBS payloads, transition rows, Python OBS parsing,
+  `DQN_FEATURE_NAMES`, metadata, analyzer diagnostics, and probe inference
+  together so train and live action eligibility use the same features.
+
+Follow-up:
+- keep this behind the shared valid-action mask validation; do not expand the
+  action set or observation schema before the current mask experiment proves
+  useful offline.
+
 ## 2026-05-01: Train V39 CPU-Demo Full-Action With Unsupported Regularization
 
 Milestone:

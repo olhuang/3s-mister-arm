@@ -2507,6 +2507,7 @@ Tasks:
 - [x] Record V37b / V38 full-action support-prior training parameters and findings before continuing full action-set experiments
 - [x] Add DQN zero-sample / low-support action regularization so full-action output heads with no replay support cannot become top greedy actions
 - [ ] Add a shared DQN valid-action mask for train-time target selection and probe-time inference, starting with self-routine-aware jump-action gating
+- [ ] After shared valid-action mask validation, split jump-in policy actions into ground jump-start actions and true airborne attack actions with observation-schema support
 - [ ] Review v24 live behavior before promoting it over v23; same-observation compare kept `stand-hk` suppressed but did not reduce the `tatsu-lk` replacement shift
 - [ ] Review v23's `tatsu-lk` / `crouch-mk` policy shift before any live promotion; `stand-hk` was suppressed, but the replacement action is not yet validated
 - [ ] Add stronger source/action-specific live negative replay handling before expecting v21a-live punish data to move `stand-hk` / mid-fireball behavior
@@ -2603,6 +2604,49 @@ Full-action DQN sparse-action plan:
       the mask.
     - run a live probe only after offline diagnostics show jump-action collapse
       is fixed without introducing guard/fireball collapse.
+
+- Step 3: post-mask jump-in action taxonomy split.
+  - Do this only after the shared valid-action mask proves that
+    self-routine-aware ground/jump gating fixes the current full-action
+    collapse without damaging normal ground policy behavior.
+  - Problem to solve:
+    - current `jump-forward-*`, `jump-neutral-*`, and `jump-back-*` policy
+      actions mix two different decisions:
+      - starting a jump from grounded neutral/movable state
+      - pressing an attack button after the character is already airborne
+    - this makes it hard for the DQN to learn reasonable jump-in timing because
+      a ground-state action head can look like a full air-attack decision.
+  - Candidate action split:
+    - ground jump-start actions:
+      - `jump-forward-start`
+      - `jump-neutral-start`
+      - `jump-back-start`
+    - airborne attack actions:
+      - `air-lp`
+      - `air-mp`
+      - `air-hp`
+      - `air-lk`
+      - `air-mk`
+      - `air-hk`
+  - Expected mask semantics after the split:
+    - grounded ordinary/movable state allows jump-start actions, but not
+      `air-*` attacks.
+    - ordinary jump-air state (`R1=0`, `R2=18..26`) allows `air-*` attacks,
+      but not new grounded normals/specials or jump-start actions.
+    - non-movable attack/contact/damage/caught states avoid new action-start
+      choices and fall back to the configured hold/fallback behavior.
+  - Observation-schema follow-up:
+    - add schema-versioned fields that make this train/live parity explicit,
+      instead of relying only on raw routine ids:
+      - `obs_self_airborne`
+      - `obs_self_jump_phase` or compact equivalent
+      - `obs_self_can_start_jump`
+      - `obs_self_can_air_attack`
+      - optional opponent counterparts for anti-air / jump-in curriculum.
+    - update C-side OBS payload, transition rows, Python OBS parsing,
+      `DQN_FEATURE_NAMES`, model metadata, analyzer diagnostics, and probe
+      inference together so train-time and live-time action eligibility use
+      the same features.
 
 Implementation notes:
 

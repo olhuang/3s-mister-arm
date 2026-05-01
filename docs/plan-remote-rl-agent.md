@@ -2938,6 +2938,26 @@ Full-action DQN sparse-action plan:
         action-start flags. Shoryuken was not present in this particular
         post-fix smoke and should be covered by the next broader training/demo
         capture rather than blocking the split-label validation.
+    - follow-up inspection of `stand-hk` / `crouch-hk` rows found one more
+      demo-label cleanup before V41 training:
+      - `stand-hk` had some clean start rows with
+        `(ground=1, jump=1, air=0)`, but most held-button rows were already in
+        `R1=4` attack state with all allow flags off.
+      - `crouch-hk` rows in the smoke were all `R1=4/R2=0` attack-state rows
+        with all allow flags off, meaning the held input was being repeatedly
+        labeled as a new `crouch-hk` action.
+    - fix: gate demo input labels for throw, command normals, crouch normals,
+      and stand normals on `obs_self_ground_action_start_allowed=1`. Keep
+      `air-*` labels gated by `obs_self_air_attack_allowed` and
+      `jump-*-start` labels gated by `obs_self_jump_start_allowed`. If held
+      ground attack input is observed during attack/recovery/lockout, leave the
+      row as neutral/none instead of labeling another ground action start.
+    - next targeted smoke before V41 should confirm:
+      - clean `stand-hk` and `crouch-hk` start rows appear with
+        `(ground=1, jump=1, air=0)`.
+      - attack routine/recovery rows no longer carry repeated input labels for
+        `stand-hk`, `crouch-hk`, throw, or command normals.
+      - `jump-*-start`, `air-*`, and special engine labels remain separated.
 
 - Step 4: train-time invalid-action Q penalty on the split action space.
   - Do this after Step 3, not before it.

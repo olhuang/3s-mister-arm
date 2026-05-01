@@ -687,13 +687,6 @@ static void RLSession_DeriveDemoPolicyMeta(u8 move_intent,
     *policy_sub_action_id = RL_POLICY_SUB_ACTION_NONE;
 
     if (attack_bits != 0) {
-        if ((attack_bits & SWK_WEST) && (attack_bits & SWK_SOUTH) &&
-            (move_intent == RL_MOVE_FORWARD || move_intent == RL_MOVE_BACK)) {
-            *policy_action_id = RL_POLICY_ACTION_THROW;
-            *policy_sub_action_id =
-                (move_intent == RL_MOVE_BACK) ? RL_POLICY_SUB_ACTION_BACK : RL_POLICY_SUB_ACTION_FORWARD;
-            return;
-        }
         if (move_intent == RL_MOVE_UP_FORWARD || move_intent == RL_MOVE_UP || move_intent == RL_MOVE_UP_BACK) {
             if (obs != NULL && obs->valid && obs->self_air_attack_allowed) {
                 *policy_action_id = RL_POLICY_ACTION_AIR_NORMAL;
@@ -715,9 +708,16 @@ static void RLSession_DeriveDemoPolicyMeta(u8 move_intent,
             *policy_sub_action_id = first_attack;
             return;
         }
-        if (obs != NULL && obs->valid && obs->self_airborne && !obs->self_ground_action_start_allowed) {
+        if (obs == NULL || !obs->valid || !obs->self_ground_action_start_allowed) {
             *policy_action_id = RL_POLICY_ACTION_NEUTRAL;
             *policy_sub_action_id = RL_POLICY_SUB_ACTION_NONE;
+            return;
+        }
+        if ((attack_bits & SWK_WEST) && (attack_bits & SWK_SOUTH) &&
+            (move_intent == RL_MOVE_FORWARD || move_intent == RL_MOVE_BACK)) {
+            *policy_action_id = RL_POLICY_ACTION_THROW;
+            *policy_sub_action_id =
+                (move_intent == RL_MOVE_BACK) ? RL_POLICY_SUB_ACTION_BACK : RL_POLICY_SUB_ACTION_FORWARD;
             return;
         }
         if (RLSession_MoveIntentIsCrouch(move_intent)) {

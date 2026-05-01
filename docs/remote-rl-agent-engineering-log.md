@@ -2,6 +2,54 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-01: Gate Demo Ground-Attack Labels On Action-Start Allow
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / full action-set DQN experiments
+
+Files changed:
+- `src/rl/rl_session.c`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- clean schema-v4 demo labels before V41/Vnext training.
+- prevent held attack buttons from repeatedly labeling locked attack/recovery
+  rows as fresh ground-action starts.
+
+Smoke finding:
+- `logs/rl-transitions-cpu-human-demo-schema-v4-smoke-4-3-3.ndjson` showed
+  split labels and allow flags working, but `stand-hk` / `crouch-hk` exposed a
+  demo-label quality issue.
+- `stand-hk` had `5` clean start rows with `(ground=1, jump=1, air=0)`, but
+  `31` held-button rows were already in attack state with all allow flags off.
+- `crouch-hk` had `16` labeled rows, all in `R1=4/R2=0` attack state with
+  `(ground=0, jump=0, air=0)`.
+
+Implementation notes:
+- updated `RLSession_DeriveDemoPolicyMeta()` so throw, command-normal,
+  crouch-normal, and stand-normal demo input labels require
+  `obs_self_ground_action_start_allowed=1`.
+- kept `air-*` labels gated by `obs_self_air_attack_allowed`.
+- kept `jump-*-start` labels gated by `obs_self_jump_start_allowed`.
+- when a held ground attack is observed during attack/recovery/lockout, the
+  row remains neutral/none instead of becoming another action-start label.
+
+Validation:
+- existing-log estimate: this cleanup should remove repeated locked-state
+  `stand-hk` / `crouch-hk` labels while preserving clean start labels.
+- `python3 -m py_compile tools/rl_probe_server.py tools/train_dqn_learner.py tools/compare_dqn_models.py tools/analyze_rl_transitions.py tools/rl_auto_retrain.py`
+- `git diff --check`
+- `tools/mister/build-game.sh --flavor telemetry`
+
+Follow-up:
+- re-record a targeted schema-v4 smoke with neutral-to-`stand-hk`,
+  neutral-to-`crouch-hk`, shoryuken, fireball, tatsu, jump starts, and air
+  normals.
+- confirm ground attack starts are labeled only on
+  `(ground=1, jump=1, air=0)` rows and no longer repeat through `R1=4`
+  attack/recovery rows.
+
 ## 2026-05-01: Validate Schema-V4 Split Labels With Human/CPU Smoke
 
 Milestone:

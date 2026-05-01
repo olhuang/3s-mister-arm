@@ -2509,7 +2509,7 @@ Tasks:
 - [x] Add a shared DQN valid-action mask for train-time target selection and probe-time inference, starting with self-routine-aware jump-action gating
 - [x] Let `rl_probe_server.py` auto-enable DQN valid-action masks from actor metadata so masked-trained actors do not require a manual probe flag
 - [x] Add DQN verbose action-mask diagnostics and reduce high-frequency verbose PING logging
-- [ ] After shared valid-action mask validation, split jump-in policy actions into ground jump-start actions and true airborne attack actions with observation-schema support
+- [x] After shared valid-action mask validation, split jump-in policy actions into ground jump-start actions and true airborne attack actions with observation-schema support
 - [ ] After the jump-start / air-attack taxonomy and schema split, add opt-in train-time invalid-action Q penalty so raw DQN weights learn on the cleaned-up action space
 - [ ] Review v24 live behavior before promoting it over v23; same-observation compare kept `stand-hk` suppressed but did not reduce the `tatsu-lk` replacement shift
 - [ ] Review v23's `tatsu-lk` / `crouch-mk` policy shift before any live promotion; `stand-hk` was suppressed, but the replacement action is not yet validated
@@ -2821,21 +2821,63 @@ Full-action DQN sparse-action plan:
         new action list from current models and review reward preset names /
         extra args that still say "jump attack" when they now apply to
         `air-*`.
-    - Validation before training the first split model:
-      - Python: `python3 -m py_compile tools/rl_probe_server.py
-        tools/train_dqn_learner.py tools/compare_dqn_models.py
-        tools/analyze_rl_transitions.py tools/rl_auto_retrain.py`.
-      - Python smoke: synthetic policy-meta decode for `jump-forward-start`,
-        `jump-neutral-start`, `jump-back-start`, and all six `air-*` actions.
-      - Python mask smoke: grounded rows allow ground + jump-start and reject
-        `air-*`; jump-air rows allow only `air-*`; non-movable rows reject both
-        new action-start families.
-      - C/local smoke: build with the telemetry flavor, then validate handshake
-        schema rejection/acceptance, OBS payload size/version, and one local
-        schema-v4 transition row containing the new fields.
-      - Data smoke: collect a short CPU-demo schema-v4 log and verify analyzer
-        counts show jump-start labels separately from air-normal labels before
-        training the first V41/Vnext DQN.
+  - Validation before training the first split model:
+    - Python: `python3 -m py_compile tools/rl_probe_server.py
+      tools/train_dqn_learner.py tools/compare_dqn_models.py
+      tools/analyze_rl_transitions.py tools/rl_auto_retrain.py`.
+    - Python smoke: synthetic policy-meta decode for `jump-forward-start`,
+      `jump-neutral-start`, `jump-back-start`, and all six `air-*` actions.
+    - Python mask smoke: grounded rows allow ground + jump-start and reject
+      `air-*`; jump-air rows allow only `air-*`; non-movable rows reject both
+      new action-start families.
+    - C/local smoke: build with the telemetry flavor, then validate handshake
+      schema rejection/acceptance, OBS payload size/version, and one local
+      schema-v4 transition row containing the new fields.
+    - Data smoke: collect a short CPU-demo schema-v4 log and verify analyzer
+      counts show jump-start labels separately from air-normal labels before
+      training the first V41/Vnext DQN.
+  - Implemented on 2026-05-01:
+    - protocol/action/OBS compatibility gates now move to
+      `RL_PROTOCOL_VERSION=4`, `RL_OBSERVATION_SCHEMA_VERSION=4`,
+      `RL_ACTION_SCHEMA_VERSION=3`, transition schema `4`, Python
+      `OBS_SPACING_PAYLOAD_VERSION=4`, and Python `ACTION_SET_VERSION=5`.
+    - `RLObsSpacingPayloadV1` expanded from 32 to 36 bytes and now carries
+      `obs_self_airborne`, `obs_self_jump_phase`,
+      `obs_self_ground_action_start_allowed`,
+      `obs_self_jump_start_allowed`, and
+      `obs_self_air_attack_allowed`.
+    - current action set replaces the old direction-specific jump attacks with
+      `jump-forward-start`, `jump-neutral-start`, `jump-back-start`, and
+      `air-lp`, `air-mp`, `air-hp`, `air-lk`, `air-mk`, `air-hk`.
+    - new policy metadata uses `RL_POLICY_ACTION_JUMP` plus directional
+      sub-actions for jump starts, and `RL_POLICY_ACTION_AIR_NORMAL=16` plus
+      button sub-actions for air normals.
+    - `tools/rl_probe_server.py` added `action-start-v1` as the schema-backed
+      DQN valid-action mask. Ground rows allow ground actions and
+      `jump-*-start`; jump-air rows allow `air-*`; locked states fall back to
+      movement/guard hold candidates.
+    - DQN feature metadata now includes the new schema fields, so V41/Vnext
+      split-taxonomy models should be trained from fresh schema-v4 logs rather
+      than warm-started from V40 action-set-v4 weights.
+  - Local validation completed:
+    - `python3 -m py_compile tools/rl_probe_server.py
+      tools/train_dqn_learner.py tools/compare_dqn_models.py
+      tools/analyze_rl_transitions.py tools/rl_auto_retrain.py`
+    - `python3 tools/rl_probe_server.py --help`
+    - `python3 tools/train_dqn_learner.py --help`
+    - `python3 tools/compare_dqn_models.py --help`
+    - `python3 tools/analyze_rl_transitions.py --help`
+    - synthetic OBS/action/mask smoke confirmed 36-byte OBS parsing,
+      `jump-forward-start` / `air-mk` policy-meta decode, replay-row
+      normalization, DQN feature vector inclusion, and `action-start-v1`
+      ground/air gating.
+    - `git diff --check`
+    - `tools/mister/build-game.sh --flavor telemetry`
+  - Remaining data validation before first split-taxonomy training:
+    - collect a short CPU-demo schema-v4 log and confirm that
+      `obs_self_air_attack_allowed=1` appears during ordinary jump-air rows
+      (`R1=0`, `R2=18..26`) and that analyzer output separates
+      `jump-*-start` from `air-*`.
 
 - Step 4: train-time invalid-action Q penalty on the split action space.
   - Do this after Step 3, not before it.

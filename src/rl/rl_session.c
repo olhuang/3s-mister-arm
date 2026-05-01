@@ -134,6 +134,11 @@ typedef struct RLDecisionLedgerEntry {
     u8 obs_opp_routine_attack_state;
     u8 obs_self_contact_reaction_state;
     u8 obs_opp_contact_reaction_state;
+    u8 obs_self_airborne;
+    u8 obs_self_jump_phase;
+    u8 obs_self_ground_action_start_allowed;
+    u8 obs_self_jump_start_allowed;
+    u8 obs_self_air_attack_allowed;
     u8 executed_move_intent;
     u16 executed_attack_bits;
     u8 execution_source;
@@ -206,6 +211,7 @@ static const RLLocalFakeAction kLocalFakeAgentSequence[] = {
 #define RL_POLICY_ACTION_JUMP_ATTACK_NEUTRAL 13u
 #define RL_POLICY_ACTION_JUMP_ATTACK_BACK 14u
 #define RL_POLICY_ACTION_CROUCH_NORMAL 15u
+#define RL_POLICY_ACTION_AIR_NORMAL 16u
 #define RL_POLICY_ACTION_RYU_SHINKUU_HADOUKEN 1220u
 #define RL_POLICY_ACTION_RYU_DENJIN_HADOUKEN 1221u
 #define RL_POLICY_ACTION_RYU_SHIN_SHORYUKEN 1222u
@@ -232,7 +238,7 @@ static const RLLocalFakeAction kLocalFakeAgentSequence[] = {
 #define RL_POLICY_SUB_ACTION_CROUCH 21u
 #define RL_DEMO_GUARD_THREAT_DX 144
 #define RL_CHARACTER_RYU 2u
-#define RL_TRANSITION_SCHEMA_VERSION 3u
+#define RL_TRANSITION_SCHEMA_VERSION 4u
 #define RL_INPUT_LABEL_SOURCE_NONE 0u
 #define RL_INPUT_LABEL_SOURCE_DEMO_INPUT 1u
 #define RL_DEMO_ATTRIBUTION_NONE 0u
@@ -689,14 +695,29 @@ static void RLSession_DeriveDemoPolicyMeta(u8 move_intent,
             return;
         }
         if (move_intent == RL_MOVE_UP_FORWARD || move_intent == RL_MOVE_UP || move_intent == RL_MOVE_UP_BACK) {
-            if (move_intent == RL_MOVE_UP_FORWARD) {
-                *policy_action_id = RL_POLICY_ACTION_JUMP_ATTACK_FORWARD;
-            } else if (move_intent == RL_MOVE_UP_BACK) {
-                *policy_action_id = RL_POLICY_ACTION_JUMP_ATTACK_BACK;
-            } else {
-                *policy_action_id = RL_POLICY_ACTION_JUMP_ATTACK_NEUTRAL;
+            if (obs != NULL && obs->valid && obs->self_air_attack_allowed) {
+                *policy_action_id = RL_POLICY_ACTION_AIR_NORMAL;
+                *policy_sub_action_id = first_attack;
+            } else if (obs != NULL && obs->valid && obs->self_jump_start_allowed) {
+                *policy_action_id = RL_POLICY_ACTION_JUMP;
+                if (move_intent == RL_MOVE_UP_FORWARD) {
+                    *policy_sub_action_id = RL_POLICY_SUB_ACTION_UP_FORWARD;
+                } else if (move_intent == RL_MOVE_UP_BACK) {
+                    *policy_sub_action_id = RL_POLICY_SUB_ACTION_UP_BACK;
+                } else {
+                    *policy_sub_action_id = RL_POLICY_SUB_ACTION_NEUTRAL_DIRECTION;
+                }
             }
+            return;
+        }
+        if (obs != NULL && obs->valid && obs->self_air_attack_allowed) {
+            *policy_action_id = RL_POLICY_ACTION_AIR_NORMAL;
             *policy_sub_action_id = first_attack;
+            return;
+        }
+        if (obs != NULL && obs->valid && obs->self_airborne && !obs->self_ground_action_start_allowed) {
+            *policy_action_id = RL_POLICY_ACTION_NEUTRAL;
+            *policy_sub_action_id = RL_POLICY_SUB_ACTION_NONE;
             return;
         }
         if (RLSession_MoveIntentIsCrouch(move_intent)) {
@@ -735,16 +756,22 @@ static void RLSession_DeriveDemoPolicyMeta(u8 move_intent,
         }
         break;
     case RL_MOVE_UP_FORWARD:
-        *policy_action_id = RL_POLICY_ACTION_JUMP;
-        *policy_sub_action_id = RL_POLICY_SUB_ACTION_UP_FORWARD;
+        if (obs != NULL && obs->valid && obs->self_jump_start_allowed) {
+            *policy_action_id = RL_POLICY_ACTION_JUMP;
+            *policy_sub_action_id = RL_POLICY_SUB_ACTION_UP_FORWARD;
+        }
         break;
     case RL_MOVE_UP_BACK:
-        *policy_action_id = RL_POLICY_ACTION_JUMP;
-        *policy_sub_action_id = RL_POLICY_SUB_ACTION_UP_BACK;
+        if (obs != NULL && obs->valid && obs->self_jump_start_allowed) {
+            *policy_action_id = RL_POLICY_ACTION_JUMP;
+            *policy_sub_action_id = RL_POLICY_SUB_ACTION_UP_BACK;
+        }
         break;
     case RL_MOVE_UP:
-        *policy_action_id = RL_POLICY_ACTION_JUMP;
-        *policy_sub_action_id = RL_POLICY_SUB_ACTION_NEUTRAL_DIRECTION;
+        if (obs != NULL && obs->valid && obs->self_jump_start_allowed) {
+            *policy_action_id = RL_POLICY_ACTION_JUMP;
+            *policy_sub_action_id = RL_POLICY_SUB_ACTION_NEUTRAL_DIRECTION;
+        }
         break;
     case RL_MOVE_DOWN_FORWARD:
         *policy_action_id = RL_POLICY_ACTION_WALK;
@@ -761,8 +788,7 @@ static bool RLSession_IsDemoExecutionSource(u8 source) {
 
 static bool RLSession_IsNormalPolicyAction(u16 action_id) {
     return action_id == RL_POLICY_ACTION_STAND_NORMAL || action_id == RL_POLICY_ACTION_CROUCH_NORMAL ||
-           action_id == RL_POLICY_ACTION_COMMAND_NORMAL || action_id == RL_POLICY_ACTION_JUMP_ATTACK_FORWARD ||
-           action_id == RL_POLICY_ACTION_JUMP_ATTACK_NEUTRAL || action_id == RL_POLICY_ACTION_JUMP_ATTACK_BACK;
+           action_id == RL_POLICY_ACTION_COMMAND_NORMAL || action_id == RL_POLICY_ACTION_AIR_NORMAL;
 }
 
 static u16 RLSession_SubActionFromRyuKindOfWaza(u8 kind_of_waza) {
@@ -905,7 +931,7 @@ static bool RLSession_RyuNormalPolicyMetaFromIdentity(const RLDecisionLedgerEntr
     }
 
     if (obs->self_airborne) {
-        *action_id = RL_POLICY_ACTION_JUMP_ATTACK_FORWARD;
+        *action_id = RL_POLICY_ACTION_AIR_NORMAL;
     } else if (entry != NULL && RLSession_MoveIntentIsCrouch(entry->executed_move_intent)) {
         *action_id = RL_POLICY_ACTION_CROUCH_NORMAL;
     } else {
@@ -1139,6 +1165,11 @@ static void RLSession_FillObsSpacingPayload(RLObsSpacingPayloadV1* payload, cons
     payload->obs_opp_routine_attack_state = obs->opp_routine_attack_state ? 1u : 0u;
     payload->obs_self_contact_reaction_state = obs->self_contact_reaction_state ? 1u : 0u;
     payload->obs_opp_contact_reaction_state = obs->opp_contact_reaction_state ? 1u : 0u;
+    payload->obs_self_airborne = obs->self_airborne ? 1u : 0u;
+    payload->obs_self_jump_phase = obs->self_jump_phase;
+    payload->obs_self_ground_action_start_allowed = obs->self_ground_action_start_allowed ? 1u : 0u;
+    payload->obs_self_jump_start_allowed = obs->self_jump_start_allowed ? 1u : 0u;
+    payload->obs_self_air_attack_allowed = obs->self_air_attack_allowed ? 1u : 0u;
 }
 
 static void RLSession_CaptureObservationSpacing(RLDecisionLedgerEntry* entry, const RLObservationV1* obs) {
@@ -1163,6 +1194,11 @@ static void RLSession_CaptureObservationSpacing(RLDecisionLedgerEntry* entry, co
     entry->obs_opp_routine_attack_state = payload.obs_opp_routine_attack_state;
     entry->obs_self_contact_reaction_state = payload.obs_self_contact_reaction_state;
     entry->obs_opp_contact_reaction_state = payload.obs_opp_contact_reaction_state;
+    entry->obs_self_airborne = payload.obs_self_airborne;
+    entry->obs_self_jump_phase = payload.obs_self_jump_phase;
+    entry->obs_self_ground_action_start_allowed = payload.obs_self_ground_action_start_allowed;
+    entry->obs_self_jump_start_allowed = payload.obs_self_jump_start_allowed;
+    entry->obs_self_air_attack_allowed = payload.obs_self_air_attack_allowed;
 }
 
 static void RLSession_AccumulateDeltaS16(s16* accum, s32 delta) {
@@ -1271,6 +1307,10 @@ static int RLSession_FormatTransitionLogLine(const RLDecisionLedgerEntry* entry,
                         "\"obs_opp_routine_1\":%u,\"obs_opp_routine_2\":%u,"
                         "\"obs_self_routine_attack_state\":%u,\"obs_opp_routine_attack_state\":%u,"
                         "\"obs_self_contact_reaction_state\":%u,\"obs_opp_contact_reaction_state\":%u,"
+                        "\"obs_self_airborne\":%u,\"obs_self_jump_phase\":%u,"
+                        "\"obs_self_ground_action_start_allowed\":%u,"
+                        "\"obs_self_jump_start_allowed\":%u,"
+                        "\"obs_self_air_attack_allowed\":%u,"
                         "\"final_self_hp\":%d,\"final_opp_hp\":%d,"
                         "\"model_version_executed\":%u,"
                         "\"execution_source\":%u,"
@@ -1327,6 +1367,11 @@ static int RLSession_FormatTransitionLogLine(const RLDecisionLedgerEntry* entry,
                         entry->obs_opp_routine_attack_state,
                         entry->obs_self_contact_reaction_state,
                         entry->obs_opp_contact_reaction_state,
+                        entry->obs_self_airborne,
+                        entry->obs_self_jump_phase,
+                        entry->obs_self_ground_action_start_allowed,
+                        entry->obs_self_jump_start_allowed,
+                        entry->obs_self_air_attack_allowed,
                         entry->final_self_hp,
                         entry->final_opp_hp,
                         entry->model_version_executed,

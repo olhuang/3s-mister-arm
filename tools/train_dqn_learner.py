@@ -272,10 +272,11 @@ class GreedyDiagnostics:
         }
 
 
-NON_ATTACK_ACTIONS = frozenset({"forward", "back", "guard-stand", "guard-crouch"})
+JUMP_START_ACTIONS = frozenset(getattr(rl, "JUMP_START_ACTION_NAMES", ()))
+AIR_ATTACK_RISK_ACTIONS = frozenset(getattr(rl, "AIR_NORMAL_ACTION_NAMES", ()))
+NON_ATTACK_ACTIONS = frozenset({"forward", "back", "guard-stand", "guard-crouch"}) | JUMP_START_ACTIONS
 ATTACK_RISK_ACTIONS = frozenset(action for action in rl.TABULAR_ACTION_NAMES if action not in NON_ATTACK_ACTIONS)
 SHORYUKEN_ACTIONS = frozenset({"shoryuken-lp", "shoryuken-mp", "shoryuken-hp"})
-JUMP_ATTACK_RISK_ACTIONS = frozenset(action for action in rl.TABULAR_ACTION_NAMES if action.startswith("jump-"))
 REWARD_RISK_PROFILES = ("none", "shoryuken-only", "all-attacks")
 ENGINE_OUTCOME_TRAINING_MODES = ("off", "prefer-engine-action")
 ENGINE_OUTCOME_MODE_ALIASES = {"prefer-demo-action": "prefer-engine-action"}
@@ -806,6 +807,10 @@ def model_version_executed(row: dict[str, object]) -> int:
 
 
 def movable_action_filter_reason(row: dict[str, object]) -> str:
+    if rl.dqn_action_start_allowed(row):
+        return ""
+    if "obs_self_ground_action_start_allowed" in row or "obs_self_air_attack_allowed" in row:
+        return "self_action_start_not_allowed"
     routine1 = int_field(row, "obs_self_routine_1")
     if routine1 != 0:
         return f"self_routine_1:{routine1}"
@@ -1145,7 +1150,7 @@ def dqn_valid_action_mask_training_config_from_args(args: argparse.Namespace) ->
 
 
 def action_batch_group(action_name: str) -> str:
-    if action_name in NON_ATTACK_ACTIONS:
+    if action_name in NON_ATTACK_ACTIONS or action_name in JUMP_START_ACTIONS:
         return "movement"
     if action_name.startswith(SPECIAL_ACTION_PREFIXES):
         return "special"
@@ -1257,8 +1262,8 @@ def reward_risk_cost(
 
     apply_attack_cost = config.profile == "all-attacks" and action_name in ATTACK_RISK_ACTIONS
     apply_shoryuken_cost = action_name in SHORYUKEN_ACTIONS and config.profile in {"shoryuken-only", "all-attacks"}
-    apply_jump_attack_cost = config.profile == "all-attacks" and action_name in JUMP_ATTACK_RISK_ACTIONS
-    if not apply_attack_cost and not apply_shoryuken_cost and not apply_jump_attack_cost:
+    apply_air_attack_cost = config.profile == "all-attacks" and action_name in AIR_ATTACK_RISK_ACTIONS
+    if not apply_attack_cost and not apply_shoryuken_cost and not apply_air_attack_cost:
         return 0.0
 
     window_length = config.action_windows.get(action_name, config.window_decisions)
@@ -1290,7 +1295,7 @@ def reward_risk_cost(
             cost += config.shoryuken_punished_extra_cost
             stats.shoryuken_punished_extra_cost_total += config.shoryuken_punished_extra_cost
 
-    if apply_jump_attack_cost:
+    if apply_air_attack_cost:
         cost += config.jump_attack_no_damage_extra_cost
         stats.jump_attack_no_damage_extra_cost_total += config.jump_attack_no_damage_extra_cost
         if punished:
@@ -1967,7 +1972,7 @@ def engine_outcome_config_from_args(args: argparse.Namespace) -> EngineOutcomeCo
     training_mode = ENGINE_OUTCOME_MODE_ALIASES.get(training_mode, training_mode)
     if training_mode in REMOVED_ENGINE_OUTCOME_MODES:
         raise SystemExit(
-            f"--engine-outcome-training-mode {training_mode!r} was removed for schema v3; "
+            f"--engine-outcome-training-mode {training_mode!r} was removed for the current schema; "
             "use 'prefer-engine-action' so engine-labeled rows replace only matching input rows"
         )
     if training_mode not in ENGINE_OUTCOME_TRAINING_MODES:
@@ -2932,13 +2937,13 @@ def main() -> None:
         "--reward-jump-attack-no-damage-extra-cost",
         type=float,
         default=0.0,
-        help="Additional positive raw reward cost subtracted from no-damage jump attacks in all-attacks profile",
+        help="Additional positive raw reward cost subtracted from no-damage air attacks in all-attacks profile",
     )
     parser.add_argument(
         "--reward-jump-attack-punished-extra-cost",
         type=float,
         default=0.0,
-        help="Additional positive raw reward cost when a no-damage jump attack is followed by self HP damage",
+        help="Additional positive raw reward cost when a no-damage air attack is followed by self HP damage",
     )
     parser.add_argument(
         "--reward-guard-success-bonus",
@@ -3168,7 +3173,7 @@ def main() -> None:
         default="auto",
         help=(
             "Action label source for normal DQN replay rows. auto uses engine/input labels for "
-            "schema-v3 demo rows and policy labels for schema-v3 remote rows"
+            "current-schema demo rows and policy labels for current-schema remote rows"
         ),
     )
     parser.add_argument("--target-sync-steps", type=int, default=200, help="Steps between target-network syncs")
@@ -3184,7 +3189,8 @@ def main() -> None:
         default="off",
         help=(
             "Optional train-time DQN valid-action mask for target max and greedy diagnostics. "
-            "self-routine-v1 gates ground, jump-air, and non-movable candidates from self routine fields"
+            "self-routine-v1 gates from legacy routine fields; action-start-v1 gates from schema-backed "
+            "ground/jump/air action-start flags"
         ),
     )
     parser.add_argument("--epsilon", type=float, default=0.05, help="Exploration probability stamped into the published actor")

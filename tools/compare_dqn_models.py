@@ -12,7 +12,9 @@ import rl_probe_server as rl
 
 
 DX_BUCKETS = ("close", "mid", "far")
-NON_ATTACK_ACTIONS = frozenset({"forward", "back", "guard-stand", "guard-crouch"})
+NON_ATTACK_ACTIONS = frozenset({"forward", "back", "guard-stand", "guard-crouch"}) | frozenset(
+    getattr(rl, "JUMP_START_ACTION_NAMES", ())
+)
 ATTACK_ACTIONS = frozenset(action for action in rl.TABULAR_ACTION_NAMES if action not in NON_ATTACK_ACTIONS)
 SHORYUKEN_ACTIONS = frozenset(action for action in rl.TABULAR_ACTION_NAMES if action.startswith("shoryuken-"))
 THREAT_DX_BUCKETS = ("atk0_close", "atk0_mid", "atk0_far", "atk1_close", "atk1_mid", "atk1_far")
@@ -311,7 +313,7 @@ def main() -> int:
         default="auto",
         help=(
             "Canonical log action label source to summarize before model evaluation. auto uses engine/input "
-            "labels for schema-v3 demo rows and policy labels for schema-v3 remote rows."
+            "labels for current-schema demo rows and policy labels for current-schema remote rows."
         ),
     )
     parser.add_argument(

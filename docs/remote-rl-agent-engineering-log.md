@@ -2,6 +2,77 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-01: Implement Jump-Start / Air-Normal Action Split
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / full action-set DQN experiments
+
+Files changed:
+- `src/rl/rl_protocol.h`
+- `src/rl/rl_observation.h`
+- `src/rl/rl_observation.c`
+- `src/rl/rl_session.c`
+- `tools/rl_probe_server.py`
+- `tools/train_dqn_learner.py`
+- `tools/compare_dqn_models.py`
+- `tools/analyze_rl_transitions.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+- `docs/rl-policy-action-taxonomy.md`
+
+Purpose:
+- stop using one `jump-*` action head for both "start a jump from the ground"
+  and "press an attack button while airborne."
+- give the next DQN action space clean labels so the following invalid-action Q
+  penalty can learn state-conditioned legality from the right semantics.
+
+Implementation notes:
+- bumped the compatibility gates to protocol `4`, OBS schema `4`, action schema
+  `3`, transition schema `4`, OBS spacing payload version `4`, and Python
+  action set version `5`.
+- expanded the live OBS spacing payload from 32 to 36 bytes with:
+  - `obs_self_airborne`
+  - `obs_self_jump_phase`
+  - `obs_self_ground_action_start_allowed`
+  - `obs_self_jump_start_allowed`
+  - `obs_self_air_attack_allowed`
+- replaced the old full-action jump attacks with:
+  - `jump-forward-start`
+  - `jump-neutral-start`
+  - `jump-back-start`
+  - `air-lp`, `air-mp`, `air-hp`, `air-lk`, `air-mk`, `air-hk`
+- added `RL_POLICY_ACTION_AIR_NORMAL=16`; schema-v4 jump starts use
+  `RL_POLICY_ACTION_JUMP` plus directional sub-actions, and air normals use the
+  new air-normal action id plus button sub-actions.
+- added shared Python action-start helpers and a new `action-start-v1` DQN mask
+  mode backed by the schema fields.
+- updated DQN feature metadata so split-taxonomy models include the new
+  airborne/action-start flags in offline training and live inference.
+- kept the old jump-attack policy ids reserved but unused by current schema-v4
+  action names.
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py tools/train_dqn_learner.py tools/compare_dqn_models.py tools/analyze_rl_transitions.py tools/rl_auto_retrain.py`
+- `python3 tools/rl_probe_server.py --help`
+- `python3 tools/train_dqn_learner.py --help`
+- `python3 tools/compare_dqn_models.py --help`
+- `python3 tools/analyze_rl_transitions.py --help`
+- synthetic Python smoke confirmed:
+  - 36-byte OBS payload parsing.
+  - `jump-forward-start` and `air-mk` policy-meta decode.
+  - schema-v4 replay-row normalization.
+  - new DQN feature vector entries.
+  - `action-start-v1` allows ground actions plus `jump-*-start` on ground rows,
+    and allows `air-*` on air rows.
+- `git diff --check`
+- `tools/mister/build-game.sh --flavor telemetry`
+
+Follow-up:
+- collect a short CPU-demo schema-v4 log before training V41/Vnext.
+- confirm `obs_self_air_attack_allowed=1` appears during ordinary jump-air rows
+  (`R1=0`, `R2=18..26`) and analyzer output separates `jump-*-start` labels
+  from `air-*` labels.
+
 ## 2026-05-01: Audit Jump Taxonomy Split Code Touch Points
 
 Milestone:

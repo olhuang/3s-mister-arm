@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 
 MAGIC = 0x33524C41
 PACKET_VERSION = 1
-PROTOCOL_VERSION = 3
+PROTOCOL_VERSION = 4
 TYPE_HELLO = 1
 TYPE_ACK = 2
 TYPE_PING = 3
@@ -28,11 +28,11 @@ TYPE_OBS = 5
 PACKET = struct.Struct("<IHHQIIQ")
 ACTION_PACKET = struct.Struct("<IHHQQIIIHHHHI")
 OBS_HEADER = struct.Struct("<IHHQQIIIIHHI")
-OBS_SPACING_PAYLOAD = struct.Struct("<HHhhhhhhHHHHBBBBB3x")
-OBS_SPACING_PAYLOAD_VERSION = 3
+OBS_SPACING_PAYLOAD = struct.Struct("<HHhhhhhhHHHHBBBBBBBBBB2x")
+OBS_SPACING_PAYLOAD_VERSION = 4
 TRANSITION_BATCH_HEADER = struct.Struct("<IHHQQIII")
 TRANSITION_BATCH_ACK = struct.Struct("<IHHQQII")
-ACTION_SET_VERSION = 4
+ACTION_SET_VERSION = 5
 
 RL_MOVE_NEUTRAL = 0x0000
 RL_MOVE_UP = 0x0001
@@ -63,6 +63,7 @@ RL_POLICY_ACTION_JUMP_ATTACK_FORWARD = 12
 RL_POLICY_ACTION_JUMP_ATTACK_NEUTRAL = 13
 RL_POLICY_ACTION_JUMP_ATTACK_BACK = 14
 RL_POLICY_ACTION_CROUCH_NORMAL = 15
+RL_POLICY_ACTION_AIR_NORMAL = 16
 RL_POLICY_ACTION_RYU_SHINKUU_HADOUKEN = 1220
 RL_POLICY_ACTION_RYU_DENJIN_HADOUKEN = 1221
 RL_POLICY_ACTION_RYU_SHIN_SHORYUKEN = 1222
@@ -81,6 +82,9 @@ RL_POLICY_SUB_MK = 5
 RL_POLICY_SUB_HK = 6
 RL_POLICY_SUB_FORWARD = 13
 RL_POLICY_SUB_BACK = 14
+RL_POLICY_SUB_NEUTRAL_DIRECTION = 15
+RL_POLICY_SUB_UP_FORWARD = 16
+RL_POLICY_SUB_UP_BACK = 17
 RL_POLICY_SUB_STAND = 20
 RL_POLICY_SUB_CROUCH = 21
 
@@ -92,10 +96,10 @@ RL_POLICY_BUTTONS = (
     ("mk", BTN_MK, RL_POLICY_SUB_MK),
     ("hk", BTN_HK, RL_POLICY_SUB_HK),
 )
-RL_POLICY_JUMP_DIRECTIONS = (
-    ("forward", RL_MOVE_UP_FORWARD, RL_POLICY_ACTION_JUMP_ATTACK_FORWARD),
-    ("neutral", RL_MOVE_UP, RL_POLICY_ACTION_JUMP_ATTACK_NEUTRAL),
-    ("back", RL_MOVE_UP_BACK, RL_POLICY_ACTION_JUMP_ATTACK_BACK),
+RL_POLICY_JUMP_STARTS = (
+    ("forward", RL_MOVE_UP_FORWARD, RL_POLICY_SUB_UP_FORWARD),
+    ("neutral", RL_MOVE_UP, RL_POLICY_SUB_NEUTRAL_DIRECTION),
+    ("back", RL_MOVE_UP_BACK, RL_POLICY_SUB_UP_BACK),
 )
 STAND_NORMAL_ACTION_NAMES = tuple(f"stand-{button}" for button, _, _ in RL_POLICY_BUTTONS)
 CROUCH_NORMAL_ACTION_NAMES = tuple(f"crouch-{button}" for button, _, _ in RL_POLICY_BUTTONS)
@@ -117,29 +121,13 @@ TATSU_ACTIONS = (
     ("tatsu-hk", BTN_HK, RL_POLICY_SUB_HK),
 )
 TATSU_ACTION_NAMES = tuple(action for action, _, _ in TATSU_ACTIONS)
-JUMP_NORMAL_ACTION_NAMES = tuple(
-    f"jump-{direction}-{button}"
-    for direction, _, _ in RL_POLICY_JUMP_DIRECTIONS
-    for button, _, _ in RL_POLICY_BUTTONS
-)
-JUMP_NORMAL_ACTION_WIRES = {
-    f"jump-{direction}-{button}": move | button_wire
-    for direction, move, _ in RL_POLICY_JUMP_DIRECTIONS
-    for button, button_wire, _ in RL_POLICY_BUTTONS
+JUMP_START_ACTION_NAMES = tuple(f"jump-{direction}-start" for direction, _, _ in RL_POLICY_JUMP_STARTS)
+JUMP_START_ACTION_WIRES = {
+    f"jump-{direction}-start": move
+    for direction, move, _ in RL_POLICY_JUMP_STARTS
 }
-JUMP_NORMAL_ACTION_SEQUENCES = {
-    action: (
-        move,
-        move,
-        wire,
-        wire,
-        RL_MOVE_NEUTRAL,
-        RL_MOVE_NEUTRAL,
-    )
-    for action, wire in JUMP_NORMAL_ACTION_WIRES.items()
-    for direction, move, _action_id in RL_POLICY_JUMP_DIRECTIONS
-    if action.startswith(f"jump-{direction}-")
-}
+AIR_NORMAL_ACTION_NAMES = tuple(f"air-{button}" for button, _, _ in RL_POLICY_BUTTONS)
+AIR_NORMAL_ACTION_WIRES = {f"air-{button}": wire for button, wire, _ in RL_POLICY_BUTTONS}
 SCRIPTED_POLICY_CHOICES = (
     "forward",
     "back",
@@ -158,7 +146,8 @@ SCRIPTED_POLICY_CHOICES = (
     *TATSU_ACTION_NAMES,
     "shoryuken",
     *SHORYUKEN_ACTION_NAMES,
-    *JUMP_NORMAL_ACTION_NAMES,
+    *JUMP_START_ACTION_NAMES,
+    *AIR_NORMAL_ACTION_NAMES,
 )
 MODEL_POLICY_CHOICES = (
     "tabular",
@@ -167,7 +156,7 @@ MODEL_POLICY_CHOICES = (
 POLICY_CHOICES = SCRIPTED_POLICY_CHOICES + MODEL_POLICY_CHOICES
 GUARD_MACRO_DECISION_STEPS = 6
 DEMO_EXECUTION_SOURCES = frozenset({4, 5})
-TRANSITION_SCHEMA_VERSION = 3
+TRANSITION_SCHEMA_VERSION = 4
 TRAINING_ACTION_SOURCES = ("auto", "policy", "input", "engine", "prefer-engine")
 
 TABULAR_ACTION_NAMES = (
@@ -180,7 +169,8 @@ TABULAR_ACTION_NAMES = (
     *CROUCH_NORMAL_ACTION_NAMES,
     *FIREBALL_ACTION_NAMES,
     "throw",
-    *JUMP_NORMAL_ACTION_NAMES,
+    *JUMP_START_ACTION_NAMES,
+    *AIR_NORMAL_ACTION_NAMES,
     *SHORYUKEN_ACTION_NAMES,
     *TATSU_ACTION_NAMES,
 )
@@ -192,16 +182,17 @@ TABULAR_ACTION_WIRES = {
     "throw": RL_MOVE_FORWARD | BTN_LP | BTN_LK,
 }
 DQN_MOVEMENT_GUARD_ACTIONS = frozenset({"forward", "back", "guard-stand", "guard-crouch"})
-DQN_JUMP_ATTACK_ACTIONS = frozenset(JUMP_NORMAL_ACTION_NAMES)
-DQN_VALID_ACTION_MASK_MODES = ("off", "self-routine-v1")
+DQN_JUMP_START_ACTIONS = frozenset(JUMP_START_ACTION_NAMES)
+DQN_AIR_ATTACK_ACTIONS = frozenset(AIR_NORMAL_ACTION_NAMES)
+DQN_VALID_ACTION_MASK_MODES = ("off", "self-routine-v1", "action-start-v1")
 DQN_VALID_ACTION_MASK_CLI_MODES = ("auto", *DQN_VALID_ACTION_MASK_MODES)
 TABULAR_ACTION_WIRES.update({f"stand-{name}": wire for name, wire, _ in RL_POLICY_BUTTONS})
 TABULAR_ACTION_WIRES.update({f"crouch-{name}": RL_MOVE_DOWN | wire for name, wire, _ in RL_POLICY_BUTTONS})
+TABULAR_ACTION_WIRES.update(JUMP_START_ACTION_WIRES)
 TABULAR_ACTION_NAMES_BY_WIRE = {
     wire: name for name, wire in TABULAR_ACTION_WIRES.items() if name != "neutral"
 }
 TABULAR_ACTION_NAMES_BY_WIRE[RL_MOVE_FORWARD | BTN_LP] = "fireball-lp"
-TABULAR_ACTION_NAMES_BY_WIRE.update({wire: action for action, wire in JUMP_NORMAL_ACTION_WIRES.items()})
 TABULAR_ACTION_NAMES_BY_WIRE.update({RL_MOVE_DOWN_FORWARD | wire: action for action, wire, _ in SHORYUKEN_ACTIONS})
 TABULAR_ACTION_NAMES_BY_WIRE.update({RL_MOVE_BACK | wire: action for action, wire, _ in TATSU_ACTIONS})
 TABULAR_DEFAULT_ACTIONS = TABULAR_ACTION_NAMES
@@ -213,6 +204,9 @@ TABULAR_ACTION_ALIASES = {
     "ryu-fireball": "fireball-lp",
     "shoryuken": "shoryuken-hp",
     "tatsu": "tatsu-lk",
+    "jump-forward": "jump-forward-start",
+    "jump-neutral": "jump-neutral-start",
+    "jump-back": "jump-back-start",
 }
 
 POLICY_ACTION_META_BY_NAME = {
@@ -246,11 +240,10 @@ POLICY_ACTION_META_BY_NAME.update(
     {f"crouch-{name}": (RL_POLICY_ACTION_CROUCH_NORMAL, sub_action) for name, _, sub_action in RL_POLICY_BUTTONS}
 )
 POLICY_ACTION_META_BY_NAME.update(
-    {
-        f"jump-{direction}-{name}": (action_id, sub_action)
-        for direction, _, action_id in RL_POLICY_JUMP_DIRECTIONS
-        for name, _, sub_action in RL_POLICY_BUTTONS
-    }
+    {f"jump-{direction}-start": (RL_POLICY_ACTION_JUMP, sub_action) for direction, _, sub_action in RL_POLICY_JUMP_STARTS}
+)
+POLICY_ACTION_META_BY_NAME.update(
+    {f"air-{name}": (RL_POLICY_ACTION_AIR_NORMAL, sub_action) for name, _, sub_action in RL_POLICY_BUTTONS}
 )
 
 TABULAR_ACTION_NAMES_BY_POLICY_META = {
@@ -287,11 +280,10 @@ TABULAR_ACTION_NAMES_BY_POLICY_META.update(
     {(RL_POLICY_ACTION_CROUCH_NORMAL, sub_action): f"crouch-{name}" for name, _, sub_action in RL_POLICY_BUTTONS}
 )
 TABULAR_ACTION_NAMES_BY_POLICY_META.update(
-    {
-        (action_id, sub_action): f"jump-{direction}-{name}"
-        for direction, _, action_id in RL_POLICY_JUMP_DIRECTIONS
-        for name, _, sub_action in RL_POLICY_BUTTONS
-    }
+    {(RL_POLICY_ACTION_JUMP, sub_action): f"jump-{direction}-start" for direction, _, sub_action in RL_POLICY_JUMP_STARTS}
+)
+TABULAR_ACTION_NAMES_BY_POLICY_META.update(
+    {(RL_POLICY_ACTION_AIR_NORMAL, sub_action): f"air-{name}" for name, _, sub_action in RL_POLICY_BUTTONS}
 )
 
 DQN_BASE_FEATURE_NAMES = (
@@ -303,6 +295,11 @@ DQN_BASE_FEATURE_NAMES = (
     "obs_opp_back_edge_dist",
     "obs_opp_in_front",
     "obs_opp_routine_attack_state",
+    "obs_self_airborne",
+    "obs_self_jump_phase",
+    "obs_self_ground_action_start_allowed",
+    "obs_self_jump_start_allowed",
+    "obs_self_air_attack_allowed",
 )
 DQN_OPP_ROUTINE_1_VALUES = (0, 1, 2, 3, 4)
 DQN_OPP_ROUTINE_2_VALUES = (0, 1, 3, 4, 5, 6, 7, 8, 12, 13, 16, 17, 18, 19, 21, 24, 28, 32, 36, 37)
@@ -319,6 +316,11 @@ DQN_FEATURE_SCALES = {
     "obs_opp_back_edge_dist": 384.0,
     "obs_opp_in_front": 1.0,
     "obs_opp_routine_attack_state": 1.0,
+    "obs_self_airborne": 1.0,
+    "obs_self_jump_phase": 3.0,
+    "obs_self_ground_action_start_allowed": 1.0,
+    "obs_self_jump_start_allowed": 1.0,
+    "obs_self_air_attack_allowed": 1.0,
 }
 DQN_FEATURE_SCALES.update({name: 1.0 for name in DQN_OPP_ROUTINE_FEATURE_NAMES})
 
@@ -1109,6 +1111,11 @@ def parse_obs_spacing_payload(payload: bytes) -> dict[str, object] | None:
         obs_opp_routine_attack_state,
         obs_self_contact_reaction_state,
         obs_opp_contact_reaction_state,
+        obs_self_airborne,
+        obs_self_jump_phase,
+        obs_self_ground_action_start_allowed,
+        obs_self_jump_start_allowed,
+        obs_self_air_attack_allowed,
     ) = OBS_SPACING_PAYLOAD.unpack(payload)
     if payload_version != OBS_SPACING_PAYLOAD_VERSION:
         return None
@@ -1128,6 +1135,11 @@ def parse_obs_spacing_payload(payload: bytes) -> dict[str, object] | None:
         "obs_opp_routine_attack_state": obs_opp_routine_attack_state,
         "obs_self_contact_reaction_state": obs_self_contact_reaction_state,
         "obs_opp_contact_reaction_state": obs_opp_contact_reaction_state,
+        "obs_self_airborne": obs_self_airborne,
+        "obs_self_jump_phase": obs_self_jump_phase,
+        "obs_self_ground_action_start_allowed": obs_self_ground_action_start_allowed,
+        "obs_self_jump_start_allowed": obs_self_jump_start_allowed,
+        "obs_self_air_attack_allowed": obs_self_air_attack_allowed,
     }
 
 
@@ -1213,6 +1225,10 @@ def dqn_self_is_ordinary_jump_air(row: dict[str, object]) -> bool:
     )
 
 
+def row_bool_field(row: dict[str, object], name: str) -> bool:
+    return row_int_field(row, name) != 0
+
+
 def dqn_self_is_ordinary_movable(row: dict[str, object]) -> bool:
     return (
         row_int_field(row, "obs_self_routine_1") == 0
@@ -1221,7 +1237,37 @@ def dqn_self_is_ordinary_movable(row: dict[str, object]) -> bool:
     )
 
 
+def dqn_ground_action_start_allowed(row: dict[str, object]) -> bool:
+    if "obs_self_ground_action_start_allowed" in row:
+        return row_bool_field(row, "obs_self_ground_action_start_allowed")
+    return dqn_self_is_ordinary_movable(row) and not dqn_self_is_ordinary_jump_air(row)
+
+
+def dqn_jump_start_allowed(row: dict[str, object]) -> bool:
+    if "obs_self_jump_start_allowed" in row:
+        return row_bool_field(row, "obs_self_jump_start_allowed")
+    return dqn_ground_action_start_allowed(row)
+
+
+def dqn_air_attack_allowed(row: dict[str, object]) -> bool:
+    if "obs_self_air_attack_allowed" in row:
+        return row_bool_field(row, "obs_self_air_attack_allowed")
+    return dqn_self_is_ordinary_jump_air(row)
+
+
+def dqn_action_start_allowed(row: dict[str, object]) -> bool:
+    return (
+        dqn_ground_action_start_allowed(row)
+        or dqn_jump_start_allowed(row)
+        or dqn_air_attack_allowed(row)
+    )
+
+
 def dqn_self_mask_phase(row: dict[str, object]) -> str:
+    if dqn_air_attack_allowed(row):
+        return "air-attack"
+    if dqn_ground_action_start_allowed(row) or dqn_jump_start_allowed(row):
+        return "ground-action-start"
     if dqn_self_is_ordinary_jump_air(row):
         return "jump-air"
     if dqn_self_is_ordinary_movable(row):
@@ -1234,13 +1280,22 @@ def dqn_valid_action_for_row(action: str, row: dict[str, object], config: DQNVal
         return True
     if action not in TABULAR_ACTION_NAMES:
         return False
+    if config.mode == "action-start-v1":
+        if action in DQN_MOVEMENT_GUARD_ACTIONS:
+            return True
+        if action in DQN_AIR_ATTACK_ACTIONS:
+            return dqn_air_attack_allowed(row)
+        if action in DQN_JUMP_START_ACTIONS:
+            return dqn_jump_start_allowed(row)
+        return dqn_ground_action_start_allowed(row)
+
     if config.mode != "self-routine-v1":
         return True
 
     if dqn_self_is_ordinary_jump_air(row):
-        return action in DQN_JUMP_ATTACK_ACTIONS
+        return action in DQN_AIR_ATTACK_ACTIONS or action in DQN_MOVEMENT_GUARD_ACTIONS
     if dqn_self_is_ordinary_movable(row):
-        return action not in DQN_JUMP_ATTACK_ACTIONS
+        return action not in DQN_AIR_ATTACK_ACTIONS
     return action in DQN_MOVEMENT_GUARD_ACTIONS
 
 
@@ -1266,11 +1321,11 @@ def dqn_valid_action_indices_for_row(
     )
 
 
-def is_schema_v3_transition_row(row: dict[str, object]) -> bool:
+def is_current_transition_schema_row(row: dict[str, object]) -> bool:
     return row_int_field(row, "transition_schema_version") == TRANSITION_SCHEMA_VERSION
 
 
-def require_transition_schema_v3(row: dict[str, object], context: str = "transition row") -> None:
+def require_current_transition_schema(row: dict[str, object], context: str = "transition row") -> None:
     version = row_int_field(row, "transition_schema_version")
     if version != TRANSITION_SCHEMA_VERSION:
         raise ValueError(f"{context}: transition_schema_version={version} expected={TRANSITION_SCHEMA_VERSION}")
@@ -1341,7 +1396,7 @@ def select_training_action(row: dict[str, object], source_mode: str = "auto") ->
     if source_mode not in TRAINING_ACTION_SOURCES:
         raise ValueError(f"unknown training action source: {source_mode}")
 
-    require_transition_schema_v3(row)
+    require_current_transition_schema(row)
     policy = action_selection_from_fields(
         row,
         "policy_executed_action_id",
@@ -1621,7 +1676,7 @@ class TabularPolicyLearner:
 
 
 def learner_replay_row(row: dict[str, object]) -> dict[str, object] | None:
-    require_transition_schema_v3(row, "learner replay row")
+    require_current_transition_schema(row, "learner replay row")
     return {
         "run_id": int(row.get("run_id", 0) or 0),
         "episode_id": int(row.get("episode_id", 0) or 0),
@@ -1674,6 +1729,11 @@ def learner_replay_row(row: dict[str, object]) -> dict[str, object] | None:
         "obs_opp_routine_attack_state": int(row.get("obs_opp_routine_attack_state", 0) or 0),
         "obs_self_contact_reaction_state": int(row.get("obs_self_contact_reaction_state", 0) or 0),
         "obs_opp_contact_reaction_state": int(row.get("obs_opp_contact_reaction_state", 0) or 0),
+        "obs_self_airborne": int(row.get("obs_self_airborne", 0) or 0),
+        "obs_self_jump_phase": int(row.get("obs_self_jump_phase", 0) or 0),
+        "obs_self_ground_action_start_allowed": int(row.get("obs_self_ground_action_start_allowed", 0) or 0),
+        "obs_self_jump_start_allowed": int(row.get("obs_self_jump_start_allowed", 0) or 0),
+        "obs_self_air_attack_allowed": int(row.get("obs_self_air_attack_allowed", 0) or 0),
         "final_self_hp": int(row.get("final_self_hp", 0) or 0),
         "final_opp_hp": int(row.get("final_opp_hp", 0) or 0),
         "model_version_executed": int(row.get("model_version_executed", 0) or 0),
@@ -2221,6 +2281,8 @@ def maybe_send_action(
 def fixed_action_wire(policy: str) -> int | None:
     if policy == "hp":
         return BTN_HP
+    if policy in AIR_NORMAL_ACTION_WIRES:
+        return AIR_NORMAL_ACTION_WIRES[policy]
     return TABULAR_ACTION_WIRES.get(policy)
 
 
@@ -2248,10 +2310,6 @@ def policy_action_frame_name(frame: PolicyActionFrame) -> str:
 
 
 def scripted_sequence(policy: str) -> tuple[int, ...] | None:
-    jump_sequence = JUMP_NORMAL_ACTION_SEQUENCES.get(policy)
-    if jump_sequence is not None:
-        return jump_sequence
-
     fireball_scripts = {
         action: (
             RL_MOVE_DOWN_BACK,
@@ -2274,38 +2332,6 @@ def scripted_sequence(policy: str) -> tuple[int, ...] | None:
         "throw": (
             RL_MOVE_FORWARD | BTN_LP | BTN_LK,
             RL_MOVE_NEUTRAL,
-            RL_MOVE_NEUTRAL,
-            RL_MOVE_NEUTRAL,
-        ),
-        "jump-forward-mk": (
-            RL_MOVE_UP_FORWARD,
-            RL_MOVE_UP_FORWARD,
-            RL_MOVE_UP_FORWARD | BTN_MK,
-            RL_MOVE_UP_FORWARD | BTN_MK,
-            RL_MOVE_NEUTRAL,
-            RL_MOVE_NEUTRAL,
-        ),
-        "jump-forward-hk": (
-            RL_MOVE_UP_FORWARD,
-            RL_MOVE_UP_FORWARD,
-            RL_MOVE_UP_FORWARD | BTN_HK,
-            RL_MOVE_UP_FORWARD | BTN_HK,
-            RL_MOVE_NEUTRAL,
-            RL_MOVE_NEUTRAL,
-        ),
-        "jump-neutral-hk": (
-            RL_MOVE_UP,
-            RL_MOVE_UP,
-            RL_MOVE_UP | BTN_HK,
-            RL_MOVE_UP | BTN_HK,
-            RL_MOVE_NEUTRAL,
-            RL_MOVE_NEUTRAL,
-        ),
-        "jump-back-hk": (
-            RL_MOVE_UP_BACK,
-            RL_MOVE_UP_BACK,
-            RL_MOVE_UP_BACK | BTN_HK,
-            RL_MOVE_UP_BACK | BTN_HK,
             RL_MOVE_NEUTRAL,
             RL_MOVE_NEUTRAL,
         ),
@@ -2594,6 +2620,7 @@ def format_dqn_verbose_diagnostics(
             f" dqn_mask_source={valid_action_mask_source}"
             " dqn_valid=n/a"
             " self_r1=n/a self_r2=n/a self_atk=n/a self_contact=n/a"
+            " self_air=n/a self_jump_phase=n/a ground_ok=n/a jump_ok=n/a air_ok=n/a"
         )
     valid_actions = dqn_valid_actions_for_row(obs_row, actor.actions, valid_action_mask_config)
     return (
@@ -2606,6 +2633,11 @@ def format_dqn_verbose_diagnostics(
         f" self_r2={row_int_field(obs_row, 'obs_self_routine_2')}"
         f" self_atk={row_int_field(obs_row, 'obs_self_routine_attack_state')}"
         f" self_contact={row_int_field(obs_row, 'obs_self_contact_reaction_state')}"
+        f" self_air={row_int_field(obs_row, 'obs_self_airborne')}"
+        f" self_jump_phase={row_int_field(obs_row, 'obs_self_jump_phase')}"
+        f" ground_ok={1 if dqn_ground_action_start_allowed(obs_row) else 0}"
+        f" jump_ok={1 if dqn_jump_start_allowed(obs_row) else 0}"
+        f" air_ok={1 if dqn_air_attack_allowed(obs_row) else 0}"
     )
 
 
@@ -3088,8 +3120,8 @@ def main() -> None:
         default="auto",
         help=(
             "DQN action eligibility mask. auto reads metadata.dqn_valid_action_mask_config from the active "
-            "actor; off disables masking; self-routine-v1 uses current self routine/contact fields to gate "
-            "ground, jump-air, and non-movable action candidates"
+            "actor; off disables masking; self-routine-v1 uses current self routine/contact fields; "
+            "action-start-v1 uses schema-backed ground/jump/air action-start flags"
         ),
     )
     parser.add_argument(

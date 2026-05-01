@@ -6,9 +6,9 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-#define RL_PROTOCOL_VERSION 3u
-#define RL_OBSERVATION_SCHEMA_VERSION 3u
-#define RL_ACTION_SCHEMA_VERSION 2u
+#define RL_PROTOCOL_VERSION 4u
+#define RL_OBSERVATION_SCHEMA_VERSION 4u
+#define RL_ACTION_SCHEMA_VERSION 3u
 #define RL_PROTOCOL_MAGIC 0x33524C41u /* 3RLA */
 #define RL_PROTOCOL_FEATURE_RELATIVE_MOVEMENT 0x00000001u
 #define RL_PROTOCOL_FEATURE_FIXED_HOLD 0x00000002u
@@ -121,7 +121,12 @@ typedef struct RL_PROTOCOL_PACKED RLObsSpacingPayloadV1 {
     u8 obs_opp_routine_attack_state;
     u8 obs_self_contact_reaction_state;
     u8 obs_opp_contact_reaction_state;
-    u8 reserved1[3];
+    u8 obs_self_airborne;
+    u8 obs_self_jump_phase;
+    u8 obs_self_ground_action_start_allowed;
+    u8 obs_self_jump_start_allowed;
+    u8 obs_self_air_attack_allowed;
+    u8 reserved1[2];
 } RLObsSpacingPayloadV1;
 
 typedef struct RL_PROTOCOL_PACKED RLTransitionBatchHeader {

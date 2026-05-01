@@ -53,6 +53,10 @@ typedef struct RLObservationV1 {
     u8 opp_high_jump_flag;
     u8 self_airborne;
     u8 opp_airborne;
+    u8 self_jump_phase;
+    u8 self_ground_action_start_allowed;
+    u8 self_jump_start_allowed;
+    u8 self_air_attack_allowed;
     u8 self_airborne_started;
     u8 opp_airborne_started;
     u8 self_attack_started;

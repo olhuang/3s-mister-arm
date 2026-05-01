@@ -74,6 +74,57 @@ enum {
     RL_DEBUG_BTN_HK = 0x0400,
 };
 
+enum {
+    RL_OBS_JUMP_PHASE_NONE = 0,
+    RL_OBS_JUMP_PHASE_READY = 1,
+    RL_OBS_JUMP_PHASE_AIR = 2,
+    RL_OBS_JUMP_PHASE_AIR_OTHER = 3,
+};
+
+static bool is_ordinary_jump_ready_routine(u16 routine1, u16 routine2) {
+    return routine1 == 0 && (routine2 == 16 || routine2 == 17);
+}
+
+static bool is_ordinary_jump_air_routine(u16 routine1, u16 routine2) {
+    return routine1 == 0 && routine2 >= 18 && routine2 <= 26;
+}
+
+static u8 derive_jump_phase(const RLObservationV1* obs) {
+    if (obs == NULL) {
+        return RL_OBS_JUMP_PHASE_NONE;
+    }
+    if (is_ordinary_jump_ready_routine(obs->self_routine[1], obs->self_routine[2])) {
+        return RL_OBS_JUMP_PHASE_READY;
+    }
+    if (is_ordinary_jump_air_routine(obs->self_routine[1], obs->self_routine[2])) {
+        return RL_OBS_JUMP_PHASE_AIR;
+    }
+    return obs->self_airborne ? RL_OBS_JUMP_PHASE_AIR_OTHER : RL_OBS_JUMP_PHASE_NONE;
+}
+
+static void derive_action_start_flags(RLObservationV1* obs) {
+    bool ordinary_unlocked = false;
+    bool jump_ready = false;
+    bool jump_air = false;
+
+    if (obs == NULL) {
+        return;
+    }
+
+    obs->self_jump_phase = derive_jump_phase(obs);
+    ordinary_unlocked = obs->valid && obs->self_routine[1] == 0 && !obs->self_routine_attack_state &&
+                        !obs->self_contact_reaction_state && !obs->self_hit_stop &&
+                        !obs->self_do_not_move && obs->self_current_attack == 0 &&
+                        !obs->self_throw_active;
+    jump_ready = is_ordinary_jump_ready_routine(obs->self_routine[1], obs->self_routine[2]);
+    jump_air = is_ordinary_jump_air_routine(obs->self_routine[1], obs->self_routine[2]);
+
+    obs->self_ground_action_start_allowed =
+        (u8)(ordinary_unlocked && !obs->self_airborne && !jump_ready && !jump_air);
+    obs->self_jump_start_allowed = obs->self_ground_action_start_allowed;
+    obs->self_air_attack_allowed = (u8)(ordinary_unlocked && obs->self_airborne && jump_air);
+}
+
 static s16 clamp_s16_nonnegative(s16 value) {
     return (value < 0) ? 0 : value;
 }
@@ -254,6 +305,7 @@ void RLObservation_OnFrameEnd() {
     obs.opp_routine_attack_state = (u8)(obs.opp_routine[1] == 4);
     obs.self_contact_reaction_state = (u8)(obs.self_routine[1] == 1);
     obs.opp_contact_reaction_state = (u8)(obs.opp_routine[1] == 1);
+    derive_action_start_flags(&obs);
     if (prev_frame_valid) {
         const s16 self_hp_delta = clamp_s16_delta((s32)prev_frame_hp[self] - (s32)debug.self_hp);
         const s16 opp_hp_delta = clamp_s16_delta((s32)prev_frame_hp[opp] - (s32)debug.opp_hp);

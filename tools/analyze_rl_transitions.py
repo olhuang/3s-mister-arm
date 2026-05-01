@@ -280,7 +280,7 @@ def parse_args() -> argparse.Namespace:
         default="auto",
         help=(
             "Canonical action label source for DIRECT/CREDITED tables. auto uses engine/input labels "
-            "for schema-v3 demo rows and policy labels for schema-v3 remote rows."
+            "for current-schema demo rows and policy labels for current-schema remote rows."
         ),
     )
     args = parser.parse_args()

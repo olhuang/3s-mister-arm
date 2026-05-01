@@ -175,6 +175,46 @@ Rollout steps:
      attribution exists.
    - run a short DQN smoke test on one v3 CPU-demo log.
 
+### Transition Schema V4 / Action Set V5 Jump Split
+
+Status: implemented as of 2026-05-01 for the next split-taxonomy logs and
+models. V40 and older action-set-v4 models remain schema-v3 actors and should
+not be warm-started into this action set.
+
+The schema-v4 change keeps the v3 `policy_*`, `input_*`, and `engine_*`
+families, but fixes the jump namespace:
+
+- `RL_POLICY_ACTION_JUMP` (`3`) now represents only starting a jump from a
+  ground action-start state. The direction comes from sub-actions
+  `up_forward`, `neutral_direction`, or `up_back`, and maps to
+  `jump-forward-start`, `jump-neutral-start`, or `jump-back-start`.
+- `RL_POLICY_ACTION_AIR_NORMAL` (`16`) represents airborne button normals. The
+  button comes from `lp/mp/hp/lk/mk/hk` sub-actions and maps to `air-lp` through
+  `air-hk`.
+- legacy `jump_attack_forward` / `jump_attack_neutral` / `jump_attack_back`
+  ids (`12..14`) are kept reserved for old schema-v3/action-set-v4 logs but are
+  not emitted for new schema-v4 rows.
+
+Schema-v4 rows add these observation fields:
+
+| field | meaning |
+|---|---|
+| `obs_self_airborne` | whether the self player is airborne in the sampled observation |
+| `obs_self_jump_phase` | compact jump phase: none, jump-ready, ordinary jump-air, or other airborne |
+| `obs_self_ground_action_start_allowed` | ground action families can start now |
+| `obs_self_jump_start_allowed` | jump-start actions can start now |
+| `obs_self_air_attack_allowed` | `air-*` button normals can start now |
+
+Probe/trainer/analyzer code should use the schema-backed helper semantics:
+
+- ground action-start rows can train/rank ground actions plus
+  `jump-*-start`, not `air-*`.
+- ordinary jump-air rows can train/rank `air-*`, not ground actions or
+  `jump-*-start`.
+- locked/recovery/contact/damage rows should not create new attack/jump-start
+  targets; live inference may still keep movement/guard hold candidates as a
+  conservative fallback.
+
 ### Routine Number Dispatch Source Map
 
 Do not interpret `R2` without `R1`. The stable engine-state key is at least
@@ -326,10 +366,11 @@ How to add another character:
 | 9 | tech_throw | neutral | `LP+LK` |
 | 10 | quick_stand | neutral | `down_on_knockdown` |
 | 11 | taunt | neutral | `HP+HK` |
-| 12 | jump_attack_forward | lp, mp, hp, lk, mk, hk | `up-forward+<button>` |
-| 13 | jump_attack_neutral | lp, mp, hp, lk, mk, hk | `up+<button>` |
-| 14 | jump_attack_back | lp, mp, hp, lk, mk, hk | `up-back+<button>` |
+| 12 | jump_attack_forward | lp, mp, hp, lk, mk, hk | legacy schema-v3/action-set-v4 only |
+| 13 | jump_attack_neutral | lp, mp, hp, lk, mk, hk | legacy schema-v3/action-set-v4 only |
+| 14 | jump_attack_back | lp, mp, hp, lk, mk, hk | legacy schema-v3/action-set-v4 only |
 | 15 | crouch_normal | lp, mp, hp, lk, mk, hk | `down+<button>` |
+| 16 | air_normal | lp, mp, hp, lk, mk, hk | `<button>` while `obs_self_air_attack_allowed` |
 
 ## Sub Actions
 
@@ -459,12 +500,12 @@ Observed field behavior:
 
 | move family | policy_action_id | sub_action | R2 | KW | AK | status / notes |
 |---|---:|---|---:|---|---|---|
-| normal punch | `stand_normal` / `crouch_normal` / `jump_attack_*` | `lp` | TBD | `00` | `010` | AK/KW observed; R2 still needs stance/jump validation |
-| normal punch | `stand_normal` / `crouch_normal` / `jump_attack_*` | `mp` | TBD | `02` | `020` | AK/KW observed; R2 still needs stance/jump validation |
-| normal punch | `stand_normal` / `crouch_normal` / `jump_attack_*` | `hp` | TBD | `04` | `040` | AK/KW observed; R2 still needs stance/jump validation |
-| normal kick | `stand_normal` / `crouch_normal` / `jump_attack_*` | `lk` | TBD | `01` | `100` | AK/KW observed; R2 still needs stance/jump validation |
-| normal kick | `stand_normal` / `crouch_normal` / `jump_attack_*` | `mk` | TBD | `03` | `200` | AK/KW observed; R2 still needs stance/jump validation |
-| normal kick | `stand_normal` / `crouch_normal` / `jump_attack_*` | `hk` | TBD | `05` | `400` | AK/KW observed; R2 still needs stance/jump validation |
+| normal punch | `stand_normal` / `crouch_normal` / `air_normal` | `lp` | TBD | `00` | `010` | AK/KW observed; R2 still needs stance/jump validation |
+| normal punch | `stand_normal` / `crouch_normal` / `air_normal` | `mp` | TBD | `02` | `020` | AK/KW observed; R2 still needs stance/jump validation |
+| normal punch | `stand_normal` / `crouch_normal` / `air_normal` | `hp` | TBD | `04` | `040` | AK/KW observed; R2 still needs stance/jump validation |
+| normal kick | `stand_normal` / `crouch_normal` / `air_normal` | `lk` | TBD | `01` | `100` | AK/KW observed; R2 still needs stance/jump validation |
+| normal kick | `stand_normal` / `crouch_normal` / `air_normal` | `mk` | TBD | `03` | `200` | AK/KW observed; R2 still needs stance/jump validation |
+| normal kick | `stand_normal` / `crouch_normal` / `air_normal` | `hk` | TBD | `05` | `400` | AK/KW observed; R2 still needs stance/jump validation |
 | Hadouken | 1229 | `lp` / `mp` / `hp` | 16 | `08` / `0A` / `0C` | not stable | overlay observed |
 | Shoryuken | 1228 | `lp` / `mp` / `hp` | 17 | `08` / `0A` / `0C` | not stable | overlay observed |
 | Tatsumaki Senpukyaku | 1230 | `lk` / `mk` / `hk` | 18 | `09` / `0B` / `0D` | not stable | overlay observed |
@@ -727,3 +768,5 @@ Source-known Ryu command routines that still need overlay confirmation:
   before promoting them into a live curriculum.
 - Keep live learner action sets using separate `back`, `guard/stand`, and
   `guard/crouch` actions so retreat spacing is not credited as blocking.
+- Collect a short schema-v4 CPU-demo log and confirm `jump-*-start` and
+  `air-*` labels are separated before training the first action-set-v5 DQN.

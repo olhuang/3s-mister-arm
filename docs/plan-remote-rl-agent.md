@@ -2732,6 +2732,110 @@ Full-action DQN sparse-action plan:
       `DQN_FEATURE_NAMES`, model metadata, analyzer diagnostics, and probe
       inference together so train-time and live-time action eligibility use
       the same features.
+  - Implementation review / code-change map:
+    - version and compatibility gates:
+      - bump Python `ACTION_SET_VERSION` because old V40 action heads encode
+        direction-specific jump attacks, while the new set separates
+        `jump-*-start` from `air-*`.
+      - bump C `RL_ACTION_SCHEMA_VERSION` so the handshake rejects old probe
+        servers that still interpret the old jump-attack action ids.
+      - bump C `RL_OBSERVATION_SCHEMA_VERSION` and Python
+        `OBS_SPACING_PAYLOAD_VERSION`; the current 32-byte live OBS payload has
+        only three reserved bytes, which is not enough for
+        `obs_self_airborne`, jump phase, and three allow flags.
+      - bump C/Python `TRANSITION_SCHEMA_VERSION` when transition NDJSON starts
+        carrying the new observation fields and canonical action labels.
+      - keep V40 as an action-set-v4/model-schema-v3 actor that requires the
+        current hard mask; train the first split-taxonomy model from fresh
+        schema-v4 logs instead of warm-starting V40.
+    - C-side RL runtime:
+      - `src/rl/rl_observation.h` / `src/rl/rl_observation.c`: surface the
+        existing `self_airborne` field into live/log payloads, then add and
+        derive `self_jump_phase`, `self_ground_action_start_allowed`,
+        `self_jump_start_allowed`, and `self_air_attack_allowed` from the
+        latest player routine, airborne, attack, contact/reaction, hit-stop,
+        and movement-lock fields.
+      - `src/rl/rl_protocol.h`: extend `RLObsSpacingPayloadV1` or introduce the
+        next payload shape for the schema-v4 fields; keep the header framing
+        unchanged unless validation shows a protocol-level bump is needed.
+      - `src/rl/rl_session.c`: copy the new OBS fields into both
+        `RLSession_FillObsSpacingPayload()` and
+        `RLSession_CaptureObservationSpacing()`, then emit them from
+        `RLSession_FormatTransitionLogLine()`.
+      - `src/rl/rl_session.c`: add a new policy action id for air normals
+        (button sub-action only), map movement-only `RL_POLICY_ACTION_JUMP`
+        direction sub-actions to `jump-forward-start`,
+        `jump-neutral-start`, and `jump-back-start`, and stop using
+        `RL_POLICY_ACTION_JUMP_ATTACK_FORWARD/NEUTRAL/BACK` for new schema-v4
+        rows.
+      - `src/rl/rl_session.c`: update `RLSession_DeriveDemoPolicyMeta()` so
+        demo input labels `air-*` only when the observation says air attack is
+        allowed; grounded jump input should label a jump-start or stay
+        unattributed until engine outcome attribution sees the real air normal.
+      - `src/rl/rl_session.c`: update
+        `RLSession_RyuNormalPolicyMetaFromIdentity()` and
+        `RLSession_IsNormalPolicyAction()` so airborne normal engine
+        attribution becomes the new air-normal action id instead of the old
+        `jump_attack_forward` fallback.
+      - `src/rl/rl_net.c` should not need action-specific logic, but its
+        handshake and packet-version rejection path must be validated after the
+        action/OBS schema bumps.
+    - Python shared action/probe surface:
+      - `tools/rl_probe_server.py`: replace `JUMP_NORMAL_ACTION_NAMES`,
+        `JUMP_NORMAL_ACTION_WIRES`, and
+        `JUMP_NORMAL_ACTION_SEQUENCES` with separate jump-start and air-normal
+        action families.
+      - `tools/rl_probe_server.py`: update `SCRIPTED_POLICY_CHOICES`,
+        `TABULAR_ACTION_NAMES`, `TABULAR_ACTION_WIRES`,
+        `POLICY_ACTION_META_BY_NAME`,
+        `TABULAR_ACTION_NAMES_BY_POLICY_META`,
+        `TABULAR_ACTION_NAMES_BY_WIRE`, aliases, `policy_action_frame_name()`,
+        and macro/fixed-action helpers so `jump-*-start` sends only direction
+        and `air-*` sends only the button while stamping the air-normal policy
+        metadata.
+      - `tools/rl_probe_server.py`: parse the expanded OBS payload, normalize
+        the new transition fields in `learner_replay_row()`, and include the
+        schema-v4 fields in verbose DQN diagnostics.
+      - `tools/rl_probe_server.py`: add schema-backed action eligibility
+        helpers and a new split-taxonomy DQN mask mode, keeping
+        `self-routine-v1` only for action-set-v4/V40 compatibility.
+      - `tools/rl_probe_server.py`: add the new action-start / airborne fields
+        to `DQN_FEATURE_NAMES` and `DQN_FEATURE_SCALES` so offline training and
+        live inference consume identical features.
+    - Python training and diagnostics:
+      - `tools/train_dqn_learner.py`: update attack-risk sets so
+        `jump-*-start` is treated as movement/jump-start, while `air-*` is
+        treated as an attack for generic and jump/air whiff costs.
+      - `tools/train_dqn_learner.py`: switch movable-state filtering and
+        train-time valid-action target masking from raw routine guesses to the
+        schema-backed action-start allow flags.
+      - `tools/train_dqn_learner.py`: review balanced batch groups after the
+        split; either keep `air-*` in the normal bucket and jump-start in
+        movement, or add an explicit air/jump group with ratio metadata.
+      - `tools/compare_dqn_models.py`: update action-rate summaries,
+        focus-action parsing, and shared mask selection for the new action set.
+      - `tools/analyze_rl_transitions.py`: update default action lists,
+        policy-meta names, engine-outcome summaries, and routine/action tables
+        so schema-v4 logs show jump-start and air-normal labels clearly.
+      - `tools/rl_auto_retrain.py`: ensure incremental retrain preserves the
+        new action list from current models and review reward preset names /
+        extra args that still say "jump attack" when they now apply to
+        `air-*`.
+    - Validation before training the first split model:
+      - Python: `python3 -m py_compile tools/rl_probe_server.py
+        tools/train_dqn_learner.py tools/compare_dqn_models.py
+        tools/analyze_rl_transitions.py tools/rl_auto_retrain.py`.
+      - Python smoke: synthetic policy-meta decode for `jump-forward-start`,
+        `jump-neutral-start`, `jump-back-start`, and all six `air-*` actions.
+      - Python mask smoke: grounded rows allow ground + jump-start and reject
+        `air-*`; jump-air rows allow only `air-*`; non-movable rows reject both
+        new action-start families.
+      - C/local smoke: build with the telemetry flavor, then validate handshake
+        schema rejection/acceptance, OBS payload size/version, and one local
+        schema-v4 transition row containing the new fields.
+      - Data smoke: collect a short CPU-demo schema-v4 log and verify analyzer
+        counts show jump-start labels separately from air-normal labels before
+        training the first V41/Vnext DQN.
 
 - Step 4: train-time invalid-action Q penalty on the split action space.
   - Do this after Step 3, not before it.

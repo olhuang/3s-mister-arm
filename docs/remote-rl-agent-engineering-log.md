@@ -2,6 +2,72 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-01: Audit Jump Taxonomy Split Code Touch Points
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / full action-set DQN experiments
+
+Files changed:
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- review the live/probe/training code paths that must change for the planned
+  split between ground jump-start actions and true airborne attack actions.
+- turn the review into an implementation map before editing action ids or
+  schema versions.
+
+Findings:
+- the split is a schema/action-set change, not a trainer-only change.
+- C-side runtime changes are required in:
+  - `src/rl/rl_observation.h`
+  - `src/rl/rl_observation.c`
+  - `src/rl/rl_protocol.h`
+  - `src/rl/rl_protocol.c`
+  - `src/rl/rl_session.c`
+  - validation of `src/rl/rl_net.c` handshake/action-packet rejection behavior.
+- Python-side changes are required in:
+  - `tools/rl_probe_server.py`
+  - `tools/train_dqn_learner.py`
+  - `tools/compare_dqn_models.py`
+  - `tools/analyze_rl_transitions.py`
+  - `tools/rl_auto_retrain.py`
+- compatibility gates must move together:
+  - Python `ACTION_SET_VERSION`
+  - C `RL_ACTION_SCHEMA_VERSION`
+  - C `RL_OBSERVATION_SCHEMA_VERSION`
+  - Python `OBS_SPACING_PAYLOAD_VERSION`
+  - C/Python `TRANSITION_SCHEMA_VERSION`
+- the current live OBS spacing payload is 32 bytes and has only three reserved
+  bytes left, so the schema-v4 fields should expand the payload instead of
+  trying to squeeze five new fields into the reserved tail.
+- `RLSession_RyuNormalPolicyMetaFromIdentity()` currently maps airborne normal
+  attribution to `RL_POLICY_ACTION_JUMP_ATTACK_FORWARD`; this must become a new
+  air-normal policy action id with button sub-actions.
+- `RLSession_DeriveDemoPolicyMeta()` currently maps attack + up-direction input
+  to direction-specific jump-attack action ids. After the split, demo input
+  should label `air-*` only when the observation says an air attack can start;
+  grounded jump input should label jump-start or let later engine attribution
+  produce the air-normal label.
+- `tools/train_dqn_learner.py` currently treats every action whose name starts
+  with `jump-` as a jump-attack risk action. After the split,
+  `jump-*-start` must not be treated as an air attack, while `air-*` should be
+  included in attack/risk accounting.
+
+Plan update:
+- added a Step 3 implementation review / code-change map to
+  `docs/plan-remote-rl-agent.md`.
+- recorded that V40 remains action-set-v4/schema-v3 and should not be
+  warm-started into the split action set.
+- recorded validation requirements for synthetic action-meta decode, mask truth
+  tables, telemetry build, handshake/schema compatibility, and a short
+  schema-v4 CPU-demo data smoke before training the first split-taxonomy DQN.
+
+Validation:
+- docs-only audit; no runtime behavior changed in this entry.
+- `git diff --check -- docs/plan-remote-rl-agent.md docs/remote-rl-agent-engineering-log.md`
+  passed.
+
 ## 2026-05-01: Refine Jump Root-Fix Action-Start Schema
 
 Milestone:

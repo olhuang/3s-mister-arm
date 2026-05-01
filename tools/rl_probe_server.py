@@ -417,6 +417,29 @@ class DQNValidActionMaskConfig:
         return self.mode
 
 
+@dataclass(frozen=True)
+class DQNProjectileTimingPriorConfig:
+    enabled: bool = False
+    min_time_to_self: int = 0
+    urgent_max_time_to_self: int = 6
+    borderline_max_time_to_self: int = 12
+    urgent_jump_penalty: float = 0.05
+    borderline_jump_penalty: float = 0.03
+    threat_max_dx: int = 240
+    threat_max_abs_y: int = 96
+
+    def label(self) -> str:
+        if not self.enabled:
+            return "off"
+        return (
+            f"jump_penalty:{self.min_time_to_self}-{self.urgent_max_time_to_self}"
+            f"={self.urgent_jump_penalty:.3f},"
+            f"{self.urgent_max_time_to_self + 1}-{self.borderline_max_time_to_self}"
+            f"={self.borderline_jump_penalty:.3f}"
+            f"/dx<={self.threat_max_dx}/abs_y<={self.threat_max_abs_y}"
+        )
+
+
 @dataclass
 class TimingBucketStats:
     rows: int = 0
@@ -1180,6 +1203,47 @@ def row_int_field(row: dict[str, object], name: str) -> int:
         return 0
 
 
+def dqn_projectile_timing_prior_jump_penalty(
+    row: dict[str, object],
+    config: DQNProjectileTimingPriorConfig,
+) -> float:
+    if not config.enabled:
+        return 0.0
+    if row_int_field(row, "obs_self_airborne") != 0 or row_int_field(row, "obs_self_jump_phase") >= 2:
+        return 0.0
+    if row_int_field(row, "obs_projectile_active") == 0:
+        return 0.0
+    if row_int_field(row, "obs_projectile_owner") != 2:
+        return 0.0
+
+    rel_x = row_int_field(row, "obs_projectile_rel_x")
+    rel_y = row_int_field(row, "obs_projectile_rel_y")
+    vel_x = row_int_field(row, "obs_projectile_vel_x")
+    time_to_self = row_int_field(row, "obs_projectile_time_to_self")
+    if (
+        rel_x <= 0
+        or rel_x > config.threat_max_dx
+        or abs(rel_y) > config.threat_max_abs_y
+        or vel_x >= 0
+        or time_to_self < config.min_time_to_self
+        or time_to_self > config.borderline_max_time_to_self
+    ):
+        return 0.0
+    if time_to_self <= config.urgent_max_time_to_self:
+        return max(0.0, config.urgent_jump_penalty)
+    return max(0.0, config.borderline_jump_penalty)
+
+
+def dqn_projectile_timing_prior_penalty(
+    action: str,
+    row: dict[str, object],
+    config: DQNProjectileTimingPriorConfig,
+) -> float:
+    if action not in DQN_JUMP_START_ACTIONS:
+        return 0.0
+    return dqn_projectile_timing_prior_jump_penalty(row, config)
+
+
 def normalize_dqn_valid_action_mask_mode(mode: object) -> str:
     normalized = str(mode).strip().lower().replace("_", "-")
     return normalized or "off"
@@ -1574,6 +1638,7 @@ def dqn_ranked_action_scores(
     row: dict[str, object],
     support_prior_config: DQNSupportPriorConfig = DQNSupportPriorConfig(),
     valid_action_mask_config: DQNValidActionMaskConfig = DQNValidActionMaskConfig(),
+    projectile_timing_prior_config: DQNProjectileTimingPriorConfig = DQNProjectileTimingPriorConfig(),
 ) -> list[tuple[str, float]]:
     values = dqn_predict_values(dqn_model, row)
     if not values:
@@ -1588,6 +1653,7 @@ def dqn_ranked_action_scores(
             continue
         score = float(values[index])
         score -= dqn_support_prior_penalty(action, action_counts, action_rewards, support_prior_config)
+        score -= dqn_projectile_timing_prior_penalty(action, row, projectile_timing_prior_config)
         scored_actions.append((action, score))
     return sorted(scored_actions, key=lambda item: (item[1], item[0]), reverse=True)
 
@@ -2495,6 +2561,7 @@ def dqn_actor_action_name(
     obs_row: dict[str, object] | None,
     support_prior_config: DQNSupportPriorConfig = DQNSupportPriorConfig(),
     valid_action_mask_config: DQNValidActionMaskConfig = DQNValidActionMaskConfig(),
+    projectile_timing_prior_config: DQNProjectileTimingPriorConfig = DQNProjectileTimingPriorConfig(),
 ) -> str | None:
     if actor.policy != "dqn" or not obs_row or not actor.dqn_model:
         return None
@@ -2510,6 +2577,7 @@ def dqn_actor_action_name(
         obs_row,
         support_prior_config,
         valid_action_mask_config,
+        projectile_timing_prior_config,
     )
     if not ranked_actions:
         return None
@@ -2590,6 +2658,7 @@ def policy_action_frame(
     obs_row_override: dict[str, object] | None = None,
     dqn_support_prior_config: DQNSupportPriorConfig = DQNSupportPriorConfig(),
     dqn_valid_action_mask_config: DQNValidActionMaskConfig = DQNValidActionMaskConfig(),
+    dqn_projectile_timing_prior_config: DQNProjectileTimingPriorConfig = DQNProjectileTimingPriorConfig(),
 ) -> PolicyActionFrame:
     if actor.policy in MODEL_POLICY_CHOICES:
         macro_frame = active_macro_action_frame(macro_states, nonce, run_id, episode_id)
@@ -2605,6 +2674,7 @@ def policy_action_frame(
             obs_row_override,
             dqn_support_prior_config,
             dqn_valid_action_mask_config,
+            dqn_projectile_timing_prior_config,
         )
     if action_name is not None:
         fixed = fixed_action_wire(action_name)
@@ -2630,6 +2700,7 @@ def policy_action_wire(
     obs_row_override: dict[str, object] | None = None,
     dqn_support_prior_config: DQNSupportPriorConfig = DQNSupportPriorConfig(),
     dqn_valid_action_mask_config: DQNValidActionMaskConfig = DQNValidActionMaskConfig(),
+    dqn_projectile_timing_prior_config: DQNProjectileTimingPriorConfig = DQNProjectileTimingPriorConfig(),
 ) -> int:
     return policy_action_frame(
         actor,
@@ -2644,6 +2715,7 @@ def policy_action_wire(
         obs_row_override,
         dqn_support_prior_config,
         dqn_valid_action_mask_config,
+        dqn_projectile_timing_prior_config,
     ).action_wire
 
 
@@ -2653,6 +2725,7 @@ def format_dqn_verbose_diagnostics(
     target_action: PolicyActionFrame,
     valid_action_mask_config: DQNValidActionMaskConfig,
     valid_action_mask_source: str,
+    projectile_timing_prior_config: DQNProjectileTimingPriorConfig,
 ) -> str:
     if actor.policy != "dqn":
         return ""
@@ -2662,16 +2735,23 @@ def format_dqn_verbose_diagnostics(
             f" dqn_action={action_name}"
             f" dqn_mask={valid_action_mask_config.label()}"
             f" dqn_mask_source={valid_action_mask_source}"
+            f" dqn_proj_prior={projectile_timing_prior_config.label()}"
             " dqn_valid=n/a"
             " self_r1=n/a self_r2=n/a self_atk=n/a self_contact=n/a"
             " self_air=n/a self_jump_phase=n/a ground_ok=n/a jump_ok=n/a air_ok=n/a"
             " proj=n/a"
         )
     valid_actions = dqn_valid_actions_for_row(obs_row, actor.actions, valid_action_mask_config)
+    projectile_timing_prior_penalty = dqn_projectile_timing_prior_jump_penalty(
+        obs_row,
+        projectile_timing_prior_config,
+    )
     return (
         f" dqn_action={action_name}"
         f" dqn_mask={valid_action_mask_config.label()}"
         f" dqn_mask_source={valid_action_mask_source}"
+        f" dqn_proj_prior={projectile_timing_prior_config.label()}"
+        f" dqn_proj_prior_jump_penalty={projectile_timing_prior_penalty:.3f}"
         f" dqn_valid={len(valid_actions)}/{len(actor.actions)}"
         f" dqn_phase={dqn_self_mask_phase(obs_row)}"
         f" self_r1={row_int_field(obs_row, 'obs_self_routine_1')}"
@@ -2743,6 +2823,7 @@ def serve(
     dqn_support_prior_config: DQNSupportPriorConfig,
     dqn_valid_action_mask_config: DQNValidActionMaskConfig,
     dqn_valid_action_mask_auto: bool,
+    dqn_projectile_timing_prior_config: DQNProjectileTimingPriorConfig,
 ) -> None:
     inference_stats = InferenceStats()
     initial_actions = tabular_actions if policy == "tabular" else TABULAR_DEFAULT_ACTIONS
@@ -2795,6 +2876,8 @@ def serve(
     print(f"RL probe server listening on {host}:{port}")
     if dqn_support_prior_config.enabled:
         print(f"DQN support prior active {dqn_support_prior_config.label()}", flush=True)
+    if dqn_projectile_timing_prior_config.enabled:
+        print(f"DQN projectile timing prior active {dqn_projectile_timing_prior_config.label()}", flush=True)
     active_model = model_store.current()
     initial_mask_config, initial_mask_source = resolve_dqn_valid_action_mask_config(
         active_model,
@@ -2890,6 +2973,7 @@ def serve(
                     obs_row,
                     dqn_support_prior_config,
                     effective_dqn_valid_action_mask_config,
+                    dqn_projectile_timing_prior_config,
                 )
                 payload = make_action_packet(
                     nonce,
@@ -2922,6 +3006,7 @@ def serve(
                         target_action,
                         effective_dqn_valid_action_mask_config,
                         dqn_valid_action_mask_source,
+                        dqn_projectile_timing_prior_config,
                     )
                     print(
                         f"{target} OBS-ACTION policy={active_model.policy} reply={obs_reply_mode} "
@@ -3175,6 +3260,53 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--dqn-projectile-timing-prior",
+        action="store_true",
+        help="Apply a soft jump-start Q penalty for close incoming opponent projectiles before DQN argmax",
+    )
+    parser.add_argument(
+        "--dqn-projectile-prior-urgent-jump-penalty",
+        type=float,
+        default=0.05,
+        help="Jump-start Q penalty when obs_projectile_time_to_self is in the urgent projectile bucket",
+    )
+    parser.add_argument(
+        "--dqn-projectile-prior-borderline-jump-penalty",
+        type=float,
+        default=0.03,
+        help="Jump-start Q penalty when obs_projectile_time_to_self is in the borderline projectile bucket",
+    )
+    parser.add_argument(
+        "--dqn-projectile-prior-min-time-to-self",
+        type=int,
+        default=0,
+        help="Minimum obs_projectile_time_to_self eligible for the projectile timing prior",
+    )
+    parser.add_argument(
+        "--dqn-projectile-prior-urgent-max-time-to-self",
+        type=int,
+        default=6,
+        help="Maximum obs_projectile_time_to_self for the urgent projectile prior bucket",
+    )
+    parser.add_argument(
+        "--dqn-projectile-prior-borderline-max-time-to-self",
+        type=int,
+        default=12,
+        help="Maximum obs_projectile_time_to_self for the borderline projectile prior bucket",
+    )
+    parser.add_argument(
+        "--dqn-projectile-prior-threat-max-dx",
+        type=int,
+        default=240,
+        help="Maximum positive obs_projectile_rel_x eligible for the projectile timing prior",
+    )
+    parser.add_argument(
+        "--dqn-projectile-prior-threat-max-abs-y",
+        type=int,
+        default=96,
+        help="Maximum absolute obs_projectile_rel_y eligible for the projectile timing prior",
+    )
+    parser.add_argument(
         "--verbose",
         action="store_true",
         help="Log valid packets; PING summaries are sampled by --verbose-ping-interval",
@@ -3217,6 +3349,25 @@ def main() -> None:
     dqn_valid_action_mask_auto, dqn_valid_action_mask_config = parse_dqn_valid_action_mask_cli_config(
         str(args.dqn_valid_action_mask)
     )
+    projectile_prior_min_time = max(0, int(args.dqn_projectile_prior_min_time_to_self))
+    projectile_prior_urgent_max_time = max(
+        projectile_prior_min_time,
+        int(args.dqn_projectile_prior_urgent_max_time_to_self),
+    )
+    projectile_prior_borderline_max_time = max(
+        projectile_prior_urgent_max_time,
+        int(args.dqn_projectile_prior_borderline_max_time_to_self),
+    )
+    dqn_projectile_timing_prior_config = DQNProjectileTimingPriorConfig(
+        enabled=bool(args.dqn_projectile_timing_prior),
+        min_time_to_self=projectile_prior_min_time,
+        urgent_max_time_to_self=projectile_prior_urgent_max_time,
+        borderline_max_time_to_self=projectile_prior_borderline_max_time,
+        urgent_jump_penalty=max(0.0, float(args.dqn_projectile_prior_urgent_jump_penalty)),
+        borderline_jump_penalty=max(0.0, float(args.dqn_projectile_prior_borderline_jump_penalty)),
+        threat_max_dx=max(0, int(args.dqn_projectile_prior_threat_max_dx)),
+        threat_max_abs_y=max(0, int(args.dqn_projectile_prior_threat_max_abs_y)),
+    )
     serve(
         args.host,
         args.port,
@@ -3254,6 +3405,7 @@ def main() -> None:
         dqn_support_prior_config,
         dqn_valid_action_mask_config,
         dqn_valid_action_mask_auto,
+        dqn_projectile_timing_prior_config,
     )
 
 

@@ -1169,3 +1169,52 @@ Until this is implemented, pass an explicit ratio matching available sources:
 
 Do not use the current fixed default for targeted human-demo incremental
 retrain.
+
+## V61 Policy-Time Projectile Timing Prior
+
+V60 reduced close projectile human-defense Q gaps to roughly `0.024-0.027`,
+but still did not flip urgent/borderline top-1 away from jump. Stronger replay
+sampling also introduced a global `back` bias. V61 therefore adds an opt-in
+policy-time prior for live data collection instead of another blind margin or
+sampling increase.
+
+Implementation:
+- file: `tools/rl_probe_server.py`
+- flag: `--dqn-projectile-timing-prior`
+- default jump-start penalties:
+  - `obs_projectile_time_to_self 0-6`: `0.05`
+  - `obs_projectile_time_to_self 7-12`: `0.03`
+  - `13+`: no penalty
+- projectile gate:
+  - `obs_projectile_active == 1`
+  - `obs_projectile_owner == 2`
+  - `obs_projectile_rel_x > 0`
+  - `obs_projectile_rel_x <= 240`
+  - `abs(obs_projectile_rel_y) <= 96`
+  - `obs_projectile_vel_x < 0`
+- safety gate:
+  - skip if `obs_self_airborne != 0`
+  - skip if `obs_self_jump_phase >= 2`
+
+Intent:
+- use V60 weights with a small soft penalty to bootstrap on-policy
+  `guard`/`back` success data in `time_to_self <= 12` projectile rows.
+- keep far safe-jump behavior untouched.
+- avoid hard-masking jump.
+- avoid adding a direct `back`/`guard` bonus that would make the global back
+  bias worse.
+
+Probe target:
+- first live verification:
+  - `500+` effective projectile threat rows.
+  - `300+` rows with `time_to_self <= 12`.
+  - `100-150+` close `guard`/`back` rows.
+- retrain-quality collection:
+  - `2,000-4,000` projectile threat rows.
+  - at least `800` clean close defensive rows, ideally `1,200-2,000`.
+  - at least `300` clean `0-6` defensive rows and `300` clean `7-12`
+    defensive rows.
+
+Command note:
+- `--model-version` is an integer action-packet stamp. Use `--model-version 61`;
+  keep descriptive labels such as `v61-prior` in paths.

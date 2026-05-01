@@ -2454,7 +2454,9 @@ Tasks:
 - [x] Add clean human-demo projectile defensive expert margin support for V57/V58, including all-competitor mode and `projectile-response-v6` preset wiring
 - [x] Train and analyze V57/V58 defensive expert candidates; result: V57 moved defensive Q closer but leaked into specials, V58 preserved safe-jump but still did not make `guard`/`back` top-1 on urgent rows
 - [x] Add projectile-aware batch sampling plus a clean defensive-row selector so urgent projectile guard/back examples appear reliably in every training batch; V59/V60 result: Q gaps improve but top-1 still stays jump
-- [ ] V61 direction: add a policy-time projectile timing prior/mask or stronger filtered BC objective for `time_to_self <= 12`, because replay sampling alone did not flip urgent projectile decisions
+- [x] Add an opt-in V61 policy-time projectile timing prior for `time_to_self <= 12`: soft-penalize jump-start Q scores for close incoming opponent projectiles, skip airborne/jump-phase rows, and keep the default server behavior unchanged unless the CLI flag is enabled
+- [ ] V61 live probe: use V60 weights plus the projectile timing prior to collect on-policy close projectile guard/back success rows, then analyze bucket action distribution, `13+` safe-jump preservation, non-projectile behavior, and HP outcome before retraining
+- [ ] V62 direction: if V61 live data confirms guard/back is correct, retrain with the new on-policy defensive rows and consider a filtered group BC/classification objective only after enough clean data exists
 - [ ] Fix `rl_auto_retrain.py` replay planning for human-demo incremental retrain: add auto-available source ratios, log-level boost inputs, and replay-plan metadata
 - [ ] Review walk-forward/back macro actions after spacing-shaping A/B results
 - [ ] Review finer distance buckets after spacing-shaping sample-volume checks

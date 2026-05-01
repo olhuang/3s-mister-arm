@@ -9294,3 +9294,43 @@ Conclusion:
 - V59/V60 are not promotable.
 - V61 should add a policy-time projectile timing prior/mask or a stronger
   filtered BC/classification objective for `time_to_self <= 12`.
+
+## 2026-05-01: V61 Projectile Timing Prior
+
+Milestone:
+- Milestone 6: higher-control-rate policy and projectile curriculum.
+
+Code:
+- added opt-in DQN inference prior flags to `tools/rl_probe_server.py`.
+- `--dqn-projectile-timing-prior` applies a soft jump-start Q penalty only when
+  an opponent projectile is incoming, close enough, and the player is grounded.
+- default penalties:
+  - `time_to_self 0-6`: `0.05`
+  - `time_to_self 7-12`: `0.03`
+  - `13+`: no penalty
+- prior skips rows where `obs_self_airborne != 0` or
+  `obs_self_jump_phase >= 2`.
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py`
+- `python3 tools/rl_probe_server.py --help | rg "dqn-projectile"`
+- smoke helper check:
+  - urgent bucket returns `0.05`
+  - borderline bucket returns `0.03`
+  - `13+` and airborne rows return `0.0`
+- smoke ranking check:
+  - a synthetic close projectile row flipped from
+    `jump-forward-start` over `back` to `back` over `jump-forward-start`
+    after the prior was enabled.
+
+Findings:
+- V61 is an inference/data-collection bootstrap, not a new trained model yet.
+- The prior does not add a global `back`/`guard` bonus, which avoids amplifying
+  the V60 global back-bias failure mode.
+- `--model-version` remains an integer stamp; use `--model-version 61` and keep
+  descriptive names such as `v61-prior` in the log path or model directory.
+
+Next:
+- run a live V61 probe with V60 weights plus the prior enabled.
+- collect on-policy close projectile `guard`/`back` success rows before doing
+  another incremental retrain.

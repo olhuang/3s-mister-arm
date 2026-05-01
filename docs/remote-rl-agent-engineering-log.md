@@ -2,6 +2,46 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-01: Reorder Jump Root-Fix Before Raw DQN Penalty
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / full action-set DQN experiments
+
+Files changed:
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- adjust the next full-action DQN plan so the root fix happens before the raw
+  weight regularizer.
+- avoid training an invalid-action Q penalty against the current mixed
+  `jump-*` semantics, where one action head can mean both "start a jump from
+  the ground" and "press an attack button while already airborne".
+
+Plan change:
+- do the post-mask jump action taxonomy and observation-schema split first:
+  - `jump-forward-start`
+  - `jump-neutral-start`
+  - `jump-back-start`
+  - `air-lp`, `air-mp`, `air-hp`, `air-lk`, `air-mk`, `air-hk`
+- promote the schema support from a later follow-up into the same root-fix
+  step:
+  - `obs_self_airborne`
+  - `obs_self_jump_phase`
+  - `obs_self_can_start_jump`
+  - `obs_self_can_air_attack`
+  - optional opponent counterparts for anti-air / jump-in curriculum.
+- move the train-time invalid-action Q penalty after that split, so it learns
+  clean state-conditioned legality:
+  - grounded ordinary state can choose `jump-*-start`, not `air-*`.
+  - ordinary jump-air state can choose `air-*`, not `jump-*-start`.
+  - non-movable state should not start either family.
+
+Decision:
+- treat this as the next root-fix sequence after confirming the current V40
+  mask/probe behavior.
+- keep the hard valid-action mask for live safety throughout the transition.
+
 ## 2026-05-01: DQN Verbose Mask Diagnostics And PING Log Throttling
 
 Milestone:

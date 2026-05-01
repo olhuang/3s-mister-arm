@@ -2,6 +2,48 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-02: Refine Full-Retrain Collection Plan Risk Gates
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / controlled full
+  retrain data collection
+
+Files changed:
+- `docs/agent-memory/remote-rl-retrain-data-collection-plan.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- make the reboot collection plan more executable by addressing the main risks
+  in the first draft:
+  - humans cannot collect exact `time_to_self` buckets live.
+  - projectile jump punish depends on opponent fireball recovery, not timing
+    alone.
+  - projectile-defense training can over-generalize into bad guard/back
+    behavior against opponent jump-ins.
+  - natural match data quality matters more than raw row count.
+  - oki/wakeup is a core pressure situation and should be explicit curriculum
+    data.
+  - detectors/selectors must be validated before training on each collected
+    phase.
+
+Implementation:
+- changed Phase 5 collection from exact live timing buckets to three
+  operator-visible projectile cues: close, mid, and just-released/far.
+- kept post-collection `time_to_self` bucket analysis, but added
+  opponent-recovery/actionability as the missing split for `20-48` jump-forward
+  punish.
+- added detector dry-run gates to Phase 0 and every subsequent phase.
+- marked Phase 6 anti-air as a required patch after Phase 5 and added an M5
+  jump-in guard regression check.
+- added oki/wakeup targets to defense/corner-pressure collection.
+- changed Phase 8 natural data guidance from raw volume to a split of
+  high-quality CPU-demo, serious human-demo, and structured mixed rounds.
+
+Validation:
+- documentation-only change.
+- checked markdown diff locally.
+
 ## 2026-05-02: Add Full-Retrain Collection Plan To Future Task Tracking
 
 Milestone:

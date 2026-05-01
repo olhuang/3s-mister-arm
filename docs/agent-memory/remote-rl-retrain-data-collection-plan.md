@@ -53,6 +53,10 @@ Every collected log should be summarized by:
   - HP delta.
   - engine-attributed action, when validated.
   - guard/contact/whiff/punished indicators, when validated.
+- detector dry-run results for the phase:
+  - threat detectors.
+  - success/failure detectors.
+  - oversample/margin eligibility counts.
 
 Target scale for the first useful reboot:
 
@@ -60,6 +64,38 @@ Target scale for the first useful reboot:
 - preferred: `80K-120K` effective experiences.
 - expected raw rows: about `120K-250K`, depending on action cadence, macro
   continuation rows, and episode length.
+
+## Detector Dry-Run Gate
+
+Do not train directly after collecting a phase log. First run analyzer/detector
+dry-runs and compare detector counts against what was intentionally recorded.
+
+The important lesson from V55-V60 is that a behavior can be present in the log
+while the detector still misses it because the selector is too narrow. If the
+detector misses most of the intended rows, fix the detector or selector before
+training.
+
+For every phase log, record:
+
+- rows and action-start experiences.
+- selected execution source counts.
+- action distribution.
+- detector hit counts for the phase.
+- detector misses that appear visually/semantically wrong.
+
+For projectile logs, specifically check:
+
+- incoming projectile threat rows.
+- close guard success.
+- close back success.
+- safe jump.
+- late jump hit.
+- too-early jump failure.
+- timing-bucket distribution after log collection.
+
+If expected detector hit rates are far below the collection intent, stop and
+repair the detector/selector. Do not compensate by only increasing reward
+weights.
 
 ## Log Naming
 
@@ -131,6 +167,9 @@ Pass gates:
     `vel_x < 0`.
 - action-start flags are populated.
 - damage-only training-mode replay does not turn healing into positive reward.
+- detector dry-runs produce plausible counts for the intentionally recorded
+  scenarios. If a collected skill is visible in the log but not detected, fix
+  the detector before training on that phase.
 
 ## Phase 1: Movement And Spacing
 
@@ -250,6 +289,9 @@ Targets:
 | guard jump-in | 400-700 |
 | throw hit against agent as negative data | 200-400 |
 | throw tech, only if labels are reliable | 200-400 |
+| wakeup defense after agent knockdown | 300-500 |
+| wakeup reversal/no-reversal negative mix | 200-400 |
+| meaty pressure blocked on wakeup | 300-500 |
 
 Training notes:
 
@@ -257,6 +299,8 @@ Training notes:
 - keep passive/far guard cost, but do not make it so large that guard cannot
   win in real threats.
 - use delayed credit for post-block punish.
+- include wakeup/oki rows here or in Phase 7; do not leave knockdown pressure
+  entirely to natural match data.
 
 ## Phase 5: Projectile Defense Curriculum
 
@@ -273,7 +317,20 @@ Collection setup:
 - training mode.
 - opponent repeatedly throws LP, MP, and HP fireballs.
 - human-demo controls the agent.
-- collect each distance and `time_to_self` bucket deliberately.
+- collect by visual cue, not by trying to target exact `time_to_self` values
+  during play. Split into exact buckets after collection with the analyzer.
+
+Operator-facing visual cues:
+
+| Visual cue during recording | Approximate `time_to_self` | Recording intent |
+| --- | --- | --- |
+| fireball is very close / about to hit | about `0-12` | guard/back, do not jump |
+| fireball is mid-screen / readable | about `13-30` | mix guard, wait, delayed jump, and safe jump |
+| fireball was just released / still far | about `31-48+` | wait, walk-forward, or jump-forward only if opponent is still punishable |
+
+Post-collection analysis must still split the log into the five `time_to_self`
+buckets below. If a bucket is underrepresented, collect another targeted visual
+cue pass.
 
 Targets:
 
@@ -285,29 +342,46 @@ Targets:
 | `7-12` | guard/back success | 500-800 |
 | `7-12` | rare clean jump only when truly safe | 100-200 |
 | `7-12` | jump gets hit, negative data | 80-150 |
-| `13-22` | guard, wait, or delayed jump setup | 500-800 |
+| `13-22` | guard, wait, or delayed jump setup | 400-700 |
+| `13-22` | jump-forward punish only if opponent is still in fireball recovery | 150-300 |
 | `13-22` | early jump gets hit, negative data | 100-200 |
 | `23-30` | safe jump or jump-forward punish | 600-900 |
 | `23-30` | jump blocked or mistimed, negative data | 100-200 |
-| `31-48` | wait, walk-forward, or later guard | 500-800 |
+| `31-48` | wait, walk-forward, or later guard | 300-600 |
+| `31-48` | jump-forward punish if opponent is still in fireball recovery | 300-600 |
 | `31-48` | too-early jump failure | 150-250 |
 
-Current timing rule from V61/V62:
+Current timing lesson from V61/V62:
 
 - `0-12`: prefer guard/back.
-- `13-22`: still risky, do not label as universally safe jump.
-- `23-30`: current best live safe-jump window.
-- `31-48`: too early to jump in current live probes, prefer wait/walk/guard
-  until timing improves.
+- `13-22`: still risky. Do not label this as a universal safe-jump window, but
+  do keep jump-forward punish examples when the opponent is still in fireball
+  recovery.
+- `23-30`: current best live safe-jump window in V61/V62 logs.
+- `31-48`: V61/V62 exposed many too-early jump failures, but this bucket is not
+  globally "never jump." The correct label depends on whether the opponent is
+  still in fireball recovery and punishable.
+
+Important unresolved feature:
+
+- the real split for `20-48` is not only projectile timing; it is opponent
+  actionability. A future schema/detector should expose or infer
+  `obs_opp_can_act` / fireball recovery from existing opponent routine/action
+  fields. Until then, do not use a blanket "no jump in 31-48" training target.
 
 Training notes:
 
 - use projectile batch group.
-- use timing group margin:
-  - defense group wins for `0-22,31-48`.
-  - jump group wins for `23-30`.
+- use timing group margin only with selectors that match the intended labels:
+  - defense group wins for `0-12`.
+  - `13-22` is mixed and should be filtered by recovery/outcome.
+  - jump-forward punish should be allowed across `23-48` when the opponent is
+    still in fireball recovery.
+  - recovered-opponent `31-48` early jumps remain negative data.
 - keep a small policy-time prior for bootstrap if needed.
 - avoid hard masking jump, because the safe jump window must remain available.
+- mix a small set of opponent jump-in rows into the M5 regression set so
+  projectile defense does not turn into a global guard policy.
 
 ## Phase 6: Anti-Air And Jump Defense
 
@@ -337,6 +411,9 @@ Training notes:
 - use anti-air margin or BC only after labels are visually validated.
 - include negative DP examples so shoryuken does not become the universal
   answer.
+- treat Phase 6 as the required patch after Phase 5, not as optional polish.
+  If M5 starts ranking guard for opponent jump-ins, run Phase 6 immediately
+  before collecting more projectile rows.
 
 ## Phase 7: Corner And Pressure
 
@@ -360,12 +437,15 @@ Targets:
 | timed corner escape | 500-800 |
 | pressure defense without random DP | 300-500 |
 | post-block escape or punish | 500-800 |
+| agent knocks opponent down, then meaty/throw/retreat oki choice | 500-800 |
+| agent wakes up under pressure, then block/reversal/escape choice | 500-800 |
 
 Training notes:
 
 - use corner position reward carefully.
 - keep general movement replay mixed in so the model does not treat back as
   always bad.
+- oki/wakeup should be explicit curriculum data, not only natural match data.
 
 ## Phase 8: Natural Match Integration
 
@@ -383,8 +463,9 @@ Targets:
 
 | Source | Target raw rows |
 | --- | ---: |
-| CPU-demo normal matches | 30K-60K |
-| human-demo normal matches | 20K-40K |
+| high-quality CPU-demo normal matches | about 10K |
+| serious human-demo normal matches | about 10K |
+| structured mixed natural matches | about 10K |
 | remote/on-policy candidate logs | 20K-50K per correction loop |
 
 Training notes:
@@ -393,6 +474,10 @@ Training notes:
 - use source ratios and, when available, log-level boosts for targeted logs.
 - use on-policy logs for the model's real mistakes, not as the only data
   source.
+- prefer higher-density natural data over low-quality volume. A useful 30K-row
+  natural set should be split across CPU-demo, serious human-demo, and
+  semi-structured theme rounds such as neutral, fireball/DP, defense, and
+  corner pressure.
 
 ## Training Schedule
 
@@ -446,9 +531,15 @@ Every candidate model needs these checks before live promotion:
   - `time_to_self` bucket top-1 distribution.
   - `0-12` does not mostly jump.
   - `23-30` preserves safe jump.
-  - `31-48` does not jump too early.
+  - `23-48` allows jump-forward punish when opponent fireball recovery is
+    still punishable.
+  - recovered-opponent `31-48` does not jump too early.
 - anti-air:
-  - opponent airborne/jump-in response ranks anti-air or guard.
+  - opponent airborne/jump-in response ranks anti-air, movement, or a validated
+    guard response; it must not become a generic guard-only answer.
+- oki:
+  - wakeup defense and post-knockdown pressure do not collapse to random DP or
+    passive guard.
 - global:
   - no single greedy action collapse.
   - non-projectile behavior does not become global guard/back bias.
@@ -464,7 +555,7 @@ If the full plan is too large, collect this first:
 | Phase 3 specials | 8K |
 | Phase 4 defense | 6K |
 | Phase 5 projectile | 10K |
-| Phase 8 natural matches | 30K |
+| Phase 8 natural matches | 30K, split into CPU-demo/human-demo/structured mixed |
 
 Total minimum:
 
@@ -479,7 +570,8 @@ specific behavior.
 Before collecting the full reboot dataset:
 
 1. run Phase 0 sanity logs for the current schema/build.
-2. analyze action-start counts and projectile field correctness.
-3. collect Phase 1 movement data.
-4. train `M1` and verify spacing behavior before moving to attacks.
-
+2. analyze action-start counts, projectile field correctness, and detector
+   dry-run hit rates.
+3. fix detector/selector mismatches before using the logs for training.
+4. collect Phase 1 movement data.
+5. train `M1` and verify spacing behavior before moving to attacks.

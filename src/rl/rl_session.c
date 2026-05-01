@@ -139,6 +139,12 @@ typedef struct RLDecisionLedgerEntry {
     u8 obs_self_ground_action_start_allowed;
     u8 obs_self_jump_start_allowed;
     u8 obs_self_air_attack_allowed;
+    u8 obs_projectile_active;
+    u8 obs_projectile_owner;
+    s16 obs_projectile_rel_x;
+    s16 obs_projectile_rel_y;
+    s16 obs_projectile_vel_x;
+    s16 obs_projectile_time_to_self;
     u8 executed_move_intent;
     u16 executed_attack_bits;
     u8 execution_source;
@@ -238,7 +244,7 @@ static const RLLocalFakeAction kLocalFakeAgentSequence[] = {
 #define RL_POLICY_SUB_ACTION_CROUCH 21u
 #define RL_DEMO_GUARD_THREAT_DX 144
 #define RL_CHARACTER_RYU 2u
-#define RL_TRANSITION_SCHEMA_VERSION 4u
+#define RL_TRANSITION_SCHEMA_VERSION 5u
 #define RL_INPUT_LABEL_SOURCE_NONE 0u
 #define RL_INPUT_LABEL_SOURCE_DEMO_INPUT 1u
 #define RL_DEMO_ATTRIBUTION_NONE 0u
@@ -1180,6 +1186,12 @@ static void RLSession_FillObsSpacingPayload(RLObsSpacingPayloadV1* payload, cons
     payload->obs_self_ground_action_start_allowed = obs->self_ground_action_start_allowed ? 1u : 0u;
     payload->obs_self_jump_start_allowed = obs->self_jump_start_allowed ? 1u : 0u;
     payload->obs_self_air_attack_allowed = obs->self_air_attack_allowed ? 1u : 0u;
+    payload->obs_projectile_active = obs->projectile_active ? 1u : 0u;
+    payload->obs_projectile_owner = obs->projectile_owner;
+    payload->obs_projectile_rel_x = obs->projectile_rel_x;
+    payload->obs_projectile_rel_y = obs->projectile_rel_y;
+    payload->obs_projectile_vel_x = obs->projectile_vel_x;
+    payload->obs_projectile_time_to_self = obs->projectile_time_to_self;
 }
 
 static void RLSession_CaptureObservationSpacing(RLDecisionLedgerEntry* entry, const RLObservationV1* obs) {
@@ -1209,6 +1221,12 @@ static void RLSession_CaptureObservationSpacing(RLDecisionLedgerEntry* entry, co
     entry->obs_self_ground_action_start_allowed = payload.obs_self_ground_action_start_allowed;
     entry->obs_self_jump_start_allowed = payload.obs_self_jump_start_allowed;
     entry->obs_self_air_attack_allowed = payload.obs_self_air_attack_allowed;
+    entry->obs_projectile_active = payload.obs_projectile_active;
+    entry->obs_projectile_owner = payload.obs_projectile_owner;
+    entry->obs_projectile_rel_x = payload.obs_projectile_rel_x;
+    entry->obs_projectile_rel_y = payload.obs_projectile_rel_y;
+    entry->obs_projectile_vel_x = payload.obs_projectile_vel_x;
+    entry->obs_projectile_time_to_self = payload.obs_projectile_time_to_self;
 }
 
 static void RLSession_AccumulateDeltaS16(s16* accum, s32 delta) {
@@ -1321,6 +1339,12 @@ static int RLSession_FormatTransitionLogLine(const RLDecisionLedgerEntry* entry,
                         "\"obs_self_ground_action_start_allowed\":%u,"
                         "\"obs_self_jump_start_allowed\":%u,"
                         "\"obs_self_air_attack_allowed\":%u,"
+                        "\"obs_projectile_active\":%u,"
+                        "\"obs_projectile_owner\":%u,"
+                        "\"obs_projectile_rel_x\":%d,"
+                        "\"obs_projectile_rel_y\":%d,"
+                        "\"obs_projectile_vel_x\":%d,"
+                        "\"obs_projectile_time_to_self\":%d,"
                         "\"final_self_hp\":%d,\"final_opp_hp\":%d,"
                         "\"model_version_executed\":%u,"
                         "\"execution_source\":%u,"
@@ -1382,6 +1406,12 @@ static int RLSession_FormatTransitionLogLine(const RLDecisionLedgerEntry* entry,
                         entry->obs_self_ground_action_start_allowed,
                         entry->obs_self_jump_start_allowed,
                         entry->obs_self_air_attack_allowed,
+                        entry->obs_projectile_active,
+                        entry->obs_projectile_owner,
+                        entry->obs_projectile_rel_x,
+                        entry->obs_projectile_rel_y,
+                        entry->obs_projectile_vel_x,
+                        entry->obs_projectile_time_to_self,
                         entry->final_self_hp,
                         entry->final_opp_hp,
                         entry->model_version_executed,

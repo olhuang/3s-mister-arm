@@ -57,6 +57,12 @@ typedef struct RLObservationV1 {
     u8 self_ground_action_start_allowed;
     u8 self_jump_start_allowed;
     u8 self_air_attack_allowed;
+    u8 projectile_active;
+    u8 projectile_owner;
+    s16 projectile_rel_x;
+    s16 projectile_rel_y;
+    s16 projectile_vel_x;
+    s16 projectile_time_to_self;
     u8 self_airborne_started;
     u8 opp_airborne_started;
     u8 self_attack_started;

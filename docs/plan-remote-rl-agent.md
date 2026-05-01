@@ -3010,6 +3010,28 @@ Full-action DQN sparse-action plan:
     - keep the field count small: one selected projectile is enough for the
       first Ryu fireball/jump-over curriculum; multi-projectile summaries can
       be added later if needed.
+  - Implementation method recorded 2026-05-01:
+    - derive projectile observations in C from live engine state, not in the
+      Python probe. The authoritative path is each player's
+      `plw[player].wu.shell_ix[0..7]` list, whose valid entries index `frw[]`
+      `WORK_Other` effect records.
+    - scan both players' shell lists so the selected projectile can be
+      self-owned or opponent-owned relative to the RL agent. Use
+      `WORK_Other.master_id` to assign `obs_projectile_owner`.
+    - first active-candidate filter matches the CPU shell-avoidance path:
+      require an active shell/effect (`wu.be_flag`, `wu.id == 13`,
+      `wu.routine_no[0] == 1`, not dying routine `wu.routine_no[1] == 2`),
+      skip non-projectile/auxiliary shell types, and only accept shells owned
+      by self or opponent.
+    - normalize `obs_projectile_rel_x` and `obs_projectile_vel_x` by
+      `obs_self_facing_sign` so positive `rel_x` means the projectile is in
+      front of self, and negative `vel_x` means it is moving toward self.
+    - use sentinel `32767` for no useful distance/time estimate. For
+      `obs_projectile_time_to_self`, only compute a finite frame estimate when
+      the selected projectile is in front of self and moving toward self.
+    - schema-v5 packs these six fields into the live OBS spacing payload and
+      transition NDJSON, then exposes them as normalized DQN features and
+      verbose probe diagnostics.
   - Expected implementation areas:
     - C observation builder: locate the authoritative active projectile state
       used by Ryu hadouken and derive the compact projectile fields from live
@@ -3019,6 +3041,20 @@ Full-action DQN sparse-action plan:
     - Python probe/training/analyzer: add feature normalization, model
       metadata, verbose diagnostics, and analyzer summaries for projectile
       active/owner/distance/velocity/time-to-self buckets.
+  - Implementation status 2026-05-01:
+    - implemented as schema v5 in `src/rl/rl_observation.*`,
+      `src/rl/rl_protocol.h`, `src/rl/rl_session.c`, and
+      `tools/rl_probe_server.py`.
+    - live OBS spacing payload is now 44 bytes and transition NDJSON carries
+      the same six projectile fields for replay/training.
+    - Python DQN feature normalization and verbose diagnostics now expose the
+      selected projectile threat as `proj=active/owner`, `proj_rx`, `proj_ry`,
+      `proj_vx`, and `proj_t`.
+    - local validation passed with `python3 -m py_compile
+      tools/rl_probe_server.py` and `tools/mister/build-game.sh --flavor
+      telemetry`.
+    - on-device schema-v5 smoke is still required before training the first
+      anti-fireball / jump-over model.
   - Validation before training:
     - record a targeted human-demo smoke with Ryu fireballs, neutral/forward
       jump-over responses, blocked/failed jumps, and no-projectile baseline

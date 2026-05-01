@@ -2,6 +2,70 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-01: Implement Schema-V5 Projectile-Threat Observation Fields
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / full action-set DQN experiments
+
+Files changed:
+- `src/rl/rl_observation.h`
+- `src/rl/rl_observation.c`
+- `src/rl/rl_protocol.h`
+- `src/rl/rl_session.c`
+- `tools/rl_probe_server.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- let the model observe an active traveling projectile after the opponent's
+  fireball routine has finished, so `jump-*-start` can be learned as an
+  anti-fireball response instead of only as a generic movement action.
+- keep the first version compact: expose one selected projectile with owner,
+  facing-normalized distance, facing-normalized velocity, and a time-to-self
+  estimate.
+
+Implementation notes:
+- bumped live observation and transition data from schema v4 to schema v5.
+- packed six projectile fields into `RLObsSpacingPayloadV1` and transition
+  NDJSON:
+  - `obs_projectile_active`
+  - `obs_projectile_owner`
+  - `obs_projectile_rel_x`
+  - `obs_projectile_rel_y`
+  - `obs_projectile_vel_x`
+  - `obs_projectile_time_to_self`
+- derive the fields in `RLObservation_OnFrameEnd()` by scanning both players'
+  `plw[player].wu.shell_ix[0..7]` lists and resolving valid entries through
+  `frw[]` `WORK_Other` records.
+- first active-candidate filter follows the same source family as the CPU
+  shell-avoidance path: active shell/effect id `13`, live routine, owned by
+  self or opponent, and not one of the auxiliary shell types that should be
+  ignored for projectile threat.
+- selection priority:
+  - opponent-owned, in front of self, moving toward self
+  - opponent-owned and in front of self
+  - any active self/opponent projectile
+- `obs_projectile_rel_x` and `obs_projectile_vel_x` are normalized by
+  `obs_self_facing_sign`; an incoming opponent projectile in front of self
+  should usually show `rel_x > 0` and `vel_x < 0`.
+- `32767` is the sentinel for no useful relative distance/time estimate.
+- Python probe/training now decodes the 44-byte schema-v5 spacing payload,
+  adds the projectile fields to DQN features/scales, preserves them in learner
+  replay rows, and prints compact verbose diagnostics as
+  `proj=active/owner proj_rx=... proj_ry=... proj_vx=... proj_t=...`.
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed and rebuilt the
+  MiSTer ARM executable/package. The only warning observed was the existing
+  minizip `mktemp` linker warning, unrelated to RL projectile changes.
+
+Remaining follow-up:
+- deploy the schema-v5 build, record a targeted Ryu fireball/jump-over smoke,
+  and confirm projectile fields stay active while the fireball travels.
+- verify the `rel_x`, `vel_x`, and `time_to_self` signs on both left/right
+  sides before using schema-v5 logs for V41/Vnext anti-fireball training.
+
 ## 2026-05-01: Plan Projectile-Threat Observation Fields
 
 Milestone:

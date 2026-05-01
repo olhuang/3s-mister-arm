@@ -28,8 +28,8 @@ TYPE_OBS = 5
 PACKET = struct.Struct("<IHHQIIQ")
 ACTION_PACKET = struct.Struct("<IHHQQIIIHHHHI")
 OBS_HEADER = struct.Struct("<IHHQQIIIIHHI")
-OBS_SPACING_PAYLOAD = struct.Struct("<HHhhhhhhHHHHBBBBBBBBBB2x")
-OBS_SPACING_PAYLOAD_VERSION = 4
+OBS_SPACING_PAYLOAD = struct.Struct("<HHhhhhhhHHHHBBBBBBBBBBBBhhhh")
+OBS_SPACING_PAYLOAD_VERSION = 5
 TRANSITION_BATCH_HEADER = struct.Struct("<IHHQQIII")
 TRANSITION_BATCH_ACK = struct.Struct("<IHHQQII")
 ACTION_SET_VERSION = 5
@@ -156,7 +156,7 @@ MODEL_POLICY_CHOICES = (
 POLICY_CHOICES = SCRIPTED_POLICY_CHOICES + MODEL_POLICY_CHOICES
 GUARD_MACRO_DECISION_STEPS = 6
 DEMO_EXECUTION_SOURCES = frozenset({4, 5})
-TRANSITION_SCHEMA_VERSION = 4
+TRANSITION_SCHEMA_VERSION = 5
 TRAINING_ACTION_SOURCES = ("auto", "policy", "input", "engine", "prefer-engine")
 
 TABULAR_ACTION_NAMES = (
@@ -300,6 +300,12 @@ DQN_BASE_FEATURE_NAMES = (
     "obs_self_ground_action_start_allowed",
     "obs_self_jump_start_allowed",
     "obs_self_air_attack_allowed",
+    "obs_projectile_active",
+    "obs_projectile_owner",
+    "obs_projectile_rel_x",
+    "obs_projectile_rel_y",
+    "obs_projectile_vel_x",
+    "obs_projectile_time_to_self",
 )
 DQN_OPP_ROUTINE_1_VALUES = (0, 1, 2, 3, 4)
 DQN_OPP_ROUTINE_2_VALUES = (0, 1, 3, 4, 5, 6, 7, 8, 12, 13, 16, 17, 18, 19, 21, 24, 28, 32, 36, 37)
@@ -321,6 +327,12 @@ DQN_FEATURE_SCALES = {
     "obs_self_ground_action_start_allowed": 1.0,
     "obs_self_jump_start_allowed": 1.0,
     "obs_self_air_attack_allowed": 1.0,
+    "obs_projectile_active": 1.0,
+    "obs_projectile_owner": 2.0,
+    "obs_projectile_rel_x": 384.0,
+    "obs_projectile_rel_y": 256.0,
+    "obs_projectile_vel_x": 16.0,
+    "obs_projectile_time_to_self": 120.0,
 }
 DQN_FEATURE_SCALES.update({name: 1.0 for name in DQN_OPP_ROUTINE_FEATURE_NAMES})
 
@@ -1116,6 +1128,12 @@ def parse_obs_spacing_payload(payload: bytes) -> dict[str, object] | None:
         obs_self_ground_action_start_allowed,
         obs_self_jump_start_allowed,
         obs_self_air_attack_allowed,
+        obs_projectile_active,
+        obs_projectile_owner,
+        obs_projectile_rel_x,
+        obs_projectile_rel_y,
+        obs_projectile_vel_x,
+        obs_projectile_time_to_self,
     ) = OBS_SPACING_PAYLOAD.unpack(payload)
     if payload_version != OBS_SPACING_PAYLOAD_VERSION:
         return None
@@ -1140,6 +1158,12 @@ def parse_obs_spacing_payload(payload: bytes) -> dict[str, object] | None:
         "obs_self_ground_action_start_allowed": obs_self_ground_action_start_allowed,
         "obs_self_jump_start_allowed": obs_self_jump_start_allowed,
         "obs_self_air_attack_allowed": obs_self_air_attack_allowed,
+        "obs_projectile_active": obs_projectile_active,
+        "obs_projectile_owner": obs_projectile_owner,
+        "obs_projectile_rel_x": obs_projectile_rel_x,
+        "obs_projectile_rel_y": obs_projectile_rel_y,
+        "obs_projectile_vel_x": obs_projectile_vel_x,
+        "obs_projectile_time_to_self": obs_projectile_time_to_self,
     }
 
 
@@ -1734,6 +1758,12 @@ def learner_replay_row(row: dict[str, object]) -> dict[str, object] | None:
         "obs_self_ground_action_start_allowed": int(row.get("obs_self_ground_action_start_allowed", 0) or 0),
         "obs_self_jump_start_allowed": int(row.get("obs_self_jump_start_allowed", 0) or 0),
         "obs_self_air_attack_allowed": int(row.get("obs_self_air_attack_allowed", 0) or 0),
+        "obs_projectile_active": int(row.get("obs_projectile_active", 0) or 0),
+        "obs_projectile_owner": int(row.get("obs_projectile_owner", 0) or 0),
+        "obs_projectile_rel_x": int(row.get("obs_projectile_rel_x", 0) or 0),
+        "obs_projectile_rel_y": int(row.get("obs_projectile_rel_y", 0) or 0),
+        "obs_projectile_vel_x": int(row.get("obs_projectile_vel_x", 0) or 0),
+        "obs_projectile_time_to_self": int(row.get("obs_projectile_time_to_self", 0) or 0),
         "final_self_hp": int(row.get("final_self_hp", 0) or 0),
         "final_opp_hp": int(row.get("final_opp_hp", 0) or 0),
         "model_version_executed": int(row.get("model_version_executed", 0) or 0),
@@ -2621,6 +2651,7 @@ def format_dqn_verbose_diagnostics(
             " dqn_valid=n/a"
             " self_r1=n/a self_r2=n/a self_atk=n/a self_contact=n/a"
             " self_air=n/a self_jump_phase=n/a ground_ok=n/a jump_ok=n/a air_ok=n/a"
+            " proj=n/a"
         )
     valid_actions = dqn_valid_actions_for_row(obs_row, actor.actions, valid_action_mask_config)
     return (
@@ -2638,6 +2669,11 @@ def format_dqn_verbose_diagnostics(
         f" ground_ok={1 if dqn_ground_action_start_allowed(obs_row) else 0}"
         f" jump_ok={1 if dqn_jump_start_allowed(obs_row) else 0}"
         f" air_ok={1 if dqn_air_attack_allowed(obs_row) else 0}"
+        f" proj={row_int_field(obs_row, 'obs_projectile_active')}/{row_int_field(obs_row, 'obs_projectile_owner')}"
+        f" proj_rx={row_int_field(obs_row, 'obs_projectile_rel_x')}"
+        f" proj_ry={row_int_field(obs_row, 'obs_projectile_rel_y')}"
+        f" proj_vx={row_int_field(obs_row, 'obs_projectile_vel_x')}"
+        f" proj_t={row_int_field(obs_row, 'obs_projectile_time_to_self')}"
     )
 
 

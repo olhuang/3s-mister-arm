@@ -3,6 +3,7 @@
 #include "rl/rl_net.h"
 #include "rl/rl_session.h"
 #include "sf33rd/AcrSDK/common/pad.h"
+#include "sf33rd/Source/Game/effect/effect.h"
 #include "sf33rd/Source/Game/engine/plcnt.h"
 #include "sf33rd/Source/Game/engine/stun.h"
 #include "sf33rd/Source/Game/system/sys_sub.h"
@@ -81,6 +82,24 @@ enum {
     RL_OBS_JUMP_PHASE_AIR_OTHER = 3,
 };
 
+enum {
+    RL_OBS_PROJECTILE_OWNER_NONE = 0,
+    RL_OBS_PROJECTILE_OWNER_SELF = 1,
+    RL_OBS_PROJECTILE_OWNER_OPPONENT = 2,
+    RL_OBS_PROJECTILE_SENTINEL = 32767,
+};
+
+typedef struct RLProjectileSelection {
+    bool found;
+    u8 owner;
+    s16 rel_x;
+    s16 rel_y;
+    s16 vel_x;
+    s16 time_to_self;
+    u8 priority;
+    s32 score;
+} RLProjectileSelection;
+
 static bool is_ordinary_jump_ready_routine(u16 routine1, u16 routine2) {
     return routine1 == 0 && (routine2 == 16 || routine2 == 17);
 }
@@ -138,6 +157,17 @@ static s16 clamp_s16_delta(s32 value) {
     return (s16)value;
 }
 
+static s32 abs_s32(s32 value) {
+    return value < 0 ? -value : value;
+}
+
+static s16 fixed_speed_to_px_s16(s32 fixed_speed) {
+    if (fixed_speed >= 0) {
+        return clamp_s16_delta((fixed_speed + 0x8000) >> 16);
+    }
+    return clamp_s16_delta(-((abs_s32(fixed_speed) + 0x8000) >> 16));
+}
+
 static f32 clamp_ratio(s32 numerator, s32 denominator) {
     if (denominator <= 0) {
         return 0.0f;
@@ -193,6 +223,166 @@ static u16 agent_input_swkey(s16 agent) {
 static s16 safe_stage_width(void) {
     const s16 width = scrr - scrl;
     return (width > 0) ? width : 1;
+}
+
+static bool projectile_type_ignored(u8 type) {
+    if (type == 0xDE) {
+        return true;
+    }
+    if (type >= 0x24 && type < 0x28) {
+        return true;
+    }
+    if (type >= 0x0D && type < 0x10) {
+        return true;
+    }
+    if (type == 0x54 || type == 0x55) {
+        return true;
+    }
+    if (type >= 0x4D && type < 0x51) {
+        return true;
+    }
+    if (type >= 0x7A && type < 0x7F) {
+        return true;
+    }
+    return false;
+}
+
+static bool projectile_is_active_candidate(const WORK_Other* projectile, s16 self, s16 opp) {
+    if (projectile == NULL) {
+        return false;
+    }
+    if (!projectile->wu.be_flag || projectile->wu.id != 13) {
+        return false;
+    }
+    if (projectile->wu.routine_no[0] != 1 || projectile->wu.routine_no[1] == 2) {
+        return false;
+    }
+    if (projectile->master_id != self && projectile->master_id != opp) {
+        return false;
+    }
+    if (projectile->wu.charset_id == 2 || projectile_type_ignored(projectile->wu.type)) {
+        return false;
+    }
+    return true;
+}
+
+static s16 projectile_time_to_self(s16 rel_x, s32 rel_vel_x_fixed) {
+    s32 frames;
+
+    if (rel_x <= 0 || rel_vel_x_fixed >= 0) {
+        return RL_OBS_PROJECTILE_SENTINEL;
+    }
+    rel_vel_x_fixed = -rel_vel_x_fixed;
+    if (rel_vel_x_fixed <= 0) {
+        return RL_OBS_PROJECTILE_SENTINEL;
+    }
+    frames = ((s32)rel_x << 16) / rel_vel_x_fixed;
+    if (frames < 0) {
+        return RL_OBS_PROJECTILE_SENTINEL;
+    }
+    return clamp_s16_delta(frames);
+}
+
+static void projectile_selection_init(RLProjectileSelection* selection) {
+    if (selection == NULL) {
+        return;
+    }
+    selection->found = false;
+    selection->owner = RL_OBS_PROJECTILE_OWNER_NONE;
+    selection->rel_x = RL_OBS_PROJECTILE_SENTINEL;
+    selection->rel_y = RL_OBS_PROJECTILE_SENTINEL;
+    selection->vel_x = 0;
+    selection->time_to_self = RL_OBS_PROJECTILE_SENTINEL;
+    selection->priority = 3;
+    selection->score = RL_OBS_PROJECTILE_SENTINEL;
+}
+
+static void projectile_selection_consider(RLProjectileSelection* selection,
+                                          const WORK_Other* projectile,
+                                          s16 self,
+                                          s32 self_x,
+                                          s32 self_y,
+                                          s8 self_facing_sign) {
+    u8 owner;
+    s16 rel_x;
+    s16 rel_y;
+    s32 world_vel_x_fixed;
+    s32 rel_vel_x_fixed;
+    s16 rel_vel_x;
+    s16 time_to_self;
+    u8 priority = 2;
+    s32 score;
+
+    if (selection == NULL || projectile == NULL) {
+        return;
+    }
+
+    owner = (projectile->master_id == self) ? RL_OBS_PROJECTILE_OWNER_SELF : RL_OBS_PROJECTILE_OWNER_OPPONENT;
+    rel_x = clamp_s16_delta(((s32)projectile->wu.xyz[0].disp.pos - self_x) * self_facing_sign);
+    rel_y = clamp_s16_delta((s32)projectile->wu.xyz[1].disp.pos - self_y);
+    world_vel_x_fixed = projectile->wu.rl_flag ? projectile->wu.mvxy.a[0].sp : -projectile->wu.mvxy.a[0].sp;
+    rel_vel_x_fixed = world_vel_x_fixed * self_facing_sign;
+    rel_vel_x = fixed_speed_to_px_s16(rel_vel_x_fixed);
+    time_to_self = projectile_time_to_self(rel_x, rel_vel_x_fixed);
+    score = abs_s32(rel_x);
+
+    if (owner == RL_OBS_PROJECTILE_OWNER_OPPONENT && rel_x > 0 && rel_vel_x < 0) {
+        priority = 0;
+        score = time_to_self;
+    } else if (owner == RL_OBS_PROJECTILE_OWNER_OPPONENT && rel_x > 0) {
+        priority = 1;
+    }
+
+    if (selection->found && (priority > selection->priority ||
+                             (priority == selection->priority && score >= selection->score))) {
+        return;
+    }
+
+    selection->found = true;
+    selection->owner = owner;
+    selection->rel_x = rel_x;
+    selection->rel_y = rel_y;
+    selection->vel_x = rel_vel_x;
+    selection->time_to_self = time_to_self;
+    selection->priority = priority;
+    selection->score = score;
+}
+
+static void derive_projectile_fields(RLObservationV1* obs, s16 self, s16 opp) {
+    RLProjectileSelection selection;
+    s32 self_x;
+    s32 self_y;
+
+    if (obs == NULL) {
+        return;
+    }
+
+    projectile_selection_init(&selection);
+    self_x = plw[self].wu.xyz[0].disp.pos;
+    self_y = plw[self].wu.xyz[1].disp.pos;
+
+    for (s16 player = 0; player < 2; player++) {
+        for (s16 slot = 0; slot < 8; slot++) {
+            const s16 effect_index = plw[player].wu.shell_ix[slot];
+            WORK_Other* projectile;
+
+            if (effect_index < 0 || effect_index >= EFFECT_MAX) {
+                continue;
+            }
+            projectile = (WORK_Other*)frw[effect_index];
+            if (!projectile_is_active_candidate(projectile, self, opp)) {
+                continue;
+            }
+            projectile_selection_consider(&selection, projectile, self, self_x, self_y, obs->self_facing_sign);
+        }
+    }
+
+    obs->projectile_active = selection.found ? 1u : 0u;
+    obs->projectile_owner = selection.owner;
+    obs->projectile_rel_x = selection.rel_x;
+    obs->projectile_rel_y = selection.rel_y;
+    obs->projectile_vel_x = selection.vel_x;
+    obs->projectile_time_to_self = selection.time_to_self;
 }
 
 static void maybe_capture_round_start_hp() {
@@ -305,6 +495,7 @@ void RLObservation_OnFrameEnd() {
     obs.self_contact_reaction_state = (u8)(obs.self_routine[1] == 1);
     obs.opp_contact_reaction_state = (u8)(obs.opp_routine[1] == 1);
     derive_action_start_flags(&obs);
+    derive_projectile_fields(&obs, self, opp);
     if (prev_frame_valid) {
         const s16 self_hp_delta = clamp_s16_delta((s32)prev_frame_hp[self] - (s32)debug.self_hp);
         const s16 opp_hp_delta = clamp_s16_delta((s32)prev_frame_hp[opp] - (s32)debug.opp_hp);

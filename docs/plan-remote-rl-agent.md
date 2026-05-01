@@ -2919,6 +2919,25 @@ Full-action DQN sparse-action plan:
       smoke and confirm `jump-forward-start`, `jump-neutral-start`, and
       `jump-back-start` appear alongside `air-*`, and that no old mixed
       `jump-neutral-mk` / `jump-back-hk` labels return.
+    - post-fix human/CPU smoke log
+      `logs/rl-transitions-cpu-human-demo-schema-v4-smoke-4-3-3.ndjson`
+      passed the split-label validation:
+      - `1271 / 1271` rows use transition schema `4`, with all schema-v4 OBS
+        fields present.
+      - allow density is now useful and state-specific:
+        `obs_self_ground_action_start_allowed=1` on `917` rows,
+        jump-ready-only `obs_self_jump_start_allowed=1` on `13` rows, and
+        `obs_self_air_attack_allowed=1` on `67` rows.
+      - split labels appear as intended:
+        `jump-forward-start=6`, `jump-neutral-start=7`,
+        `jump-back-start=4`, `air-hp=2`, and `air-hk=2`.
+      - old mixed jump-attack labels such as `jump-neutral-mk` and
+        `jump-back-hk` did not return.
+      - fireball and tatsu engine labels were observed from ground-action
+        rows, then their attack routines correctly closed all ground/jump/air
+        action-start flags. Shoryuken was not present in this particular
+        post-fix smoke and should be covered by the next broader training/demo
+        capture rather than blocking the split-label validation.
 
 - Step 4: train-time invalid-action Q penalty on the split action space.
   - Do this after Step 3, not before it.

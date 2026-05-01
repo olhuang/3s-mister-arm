@@ -2,6 +2,58 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-01: Validate Schema-V4 Split Labels With Human/CPU Smoke
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / full action-set DQN experiments
+
+Files changed:
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- validate the schema-v4 jump-start / air-normal split after broadening
+  `obs_self_jump_start_allowed` into ordinary jump-ready rows.
+- decide whether the split-label data smoke is unblocked for V41/Vnext
+  training preparation.
+
+Smoke log:
+- `logs/rl-transitions-cpu-human-demo-schema-v4-smoke-4-3-3.ndjson`
+
+Findings:
+- `1271 / 1271` rows use transition schema `4`, and all new schema-v4
+  observation fields are present.
+- all rows were human-demo execution source `4`; the CPU part of the filename
+  refers to the opponent/demo setup, not the logged agent execution source.
+- allow flags now have useful, state-specific density:
+  - `(ground=1, jump=1, air=0)`: `917` rows.
+  - `(ground=0, jump=1, air=0)`: `13` ordinary jump-ready rows.
+  - `(ground=0, jump=0, air=1)`: `67` ordinary jump-air rows.
+  - `(ground=0, jump=0, air=0)`: `274` locked/non-action-start rows.
+- split action labels appeared:
+  - `jump-forward-start`: `6`
+  - `jump-neutral-start`: `7`
+  - `jump-back-start`: `4`
+  - `air-hp`: `2`
+  - `air-hk`: `2`
+- old mixed jump-attack labels did not return.
+- special-move state checks:
+  - `fireball-hp` engine label appeared from ground-action state
+    `(ground=1, jump=1, air=0)`, then `R1=4/R2=16` had all allow flags off.
+  - `tatsu-hk` engine label appeared from ground-action state
+    `(ground=1, jump=1, air=0)`, then `R1=4/R2=18` had all allow flags off.
+  - shoryuken did not appear in this particular post-fix smoke.
+
+Validation:
+- `python3 tools/analyze_rl_transitions.py logs/rl-transitions-cpu-human-demo-schema-v4-smoke-4-3-3.ndjson --training-action-source auto --limit 90`
+- custom schema/action/allow summary script over the same log.
+- `git diff --check`
+
+Follow-up:
+- the split-label smoke is unblocked for V41/Vnext preparation.
+- include shoryuken coverage in the next broader demo/training capture, but it
+  does not block the jump-start / air-normal split validation.
+
 ## 2026-05-01: Allow Jump-Start Labels in Jump-Ready Phase
 
 Milestone:

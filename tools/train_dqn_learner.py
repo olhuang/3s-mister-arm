@@ -31,6 +31,7 @@ class Experience:
     row: dict[str, object] = field(default_factory=dict)
     next_row: dict[str, object] = field(default_factory=dict)
     projectile_expert_margin_eligible: bool = False
+    projectile_late_defensive_margin_eligible: bool = False
 
 
 EXECUTION_SOURCE_NAMES = {
@@ -284,6 +285,7 @@ ENGINE_OUTCOME_MODE_ALIASES = {"prefer-demo-action": "prefer-engine-action"}
 REMOVED_ENGINE_OUTCOME_MODES = ("augment", "replace-demo")
 TRAINING_ACTION_SOURCES = rl.TRAINING_ACTION_SOURCES
 GUARD_ACTIONS = frozenset({"guard-stand", "guard-crouch"})
+DEFENSIVE_PROJECTILE_ACTIONS = frozenset({"back", "guard-stand", "guard-crouch"})
 MOVEMENT_SPACING_ACTIONS = frozenset({"forward", "back"})
 PROJECTILE_OWNER_OPPONENT = 2
 REWARD_PROJECTILE_RESPONSE_PROFILES = ("off", "incoming-v1")
@@ -901,6 +903,74 @@ class ProjectileExpertMarginStats:
             "by_expert_action_events": dict(sorted(self.by_expert_action_events.items())),
             "by_expert_action_loss": dict(sorted(self.by_expert_action_loss.items())),
             "blocker_counts": dict(sorted(self.blocker_counts.items())),
+            "sampled_by_time_bucket": dict(sorted(self.sampled_by_time_bucket.items())),
+            "violation_by_time_bucket": dict(sorted(self.violation_by_time_bucket.items())),
+        }
+
+
+@dataclass(frozen=True)
+class ProjectileLateDefensiveMarginConfig:
+    requested: bool = False
+    margin: float = 0.05
+    loss_weight: float = 0.5
+    batch_size: int = 0
+    min_time_to_self: int = 0
+    max_time_to_self: int = 12
+    eligible_sources: frozenset[str] = field(default_factory=lambda: frozenset({"human-demo", "remote"}))
+    valid_action_mask_mode: str = "action-start-v1"
+
+    @property
+    def enabled(self) -> bool:
+        return self.requested and self.margin > 0.0 and self.loss_weight > 0.0
+
+    def as_shared_mask_config(self) -> rl.DQNValidActionMaskConfig:
+        return rl.parse_dqn_valid_action_mask_config(self.valid_action_mask_mode)
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "requested": self.requested,
+            "enabled": self.enabled,
+            "margin": self.margin,
+            "loss_weight": self.loss_weight,
+            "batch_size": self.batch_size,
+            "min_time_to_self": self.min_time_to_self,
+            "max_time_to_self": self.max_time_to_self,
+            "eligible_sources": sorted(self.eligible_sources),
+            "defensive_actions": sorted(DEFENSIVE_PROJECTILE_ACTIONS),
+            "jump_actions": sorted(JUMP_START_ACTIONS),
+            "valid_action_mask_mode": self.valid_action_mask_mode,
+        }
+
+
+@dataclass
+class ProjectileLateDefensiveMarginStats:
+    eligible_experiences: int = 0
+    sampled_events: int = 0
+    violation_events: int = 0
+    empty_valid_events: int = 0
+    empty_defensive_events: int = 0
+    empty_jump_events: int = 0
+    loss_total: float = 0.0
+    last_loss: float = 0.0
+    avg_loss: float = 0.0
+    defensive_action_events: dict[str, int] = field(default_factory=dict)
+    jump_blocker_counts: dict[str, int] = field(default_factory=dict)
+    sampled_by_time_bucket: dict[str, int] = field(default_factory=dict)
+    violation_by_time_bucket: dict[str, int] = field(default_factory=dict)
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "eligible_experiences": self.eligible_experiences,
+            "sampled_events": self.sampled_events,
+            "violation_events": self.violation_events,
+            "empty_valid_events": self.empty_valid_events,
+            "empty_defensive_events": self.empty_defensive_events,
+            "empty_jump_events": self.empty_jump_events,
+            "loss_total": self.loss_total,
+            "last_loss": self.last_loss,
+            "avg_loss": self.avg_loss,
+            "defensive_action_events": dict(sorted(self.defensive_action_events.items())),
+            "jump_blocker_counts": dict(sorted(self.jump_blocker_counts.items())),
             "sampled_by_time_bucket": dict(sorted(self.sampled_by_time_bucket.items())),
             "violation_by_time_bucket": dict(sorted(self.violation_by_time_bucket.items())),
         }
@@ -1923,6 +1993,27 @@ def projectile_expert_margin_eligible(
     return True
 
 
+def projectile_late_defensive_margin_eligible(
+    row: dict[str, object],
+    source_name: str,
+    action_name: str,
+    outcome: ProjectileResponseOutcome,
+    config: ProjectileLateDefensiveMarginConfig,
+) -> bool:
+    if not config.requested:
+        return False
+    if source_name not in config.eligible_sources:
+        return False
+    if action_name not in JUMP_START_ACTIONS:
+        return False
+    if not outcome.threat or not outcome.late_jump_hit:
+        return False
+    time_to_self = int_field(row, "obs_projectile_time_to_self")
+    if time_to_self < config.min_time_to_self or time_to_self > config.max_time_to_self:
+        return False
+    return True
+
+
 def add_delayed_reward(
     experiences: list[Experience],
     exp_index: int | None,
@@ -2111,6 +2202,7 @@ def build_experiences(
     reward_projectile_response_config: RewardProjectileResponseConfig,
     projectile_response_oversample_config: ProjectileResponseOversampleConfig,
     projectile_expert_margin_config: ProjectileExpertMarginConfig,
+    projectile_late_defensive_margin_config: ProjectileLateDefensiveMarginConfig,
     engine_outcome_config: EngineOutcomeConfig,
     action_filter_config: DQNActionFilterConfig,
 ) -> tuple[
@@ -2350,6 +2442,13 @@ def build_experiences(
                     projectile_response_outcome_result,
                     projectile_expert_margin_config,
                 ),
+                projectile_late_defensive_margin_eligible=projectile_late_defensive_margin_eligible(
+                    row,
+                    source_name,
+                    action_name,
+                    projectile_response_outcome_result,
+                    projectile_late_defensive_margin_config,
+                ),
             )
             multiplier = projectile_response_oversample_config.multiplier_for(projectile_response_outcome_result)
             for _ in range(multiplier):
@@ -2551,6 +2650,32 @@ def projectile_expert_margin_config_from_args(args: argparse.Namespace) -> Proje
         equivalent_jump_actions=bool(args.projectile_expert_margin_equivalent_jump_actions),
         min_time_to_self=min_time,
         max_time_to_self=max_time,
+        valid_action_mask_mode=mode,
+    )
+
+
+def projectile_late_defensive_margin_config_from_args(
+    args: argparse.Namespace,
+) -> ProjectileLateDefensiveMarginConfig:
+    mode = str(args.projectile_late_defensive_margin_valid_action_mask)
+    if mode not in rl.DQN_VALID_ACTION_MASK_MODES:
+        raise SystemExit(
+            f"unknown --projectile-late-defensive-margin-valid-action-mask {mode!r}; "
+            f"expected one of {','.join(rl.DQN_VALID_ACTION_MASK_MODES)}"
+        )
+    min_time = max(0, int(args.projectile_late_defensive_margin_min_time_to_self))
+    max_time = max(min_time, int(args.projectile_late_defensive_margin_max_time_to_self))
+    return ProjectileLateDefensiveMarginConfig(
+        requested=bool(args.projectile_late_defensive_margin_loss),
+        margin=max(0.0, float(args.projectile_late_defensive_margin)),
+        loss_weight=max(0.0, float(args.projectile_late_defensive_margin_weight)),
+        batch_size=max(0, int(args.projectile_late_defensive_margin_batch_size)),
+        min_time_to_self=min_time,
+        max_time_to_self=max_time,
+        eligible_sources=parse_source_name_set(
+            str(args.projectile_late_defensive_margin_sources),
+            "--projectile-late-defensive-margin-sources",
+        ),
         valid_action_mask_mode=mode,
     )
 
@@ -2918,6 +3043,68 @@ def apply_projectile_expert_margin_loss(
     return weighted_loss
 
 
+def apply_projectile_late_defensive_margin_loss(
+    exp: Experience,
+    values: list[float],
+    actions: tuple[str, ...],
+    output_grad: list[float],
+    config: ProjectileLateDefensiveMarginConfig,
+    shared_valid_action_mask_config: rl.DQNValidActionMaskConfig,
+    stats: ProjectileLateDefensiveMarginStats,
+) -> float:
+    if not config.enabled or not exp.projectile_late_defensive_margin_eligible:
+        return 0.0
+
+    value_count = min(len(actions), len(values))
+    valid_indices = rl.dqn_valid_action_indices_for_row(
+        exp.row,
+        actions,
+        shared_valid_action_mask_config,
+        value_count,
+    )
+    if not valid_indices:
+        stats.empty_valid_events += 1
+        return 0.0
+
+    defensive_indices = tuple(index for index in valid_indices if actions[index] in DEFENSIVE_PROJECTILE_ACTIONS)
+    jump_indices = tuple(index for index in valid_indices if actions[index] in JUMP_START_ACTIONS)
+    if not defensive_indices:
+        stats.empty_defensive_events += 1
+        return 0.0
+    if not jump_indices:
+        stats.empty_jump_events += 1
+        return 0.0
+
+    stats.sampled_events += 1
+    time_bucket = projectile_time_to_self_bucket(exp.row)
+    stats.sampled_by_time_bucket[time_bucket] = stats.sampled_by_time_bucket.get(time_bucket, 0) + 1
+    best_defensive_index = max(
+        defensive_indices,
+        key=lambda index: (values[index], actions[index]),
+    )
+    best_jump_index = max(
+        jump_indices,
+        key=lambda index: (values[index], actions[index]),
+    )
+    gap = float(values[best_jump_index]) + config.margin - float(values[best_defensive_index])
+    if gap <= 0.0:
+        return 0.0
+
+    clipped_gap = max(-10.0, min(10.0, gap))
+    weighted_loss = config.loss_weight * 0.5 * clipped_gap * clipped_gap
+    output_grad[best_jump_index] += config.loss_weight * clipped_gap
+    output_grad[best_defensive_index] -= config.loss_weight * clipped_gap
+
+    defensive_action = actions[best_defensive_index]
+    jump_action = actions[best_jump_index]
+    stats.violation_events += 1
+    stats.loss_total += weighted_loss
+    stats.defensive_action_events[defensive_action] = stats.defensive_action_events.get(defensive_action, 0) + 1
+    stats.jump_blocker_counts[jump_action] = stats.jump_blocker_counts.get(jump_action, 0) + 1
+    stats.violation_by_time_bucket[time_bucket] = stats.violation_by_time_bucket.get(time_bucket, 0) + 1
+    return weighted_loss
+
+
 def projectile_expert_q_gap_diagnostics(
     layers: list[dict[str, object]],
     experiences: list[Experience],
@@ -3034,6 +3221,7 @@ def train_dqn(
     target_mode: str,
     unsupported_action_regularization_config: DQNUnsupportedActionRegularizationConfig,
     projectile_expert_margin_config: ProjectileExpertMarginConfig,
+    projectile_late_defensive_margin_config: ProjectileLateDefensiveMarginConfig,
     valid_action_mask_config: DQNValidActionMaskTrainingConfig,
     initial_layers: list[dict[str, object]] | None = None,
 ) -> tuple[
@@ -3041,6 +3229,7 @@ def train_dqn(
     dict[str, object],
     DQNUnsupportedActionRegularizationStats,
     ProjectileExpertMarginStats,
+    ProjectileLateDefensiveMarginStats,
     DQNValidActionMaskTrainingStats,
 ]:
     rng = random.Random(seed)
@@ -3063,6 +3252,8 @@ def train_dqn(
     avg_unsupported_regularization_loss = 0.0
     last_projectile_margin_loss = 0.0
     avg_projectile_margin_loss = 0.0
+    last_projectile_late_defensive_margin_loss = 0.0
+    avg_projectile_late_defensive_margin_loss = 0.0
     unsupported_action_indices, unsupported_action_regularization_stats = dqn_unsupported_action_indices(
         actions,
         action_counts,
@@ -3074,8 +3265,15 @@ def train_dqn(
     projectile_expert_margin_pool = [
         exp for exp in experiences if exp.projectile_expert_margin_eligible
     ]
+    projectile_late_defensive_margin_stats = ProjectileLateDefensiveMarginStats(
+        eligible_experiences=sum(1 for exp in experiences if exp.projectile_late_defensive_margin_eligible)
+    )
+    projectile_late_defensive_margin_pool = [
+        exp for exp in experiences if exp.projectile_late_defensive_margin_eligible
+    ]
     shared_valid_action_mask_config = valid_action_mask_config.as_shared_config()
     projectile_expert_margin_mask_config = projectile_expert_margin_config.as_shared_mask_config()
+    projectile_late_defensive_margin_mask_config = projectile_late_defensive_margin_config.as_shared_mask_config()
     valid_action_mask_stats = DQNValidActionMaskTrainingStats()
 
     for step in range(1, steps + 1):
@@ -3091,6 +3289,7 @@ def train_dqn(
         loss = 0.0
         unsupported_regularization_loss = 0.0
         projectile_margin_loss = 0.0
+        projectile_late_defensive_margin_loss = 0.0
         for exp in batch:
             values, activations, pre_activations = forward(layers, exp.state)
             next_values, _, _ = forward(target_layers, exp.next_state)
@@ -3175,6 +3374,17 @@ def train_dqn(
             )
             projectile_margin_loss += exp_projectile_margin_loss
             loss += exp_projectile_margin_loss
+            exp_late_defensive_margin_loss = apply_projectile_late_defensive_margin_loss(
+                exp,
+                values,
+                actions,
+                output_grad,
+                projectile_late_defensive_margin_config,
+                projectile_late_defensive_margin_mask_config,
+                projectile_late_defensive_margin_stats,
+            )
+            projectile_late_defensive_margin_loss += exp_late_defensive_margin_loss
+            loss += exp_late_defensive_margin_loss
             add_backward_grads(layers, grads, activations, pre_activations, output_grad)
         if projectile_expert_margin_config.enabled and projectile_expert_margin_pool:
             for _ in range(max(0, projectile_expert_margin_config.batch_size)):
@@ -3194,6 +3404,24 @@ def train_dqn(
                 loss += exp_projectile_margin_loss
                 if exp_projectile_margin_loss > 0.0:
                     add_backward_grads(layers, grads, activations, pre_activations, output_grad)
+        if projectile_late_defensive_margin_config.enabled and projectile_late_defensive_margin_pool:
+            for _ in range(max(0, projectile_late_defensive_margin_config.batch_size)):
+                exp = rng.choice(projectile_late_defensive_margin_pool)
+                values, activations, pre_activations = forward(layers, exp.state)
+                output_grad = [0.0 for _ in values]
+                exp_late_defensive_margin_loss = apply_projectile_late_defensive_margin_loss(
+                    exp,
+                    values,
+                    actions,
+                    output_grad,
+                    projectile_late_defensive_margin_config,
+                    projectile_late_defensive_margin_mask_config,
+                    projectile_late_defensive_margin_stats,
+                )
+                projectile_late_defensive_margin_loss += exp_late_defensive_margin_loss
+                loss += exp_late_defensive_margin_loss
+                if exp_late_defensive_margin_loss > 0.0:
+                    add_backward_grads(layers, grads, activations, pre_activations, output_grad)
         apply_grads(layers, grads, learning_rate, batch_size)
         last_loss = loss / max(1, batch_size)
         avg_loss = last_loss if step == 1 else (0.98 * avg_loss + 0.02 * last_loss)
@@ -3209,13 +3437,23 @@ def train_dqn(
             if step == 1
             else (0.98 * avg_projectile_margin_loss + 0.02 * last_projectile_margin_loss)
         )
+        last_projectile_late_defensive_margin_loss = projectile_late_defensive_margin_loss / max(1, batch_size)
+        avg_projectile_late_defensive_margin_loss = (
+            last_projectile_late_defensive_margin_loss
+            if step == 1
+            else (
+                0.98 * avg_projectile_late_defensive_margin_loss
+                + 0.02 * last_projectile_late_defensive_margin_loss
+            )
+        )
         if target_sync_steps > 0 and step % target_sync_steps == 0:
             target_layers = copy.deepcopy(layers)
         if log_interval > 0 and (step == 1 or step % log_interval == 0 or step == steps):
             print(
                 f"TRAIN step={step} loss={last_loss:.6f} avg_loss={avg_loss:.6f} "
                 f"unsupported_reg={last_unsupported_regularization_loss:.6f} "
-                f"projectile_margin={last_projectile_margin_loss:.6f}",
+                f"projectile_margin={last_projectile_margin_loss:.6f} "
+                f"projectile_late_def_margin={last_projectile_late_defensive_margin_loss:.6f}",
                 flush=True,
             )
 
@@ -3229,6 +3467,8 @@ def train_dqn(
     unsupported_action_regularization_stats.avg_loss = avg_unsupported_regularization_loss
     projectile_expert_margin_stats.last_loss = last_projectile_margin_loss
     projectile_expert_margin_stats.avg_loss = avg_projectile_margin_loss
+    projectile_late_defensive_margin_stats.last_loss = last_projectile_late_defensive_margin_loss
+    projectile_late_defensive_margin_stats.avg_loss = avg_projectile_late_defensive_margin_loss
     return (
         layers,
         {
@@ -3238,6 +3478,7 @@ def train_dqn(
         },
         unsupported_action_regularization_stats,
         projectile_expert_margin_stats,
+        projectile_late_defensive_margin_stats,
         valid_action_mask_stats,
     )
 
@@ -4091,6 +4332,62 @@ def main() -> None:
         help="Valid-action mask used for projectile expert margin competitors",
     )
     parser.add_argument(
+        "--projectile-late-defensive-margin-loss",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Add a valid-action-masked margin loss on late jump-hit projectile rows "
+            "so guard/back defensive actions rank above jump-start actions"
+        ),
+    )
+    parser.add_argument(
+        "--projectile-late-defensive-margin",
+        type=float,
+        default=0.05,
+        help="Q margin required between the best defensive action and the best jump action",
+    )
+    parser.add_argument(
+        "--projectile-late-defensive-margin-weight",
+        type=float,
+        default=0.5,
+        help="Auxiliary loss weight for --projectile-late-defensive-margin-loss",
+    )
+    parser.add_argument(
+        "--projectile-late-defensive-margin-batch-size",
+        type=int,
+        default=0,
+        help=(
+            "Extra late jump-hit projectile rows sampled per DQN step for defensive "
+            "margin-only updates; 0 keeps loss limited to the normal replay batch"
+        ),
+    )
+    parser.add_argument(
+        "--projectile-late-defensive-margin-min-time-to-self",
+        type=int,
+        default=0,
+        help="Minimum obs_projectile_time_to_self for late jump-hit defensive margin rows",
+    )
+    parser.add_argument(
+        "--projectile-late-defensive-margin-max-time-to-self",
+        type=int,
+        default=12,
+        help="Maximum obs_projectile_time_to_self for late jump-hit defensive margin rows",
+    )
+    parser.add_argument(
+        "--projectile-late-defensive-margin-sources",
+        default="human-demo,remote",
+        help=(
+            "Comma-separated execution sources eligible for late defensive margin rows; "
+            "default uses human demo and live remote failures"
+        ),
+    )
+    parser.add_argument(
+        "--projectile-late-defensive-margin-valid-action-mask",
+        choices=rl.DQN_VALID_ACTION_MASK_MODES,
+        default="action-start-v1",
+        help="Valid-action mask used for late jump-hit defensive margin competitors",
+    )
+    parser.add_argument(
         "--engine-outcome-training-mode",
         default=None,
         help=(
@@ -4273,6 +4570,7 @@ def main() -> None:
     reward_projectile_response_config = reward_projectile_response_config_from_args(args)
     projectile_response_oversample_config = projectile_response_oversample_config_from_args(args)
     projectile_expert_margin_config = projectile_expert_margin_config_from_args(args)
+    projectile_late_defensive_margin_config = projectile_late_defensive_margin_config_from_args(args)
     engine_outcome_config = engine_outcome_config_from_args(args)
     conservative_action_penalty_config = conservative_action_penalty_config_from_args(args)
     unsupported_action_regularization_config = dqn_unsupported_action_regularization_config_from_args(args)
@@ -4305,6 +4603,7 @@ def main() -> None:
         reward_projectile_response_config,
         projectile_response_oversample_config,
         projectile_expert_margin_config,
+        projectile_late_defensive_margin_config,
         engine_outcome_config,
         dqn_action_filter_config,
     )
@@ -4327,6 +4626,7 @@ def main() -> None:
         train_stats,
         unsupported_action_regularization_stats,
         projectile_expert_margin_stats,
+        projectile_late_defensive_margin_stats,
         valid_action_mask_stats,
     ) = train_dqn(
         experiences,
@@ -4344,6 +4644,7 @@ def main() -> None:
         args.dqn_target_mode,
         unsupported_action_regularization_config,
         projectile_expert_margin_config,
+        projectile_late_defensive_margin_config,
         valid_action_mask_config,
         init_model.layers if init_model is not None else None,
     )
@@ -4385,6 +4686,8 @@ def main() -> None:
         reward_sources.append("conservative-action-penalty")
     if projectile_expert_margin_config.enabled:
         reward_sources.append("projectile-expert-margin")
+    if projectile_late_defensive_margin_config.enabled:
+        reward_sources.append("projectile-late-defensive-margin")
     reward_source = "+".join(reward_sources)
     metadata = {
         "transition_logs": args.transition_logs,
@@ -4478,6 +4781,8 @@ def main() -> None:
         "projectile_expert_margin_config": projectile_expert_margin_config.as_metadata(),
         "projectile_expert_margin_stats": projectile_expert_margin_stats.as_metadata(),
         "projectile_expert_q_gap_diagnostics": projectile_expert_q_gap_diag.as_metadata(),
+        "projectile_late_defensive_margin_config": projectile_late_defensive_margin_config.as_metadata(),
+        "projectile_late_defensive_margin_stats": projectile_late_defensive_margin_stats.as_metadata(),
         "engine_outcome_training_mode": engine_outcome_config.training_mode,
         "engine_outcome_window_decisions": engine_outcome_config.window_decisions,
         "engine_outcome_action_windows": engine_outcome_config.action_windows,
@@ -4551,6 +4856,9 @@ def main() -> None:
         f"projectile_margin={projectile_expert_margin_stats.violation_events}/"
         f"{projectile_expert_margin_stats.sampled_events} "
         f"projectile_margin_loss={projectile_expert_margin_stats.last_loss:.6f} "
+        f"projectile_late_def_margin={projectile_late_defensive_margin_stats.violation_events}/"
+        f"{projectile_late_defensive_margin_stats.sampled_events} "
+        f"projectile_late_def_margin_loss={projectile_late_defensive_margin_stats.last_loss:.6f} "
         f"engine_outcome={engine_outcome_config.training_mode}:{engine_outcome_stats.included_events}/"
         f"{engine_outcome_stats.event_rows} "
         f"engine_outcome_net={engine_outcome_stats.net_adjustment:.1f} "
@@ -4814,6 +5122,32 @@ def main() -> None:
         f"positive_gap_t:{format_counts(projectile_expert_q_gap_diag.positive_gap_by_time_bucket, projectile_expert_q_gap_diag.positive_gap_rows, args.diagnostic_top_n)} "
         f"top:{format_counts(projectile_expert_q_gap_diag.top_action_counts, projectile_expert_q_gap_diag.rows, args.diagnostic_top_n)} "
         f"blockers:{format_counts(projectile_expert_q_gap_diag.blocker_counts, projectile_expert_q_gap_diag.positive_gap_rows, args.diagnostic_top_n)}",
+        flush=True,
+    )
+    print(
+        "DQN diagnostics "
+        f"projectile_late_def_margin=enabled:{int(projectile_late_defensive_margin_config.enabled)} "
+        f"requested:{int(projectile_late_defensive_margin_config.requested)} "
+        f"margin:{projectile_late_defensive_margin_config.margin:.6f} "
+        f"weight:{projectile_late_defensive_margin_config.loss_weight:.6f} "
+        f"batch_size:{projectile_late_defensive_margin_config.batch_size} "
+        f"valid_mask:{projectile_late_defensive_margin_config.valid_action_mask_mode} "
+        f"sources:{','.join(sorted(projectile_late_defensive_margin_config.eligible_sources))} "
+        f"time_to_self:{projectile_late_defensive_margin_config.min_time_to_self}-"
+        f"{projectile_late_defensive_margin_config.max_time_to_self} "
+        f"eligible:{projectile_late_defensive_margin_stats.eligible_experiences} "
+        f"sampled:{projectile_late_defensive_margin_stats.sampled_events} "
+        f"violations:{projectile_late_defensive_margin_stats.violation_events} "
+        f"empty_valid:{projectile_late_defensive_margin_stats.empty_valid_events} "
+        f"empty_def:{projectile_late_defensive_margin_stats.empty_defensive_events} "
+        f"empty_jump:{projectile_late_defensive_margin_stats.empty_jump_events} "
+        f"loss:{projectile_late_defensive_margin_stats.loss_total:.6f} "
+        f"last:{projectile_late_defensive_margin_stats.last_loss:.6f} "
+        f"avg:{projectile_late_defensive_margin_stats.avg_loss:.6f} "
+        f"defensive:{format_counts(projectile_late_defensive_margin_stats.defensive_action_events, projectile_late_defensive_margin_stats.violation_events, args.diagnostic_top_n)} "
+        f"jump_blockers:{format_counts(projectile_late_defensive_margin_stats.jump_blocker_counts, projectile_late_defensive_margin_stats.violation_events, args.diagnostic_top_n)} "
+        f"sampled_t:{format_counts(projectile_late_defensive_margin_stats.sampled_by_time_bucket, projectile_late_defensive_margin_stats.sampled_events, args.diagnostic_top_n)} "
+        f"violation_t:{format_counts(projectile_late_defensive_margin_stats.violation_by_time_bucket, projectile_late_defensive_margin_stats.violation_events, args.diagnostic_top_n)}",
         flush=True,
     )
     print(

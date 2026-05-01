@@ -22,6 +22,7 @@ REWARD_PRESETS = (
     "projectile-response-v2",
     "projectile-response-v3",
     "projectile-response-v4",
+    "projectile-response-v5",
 )
 
 
@@ -114,13 +115,24 @@ def reward_preset_args(name: str) -> list[str]:
         "projectile-response-v2",
         "projectile-response-v3",
         "projectile-response-v4",
+        "projectile-response-v5",
     }:
         raise SystemExit(f"unknown reward preset: {name}")
     original_name = name
     projectile_response_args: list[str] = []
-    if name in {"projectile-response-v1", "projectile-response-v2", "projectile-response-v3", "projectile-response-v4"}:
+    if name in {
+        "projectile-response-v1",
+        "projectile-response-v2",
+        "projectile-response-v3",
+        "projectile-response-v4",
+        "projectile-response-v5",
+    }:
         name = "ground-specials-v35a"
-        safe_jump_bonus = "2.0" if original_name in {"projectile-response-v2", "projectile-response-v3", "projectile-response-v4"} else "1.2"
+        safe_jump_bonus = (
+            "2.0"
+            if original_name in {"projectile-response-v2", "projectile-response-v3", "projectile-response-v4", "projectile-response-v5"}
+            else "1.2"
+        )
         projectile_response_args = [
             "--reward-projectile-response-profile",
             "incoming-v1",
@@ -147,7 +159,7 @@ def reward_preset_args(name: str) -> list[str]:
             "--reward-projectile-back-escape-min-dx-delta",
             "8",
         ]
-        if original_name in {"projectile-response-v2", "projectile-response-v3", "projectile-response-v4"}:
+        if original_name in {"projectile-response-v2", "projectile-response-v3", "projectile-response-v4", "projectile-response-v5"}:
             projectile_response_args.extend(
                 [
                     "--projectile-response-safe-jump-oversample",
@@ -160,7 +172,7 @@ def reward_preset_args(name: str) -> list[str]:
                     "3",
                 ]
             )
-        if original_name in {"projectile-response-v3", "projectile-response-v4"}:
+        if original_name in {"projectile-response-v3", "projectile-response-v4", "projectile-response-v5"}:
             projectile_response_args.extend(
                 [
                     "--projectile-expert-margin-loss",
@@ -175,13 +187,29 @@ def reward_preset_args(name: str) -> list[str]:
                     "action-start-v1",
                 ]
             )
-            if original_name == "projectile-response-v4":
+            if original_name in {"projectile-response-v4", "projectile-response-v5"}:
                 projectile_response_args.extend(
                     [
                         "--projectile-expert-margin-min-time-to-self",
                         "13",
                         "--projectile-expert-margin-max-time-to-self",
                         "48",
+                    ]
+                )
+            if original_name == "projectile-response-v5":
+                projectile_response_args.extend(
+                    [
+                        "--projectile-late-defensive-margin-loss",
+                        "--projectile-late-defensive-margin",
+                        "0.05",
+                        "--projectile-late-defensive-margin-weight",
+                        "0.25",
+                        "--projectile-late-defensive-margin-batch-size",
+                        "8",
+                        "--projectile-late-defensive-margin-max-time-to-self",
+                        "12",
+                        "--projectile-late-defensive-margin-valid-action-mask",
+                        "action-start-v1",
                     ]
                 )
     if name == "ground-specials-v35a":
@@ -192,7 +220,7 @@ def reward_preset_args(name: str) -> list[str]:
             "shoryuken-lp=8,shoryuken-mp=10,shoryuken-hp=12,"
             "tatsu-lk=6,tatsu-mk=6,tatsu-hk=6,throw=8"
         )
-        if original_name in {"projectile-response-v2", "projectile-response-v3", "projectile-response-v4"}:
+        if original_name in {"projectile-response-v2", "projectile-response-v3", "projectile-response-v4", "projectile-response-v5"}:
             engine_action_oversamples = (
                 "fireball-lp=4,fireball-mp=4,fireball-hp=4,"
                 "shoryuken-lp=4,shoryuken-mp=5,shoryuken-hp=6,"

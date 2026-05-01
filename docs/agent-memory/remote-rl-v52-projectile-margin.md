@@ -521,3 +521,197 @@ Conclusion:
 - The next experiment should be V54: add an explicit late-jump-hit defensive
   group margin so `guard-stand`, `guard-crouch`, or `back` can beat jump on
   damaged urgent/borderline projectile rows.
+
+## V54/V55 Execution Plan: Late Defensive Margin And Human Demo Loop
+
+Date: 2026-05-01
+
+Goal:
+- preserve V52/V53's reliable safe-jump anti-projectile behavior.
+- teach the policy not to hard-jump when projectile timing is urgent or
+  borderline.
+- get to a candidate and preset that are safe enough for live incremental
+  retrain.
+
+### Phase 1: V54 Trainer Support
+
+Add a late-jump defensive margin objective:
+- eligible rows:
+  - incoming projectile threat.
+  - jump-start action.
+  - projectile outcome is late jump hit.
+  - `obs_projectile_time_to_self <= 12`.
+- defensive group:
+  - `back`
+  - `guard-stand`
+  - `guard-crouch`
+- jump group:
+  - `jump-forward-start`
+  - `jump-neutral-start`
+  - `jump-back-start`
+- margin rule:
+  - `Q(best_defensive) >= Q(best_jump) + margin`
+
+Initial conservative parameters:
+- `--projectile-late-defensive-margin-loss`
+- `--projectile-late-defensive-margin 0.05`
+- `--projectile-late-defensive-margin-weight 0.5`
+- `--projectile-late-defensive-margin-batch-size 16`
+- `--projectile-late-defensive-margin-max-time-to-self 12`
+- `--projectile-late-defensive-margin-valid-action-mask action-start-v1`
+
+Keep V53 safe-jump margin:
+- clean safe-jump rows with `time_to_self 13..48`.
+- jump group beats valid non-jump actions.
+
+### Phase 2: Offline V54 Candidate
+
+Train first on:
+- `logs/rl-transitions-human-demo-projectile-schema-v5-smoke-4-3-3.ndjson`
+
+Suggested model:
+- `model/dqn-projectile-schema-v5-full-actions-v54-late-def-margin-candidate`
+
+Offline gate:
+- `13-24` / `25-48` safe-jump rows should remain near V52/V53 jump top-1.
+- `0-6` / `7-12` damaged late-jump rows should show lower jump top-1 and
+  higher guard/back top-1.
+- `shoryuken-hp` and `tatsu-mk` must not return as projectile blockers.
+- non-projectile greedy action distribution should not swing strongly toward
+  guard/back.
+
+If this gate fails, tune V54 before any live retrain.
+
+### Phase 3: Targeted Human Demo Collection
+
+After V54 trainer support exists, collect a focused projectile-defense demo:
+- `0-6`: show guard/back, avoid jump.
+- `7-12`: show guard/back, with only clean intentional jumps if they really
+  work.
+- `13-24`: show successful jump-over.
+- `25-48`: show jump/walk/reposition.
+
+Suggested log naming:
+- `logs/rl-transitions-human-demo-projectile-defense-v54-*.ndjson`
+
+Important: the log must remain `execution_source=human-demo` so trainer
+expert objectives can use it.
+
+### Phase 4: V55 With Demo Mix
+
+V55 should combine:
+- old projectile human demo.
+- new targeted projectile-defense human demo.
+- live failure/probe logs from V52/V53/V54 if useful.
+
+Training objective:
+- reliable clean jump rows: jump group beats non-jump.
+- urgent/borderline defensive demo rows: guard/back beats jump.
+- urgent/borderline late-hit rows: guard/back beats jump.
+
+### Phase 5: Live Incremental Retrain Readiness
+
+Only after V54 or V55 passes offline gates:
+- add/use the corresponding auto-retrain preset.
+- run a live probe.
+- then use live incremental retrain with the same preset.
+
+The live incremental retrain gate should report:
+- incoming projectile fresh decisions by timing bucket.
+- jump rate by bucket.
+- guard/back rate by bucket.
+- late jump damaged rate.
+- `shoryuken-hp` and `tatsu-mk` blocker rate.
+- non-projectile action mix and overall net HP.
+
+## V54 Implementation Result
+
+Date: 2026-05-01
+
+Status:
+- trainer support is implemented.
+- auto-retrain preset `projectile-response-v5` is implemented.
+- old-demo-only V54 candidates are not promotable.
+- targeted human-demo projectile defense data is the next required input before
+  live incremental retrain should be trusted.
+
+Implemented trainer objective:
+- late jump-hit projectile rows can receive a defensive margin loss.
+- defensive group:
+  - `back`
+  - `guard-stand`
+  - `guard-crouch`
+- jump group:
+  - `jump-forward-start`
+  - `jump-neutral-start`
+  - `jump-back-start`
+- rule:
+  - `Q(best_defensive) >= Q(best_jump) + margin`
+
+New CLI flags:
+- `--projectile-late-defensive-margin-loss`
+- `--projectile-late-defensive-margin`
+- `--projectile-late-defensive-margin-weight`
+- `--projectile-late-defensive-margin-batch-size`
+- `--projectile-late-defensive-margin-min-time-to-self`
+- `--projectile-late-defensive-margin-max-time-to-self`
+- `--projectile-late-defensive-margin-sources`
+- `--projectile-late-defensive-margin-valid-action-mask`
+
+Preset:
+- `projectile-response-v5`
+- base: V53 / `projectile-response-v4`
+- adds conservative late defensive margin:
+  - margin `0.05`
+  - weight `0.25`
+  - batch size `8`
+  - max `time_to_self` `12`
+  - valid mask `action-start-v1`
+
+Validation:
+- `python3 -m py_compile tools/train_dqn_learner.py tools/rl_auto_retrain.py`
+- preset check for `projectile-response-v5`.
+- smoke train to `/tmp/rl-v54-late-def-smoke`.
+- full trains:
+  - `model/dqn-projectile-schema-v5-full-actions-v54-late-def-margin-candidate`
+  - `model/dqn-projectile-schema-v5-full-actions-v54-late-def-finetune-candidate`
+  - `model/dqn-projectile-schema-v5-full-actions-v54-late-def-conservative-candidate`
+
+Smoke finding:
+- late defensive eligible experiences: `168`
+- sampled mostly `7-12`, plus some `0-6`
+- no empty valid/defensive/jump mask events.
+
+Old-demo-only candidate findings:
+- random-init V54 was too disruptive:
+  - expert Q-gap top-1 fell to `1650/1740` (`94.8%`)
+  - `tatsu-mk` returned as a projectile blocker.
+- V53 warm-start full-strength V54 was safer but still not promotable:
+  - expert Q-gap top-1 `1710/1740` (`98.3%`)
+  - late-hit rows still mostly predicted jump.
+- V53 warm-start conservative V54 preserved V53 projectile ranking:
+  - expert Q-gap top-1 `1730/1740` (`99.4%`)
+  - remaining blocker: `shoryuken-hp` on `10` rows
+  - late-hit rows still mostly predicted jump.
+
+Interpretation:
+- the objective is wired and ready, but the old log does not contain enough
+  clean "what to do instead" data for urgent/borderline projectile defense.
+- late-hit rows say jump was wrong, but they do not provide a clean positive
+  target for guard/back.
+- targeted human demo is required before this should be used for live
+  incremental retrain with confidence.
+
+Next data collection target:
+- record `execution_source=human-demo` rows for projectile defense:
+  - `0-6`: guard/back success; avoid jump.
+  - `7-12`: guard/back success; only jump if visibly clean.
+  - `13-24`: successful jump-over.
+  - `25-48`: successful jump/walk/reposition.
+
+Live incremental retrain readiness:
+- code path: ready.
+- preset: ready.
+- old-demo-only actor: not ready for promotion.
+- next step: collect targeted human demo, then retrain with
+  `projectile-response-v5` and compare again before live probe.

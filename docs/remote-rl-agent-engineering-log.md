@@ -2,6 +2,69 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-01: Implement V54 Late Defensive Margin For Live Retrain Readiness
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / full action-set DQN experiments
+
+Files changed:
+- `tools/train_dqn_learner.py`
+- `tools/rl_auto_retrain.py`
+- `docs/agent-memory/remote-rl-v52-projectile-margin.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- prepare the trainer and auto-retrain path for the next projectile-defense
+  loop: keep reliable safe-jump behavior, but add a way to teach urgent and
+  borderline projectile rows to prefer `back`/`guard-stand`/`guard-crouch`
+  over jump when jump gets hit.
+
+Implementation:
+- added late defensive margin config, CLI flags, metadata, and stdout
+  diagnostics.
+- added `projectile_late_defensive_margin_eligible` on late jump-hit
+  projectile rows.
+- added an auxiliary margin loss:
+  `Q(best_defensive) >= Q(best_jump) + margin`.
+- added extra late defensive margin minibatch sampling.
+- added `projectile-response-v5` to `tools/rl_auto_retrain.py`.
+
+Validation:
+- `python3 -m py_compile tools/train_dqn_learner.py tools/rl_auto_retrain.py`
+- preset check for `projectile-response-v5`.
+- smoke train to `/tmp/rl-v54-late-def-smoke`.
+- full random-init V54 train to
+  `model/dqn-projectile-schema-v5-full-actions-v54-late-def-margin-candidate`.
+- V53 warm-start fine-tunes to:
+  - `model/dqn-projectile-schema-v5-full-actions-v54-late-def-finetune-candidate`
+  - `model/dqn-projectile-schema-v5-full-actions-v54-late-def-conservative-candidate`
+
+Findings:
+- smoke confirmed the late defensive objective is wired correctly:
+  - eligible experiences: `168`
+  - sampled rows were mostly `7-12`, with some `0-6`
+  - no empty valid/defensive/jump masks.
+- random-init V54 was not acceptable:
+  - reliable expert Q-gap top-1 dropped to `1650/1740` (`94.8%`).
+  - `tatsu-mk` returned as a projectile blocker.
+- V53 warm-start V54 was better but still not promotable:
+  - full-strength fine-tune kept expert Q-gap at `1710/1740` (`98.3%`) but
+    still let `tatsu-mk` appear and did not flip late-hit rows to guard/back.
+  - conservative fine-tune preserved V53 projectile behavior
+    (`1730/1740` expert top-1) but also did not change late-hit top actions.
+- old demo data mostly contains "jump failed" evidence for urgent/borderline
+  rows, not clean examples of the correct defensive replacement action.
+
+Conclusion:
+- V54 trainer support and `projectile-response-v5` are ready for targeted demo
+  and live incremental retrain experiments.
+- No old-demo-only V54 candidate should be promoted as the live actor.
+- Before live incremental retrain, collect targeted human-demo projectile
+  defense rows, especially `time_to_self <= 12` guard/back success examples.
+- Use `projectile-response-v5` conservatively: late defensive margin weight
+  `0.25`, batch size `8`, max timing `12`.
+
 ## 2026-05-01: Implement And Analyze V53 Projectile Timing Split
 
 Milestone:

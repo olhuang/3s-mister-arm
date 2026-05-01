@@ -2977,6 +2977,61 @@ Full-action DQN sparse-action plan:
         the rest of the air attack routine.
       - `jump-*-start`, `air-*`, and special engine labels remain separated.
 
+- Step 3B: add projectile-threat observation fields before training the first
+  anti-fireball / jump-over model.
+  - Motivation:
+    - the action taxonomy already has the right escape action:
+      `jump-forward-start`, `jump-neutral-start`, or `jump-back-start`.
+    - however, the model cannot reliably learn "jump over the fireball" unless
+      the observation tells it that an active projectile is on screen after the
+      thrower has recovered.
+    - opponent routine `R1=4/R2=16` only describes the startup/recovery of the
+      fireball move; it is not enough once the projectile is traveling.
+  - Candidate schema fields:
+    - `obs_projectile_active`: `1` when a relevant active projectile exists,
+      otherwise `0`.
+    - `obs_projectile_owner`: relative owner enum, initially `0=none`,
+      `1=self`, `2=opponent`.
+    - `obs_projectile_rel_x`: signed projectile X relative to self, normalized
+      by self facing so positive means "in front of self".
+    - `obs_projectile_rel_y`: signed projectile Y relative to self.
+    - `obs_projectile_vel_x`: signed projectile X velocity normalized by self
+      facing; for an incoming opponent projectile in front of self this should
+      usually be negative.
+    - `obs_projectile_time_to_self`: optional derived estimate in frames; use a
+      sentinel/clamped max value when there is no active projectile or the
+      projectile is not moving toward self.
+  - First-version selection rule:
+    - prefer the nearest active opponent-owned projectile that is in front of
+      self and moving toward self.
+    - if no incoming opponent projectile exists, fall back to the nearest active
+      projectile and expose `owner` so the model can distinguish self zoning
+      from incoming threat.
+    - keep the field count small: one selected projectile is enough for the
+      first Ryu fireball/jump-over curriculum; multi-projectile summaries can
+      be added later if needed.
+  - Expected implementation areas:
+    - C observation builder: locate the authoritative active projectile state
+      used by Ryu hadouken and derive the compact projectile fields from live
+      game globals, not from opponent move routine alone.
+    - C/Python protocol: bump the OBS spacing payload/schema version as needed
+      and serialize/decode the new projectile fields.
+    - Python probe/training/analyzer: add feature normalization, model
+      metadata, verbose diagnostics, and analyzer summaries for projectile
+      active/owner/distance/velocity/time-to-self buckets.
+  - Validation before training:
+    - record a targeted human-demo smoke with Ryu fireballs, neutral/forward
+      jump-over responses, blocked/failed jumps, and no-projectile baseline
+      movement.
+    - confirm projectile fields stay active while the fireball is traveling,
+      not only during opponent `R1=4/R2=16`.
+    - confirm `obs_projectile_rel_x`, `obs_projectile_vel_x`, and optional
+      `obs_projectile_time_to_self` have the expected signs on both left/right
+      sides.
+    - confirm jump-over demo rows label the action as `jump-*-start` while the
+      projectile threat fields are visible in the decision row or recent
+      preceding rows.
+
 - Step 4: train-time invalid-action Q penalty on the split action space.
   - Do this after Step 3, not before it.
   - Goal:

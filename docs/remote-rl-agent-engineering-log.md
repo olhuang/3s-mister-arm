@@ -2,6 +2,43 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-01: Plan Projectile-Threat Observation Fields
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / full action-set DQN experiments
+
+Files changed:
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- schedule the observation-schema work needed for the model to learn
+  anti-fireball jump decisions.
+- make `jump-*-start` learnable as a response to an active traveling
+  projectile, not only to the opponent's fireball startup routine.
+
+Plan notes:
+- added Step 3B before the train-time invalid-action Q penalty.
+- candidate fields:
+  - `obs_projectile_active`
+  - `obs_projectile_owner`
+  - `obs_projectile_rel_x`
+  - `obs_projectile_rel_y`
+  - `obs_projectile_vel_x`
+  - optional `obs_projectile_time_to_self`
+- first version should select one relevant projectile, preferring the nearest
+  opponent-owned projectile that is in front of self and moving toward self.
+- position/velocity signs should be self-facing-normalized so side swaps do not
+  invert the learned anti-fireball policy.
+
+Validation planned:
+- targeted human-demo smoke with Ryu fireballs and neutral/forward jump-over
+  responses.
+- verify projectile fields stay active while the projectile travels, not only
+  during opponent `R1=4/R2=16`.
+- verify signs/time-to-self on both left/right sides before using the data for
+  V41/Vnext training.
+
 ## 2026-05-01: Backfill Demo Air-Normal Engine Attribution
 
 Milestone:

@@ -2,6 +2,90 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-01: Train Projectile Response V42-V44 Candidates
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / full action-set DQN experiments
+
+Files changed:
+- `tools/rl_auto_retrain.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+- `model/dqn-projectile-schema-v5-full-actions-v42-response/` (generated,
+  untracked)
+- `model/dqn-projectile-schema-v5-full-actions-v43-response/` (generated,
+  untracked)
+- `model/dqn-projectile-schema-v5-full-actions-v44-response-unsupported-reg/`
+  (generated, untracked)
+
+Purpose:
+- run the first projectile-response shaped candidates against the same
+  schema-v5 projectile smoke log used by V41.
+- verify whether explicit safe-jump / late-jump / close back-guard shaping can
+  move same-log incoming projectile rows away from `shoryuken-hp`.
+
+Commands:
+- V42/V43/V44 all used:
+  `logs/rl-transitions-projectile-schema-v5-smoke-4-3-3.ndjson`
+- V42:
+  - model dir: `model/dqn-projectile-schema-v5-full-actions-v42-response`
+  - projectile filter: `time_to_self=2..24`, `abs(rel_y)<=48`
+- V43:
+  - model dir: `model/dqn-projectile-schema-v5-full-actions-v43-response`
+  - projectile filter: `time_to_self=2..48`, `abs(rel_y)<=96`
+- V44:
+  - model dir:
+    `model/dqn-projectile-schema-v5-full-actions-v44-response-unsupported-reg`
+  - same V43 projectile filter plus train-time
+    `--dqn-unsupported-action-regularization`.
+
+Results:
+- V42 failed as a shaping smoke:
+  - `projectile_shape threat_rows=4`
+  - `safe_jump=0`, `late_jump_hit=0`, `close_back=0`, `close_guard=0`
+  - global greedy still collapsed to `shoryuken-hp 70.4%` on trainer eval.
+- Action-start diagnostics showed the filter was too narrow:
+  - same-row incoming projectile starts: `106`
+  - actions: `back=72`, `jump-forward-start=17`, `jump-back-start=7`,
+    `jump-neutral-start=4`, `forward=6`
+  - many real projectile rows use `obs_projectile_rel_y=66` and
+    `time_to_self=25-48`.
+- V43 fixed the shaping filter:
+  - `projectile_shape threat_rows=89`
+  - `safe_jump=18/21.6`
+  - `late_jump_hit=10/15.0`
+  - `close_back=0`, `close_guard=0`, because this smoke log's projectile-back
+    rows are far opponent-spacing rows (`obs_abs_dx ~= 306..328`), not
+    close-range back/guard samples.
+- V43 same-log projectile behavior did not improve:
+  - incoming projectile + jump-start-allowed rows:
+    `shoryuken-hp 313 / 343`, `jump_top=0`, `jump_top5=25`
+  - narrowed V43 filter rows:
+    `shoryuken-hp 272 / 302`, `jump_top=0`, `jump_top5=25`
+- V44 unsupported-action regularization helped only slightly:
+  - global same-log `shoryuken-hp`: V41 `4228 / 7783 = 54.3%`, V44
+    `4022 / 7783 = 51.7%`
+  - incoming projectile + jump-start-allowed rows: V41 `309 / 343`, V44
+    `306 / 343`
+  - `jump_top` remained `0`.
+
+Interpretation:
+- The projectile-response reward code is now wired correctly and measurable.
+- The current replay distribution is still too weak for a full-action DQN:
+  only `45` jump-start rows exist, `33` are near incoming projectiles, and
+  there are no close-range guard/back projectile samples in this log.
+- Zero/low-support action overestimation remains a major issue; unsupported
+  action regularization alone is not strong enough to make jump-over behavior
+  emerge.
+
+Follow-up:
+- do not promote V42, V43, or V44.
+- add projectile-response row oversampling / batch grouping, or build an
+  explicit projectile-response action-target curriculum from the analyzer's
+  near-projectile labels, before another full recipe retrain.
+- collect or synthesize close-range guard/back projectile-response rows before
+  expecting the close back/guard bonuses to affect training.
+
 ## 2026-05-01: Add Opt-In Projectile Response Reward Shaping
 
 Milestone:

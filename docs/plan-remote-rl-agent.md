@@ -3135,6 +3135,35 @@ Full-action DQN sparse-action plan:
     - `tools/rl_auto_retrain.py --reward-preset projectile-response-v1` opts
       into this shaping on top of the `ground-specials-v35a` recipe; existing
       reward presets remain unchanged.
+  - V42/V43/V44 projectile-response training result 2026-05-01:
+    - V42 used the first `projectile-response-v1` settings and published
+      `model/dqn-projectile-schema-v5-full-actions-v42-response`, but the
+      threat filter was too narrow: `threat_rows=4`, all projectile-response
+      event counts were zero, and greedy behavior was unchanged.
+    - Diagnostics showed the replay has `106` same-row incoming projectile
+      action starts (`back=72`, `jump-forward-start=17`,
+      `jump-back-start=7`, `jump-neutral-start=4`, `forward=6`), but many real
+      projectile rows use `obs_projectile_rel_y=66` and `time_to_self=25-48`.
+    - The preset was widened to `--reward-projectile-threat-max-abs-y 96` and
+      `--reward-projectile-threat-max-time-to-self 48`.
+    - V43 published
+      `model/dqn-projectile-schema-v5-full-actions-v43-response`; shaping was
+      now active: `threat_rows=89`, `safe_jump=18/21.6`,
+      `late_jump_hit=10/15.0`, `projectile_net=6.6`.
+    - V43 still did not fix the policy: same-log incoming projectile +
+      jump-start-allowed rows stayed at `shoryuken-hp 313 / 343`, with
+      `jump_top=0`.
+    - V44 added train-time unsupported-action regularization and published
+      `model/dqn-projectile-schema-v5-full-actions-v44-response-unsupported-reg`.
+      This reduced global `shoryuken-hp` only modestly (`54.3%` V41 to
+      `51.7%` V44) and incoming projectile rows only from `309 / 343` to
+      `306 / 343`; `jump_top` remained `0`.
+    - conclusion: projectile-response reward shaping is wired and measurable,
+      but sparse event counts plus full-action Q overestimation still dominate.
+      Do not promote V42/V43/V44. The next training change should add
+      projectile-response row oversampling / batching or an explicit
+      projectile-response action-target curriculum before another full recipe
+      retrain.
 
 - Step 4: train-time invalid-action Q penalty on the split action space.
   - Do this after Step 3, not before it.
@@ -3371,6 +3400,7 @@ Implementation notes:
   - projectile response reward shaping is available for offline anti-fireball DQN experiments without changing transition schema:
     - `--reward-projectile-response-profile incoming-v1` enables the profile; default `off` preserves existing recipes
     - incoming threats require opponent-owned active projectiles in front of self, moving toward self, within configurable `time_to_self`, `rel_x`, and `rel_y` bounds
+    - `tools/rl_auto_retrain.py --reward-preset projectile-response-v1` currently uses `time_to_self=2..48` and `abs(rel_y)<=96`; the initial `2..24` / `<=48` filter was too narrow for the schema-v5 projectile smoke log
     - `--reward-projectile-safe-jump-bonus` rewards clean `jump-*-start` rows that become airborne and clear/pass the projectile inside the response window
     - `--reward-projectile-late-jump-hit-cost` subtracts raw reward when a jump-start response to an incoming projectile takes self HP damage
     - `--reward-projectile-close-back-success-bonus` rewards clean close-range `back` rows that increase spacing or clear/pass the projectile

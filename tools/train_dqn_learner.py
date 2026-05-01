@@ -846,6 +846,8 @@ class ProjectileExpertMarginConfig:
     batch_size: int = 0
     require_safe_jump: bool = True
     equivalent_jump_actions: bool = True
+    min_time_to_self: int = 0
+    max_time_to_self: int = 32767
     valid_action_mask_mode: str = "action-start-v1"
 
     @property
@@ -864,6 +866,8 @@ class ProjectileExpertMarginConfig:
             "batch_size": self.batch_size,
             "require_safe_jump": self.require_safe_jump,
             "equivalent_jump_actions": self.equivalent_jump_actions,
+            "min_time_to_self": self.min_time_to_self,
+            "max_time_to_self": self.max_time_to_self,
             "valid_action_mask_mode": self.valid_action_mask_mode,
         }
 
@@ -881,6 +885,8 @@ class ProjectileExpertMarginStats:
     by_expert_action_events: dict[str, int] = field(default_factory=dict)
     by_expert_action_loss: dict[str, float] = field(default_factory=dict)
     blocker_counts: dict[str, int] = field(default_factory=dict)
+    sampled_by_time_bucket: dict[str, int] = field(default_factory=dict)
+    violation_by_time_bucket: dict[str, int] = field(default_factory=dict)
 
     def as_metadata(self) -> dict[str, object]:
         return {
@@ -895,6 +901,8 @@ class ProjectileExpertMarginStats:
             "by_expert_action_events": dict(sorted(self.by_expert_action_events.items())),
             "by_expert_action_loss": dict(sorted(self.by_expert_action_loss.items())),
             "blocker_counts": dict(sorted(self.blocker_counts.items())),
+            "sampled_by_time_bucket": dict(sorted(self.sampled_by_time_bucket.items())),
+            "violation_by_time_bucket": dict(sorted(self.violation_by_time_bucket.items())),
         }
 
 
@@ -915,6 +923,11 @@ class ProjectileExpertQGapDiagnostics:
     by_expert_action: dict[str, int] = field(default_factory=dict)
     top_action_counts: dict[str, int] = field(default_factory=dict)
     blocker_counts: dict[str, int] = field(default_factory=dict)
+    rows_by_time_bucket: dict[str, int] = field(default_factory=dict)
+    top1_by_time_bucket: dict[str, int] = field(default_factory=dict)
+    positive_gap_by_time_bucket: dict[str, int] = field(default_factory=dict)
+    top_action_counts_by_time_bucket: dict[str, dict[str, int]] = field(default_factory=dict)
+    blocker_counts_by_time_bucket: dict[str, dict[str, int]] = field(default_factory=dict)
 
     @property
     def mean_gap(self) -> float:
@@ -948,6 +961,17 @@ class ProjectileExpertQGapDiagnostics:
             "by_expert_action": dict(sorted(self.by_expert_action.items())),
             "top_action_counts": dict(sorted(self.top_action_counts.items())),
             "blocker_counts": dict(sorted(self.blocker_counts.items())),
+            "rows_by_time_bucket": dict(sorted(self.rows_by_time_bucket.items())),
+            "top1_by_time_bucket": dict(sorted(self.top1_by_time_bucket.items())),
+            "positive_gap_by_time_bucket": dict(sorted(self.positive_gap_by_time_bucket.items())),
+            "top_action_counts_by_time_bucket": {
+                bucket: dict(sorted(counts.items()))
+                for bucket, counts in sorted(self.top_action_counts_by_time_bucket.items())
+            },
+            "blocker_counts_by_time_bucket": {
+                bucket: dict(sorted(counts.items()))
+                for bucket, counts in sorted(self.blocker_counts_by_time_bucket.items())
+            },
         }
 
 
@@ -1875,6 +1899,7 @@ def reward_projectile_response_adjustment(
 
 
 def projectile_expert_margin_eligible(
+    row: dict[str, object],
     source_name: str,
     action_name: str,
     outcome: ProjectileResponseOutcome,
@@ -1891,6 +1916,9 @@ def projectile_expert_margin_eligible(
     if config.require_safe_jump and not outcome.safe_jump:
         return False
     if outcome.late_jump_hit:
+        return False
+    time_to_self = int_field(row, "obs_projectile_time_to_self")
+    if time_to_self < config.min_time_to_self or time_to_self > config.max_time_to_self:
         return False
     return True
 
@@ -2316,6 +2344,7 @@ def build_experiences(
                 row=dict(row),
                 next_row=dict(row),
                 projectile_expert_margin_eligible=projectile_expert_margin_eligible(
+                    row,
                     source_name,
                     action_name,
                     projectile_response_outcome_result,
@@ -2511,6 +2540,8 @@ def projectile_expert_margin_config_from_args(args: argparse.Namespace) -> Proje
             f"unknown --projectile-expert-margin-valid-action-mask {mode!r}; "
             f"expected one of {','.join(rl.DQN_VALID_ACTION_MASK_MODES)}"
         )
+    min_time = max(0, int(args.projectile_expert_margin_min_time_to_self))
+    max_time = max(min_time, int(args.projectile_expert_margin_max_time_to_self))
     return ProjectileExpertMarginConfig(
         requested=bool(args.projectile_expert_margin_loss),
         margin=max(0.0, float(args.projectile_expert_margin)),
@@ -2518,6 +2549,8 @@ def projectile_expert_margin_config_from_args(args: argparse.Namespace) -> Proje
         batch_size=max(0, int(args.projectile_expert_margin_batch_size)),
         require_safe_jump=bool(args.projectile_expert_margin_require_safe_jump),
         equivalent_jump_actions=bool(args.projectile_expert_margin_equivalent_jump_actions),
+        min_time_to_self=min_time,
+        max_time_to_self=max_time,
         valid_action_mask_mode=mode,
     )
 
@@ -2784,6 +2817,21 @@ def dqn_masked_indices_for_row(
     return indices
 
 
+def projectile_time_to_self_bucket(row: dict[str, object]) -> str:
+    time_to_self = int_field(row, "obs_projectile_time_to_self")
+    if time_to_self < 0 or time_to_self >= 32767:
+        return "sentinel"
+    if time_to_self <= 6:
+        return "0-6"
+    if time_to_self <= 12:
+        return "7-12"
+    if time_to_self <= 24:
+        return "13-24"
+    if time_to_self <= 48:
+        return "25-48"
+    return ">48"
+
+
 def projectile_expert_margin_group_indices(
     expert_index: int,
     valid_indices: tuple[int, ...],
@@ -2840,6 +2888,8 @@ def apply_projectile_expert_margin_loss(
         return 0.0
 
     stats.sampled_events += 1
+    time_bucket = projectile_time_to_self_bucket(exp.row)
+    stats.sampled_by_time_bucket[time_bucket] = stats.sampled_by_time_bucket.get(time_bucket, 0) + 1
     best_expert_index = max(
         expert_group_indices,
         key=lambda index: (values[index], actions[index]),
@@ -2864,6 +2914,7 @@ def apply_projectile_expert_margin_loss(
     stats.by_expert_action_events[expert_action] = stats.by_expert_action_events.get(expert_action, 0) + 1
     stats.by_expert_action_loss[expert_action] = stats.by_expert_action_loss.get(expert_action, 0.0) + weighted_loss
     stats.blocker_counts[blocker_action] = stats.blocker_counts.get(blocker_action, 0) + 1
+    stats.violation_by_time_bucket[time_bucket] = stats.violation_by_time_bucket.get(time_bucket, 0) + 1
     return weighted_loss
 
 
@@ -2927,6 +2978,7 @@ def projectile_expert_q_gap_diagnostics(
             else best_expert_index
         )
         gap = float(values[best_competitor_index]) - float(values[best_expert_index])
+        time_bucket = projectile_time_to_self_bucket(exp.row)
 
         stats.rows += 1
         unique_rows.add(
@@ -2938,20 +2990,29 @@ def projectile_expert_q_gap_diagnostics(
             )
         )
         stats.expert_rank_sum += expert_rank
+        stats.rows_by_time_bucket[time_bucket] = stats.rows_by_time_bucket.get(time_bucket, 0) + 1
         stats.gap_sum += gap
         stats.gap_min = gap if stats.gap_min is None else min(stats.gap_min, gap)
         stats.gap_max = gap if stats.gap_max is None else max(stats.gap_max, gap)
         if gap > 0.0:
             stats.positive_gap_rows += 1
             stats.positive_gap_sum += gap
+            stats.positive_gap_by_time_bucket[time_bucket] = (
+                stats.positive_gap_by_time_bucket.get(time_bucket, 0) + 1
+            )
         if expert_rank == 1:
             stats.top1_matches += 1
+            stats.top1_by_time_bucket[time_bucket] = stats.top1_by_time_bucket.get(time_bucket, 0) + 1
         if expert_rank <= 5:
             stats.top5_matches += 1
         stats.by_expert_action[expert_action] = stats.by_expert_action.get(expert_action, 0) + 1
         stats.top_action_counts[top_action] = stats.top_action_counts.get(top_action, 0) + 1
+        bucket_top_actions = stats.top_action_counts_by_time_bucket.setdefault(time_bucket, {})
+        bucket_top_actions[top_action] = bucket_top_actions.get(top_action, 0) + 1
         if top_index not in expert_group_indices:
             stats.blocker_counts[top_action] = stats.blocker_counts.get(top_action, 0) + 1
+            bucket_blockers = stats.blocker_counts_by_time_bucket.setdefault(time_bucket, {})
+            bucket_blockers[top_action] = bucket_blockers.get(top_action, 0) + 1
 
     stats.unique_rows = len(unique_rows)
     return stats
@@ -4006,6 +4067,24 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--projectile-expert-margin-min-time-to-self",
+        type=int,
+        default=0,
+        help=(
+            "Minimum obs_projectile_time_to_self required for safe human-demo "
+            "projectile jump rows to receive expert margin loss"
+        ),
+    )
+    parser.add_argument(
+        "--projectile-expert-margin-max-time-to-self",
+        type=int,
+        default=32767,
+        help=(
+            "Maximum obs_projectile_time_to_self allowed for safe human-demo "
+            "projectile jump rows to receive expert margin loss"
+        ),
+    )
+    parser.add_argument(
         "--projectile-expert-margin-valid-action-mask",
         choices=rl.DQN_VALID_ACTION_MASK_MODES,
         default="action-start-v1",
@@ -4699,6 +4778,8 @@ def main() -> None:
         f"require_safe_jump:{int(projectile_expert_margin_config.require_safe_jump)} "
         f"equivalent_jump:{int(projectile_expert_margin_config.equivalent_jump_actions)} "
         f"valid_mask:{projectile_expert_margin_config.valid_action_mask_mode} "
+        f"time_to_self:{projectile_expert_margin_config.min_time_to_self}-"
+        f"{projectile_expert_margin_config.max_time_to_self} "
         f"eligible:{projectile_expert_margin_stats.eligible_experiences} "
         f"sampled:{projectile_expert_margin_stats.sampled_events} "
         f"violations:{projectile_expert_margin_stats.violation_events} "
@@ -4708,6 +4789,8 @@ def main() -> None:
         f"last:{projectile_expert_margin_stats.last_loss:.6f} "
         f"avg:{projectile_expert_margin_stats.avg_loss:.6f} "
         f"by_expert:{format_counts(projectile_expert_margin_stats.by_expert_action_events, projectile_expert_margin_stats.sampled_events, args.diagnostic_top_n)} "
+        f"sampled_t:{format_counts(projectile_expert_margin_stats.sampled_by_time_bucket, projectile_expert_margin_stats.sampled_events, args.diagnostic_top_n)} "
+        f"violation_t:{format_counts(projectile_expert_margin_stats.violation_by_time_bucket, projectile_expert_margin_stats.violation_events, args.diagnostic_top_n)} "
         f"blockers:{format_counts(projectile_expert_margin_stats.blocker_counts, projectile_expert_margin_stats.violation_events, args.diagnostic_top_n)}",
         flush=True,
     )
@@ -4726,6 +4809,9 @@ def main() -> None:
         f"invalid_expert:{projectile_expert_q_gap_diag.invalid_expert_rows} "
         f"empty_valid:{projectile_expert_q_gap_diag.empty_valid_rows} "
         f"by_expert:{format_counts(projectile_expert_q_gap_diag.by_expert_action, projectile_expert_q_gap_diag.rows, args.diagnostic_top_n)} "
+        f"rows_t:{format_counts(projectile_expert_q_gap_diag.rows_by_time_bucket, projectile_expert_q_gap_diag.rows, args.diagnostic_top_n)} "
+        f"top1_t:{format_counts(projectile_expert_q_gap_diag.top1_by_time_bucket, projectile_expert_q_gap_diag.rows, args.diagnostic_top_n)} "
+        f"positive_gap_t:{format_counts(projectile_expert_q_gap_diag.positive_gap_by_time_bucket, projectile_expert_q_gap_diag.positive_gap_rows, args.diagnostic_top_n)} "
         f"top:{format_counts(projectile_expert_q_gap_diag.top_action_counts, projectile_expert_q_gap_diag.rows, args.diagnostic_top_n)} "
         f"blockers:{format_counts(projectile_expert_q_gap_diag.blocker_counts, projectile_expert_q_gap_diag.positive_gap_rows, args.diagnostic_top_n)}",
         flush=True,

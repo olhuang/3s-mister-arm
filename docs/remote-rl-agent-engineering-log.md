@@ -2,6 +2,71 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-01: Implement And Analyze V53 Projectile Timing Split
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / full action-set DQN experiments
+
+Files changed:
+- `tools/train_dqn_learner.py`
+- `tools/rl_auto_retrain.py`
+- `docs/agent-memory/remote-rl-v52-projectile-margin.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Implementation:
+- added `--projectile-expert-margin-min-time-to-self` and
+  `--projectile-expert-margin-max-time-to-self`.
+- kept the V52 jump-group expert margin, but allowed V53 to apply it only to
+  reliable/setup projectile timing buckets.
+- added margin and Q-gap diagnostics by `obs_projectile_time_to_self` bucket.
+- added `tools/rl_auto_retrain.py --reward-preset projectile-response-v4`,
+  which is V52's `projectile-response-v3` recipe plus margin timing
+  `13..48`.
+
+Validation:
+- `python3 -m py_compile tools/train_dqn_learner.py tools/rl_auto_retrain.py`
+- smoke train to `/tmp/rl-v53-timing-smoke` with `--steps 8`.
+- full train to
+  `model/dqn-projectile-schema-v5-full-actions-v53-timing-split-candidate`
+  with model version `53`, `--steps 3000`, and the V52 recipe plus
+  `--projectile-expert-margin-min-time-to-self 13`
+  `--projectile-expert-margin-max-time-to-self 48`.
+
+Training result:
+- V53 margin eligibility: `1740` experiences, down from V52's `1830`, all in
+  timing buckets `13-24` and `25-48`.
+- final projectile margin loss: `0.000091`.
+- reliable/setup expert Q-gap:
+  - rows: `1740`
+  - top-1: `1730/1740` (`99.4%`)
+  - positive gap: `10/1740`
+  - remaining blocker: `shoryuken-hp` on `10` rows, all in `13-24`.
+
+Offline comparison:
+- On the human-demo incoming projectile + jump-start-allowed rows, V53's
+  greedy actions were effectively identical to V52:
+  - `0-6`: jump `52/55`, `shoryuken-hp` `3/55`
+  - `7-12`: jump `315/323`, `shoryuken-hp` `2/323`, `tatsu-mk` `5/323`
+  - `13-24`: jump `672/685`
+  - `25-48`: jump `469/470`
+- On `logs/rl-transitions-v52-live-probe.ndjson`, V53 also predicted the same
+  actions as V52 for the 43 incoming projectile fresh decisions:
+  - `7-12`: jump `9/10`; both damaged rows still predicted jump.
+  - `13-24`: jump `13/13`; damaged rows still predicted jump.
+  - `25-48`: jump `18/18`; damaged rows still predicted jump.
+
+Conclusion:
+- V53 is useful as diagnostic and reproducibility infrastructure, but it is not
+  a behavior improvement over V52.
+- Simply removing expert margin from urgent/borderline buckets does not make
+  the network choose guard/back there; reward/oversample and neighboring
+  reliable-bucket generalization still keep jump ranked high.
+- Do not promote V53 over V52.
+- V54 should add an explicit late-jump-hit defensive margin that pushes
+  `guard-stand`/`guard-crouch`/`back` above jump on damaged urgent/borderline
+  projectile rows.
+
 ## 2026-05-01: Record V52 Projectile Margin Reference And V53 Direction
 
 Milestone:

@@ -456,3 +456,68 @@ Suggested naming:
 - model dir: `model/dqn-projectile-schema-v5-full-actions-v53-timing-split-candidate`
 - auto-retrain preset later: `projectile-response-v4`
 
+## V53 Timing Split Result
+
+Date: 2026-05-01
+
+Model:
+- `model/dqn-projectile-schema-v5-full-actions-v53-timing-split-candidate`
+
+Auto-retrain preset:
+- `projectile-response-v4`
+
+V53 kept all V52 parameters except the expert margin was only applied to clean
+safe-jump human-demo projectile rows with:
+- `--projectile-expert-margin-min-time-to-self 13`
+- `--projectile-expert-margin-max-time-to-self 48`
+
+Implementation changes:
+- added margin timing-window flags to `tools/train_dqn_learner.py`.
+- added margin sampled/violation bucket diagnostics.
+- added expert Q-gap bucket diagnostics.
+- added `projectile-response-v4` as a reproducible auto-retrain preset.
+
+Validation:
+- `python3 -m py_compile tools/train_dqn_learner.py tools/rl_auto_retrain.py`
+- smoke train with `--steps 8`.
+- full train with `--steps 3000`.
+
+Training diagnostics:
+- margin eligible experiences: `1740`
+- sampled timing buckets:
+  - `13-24`: `73610/99251` (`74.2%`)
+  - `25-48`: `25641/99251` (`25.8%`)
+- final margin loss: `0.000091`
+- expert Q-gap rows: `1740`
+- expert top-1: `1730/1740` (`99.4%`)
+- positive gaps: `10/1740`
+- remaining blocker: `shoryuken-hp`, `10` rows, all in `13-24`
+
+Targeted offline comparison on
+`logs/rl-transitions-human-demo-projectile-schema-v5-smoke-4-3-3.ndjson`:
+- V53 did not materially change greedy behavior versus V52.
+- incoming projectile + jump-start-allowed:
+  - `0-6`: jump `52/55`, `shoryuken-hp` `3/55`
+  - `7-12`: jump `315/323`, `shoryuken-hp` `2/323`, `tatsu-mk` `5/323`
+  - `13-24`: jump `672/685`
+  - `25-48`: jump `469/470`
+- safe-jump proxy rows remained jump-dominant in all buckets.
+
+Targeted comparison on `logs/rl-transitions-v52-live-probe.ndjson`:
+- V53 predicted the same actions as V52 on the 43 incoming projectile fresh
+  decisions.
+- V53 still predicted jump on the damaged live rows:
+  - `7-12`: `2/2` damaged rows predicted `jump-neutral-start`
+  - `13-24`: `3/3` damaged rows predicted `jump-neutral-start`
+  - `25-48`: `3/3` damaged rows predicted `jump-neutral-start`
+
+Conclusion:
+- V53 is a diagnostic/reproducibility milestone, not a promotable behavior
+  improvement.
+- Removing safe-jump margin from `time_to_self < 13` is not enough to make
+  urgent/borderline rows prefer guard/back. The V52 projectile reward,
+  oversampling, and neighboring bucket generalization still rank jump high.
+- Keep V52 as the current anti-fireball candidate.
+- The next experiment should be V54: add an explicit late-jump-hit defensive
+  group margin so `guard-stand`, `guard-crouch`, or `back` can beat jump on
+  damaged urgent/borderline projectile rows.

@@ -24,6 +24,22 @@ DX_BUCKETS = ("close", "mid", "far")
 DEFAULT_ACTIONS = TABULAR_ACTION_NAMES
 RYU_CHARACTER_ID = 2
 ROUTINE_UNKNOWN = -1
+PROJECTILE_SENTINEL = 32767
+PROJECTILE_OWNER_NAMES = {
+    0: "none",
+    1: "self",
+    2: "opponent",
+}
+JUMP_START_ACTIONS = frozenset(rl.JUMP_START_ACTION_NAMES)
+PROJECTILE_FIREBALL_ACTIONS = frozenset(
+    {
+        "fireball-lp",
+        "fireball-mp",
+        "fireball-hp",
+        "shinkuu-hadouken",
+        "denjin-hadouken",
+    }
+)
 
 SELF_R1_FIELD_NAMES = (
     "obs_self_routine_1",
@@ -210,6 +226,85 @@ class EngineOutcomeStats:
         return self.window_rows_sum / self.events if self.events else 0.0
 
 
+@dataclass
+class ProjectileOwnerStats:
+    rows: int = 0
+    rel_x_min: int | None = None
+    rel_x_max: int | None = None
+    rel_y_min: int | None = None
+    rel_y_max: int | None = None
+    vel_x_min: int | None = None
+    vel_x_max: int | None = None
+    finite_time_rows: int = 0
+    time_min: int | None = None
+    time_max: int | None = None
+    self_hp_sum: int = 0
+    opp_hp_sum: int = 0
+
+    def add(self, row: dict[str, object]) -> None:
+        rel_x = int_field(row, "obs_projectile_rel_x")
+        rel_y = int_field(row, "obs_projectile_rel_y")
+        vel_x = int_field(row, "obs_projectile_vel_x")
+        time_to_self = int_field(row, "obs_projectile_time_to_self")
+
+        self.rows += 1
+        self.rel_x_min = rel_x if self.rel_x_min is None else min(self.rel_x_min, rel_x)
+        self.rel_x_max = rel_x if self.rel_x_max is None else max(self.rel_x_max, rel_x)
+        self.rel_y_min = rel_y if self.rel_y_min is None else min(self.rel_y_min, rel_y)
+        self.rel_y_max = rel_y if self.rel_y_max is None else max(self.rel_y_max, rel_y)
+        self.vel_x_min = vel_x if self.vel_x_min is None else min(self.vel_x_min, vel_x)
+        self.vel_x_max = vel_x if self.vel_x_max is None else max(self.vel_x_max, vel_x)
+        if time_to_self != PROJECTILE_SENTINEL:
+            self.finite_time_rows += 1
+            self.time_min = time_to_self if self.time_min is None else min(self.time_min, time_to_self)
+            self.time_max = time_to_self if self.time_max is None else max(self.time_max, time_to_self)
+        self.self_hp_sum += int_field(row, "delta_self_hp")
+        self.opp_hp_sum += int_field(row, "delta_opp_hp")
+
+
+@dataclass
+class ProjectileSegmentStats:
+    segments: int = 0
+    rows: int = 0
+    min_len: int | None = None
+    max_len: int = 0
+
+    def add(self, length: int) -> None:
+        self.segments += 1
+        self.rows += length
+        self.min_len = length if self.min_len is None else min(self.min_len, length)
+        self.max_len = max(self.max_len, length)
+
+    @property
+    def mean_len(self) -> float:
+        return self.rows / self.segments if self.segments else 0.0
+
+
+@dataclass
+class JumpProjectileStats:
+    jumps: int = 0
+    near_incoming: int = 0
+    same_row_incoming: int = 0
+    damaged: int = 0
+    safe: int = 0
+    self_hp_sum: int = 0
+    opp_hp_sum: int = 0
+
+    def add_jump(self) -> None:
+        self.jumps += 1
+
+    def add_near(self, same_row: bool, self_hp: int, opp_hp: int) -> None:
+        self.near_incoming += 1
+        if same_row:
+            self.same_row_incoming += 1
+        self.self_hp_sum += self_hp
+        self.opp_hp_sum += opp_hp
+        if self_hp > 0:
+            self.damaged += 1
+        else:
+            self.safe += 1
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -282,6 +377,24 @@ def parse_args() -> argparse.Namespace:
             "Canonical action label source for DIRECT/CREDITED tables. auto uses engine/input labels "
             "for current-schema demo rows and policy labels for current-schema remote rows."
         ),
+    )
+    parser.add_argument(
+        "--projectile-window-before",
+        type=int,
+        default=5,
+        help="Rows before a jump-start row to search for incoming opponent projectile context",
+    )
+    parser.add_argument(
+        "--projectile-window-after",
+        type=int,
+        default=7,
+        help="Rows after a jump-start row to search for incoming opponent projectile context",
+    )
+    parser.add_argument(
+        "--projectile-damage-window-decisions",
+        type=int,
+        default=20,
+        help="Rows after a jump-start row used to classify projectile-near jumps as damaged or safe",
     )
     args = parser.parse_args()
     if (
@@ -541,6 +654,307 @@ def format_counter(counter: collections.Counter[str], limit: int = 12) -> str:
     return ",".join(f"{key}:{value}" for key, value in counter.most_common(limit))
 
 
+def projectile_owner_name(owner: int) -> str:
+    return PROJECTILE_OWNER_NAMES.get(owner, f"owner-{owner}")
+
+
+def projectile_time_bucket(time_to_self: int) -> str:
+    if time_to_self == PROJECTILE_SENTINEL:
+        return "sentinel"
+    if time_to_self <= 6:
+        return "0-6"
+    if time_to_self <= 12:
+        return "7-12"
+    if time_to_self <= 24:
+        return "13-24"
+    if time_to_self <= 48:
+        return "25-48"
+    return "49+"
+
+
+def projectile_rel_x_bucket(rel_x: int) -> str:
+    if rel_x < 0:
+        return "behind"
+    if rel_x <= 48:
+        return "front-close"
+    if rel_x <= 96:
+        return "front-mid"
+    if rel_x <= 160:
+        return "front-far"
+    return "front-very-far"
+
+
+def projectile_active(row: dict[str, object]) -> bool:
+    return bool(int_field(row, "obs_projectile_active"))
+
+
+def incoming_opponent_projectile(row: dict[str, object]) -> bool:
+    return (
+        projectile_active(row)
+        and int_field(row, "obs_projectile_owner") == 2
+        and int_field(row, "obs_projectile_rel_x") > 0
+        and int_field(row, "obs_projectile_vel_x") < 0
+    )
+
+
+def selected_projectile_context(
+    rows: list[dict[str, object]],
+    index: int,
+    before: int,
+    after: int,
+) -> tuple[int, dict[str, object]] | None:
+    row = rows[index]
+    key = episode_key(row)
+    start = max(0, index - max(0, before))
+    end = min(len(rows), index + max(0, after) + 1)
+    candidates: list[tuple[tuple[int, int, int], int, dict[str, object]]] = []
+
+    for candidate_index in range(start, end):
+        candidate = rows[candidate_index]
+        if episode_key(candidate) != key or not incoming_opponent_projectile(candidate):
+            continue
+        priority = 0 if candidate_index == index else 1
+        distance = abs(candidate_index - index)
+        time_to_self = int_field(candidate, "obs_projectile_time_to_self")
+        candidates.append(((priority, distance, time_to_self), candidate_index, candidate))
+
+    if not candidates:
+        return None
+    _, candidate_index, candidate = min(candidates, key=lambda item: item[0])
+    return candidate_index, candidate
+
+
+def projectile_damage_window(
+    rows: list[dict[str, object]],
+    index: int,
+    window_decisions: int,
+) -> tuple[int, int, int | None]:
+    key = episode_key(rows[index])
+    end = min(len(rows), index + max(0, window_decisions) + 1)
+    self_hp = 0
+    opp_hp = 0
+    first_self_damage_index: int | None = None
+    for candidate_index in range(index, end):
+        row = rows[candidate_index]
+        if episode_key(row) != key:
+            break
+        row_self_hp = int_field(row, "delta_self_hp")
+        row_opp_hp = int_field(row, "delta_opp_hp")
+        self_hp += row_self_hp
+        opp_hp += row_opp_hp
+        if first_self_damage_index is None and row_self_hp > 0:
+            first_self_damage_index = candidate_index
+        if bool(row.get("done", False)):
+            break
+    return self_hp, opp_hp, first_self_damage_index
+
+
+def format_projectile_owner_stats(owner: int, stats: ProjectileOwnerStats) -> str:
+    owner_text = projectile_owner_name(owner)
+    rel_x = "n/a" if stats.rel_x_min is None else f"{stats.rel_x_min}..{stats.rel_x_max}"
+    rel_y = "n/a" if stats.rel_y_min is None else f"{stats.rel_y_min}..{stats.rel_y_max}"
+    vel_x = "n/a" if stats.vel_x_min is None else f"{stats.vel_x_min}..{stats.vel_x_max}"
+    time_range = "n/a" if stats.time_min is None else f"{stats.time_min}..{stats.time_max}"
+    return (
+        f"{owner_text:<10} rows={stats.rows:6d} rel_x={rel_x:<12} rel_y={rel_y:<12} "
+        f"vel_x={vel_x:<10} finite_t={stats.finite_time_rows:6d} t={time_range:<10} "
+        f"self_hp={stats.self_hp_sum:5d} opp_hp={stats.opp_hp_sum:5d}"
+    )
+
+
+def analyze_projectiles(rows: list[dict[str, object]], args: argparse.Namespace) -> None:
+    schema_counts: collections.Counter[int] = collections.Counter()
+    owner_counts: collections.Counter[int] = collections.Counter()
+    rel_x_counts: collections.Counter[str] = collections.Counter()
+    time_counts: collections.Counter[str] = collections.Counter()
+    incoming_time_counts: collections.Counter[str] = collections.Counter()
+    owner_stats: dict[int, ProjectileOwnerStats] = {}
+    segment_stats: dict[int, ProjectileSegmentStats] = {}
+    fireball_label_counts: collections.Counter[str] = collections.Counter()
+    jump_stats = JumpProjectileStats()
+    jump_by_action: dict[str, JumpProjectileStats] = {}
+    jump_by_time: dict[str, JumpProjectileStats] = {}
+    jump_event_lines: list[str] = []
+
+    active_segment_owner: int | None = None
+    active_segment_len = 0
+
+    def flush_segment() -> None:
+        nonlocal active_segment_owner, active_segment_len
+        if active_segment_owner is not None and active_segment_len > 0:
+            segment_stats.setdefault(active_segment_owner, ProjectileSegmentStats()).add(active_segment_len)
+        active_segment_owner = None
+        active_segment_len = 0
+
+    for index, row in enumerate(rows):
+        schema_counts[int_field(row, "transition_schema_version")] += 1
+
+        engine_action = engine_outcome_action_name(row)
+        if engine_action in PROJECTILE_FIREBALL_ACTIONS:
+            fireball_label_counts[engine_action] += 1
+
+        if projectile_active(row):
+            owner = int_field(row, "obs_projectile_owner")
+            owner_counts[owner] += 1
+            owner_stats.setdefault(owner, ProjectileOwnerStats()).add(row)
+            rel_x_counts[projectile_rel_x_bucket(int_field(row, "obs_projectile_rel_x"))] += 1
+            time_bucket = projectile_time_bucket(int_field(row, "obs_projectile_time_to_self"))
+            time_counts[time_bucket] += 1
+            if incoming_opponent_projectile(row):
+                incoming_time_counts[time_bucket] += 1
+
+            if active_segment_owner is None:
+                active_segment_owner = owner
+                active_segment_len = 1
+            elif active_segment_owner == owner:
+                active_segment_len += 1
+            else:
+                flush_segment()
+                active_segment_owner = owner
+                active_segment_len = 1
+        else:
+            flush_segment()
+
+        action_selection = rl.select_training_action(row, args.training_action_source)
+        if action_selection.name not in JUMP_START_ACTIONS:
+            continue
+
+        jump_stats.add_jump()
+        jump_by_action.setdefault(action_selection.name, JumpProjectileStats()).add_jump()
+        projectile_context = selected_projectile_context(
+            rows,
+            index,
+            int(args.projectile_window_before),
+            int(args.projectile_window_after),
+        )
+        if projectile_context is None:
+            continue
+
+        projectile_index, projectile_row = projectile_context
+        same_row = projectile_index == index
+        self_hp, opp_hp, first_damage_index = projectile_damage_window(
+            rows,
+            index,
+            int(args.projectile_damage_window_decisions),
+        )
+        time_bucket = projectile_time_bucket(int_field(projectile_row, "obs_projectile_time_to_self"))
+        rel_x = int_field(projectile_row, "obs_projectile_rel_x")
+        time_to_self = int_field(projectile_row, "obs_projectile_time_to_self")
+
+        jump_stats.add_near(same_row, self_hp, opp_hp)
+        jump_by_action[action_selection.name].add_near(same_row, self_hp, opp_hp)
+        jump_by_time.setdefault(time_bucket, JumpProjectileStats()).add_jump()
+        jump_by_time[time_bucket].add_near(same_row, self_hp, opp_hp)
+
+        if len(jump_event_lines) < args.limit:
+            damage_text = "none"
+            if first_damage_index is not None:
+                damage_row = rows[first_damage_index]
+                damage_text = (
+                    f"dec={int_field(damage_row, 'decision_id')} "
+                    f"self_hp={int_field(damage_row, 'delta_self_hp')}"
+                )
+            jump_event_lines.append(
+                f"  idx={index} ep={int_field(row, 'episode_id')} dec={int_field(row, 'decision_id')} "
+                f"action={action_selection.name} same_row={int(same_row)} "
+                f"proj_dec={int_field(projectile_row, 'decision_id')} rel_x={rel_x} "
+                f"vel_x={int_field(projectile_row, 'obs_projectile_vel_x')} t={time_to_self} "
+                f"bucket={time_bucket} damage={damage_text}"
+            )
+
+    flush_segment()
+
+    print("\nPROJECTILE_SUMMARY")
+    if not rows:
+        print("  none")
+        return
+
+    active_rows = sum(owner_counts.values())
+    incoming_rows = sum(incoming_time_counts.values())
+    print(
+        f"rows={len(rows)} schemas={format_counter(collections.Counter({str(k): v for k, v in schema_counts.items()}), 8)} "
+        f"active={active_rows}/{len(rows)} ({active_rows / len(rows):.1%}) "
+        f"incoming_opp={incoming_rows}/{active_rows if active_rows else 1} "
+        f"({(incoming_rows / active_rows if active_rows else 0.0):.1%})"
+    )
+    print(
+        "owners="
+        + format_counter(
+            collections.Counter({projectile_owner_name(owner): count for owner, count in owner_counts.items()}),
+            len(owner_counts) or 1,
+        )
+    )
+    print(f"rel_x_buckets={format_counter(rel_x_counts, len(rel_x_counts) or 1)}")
+    print(f"time_to_self={format_counter(time_counts, len(time_counts) or 1)}")
+    print(f"incoming_time_to_self={format_counter(incoming_time_counts, len(incoming_time_counts) or 1)}")
+    print(f"fireball_engine_labels={format_counter(fireball_label_counts, args.limit)}")
+
+    print("\nPROJECTILE_BY_OWNER")
+    if not owner_stats:
+        print("  none")
+    else:
+        for owner, stats in sorted(owner_stats.items()):
+            print(format_projectile_owner_stats(owner, stats))
+
+    print("\nPROJECTILE_SEGMENTS_BY_OWNER")
+    if not segment_stats:
+        print("  none")
+    else:
+        for owner, stats in sorted(segment_stats.items()):
+            min_len = stats.min_len if stats.min_len is not None else 0
+            print(
+                f"{projectile_owner_name(owner):<10} segments={stats.segments:5d} "
+                f"rows={stats.rows:6d} len_min/avg/max={min_len}/{stats.mean_len:.1f}/{stats.max_len}"
+            )
+
+    print(
+        "\nPROJECTILE_JUMP_START_SUMMARY "
+        f"window_before={int(args.projectile_window_before)} "
+        f"window_after={int(args.projectile_window_after)} "
+        f"damage_window={int(args.projectile_damage_window_decisions)}"
+    )
+    print(
+        f"jump_rows={jump_stats.jumps} near_incoming_rows={jump_stats.near_incoming} "
+        f"same_rows={jump_stats.same_row_incoming} damaged_rows={jump_stats.damaged} "
+        f"safe_rows={jump_stats.safe} self_hp={jump_stats.self_hp_sum} opp_hp={jump_stats.opp_hp_sum}"
+    )
+
+    print("\nPROJECTILE_JUMP_START_BY_ACTION")
+    if not jump_by_action:
+        print("  none")
+    else:
+        for action, stats in sorted(
+            jump_by_action.items(),
+            key=lambda item: (item[1].near_incoming, item[1].jumps),
+            reverse=True,
+        ):
+            print(
+                f"{action:<24} jump_rows={stats.jumps:5d} near_rows={stats.near_incoming:5d} "
+                f"same_rows={stats.same_row_incoming:5d} damaged_rows={stats.damaged:5d} "
+                f"safe_rows={stats.safe:5d} self_hp={stats.self_hp_sum:5d} opp_hp={stats.opp_hp_sum:5d}"
+            )
+
+    print("\nPROJECTILE_JUMP_START_BY_TIME_BUCKET")
+    if not jump_by_time:
+        print("  none")
+    else:
+        for time_bucket, stats in sorted(jump_by_time.items()):
+            print(
+                f"t={time_bucket:<8} jump_rows={stats.jumps:5d} near_rows={stats.near_incoming:5d} "
+                f"same_rows={stats.same_row_incoming:5d} damaged_rows={stats.damaged:5d} "
+                f"safe_rows={stats.safe:5d} self_hp={stats.self_hp_sum:5d}"
+            )
+
+    print("\nPROJECTILE_JUMP_START_EVENTS")
+    if not jump_event_lines:
+        print("  none")
+    else:
+        for line in jump_event_lines:
+            print(line)
+        if jump_stats.near_incoming > len(jump_event_lines):
+            print(f"  ... {jump_stats.near_incoming - len(jump_event_lines)} more")
+
+
 def analyze_engine_outcome(rows: list[dict[str, object]], args: argparse.Namespace) -> None:
     window_decisions = max(0, int(args.engine_outcome_window_decisions))
     stop_at_next = bool(args.engine_outcome_stop_at_next_event)
@@ -798,6 +1212,7 @@ def main() -> int:
         for source in sorted(action_source_action_counts):
             print(f"  {source:<13} {format_counter(action_source_action_counts[source], args.limit)}")
 
+    analyze_projectiles(rows, args)
     print_table("DIRECT_BY_ACTION", direct_by_action, args.limit)
     print_table("DIRECT_BY_ACTION_DX", direct_by_action_dx, args.limit)
     print_table("CREDITED_BY_ACTION", credited_by_action, args.limit)

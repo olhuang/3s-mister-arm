@@ -3053,8 +3053,24 @@ Full-action DQN sparse-action plan:
     - local validation passed with `python3 -m py_compile
       tools/rl_probe_server.py` and `tools/mister/build-game.sh --flavor
       telemetry`.
-    - on-device schema-v5 smoke is still required before training the first
-      anti-fireball / jump-over model.
+    - on-device schema-v5 smoke
+      `logs/rl-transitions-projectile-schema-v5-smoke-4-3-3.ndjson` confirmed:
+      - all `2403` rows use transition schema `5`.
+      - projectile observation stayed active across traveling fireball frames:
+        `230 / 2403` rows had `obs_projectile_active=1`.
+      - owner/sign semantics worked for both self and opponent projectiles:
+        self-owned rows had positive `rel_x` / positive `vel_x`; opponent
+        incoming rows had positive `rel_x`, negative `vel_x`, and finite
+        `time_to_self`.
+      - Shinkuu Hadouken also appeared as a self-owned projectile segment after
+        the engine-labeled super start row.
+      - jump-start rows near incoming opponent projectiles include both
+        damaged too-late jumps and safe jump-over examples, which is enough
+        signal for the next targeted demo/training pass.
+    - `tools/analyze_rl_transitions.py` now has first-class projectile summary
+      output for schema-v5 logs: owner counts, projectile segments,
+      incoming-projectile time buckets, fireball engine-label counts, and
+      jump-start near-projectile damaged/safe row diagnostics.
   - Validation before training:
     - record a targeted human-demo smoke with Ryu fireballs, neutral/forward
       jump-over responses, blocked/failed jumps, and no-projectile baseline

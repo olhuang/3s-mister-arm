@@ -2,6 +2,61 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-01: Add Projectile Diagnostics to Transition Analyzer
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / full action-set DQN experiments
+
+Files changed:
+- `tools/analyze_rl_transitions.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- make schema-v5 projectile validation repeatable without ad hoc Python
+  snippets.
+- summarize whether logs contain the training signal needed for
+  anti-fireball jump decisions: incoming opponent projectiles, jump-start rows
+  near those projectiles, and damaged versus safe jump outcomes.
+
+Implementation notes:
+- added a `PROJECTILE_SUMMARY` block to `tools/analyze_rl_transitions.py`.
+- the analyzer now reports:
+  - transition schema counts.
+  - projectile active rows and owner counts.
+  - relative-X buckets, `time_to_self` buckets, and incoming-opponent
+    projectile buckets.
+  - per-owner relative position/velocity/time ranges.
+  - contiguous projectile segments by owner.
+  - fireball/super engine-label counts, so repeated projectile observation
+    rows can be distinguished from repeated action labels.
+  - row-level jump-start diagnostics around incoming opponent projectiles,
+    including same-row projectile context and future self-damage within a
+    configurable decision window.
+- added CLI knobs:
+  - `--projectile-window-before`
+  - `--projectile-window-after`
+  - `--projectile-damage-window-decisions`
+
+Validation:
+- `python3 -m py_compile tools/analyze_rl_transitions.py` passed.
+- `python3 tools/analyze_rl_transitions.py
+  logs/rl-transitions-projectile-schema-v5-smoke-4-3-3.ndjson --limit 12`
+  passed and reported:
+  - `schemas=5:2403`
+  - `active=230/2403`
+  - `incoming_opp=137/230`
+  - `owners=opponent:150,self:80`
+  - `fireball_engine_labels=fireball-lp:6,fireball-hp:3,fireball-mp:1,shinkuu-hadouken:1`
+  - `jump_rows=19`, `near_incoming_rows=12`, `same_rows=7`,
+    `damaged_rows=10`, `safe_rows=2`
+
+Interpretation:
+- the smoke log contains both too-late jump rows that were hit by opponent
+  fireballs and safe jump-over rows where the projectile passed behind self.
+- jump diagnostics are row-level, not de-duplicated physical jump events; this
+  is intentional for now because replay training also consumes decision rows.
+
 ## 2026-05-01: Implement Schema-V5 Projectile-Threat Observation Fields
 
 Milestone:

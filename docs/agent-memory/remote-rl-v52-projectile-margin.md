@@ -1255,3 +1255,52 @@ V61b server support:
 - `--dqn-projectile-prior-early-jump-penalty`
 - `--dqn-projectile-prior-early-min-time-to-self`
 - `--dqn-projectile-prior-early-max-time-to-self`
+
+### V61b/V61c Live Results
+
+V61b command shape:
+- stronger close jump penalty through `time_to_self <= 12`.
+- moderate penalty for `13-18`.
+- no penalty for `19-30`.
+- too-early penalty for `31-48`.
+
+V61b result:
+- file: `logs/rl-transitions-v61b-timing-window-live-probe.ndjson`
+- rows: `4,539`
+- incoming projectile rows: `1,372`
+- `31-48` jump starts: `0`
+- remaining jump starts were mostly in `19-30`.
+- `19-22` still had occasional early-jump damage.
+
+V61c command shape:
+- moved the unpenalized jump window later, to roughly `23-30`.
+- penalized jump through `time_to_self <= 22`.
+- kept the `31-48` too-early penalty.
+
+V61c result:
+- file: `logs/rl-transitions-v61c-timing-window-live-probe.ndjson`
+- rows: `5,343`
+- incoming projectile rows: `1,817`
+- `19-22`: only `1` jump start, `0` damaged.
+- `23-30`: `98` jump starts, `2` damaged.
+- `31-48`: `0` jump starts.
+- final self HP improved compared with V61b:
+  - V61b: `0`, `0`, `29`
+  - V61c: `26`, `14`, `44`
+
+Combined V61b/V61c retrain candidates:
+- clean defensive rows with `time_to_self <= 12`: `748`
+- clean defensive rows with `time_to_self <= 18`: `1,140`
+- clean defensive rows with `time_to_self <= 22`: `1,320`
+- clean defensive rows with `time_to_self <= 48`: `2,029`
+- clean jump starts in `time_to_self 23-30`: `162`
+- bad jump starts: `6`, mostly `19-22`
+
+V62 guidance:
+- use V61c as the current best live prior.
+- if retraining, filter V61b/V61c data so:
+  - `<=22` projectile rows teach `guard`/defense.
+  - `23-30` clean jump rows preserve safe jump.
+  - `31-48` rows do not teach jump.
+- be careful with far `guard` rows: many are only chip-safe or delayed-damage
+  rows, not true clean defense.

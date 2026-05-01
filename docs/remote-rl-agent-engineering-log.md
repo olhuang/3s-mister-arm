@@ -9375,3 +9375,52 @@ Conclusion:
   not all `13+` rows.
 - V61b should use stronger close/borderline penalties and an optional
   too-early penalty for `31-48`, while leaving `19-30` unpenalized.
+
+## 2026-05-01: V61b/V61c Live Timing-Window Probes
+
+Milestone:
+- Milestone 6: higher-control-rate policy and projectile curriculum.
+
+Input:
+- `logs/rl-transitions-v61b-timing-window-live-probe.ndjson`
+- `logs/rl-transitions-v61c-timing-window-live-probe.ndjson`
+- both used V60 weights with the policy-time projectile timing prior.
+
+V61b findings:
+- rows: `4,539`.
+- incoming opponent projectile rows: `1,372`.
+- `31-48` jump-starts disappeared, which confirmed the too-early far prior
+  worked.
+- remaining jump-starts were concentrated in the intended `19-30` window.
+- `19-22` still had occasional damage:
+  - `t=19`: `3/10` jump starts damaged.
+  - `t=22`: `1/11` jump starts damaged.
+
+V61c findings:
+- rows: `5,343`.
+- incoming opponent projectile rows: `1,817`.
+- moving the unpenalized jump window to about `23-30` improved behavior:
+  - `19-22`: only `1` jump start, `0` damaged.
+  - `23-30`: `98` jump starts, `2` damaged.
+  - `31-48`: no jump-starts.
+- episode outcomes improved versus V61b:
+  - V61b final self HP: `0`, `0`, `29`.
+  - V61c final self HP: `26`, `14`, `44`.
+  - V61c also dealt more opponent damage in the sampled episodes.
+
+Combined V61b/V61c filtered data candidates:
+- clean defensive rows with `time_to_self <= 12`: `748`.
+- clean defensive rows with `time_to_self <= 18`: `1,140`.
+- clean defensive rows with `time_to_self <= 22`: `1,320`.
+- clean defensive rows with `time_to_self <= 48`: `2,029`.
+- clean jump starts in `time_to_self 23-30`: `162`.
+- bad jump starts: `6`, mostly `19-22`.
+
+Conclusion:
+- V61c is the best policy-time prior so far.
+- The live-safe jump window for this setup is closer to `23-30`.
+- V62 should try a filtered retrain with V61b/V61c on-policy rows:
+  - reinforce defense for `<=22` and `31-48`.
+  - preserve jump for clean `23-30`.
+  - avoid using all far `guard` rows blindly, because far guard often still
+    takes chip or delayed damage.

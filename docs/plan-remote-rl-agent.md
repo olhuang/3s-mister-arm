@@ -2457,8 +2457,9 @@ Tasks:
 - [x] Add an opt-in V61 policy-time projectile timing prior for `time_to_self <= 12`: soft-penalize jump-start Q scores for close incoming opponent projectiles, skip airborne/jump-phase rows, and keep the default server behavior unchanged unless the CLI flag is enabled
 - [x] Analyze the first V61 live probe; result: the prior helped close rows, but `7-12` penalty was too weak and the largest jump failures came from too-early `31-48` jump timing
 - [x] Add V61b timing-window prior controls so jump can be penalized both when too-late/close and when too-early/far, while leaving the live-safe `19-30` window unpenalized
-- [ ] V61b live probe: use V60 weights plus timing-window prior controls, then re-check `7-12`, `19-30`, `31-48`, non-projectile behavior, and HP outcome before retraining
-- [ ] V62 direction: if V61 live data confirms guard/back is correct, retrain with the new on-policy defensive rows and consider a filtered group BC/classification objective only after enough clean data exists
+- [x] V61b live probe: use V60 weights plus timing-window prior controls, then re-check `7-12`, `19-30`, `31-48`, non-projectile behavior, and HP outcome before retraining; result: `31-48` jump disappeared but `19-22` was still slightly early
+- [x] V61c live probe: move the safe jump window down to roughly `23-30`; result: `19-22` jump almost disappeared, `23-30` jump stayed mostly clean, and combined V61b/V61c data is enough for a V62 filtered retrain experiment
+- [ ] V62 direction: retrain with filtered V61b/V61c on-policy rows, preserving clean `23-30` jump and teaching defensive behavior for `<=22` and `31-48`; use filtered BC/classification only if margin/replay still cannot internalize the prior
 - [ ] Fix `rl_auto_retrain.py` replay planning for human-demo incremental retrain: add auto-available source ratios, log-level boost inputs, and replay-plan metadata
 - [ ] Review walk-forward/back macro actions after spacing-shaping A/B results
 - [ ] Review finer distance buckets after spacing-shaping sample-volume checks

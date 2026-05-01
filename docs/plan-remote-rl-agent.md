@@ -2899,6 +2899,26 @@ Full-action DQN sparse-action plan:
       rows should be much closer to the routine-based estimate, ordinary
       jump-air rows should expose `obs_self_air_attack_allowed=1`, and analyzer
       output should continue to separate `jump-*-start` from `air-*`.
+    - follow-up human-demo smoke log
+      `logs/rl-transitions-cpu-demo-schema-v4-smoke-4-3-3.ndjson` confirmed
+      the routine-first allow fix restored useful density:
+      `obs_self_ground_action_start_allowed=1` on `796 / 1135` rows,
+      `obs_self_jump_start_allowed=1` on `796 / 1135` rows, and
+      `obs_self_air_attack_allowed=1` on `64 / 1135` rows. The recording also
+      covered forward/back movement, neutral/forward/back jump phases,
+      `air-lk` / `air-hk`, fireball, shoryuken, tatsu, and throws.
+    - second blocker found: jump-start labels were still `0` because the first
+      logged frame carrying up input had already advanced to ordinary
+      jump-ready (`phase=1`, `R1=0`, `R2=16/17`), where the first
+      `obs_self_jump_start_allowed` derivation was false. Broaden
+      `obs_self_jump_start_allowed` to mean "jump-start action family is
+      allowed", including ordinary jump-ready continuation, while keeping
+      `obs_self_ground_action_start_allowed` false in jump-ready and keeping
+      `obs_self_air_attack_allowed` reserved for ordinary jump-air.
+    - before V41/Vnext training, re-record one more short schema-v4 human/CPU
+      smoke and confirm `jump-forward-start`, `jump-neutral-start`, and
+      `jump-back-start` appear alongside `air-*`, and that no old mixed
+      `jump-neutral-mk` / `jump-back-hk` labels return.
 
 - Step 4: train-time invalid-action Q penalty on the split action space.
   - Do this after Step 3, not before it.

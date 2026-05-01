@@ -119,7 +119,8 @@ static void derive_action_start_flags(RLObservationV1* obs) {
 
     obs->self_ground_action_start_allowed =
         (u8)(ordinary_action_state && !obs->self_airborne && !jump_ready && !jump_air);
-    obs->self_jump_start_allowed = obs->self_ground_action_start_allowed;
+    obs->self_jump_start_allowed =
+        (u8)(obs->self_ground_action_start_allowed || (ordinary_action_state && jump_ready));
     obs->self_air_attack_allowed = (u8)(ordinary_action_state && obs->self_airborne && jump_air);
 }
 

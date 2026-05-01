@@ -2,6 +2,63 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-01: Allow Jump-Start Labels in Jump-Ready Phase
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / full action-set DQN experiments
+
+Files changed:
+- `src/rl/rl_observation.c`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- fix the second schema-v4 data-smoke finding before V41/Vnext training.
+- make demo rows label `jump-forward-start`, `jump-neutral-start`, and
+  `jump-back-start` instead of losing jump starts as `neutral`.
+
+Smoke finding:
+- the refreshed human-demo smoke log
+  `logs/rl-transitions-cpu-demo-schema-v4-smoke-4-3-3.ndjson` had `1135`
+  schema-v4 rows, all from human-demo execution source `4`.
+- the routine-first allow gate fix worked:
+  - `obs_self_ground_action_start_allowed=1`: `796 / 1135` rows.
+  - `obs_self_jump_start_allowed=1`: `796 / 1135` rows.
+  - `obs_self_air_attack_allowed=1`: `64 / 1135` rows.
+- the recording covered the needed smoke actions:
+  - forward/back movement.
+  - neutral/forward/back jump phases.
+  - `air-lk` / `air-hk`.
+  - fireball, shoryuken, tatsu, and throws.
+- blocker: `jump-*-start` labels were still absent. The first decision row with
+  up input had already advanced to ordinary jump-ready (`phase=1`, `R1=0`,
+  `R2=16/17`), where the original `obs_self_jump_start_allowed` value was
+  false.
+
+Implementation notes:
+- broadened `obs_self_jump_start_allowed` to include ordinary jump-ready rows:
+  `ground_action_start_allowed || (ordinary_action_state && jump_ready)`.
+- kept `obs_self_ground_action_start_allowed` false during jump-ready, so
+  ground normals/specials are still not opened there.
+- kept `obs_self_air_attack_allowed` restricted to airborne ordinary jump-air,
+  so jump-ready does not become an air-normal state.
+- this treats `jump-*-start` as the whole early jump-start family, including
+  the first jump-ready continuation frames needed by the demo labeler.
+
+Validation:
+- existing-log estimate found `9` prospective jump-start events after a
+  previous ground-allowed row: `3` up-back, `3` neutral jump, and `3`
+  up-forward.
+- `python3 -m py_compile tools/rl_probe_server.py tools/train_dqn_learner.py tools/compare_dqn_models.py tools/analyze_rl_transitions.py tools/rl_auto_retrain.py`
+- `git diff --check`
+- `tools/mister/build-game.sh --flavor telemetry`
+
+Follow-up:
+- re-record one more short schema-v4 human/CPU smoke and confirm
+  `jump-forward-start`, `jump-neutral-start`, and `jump-back-start` appear
+  alongside `air-*`.
+- only train V41/Vnext after the split labels and allow flags both pass.
+
 ## 2026-05-01: Fix Schema-V4 Action-Start Allow Gate
 
 Milestone:

@@ -191,6 +191,9 @@ TABULAR_ACTION_WIRES = {
     "forward-hp": RL_MOVE_FORWARD | BTN_HP,
     "throw": RL_MOVE_FORWARD | BTN_LP | BTN_LK,
 }
+DQN_MOVEMENT_GUARD_ACTIONS = frozenset({"forward", "back", "guard-stand", "guard-crouch"})
+DQN_JUMP_ATTACK_ACTIONS = frozenset(JUMP_NORMAL_ACTION_NAMES)
+DQN_VALID_ACTION_MASK_MODES = ("off", "self-routine-v1")
 TABULAR_ACTION_WIRES.update({f"stand-{name}": wire for name, wire, _ in RL_POLICY_BUTTONS})
 TABULAR_ACTION_WIRES.update({f"crouch-{name}": RL_MOVE_DOWN | wire for name, wire, _ in RL_POLICY_BUTTONS})
 TABULAR_ACTION_NAMES_BY_WIRE = {
@@ -383,6 +386,18 @@ class DQNSupportPriorConfig:
             f"/negative_mean:{self.negative_mean_penalty:.3f}"
             f"/exempt:{exempt}"
         )
+
+
+@dataclass(frozen=True)
+class DQNValidActionMaskConfig:
+    mode: str = "off"
+
+    @property
+    def enabled(self) -> bool:
+        return self.mode != "off"
+
+    def label(self) -> str:
+        return self.mode
 
 
 @dataclass
@@ -1126,6 +1141,72 @@ def row_int_field(row: dict[str, object], name: str) -> int:
         return 0
 
 
+def parse_dqn_valid_action_mask_config(mode: str) -> DQNValidActionMaskConfig:
+    normalized = mode.strip().lower().replace("_", "-")
+    if not normalized:
+        normalized = "off"
+    if normalized not in DQN_VALID_ACTION_MASK_MODES:
+        raise ValueError(
+            f"unknown DQN valid-action mask mode {mode!r}; "
+            f"expected one of {','.join(DQN_VALID_ACTION_MASK_MODES)}"
+        )
+    return DQNValidActionMaskConfig(mode=normalized)
+
+
+def dqn_self_is_ordinary_jump_air(row: dict[str, object]) -> bool:
+    return (
+        row_int_field(row, "obs_self_routine_1") == 0
+        and 18 <= row_int_field(row, "obs_self_routine_2") <= 26
+        and row_int_field(row, "obs_self_routine_attack_state") == 0
+        and row_int_field(row, "obs_self_contact_reaction_state") == 0
+    )
+
+
+def dqn_self_is_ordinary_movable(row: dict[str, object]) -> bool:
+    return (
+        row_int_field(row, "obs_self_routine_1") == 0
+        and row_int_field(row, "obs_self_routine_attack_state") == 0
+        and row_int_field(row, "obs_self_contact_reaction_state") == 0
+    )
+
+
+def dqn_valid_action_for_row(action: str, row: dict[str, object], config: DQNValidActionMaskConfig) -> bool:
+    if not config.enabled:
+        return True
+    if action not in TABULAR_ACTION_NAMES:
+        return False
+    if config.mode != "self-routine-v1":
+        return True
+
+    if dqn_self_is_ordinary_jump_air(row):
+        return action in DQN_JUMP_ATTACK_ACTIONS
+    if dqn_self_is_ordinary_movable(row):
+        return action not in DQN_JUMP_ATTACK_ACTIONS
+    return action in DQN_MOVEMENT_GUARD_ACTIONS
+
+
+def dqn_valid_actions_for_row(
+    row: dict[str, object],
+    actions: tuple[str, ...] | list[str],
+    config: DQNValidActionMaskConfig = DQNValidActionMaskConfig(),
+) -> tuple[str, ...]:
+    return tuple(action for action in actions if dqn_valid_action_for_row(str(action), row, config))
+
+
+def dqn_valid_action_indices_for_row(
+    row: dict[str, object],
+    actions: tuple[str, ...] | list[str],
+    config: DQNValidActionMaskConfig = DQNValidActionMaskConfig(),
+    value_count: int | None = None,
+) -> tuple[int, ...]:
+    count = len(actions) if value_count is None else min(len(actions), max(0, int(value_count)))
+    return tuple(
+        index
+        for index in range(count)
+        if dqn_valid_action_for_row(str(actions[index]), row, config)
+    )
+
+
 def is_schema_v3_transition_row(row: dict[str, object]) -> bool:
     return row_int_field(row, "transition_schema_version") == TRANSITION_SCHEMA_VERSION
 
@@ -1342,6 +1423,7 @@ def dqn_ranked_action_scores(
     metadata: dict[str, object],
     row: dict[str, object],
     support_prior_config: DQNSupportPriorConfig = DQNSupportPriorConfig(),
+    valid_action_mask_config: DQNValidActionMaskConfig = DQNValidActionMaskConfig(),
 ) -> list[tuple[str, float]]:
     values = dqn_predict_values(dqn_model, row)
     if not values:
@@ -1351,6 +1433,8 @@ def dqn_ranked_action_scores(
     scored_actions: list[tuple[str, float]] = []
     for index, action in enumerate(actions):
         if index >= len(values) or action not in TABULAR_ACTION_NAMES:
+            continue
+        if not dqn_valid_action_for_row(action, row, valid_action_mask_config):
             continue
         score = float(values[index])
         score -= dqn_support_prior_penalty(action, action_counts, action_rewards, support_prior_config)
@@ -2272,17 +2356,22 @@ def dqn_actor_action_name(
     actor: ActorModel,
     obs_row: dict[str, object] | None,
     support_prior_config: DQNSupportPriorConfig = DQNSupportPriorConfig(),
+    valid_action_mask_config: DQNValidActionMaskConfig = DQNValidActionMaskConfig(),
 ) -> str | None:
     if actor.policy != "dqn" or not obs_row or not actor.dqn_model:
         return None
     if random.random() < actor.epsilon:
-        return random.choice(actor.actions)
+        eligible_actions = dqn_valid_actions_for_row(obs_row, actor.actions, valid_action_mask_config)
+        if not eligible_actions:
+            return None
+        return random.choice(eligible_actions)
     ranked_actions = dqn_ranked_action_scores(
         actor.actions,
         actor.dqn_model,
         actor.metadata,
         obs_row,
         support_prior_config,
+        valid_action_mask_config,
     )
     if not ranked_actions:
         return None
@@ -2362,6 +2451,7 @@ def policy_action_frame(
     tabular_state_key_override: str | None = None,
     obs_row_override: dict[str, object] | None = None,
     dqn_support_prior_config: DQNSupportPriorConfig = DQNSupportPriorConfig(),
+    dqn_valid_action_mask_config: DQNValidActionMaskConfig = DQNValidActionMaskConfig(),
 ) -> PolicyActionFrame:
     if actor.policy in MODEL_POLICY_CHOICES:
         macro_frame = active_macro_action_frame(macro_states, nonce, run_id, episode_id)
@@ -2372,7 +2462,12 @@ def policy_action_frame(
         tabular_state = tabular_state_key_override if tabular_state_key_override else model_store.latest_tabular_state()
         action_name = tabular_actor_action_name(actor, tabular_state)
     elif actor.policy == "dqn":
-        action_name = dqn_actor_action_name(actor, obs_row_override, dqn_support_prior_config)
+        action_name = dqn_actor_action_name(
+            actor,
+            obs_row_override,
+            dqn_support_prior_config,
+            dqn_valid_action_mask_config,
+        )
     if action_name is not None:
         fixed = fixed_action_wire(action_name)
         if fixed is not None:
@@ -2396,6 +2491,7 @@ def policy_action_wire(
     tabular_state_key_override: str | None = None,
     obs_row_override: dict[str, object] | None = None,
     dqn_support_prior_config: DQNSupportPriorConfig = DQNSupportPriorConfig(),
+    dqn_valid_action_mask_config: DQNValidActionMaskConfig = DQNValidActionMaskConfig(),
 ) -> int:
     return policy_action_frame(
         actor,
@@ -2409,6 +2505,7 @@ def policy_action_wire(
         tabular_state_key_override,
         obs_row_override,
         dqn_support_prior_config,
+        dqn_valid_action_mask_config,
     ).action_wire
 
 
@@ -2446,6 +2543,7 @@ def serve(
     tabular_actions: tuple[str, ...],
     tabular_min_action_count: int,
     dqn_support_prior_config: DQNSupportPriorConfig,
+    dqn_valid_action_mask_config: DQNValidActionMaskConfig,
 ) -> None:
     inference_stats = InferenceStats()
     initial_actions = tabular_actions if policy == "tabular" else TABULAR_DEFAULT_ACTIONS
@@ -2498,6 +2596,8 @@ def serve(
     print(f"RL probe server listening on {host}:{port}")
     if dqn_support_prior_config.enabled:
         print(f"DQN support prior active {dqn_support_prior_config.label()}", flush=True)
+    if dqn_valid_action_mask_config.enabled:
+        print(f"DQN valid-action mask active {dqn_valid_action_mask_config.label()}", flush=True)
     hello_count: dict[int, int] = {}
     policy_states: dict[tuple[int, int, int, str], dict[str, int]] = {}
     macro_states: dict[tuple[int, int, int], dict[str, int | str]] = {}
@@ -2559,6 +2659,7 @@ def serve(
                     obs_state_key,
                     obs_row,
                     dqn_support_prior_config,
+                    dqn_valid_action_mask_config,
                 )
                 payload = make_action_packet(
                     nonce,
@@ -2819,6 +2920,15 @@ def main() -> None:
         default="",
         help="Comma-separated DQN actions exempt from support-prior penalties",
     )
+    parser.add_argument(
+        "--dqn-valid-action-mask",
+        choices=DQN_VALID_ACTION_MASK_MODES,
+        default="off",
+        help=(
+            "Optional DQN action eligibility mask. self-routine-v1 uses current self routine/contact fields "
+            "to gate ground, jump-air, and non-movable action candidates"
+        ),
+    )
     parser.add_argument("--verbose", action="store_true", help="Log every valid packet")
     args = parser.parse_args()
     transition_log = args.transition_log
@@ -2849,6 +2959,7 @@ def main() -> None:
             option_name="--dqn-support-prior-exempt-actions",
         ),
     )
+    dqn_valid_action_mask_config = parse_dqn_valid_action_mask_config(str(args.dqn_valid_action_mask))
     serve(
         args.host,
         args.port,
@@ -2883,6 +2994,7 @@ def main() -> None:
         tabular_actions,
         args.tabular_min_action_count,
         dqn_support_prior_config,
+        dqn_valid_action_mask_config,
     )
 
 

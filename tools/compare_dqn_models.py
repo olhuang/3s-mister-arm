@@ -89,8 +89,9 @@ def greedy_action(
     model: dict[str, object],
     row: dict[str, object],
     support_prior_config: rl.DQNSupportPriorConfig = rl.DQNSupportPriorConfig(),
+    valid_action_mask_config: rl.DQNValidActionMaskConfig = rl.DQNValidActionMaskConfig(),
 ) -> tuple[str, float]:
-    ranked = ranked_actions(model, row, support_prior_config)
+    ranked = ranked_actions(model, row, support_prior_config, valid_action_mask_config)
     if not ranked:
         return "none", 0.0
     return ranked[0]
@@ -100,6 +101,7 @@ def ranked_actions(
     model: dict[str, object],
     row: dict[str, object],
     support_prior_config: rl.DQNSupportPriorConfig = rl.DQNSupportPriorConfig(),
+    valid_action_mask_config: rl.DQNValidActionMaskConfig = rl.DQNValidActionMaskConfig(),
 ) -> list[tuple[str, float]]:
     actions = [str(action) for action in model.get("actions", [])]
     dqn_model = model.get("dqn")
@@ -112,6 +114,7 @@ def ranked_actions(
         metadata if isinstance(metadata, dict) else {},
         row,
         support_prior_config,
+        valid_action_mask_config,
     )
 
 
@@ -207,6 +210,7 @@ def print_focus_diagnostics(
     focus_rank_limit: int,
     top_n: int,
     support_prior_config: rl.DQNSupportPriorConfig,
+    valid_action_mask_config: rl.DQNValidActionMaskConfig,
 ) -> None:
     model_actions = {str(action) for action in model.get("actions", [])}
     available_actions = tuple(action for action in focus_actions if action in model_actions)
@@ -226,7 +230,7 @@ def print_focus_diagnostics(
     q_gaps: list[float] = []
 
     for row in rows:
-        ranked = ranked_actions(model, row, support_prior_config)
+        ranked = ranked_actions(model, row, support_prior_config, valid_action_mask_config)
         if not ranked:
             continue
         top_action, top_value = ranked[0]
@@ -347,6 +351,12 @@ def main() -> int:
             "empty applies the prior to every model when prior flags are enabled"
         ),
     )
+    parser.add_argument(
+        "--dqn-valid-action-mask",
+        choices=rl.DQN_VALID_ACTION_MASK_MODES,
+        default="off",
+        help="Optional shared DQN valid-action mask applied before ranking every compared model",
+    )
     args = parser.parse_args()
 
     models = [load_model(value) for value in args.model]
@@ -364,6 +374,7 @@ def main() -> int:
         for item in str(args.dqn_support_prior_models).split(",")
         if item.strip()
     }
+    valid_action_mask_config = rl.parse_dqn_valid_action_mask_config(str(args.dqn_valid_action_mask))
     rows = read_rows(args.transition_logs, max(0, args.limit), max(0, args.tail_rows))
     if not rows:
         raise SystemExit("No evaluation rows loaded")
@@ -384,7 +395,7 @@ def main() -> int:
         q_sum: collections.Counter[str] = collections.Counter()
         choices: list[str] = []
         for row in rows:
-            action, value = greedy_action(model, row, model_support_prior_config)
+            action, value = greedy_action(model, row, model_support_prior_config, valid_action_mask_config)
             choices.append(action)
             counts[action] += 1
             by_threat_dx[threat_dx_bucket(row)][action] += 1
@@ -406,7 +417,8 @@ def main() -> int:
             f"attack_rate={100.0 * attack_total / len(rows):.1f}% "
             f"shoryuken_rate={100.0 * shoryuken_total / len(rows):.1f}% "
             f"top={top_action}:{top_rate * 100.0:.1f}% collapse={collapse} "
-            f"support_prior={model_support_prior_config.label()}"
+            f"support_prior={model_support_prior_config.label()} "
+            f"valid_mask={valid_action_mask_config.label()}"
         )
         print(f"  overall {format_counts(counts, len(rows), max(1, args.top_n))}")
         print(f"  selected_q_mean {format_selected_q(counts, q_sum, max(1, args.top_n))}")
@@ -421,6 +433,7 @@ def main() -> int:
             max(1, args.focus_rank_limit),
             max(1, args.top_n),
             model_support_prior_config,
+            valid_action_mask_config,
         )
 
     baseline_choices = choices_by_label[first_label]

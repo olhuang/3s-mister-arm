@@ -2,6 +2,106 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-01: Shared DQN Valid-Action Mask And V40 CPU-Demo Masked Training
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / full action-set DQN experiments
+
+Files changed:
+- `tools/rl_probe_server.py`
+- `tools/train_dqn_learner.py`
+- `tools/compare_dqn_models.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+- `model/dqn-cpudemo-schema-v3-full-actions-v40-mask/` (generated, untracked)
+
+Purpose:
+- implement the shared valid-action mask planned after V39 showed soft
+  unsupported-action regularization was not enough.
+- use the same self-routine-aware eligibility helper for train-time DQN target
+  max, probe/live DQN ranking, epsilon exploration, and same-observation
+  comparison diagnostics.
+
+Implementation notes:
+- added shared mask mode `self-routine-v1` in `tools/rl_probe_server.py`.
+- added helpers:
+  - `parse_dqn_valid_action_mask_config()`
+  - `dqn_valid_action_for_row()`
+  - `dqn_valid_actions_for_row()`
+  - `dqn_valid_action_indices_for_row()`
+- first mask semantics:
+  - ordinary grounded/movable rows allow non-`jump-*` actions.
+  - ordinary jump-air rows (`obs_self_routine_1 == 0`,
+    `obs_self_routine_2 in 18..26`, no self attack/contact reaction) allow
+    only `jump-*` actions.
+  - attack/contact/non-movable rows allow only movement/guard hold candidates.
+- added `--dqn-valid-action-mask {off,self-routine-v1}` to:
+  - `tools/train_dqn_learner.py`
+  - `tools/rl_probe_server.py`
+  - `tools/compare_dqn_models.py`
+- trainer metadata now records:
+  - `dqn_valid_action_mask_config`
+  - `dqn_valid_action_mask_stats`
+  - target/greedy masked action totals and empty-mask counts.
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py tools/train_dqn_learner.py tools/compare_dqn_models.py` passed.
+- help output for all three tools showed the new flag.
+- helper smoke confirmed expected eligibility:
+  - ground ordinary: `guard-stand`, `stand-mk`, `fireball-hp`
+  - jump-air ordinary: `jump-neutral-mk`
+  - attack/non-movable: `guard-stand`
+- small DQN trainer smoke passed with
+  `--dqn-valid-action-mask self-routine-v1`; stdout and metadata included
+  target/greedy mask stats.
+
+Same-observation V38/V39 mask check:
+- command shape:
+  ```sh
+  python3 tools/compare_dqn_models.py logs/rl-transitions-cpu-demo-schema-v3-4-3-3.ndjson --model V38=model/dqn-cpudemo-schema-v3-full-actions-v38 --model V39=model/dqn-cpudemo-schema-v3-full-actions-v39 --limit 5000 --top-n 12 --dqn-valid-action-mask self-routine-v1
+  ```
+- V38 with mask:
+  - top action became `guard-crouch 2148/5000 = 43.0%`
+  - `jump-neutral-mk` fell to `244/5000 = 4.9%`
+  - collapse status became `ok`
+- V39 with mask was nearly identical:
+  - top action `guard-crouch 2145/5000 = 42.9%`
+  - `jump-neutral-mk 244/5000 = 4.9%`
+
+V40 training:
+- trained from the V38 CPU-demo full-action recipe, adding only:
+  - `--model-dir model/dqn-cpudemo-schema-v3-full-actions-v40-mask`
+  - `--model-version 40`
+  - `--dqn-valid-action-mask self-routine-v1`
+- training completed and published version `40`.
+- trainer diagnostics:
+  - experiences: `45124`
+  - target mask states: `126209`
+  - target empty masks: `0`
+  - greedy rows: `5000`
+  - greedy empty masks: `0`
+  - masked greedy top: `guard-crouch 1165/5000 = 23.3%`
+  - `jump-neutral-mk 385/5000 = 7.7%`
+- same-observation masked compare:
+  - V40 top action on the first `5000` CPU-demo rows:
+    `guard-crouch 2126/5000 = 42.5%`
+  - collapse status: `ok`
+  - V38 -> V40 changed `378/5000` choices.
+
+Decision:
+- shared valid-action masking is effective offline and should be the next
+  full-action DQN path.
+- V40 still collapses if evaluated with `valid_mask=off`; any live/probe use of
+  this model must pass `--dqn-valid-action-mask self-routine-v1` until model
+  metadata auto-selection or a stronger default is implemented.
+
+Follow-up:
+- run a live probe only with `--dqn-valid-action-mask self-routine-v1`.
+- decide whether probe inference should automatically honor
+  `metadata.dqn_valid_action_mask_config` for models trained with a mask.
+- after live/offline validation, continue with the recorded jump-start vs
+  air-attack action taxonomy split and schema-versioned airborne features.
+
 ## 2026-05-01: Record Post-Mask Jump-In Action Split Plan
 
 Milestone:

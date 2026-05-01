@@ -28,6 +28,8 @@ class Experience:
     done: bool
     source_name: str = "unknown"
     model_version: int = 0
+    row: dict[str, object] = field(default_factory=dict)
+    next_row: dict[str, object] = field(default_factory=dict)
 
 
 EXECUTION_SOURCE_NAMES = {
@@ -401,6 +403,52 @@ class DQNUnsupportedActionRegularizationStats:
             "avg_loss": self.avg_loss,
             "per_action_events": self.per_action_events,
             "per_action_loss": self.per_action_loss,
+        }
+
+
+@dataclass(frozen=True)
+class DQNValidActionMaskTrainingConfig:
+    mode: str
+
+    @property
+    def enabled(self) -> bool:
+        return self.mode != "off"
+
+    def as_shared_config(self) -> rl.DQNValidActionMaskConfig:
+        return rl.parse_dqn_valid_action_mask_config(self.mode)
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "mode": self.mode,
+            "enabled": self.enabled,
+        }
+
+
+@dataclass
+class DQNValidActionMaskTrainingStats:
+    target_states: int = 0
+    target_empty_masks: int = 0
+    target_masked_action_total: int = 0
+    target_valid_action_total: int = 0
+    greedy_rows: int = 0
+    greedy_empty_masks: int = 0
+    greedy_masked_action_total: int = 0
+    greedy_valid_action_total: int = 0
+    target_masked_actions: dict[str, int] = field(default_factory=dict)
+    greedy_masked_actions: dict[str, int] = field(default_factory=dict)
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "target_states": self.target_states,
+            "target_empty_masks": self.target_empty_masks,
+            "target_masked_action_total": self.target_masked_action_total,
+            "target_valid_action_total": self.target_valid_action_total,
+            "greedy_rows": self.greedy_rows,
+            "greedy_empty_masks": self.greedy_empty_masks,
+            "greedy_masked_action_total": self.greedy_masked_action_total,
+            "greedy_valid_action_total": self.greedy_valid_action_total,
+            "target_masked_actions": dict(sorted(self.target_masked_actions.items())),
+            "greedy_masked_actions": dict(sorted(self.greedy_masked_actions.items())),
         }
 
 
@@ -1091,6 +1139,11 @@ def dqn_unsupported_action_regularization_config_from_args(
     )
 
 
+def dqn_valid_action_mask_training_config_from_args(args: argparse.Namespace) -> DQNValidActionMaskTrainingConfig:
+    config = rl.parse_dqn_valid_action_mask_config(str(args.dqn_valid_action_mask))
+    return DQNValidActionMaskTrainingConfig(mode=config.mode)
+
+
 def action_batch_group(action_name: str) -> str:
     if action_name in NON_ATTACK_ACTIONS:
         return "movement"
@@ -1438,6 +1491,7 @@ def set_experience_next_state(
     if exp_index is None:
         return
     experiences[exp_index].next_state = rl.dqn_feature_vector(row)
+    experiences[exp_index].next_row = dict(row)
     experiences[exp_index].done = done
 
 
@@ -1540,6 +1594,8 @@ def add_engine_outcome_experience(
                 done=done,
                 source_name=source_name,
                 model_version=model_version,
+                row=dict(row),
+                next_row=dict(next_row),
             )
         )
     stats.included_events += 1
@@ -1745,6 +1801,8 @@ def build_experiences(
                 done=bool(row.get("done", False)),
                 source_name=source_name,
                 model_version=model_version,
+                row=dict(row),
+                next_row=dict(row),
             )
             experiences.append(exp)
             last_exp_index = len(experiences) - 1
@@ -2111,6 +2169,41 @@ def dqn_unsupported_action_indices(
     return indices, stats
 
 
+def dqn_masked_indices_for_row(
+    row: dict[str, object],
+    actions: tuple[str, ...],
+    value_count: int,
+    config: rl.DQNValidActionMaskConfig,
+    stats: DQNValidActionMaskTrainingStats,
+    context: str,
+) -> tuple[int, ...]:
+    count = min(len(actions), max(0, int(value_count)))
+    if count <= 0:
+        return ()
+    if not config.enabled:
+        return tuple(range(count))
+
+    indices = rl.dqn_valid_action_indices_for_row(row, actions, config, count)
+    masked_actions = [actions[index] for index in range(count) if index not in indices]
+    if context == "target":
+        stats.target_states += 1
+        stats.target_valid_action_total += len(indices)
+        stats.target_masked_action_total += len(masked_actions)
+        if not indices:
+            stats.target_empty_masks += 1
+        for action in masked_actions:
+            stats.target_masked_actions[action] = stats.target_masked_actions.get(action, 0) + 1
+    elif context == "greedy":
+        stats.greedy_rows += 1
+        stats.greedy_valid_action_total += len(indices)
+        stats.greedy_masked_action_total += len(masked_actions)
+        if not indices:
+            stats.greedy_empty_masks += 1
+        for action in masked_actions:
+            stats.greedy_masked_actions[action] = stats.greedy_masked_actions.get(action, 0) + 1
+    return indices
+
+
 def train_dqn(
     experiences: list[Experience],
     actions: tuple[str, ...],
@@ -2126,8 +2219,14 @@ def train_dqn(
     batch_sampling_config: BatchSamplingConfig,
     target_mode: str,
     unsupported_action_regularization_config: DQNUnsupportedActionRegularizationConfig,
+    valid_action_mask_config: DQNValidActionMaskTrainingConfig,
     initial_layers: list[dict[str, object]] | None = None,
-) -> tuple[list[dict[str, object]], dict[str, object], DQNUnsupportedActionRegularizationStats]:
+) -> tuple[
+    list[dict[str, object]],
+    dict[str, object],
+    DQNUnsupportedActionRegularizationStats,
+    DQNValidActionMaskTrainingStats,
+]:
     rng = random.Random(seed)
     layers = copy.deepcopy(initial_layers) if initial_layers is not None else init_network(
         len(rl.DQN_FEATURE_NAMES),
@@ -2151,6 +2250,8 @@ def train_dqn(
         action_counts,
         unsupported_action_regularization_config,
     )
+    shared_valid_action_mask_config = valid_action_mask_config.as_shared_config()
+    valid_action_mask_stats = DQNValidActionMaskTrainingStats()
 
     for step in range(1, steps + 1):
         batch = sample_training_batch(
@@ -2172,13 +2273,36 @@ def train_dqn(
             elif target_mode == "double":
                 online_next_values, _, _ = forward(layers, exp.next_state)
                 next_count = min(len(actions), len(online_next_values), len(next_values))
-                best_next_index = max(
-                    range(next_count),
-                    key=lambda index: (online_next_values[index], actions[index]),
+                valid_next_indices = dqn_masked_indices_for_row(
+                    exp.next_row,
+                    actions,
+                    next_count,
+                    shared_valid_action_mask_config,
+                    valid_action_mask_stats,
+                    "target",
                 )
-                target = exp.reward + gamma * next_values[best_next_index]
+                if valid_next_indices:
+                    best_next_index = max(
+                        valid_next_indices,
+                        key=lambda index: (online_next_values[index], actions[index]),
+                    )
+                    target = exp.reward + gamma * next_values[best_next_index]
+                else:
+                    target = exp.reward
             else:
-                target = exp.reward + gamma * max(next_values)
+                next_count = min(len(actions), len(next_values))
+                valid_next_indices = dqn_masked_indices_for_row(
+                    exp.next_row,
+                    actions,
+                    next_count,
+                    shared_valid_action_mask_config,
+                    valid_action_mask_stats,
+                    "target",
+                )
+                if valid_next_indices:
+                    target = exp.reward + gamma * max(next_values[index] for index in valid_next_indices)
+                else:
+                    target = exp.reward
             error = max(-10.0, min(10.0, values[exp.action_index] - target))
             loss += 0.5 * error * error
             output_grad = [0.0 for _ in values]
@@ -2249,6 +2373,7 @@ def train_dqn(
             "batch_sampling": batch_diag.as_metadata(),
         },
         unsupported_action_regularization_stats,
+        valid_action_mask_stats,
     )
 
 
@@ -2539,8 +2664,11 @@ def evaluate_greedy_actions(
     experiences: list[Experience],
     actions: tuple[str, ...],
     limit: int,
+    valid_action_mask_config: DQNValidActionMaskTrainingConfig = DQNValidActionMaskTrainingConfig("off"),
+    valid_action_mask_stats: DQNValidActionMaskTrainingStats | None = None,
 ) -> GreedyDiagnostics:
     eval_experiences = experiences[: max(0, limit)]
+    shared_valid_action_mask_config = valid_action_mask_config.as_shared_config()
     counts = {action: 0 for action in actions}
     top2_counts = {action: 0 for action in actions}
     top3_counts = {action: 0 for action in actions}
@@ -2551,7 +2679,17 @@ def evaluate_greedy_actions(
         count = min(len(actions), len(values))
         if count <= 0:
             continue
-        ranked = sorted(range(count), key=lambda index: (float(values[index]), actions[index]), reverse=True)
+        valid_indices = dqn_masked_indices_for_row(
+            exp.row,
+            actions,
+            count,
+            shared_valid_action_mask_config,
+            valid_action_mask_stats if valid_action_mask_stats is not None else DQNValidActionMaskTrainingStats(),
+            "greedy",
+        )
+        if not valid_indices:
+            continue
+        ranked = sorted(valid_indices, key=lambda index: (float(values[index]), actions[index]), reverse=True)
         counts[actions[ranked[0]]] += 1
         for rank, action_index in enumerate(ranked[:3]):
             action = actions[action_index]
@@ -3040,6 +3178,15 @@ def main() -> None:
         default="standard",
         help="DQN bootstrapping target: standard uses max target-network value; double selects with online network and evaluates with target network",
     )
+    parser.add_argument(
+        "--dqn-valid-action-mask",
+        choices=rl.DQN_VALID_ACTION_MASK_MODES,
+        default="off",
+        help=(
+            "Optional train-time DQN valid-action mask for target max and greedy diagnostics. "
+            "self-routine-v1 gates ground, jump-air, and non-movable candidates from self routine fields"
+        ),
+    )
     parser.add_argument("--epsilon", type=float, default=0.05, help="Exploration probability stamped into the published actor")
     parser.add_argument(
         "--fallback-policy",
@@ -3083,6 +3230,7 @@ def main() -> None:
     engine_outcome_config = engine_outcome_config_from_args(args)
     conservative_action_penalty_config = conservative_action_penalty_config_from_args(args)
     unsupported_action_regularization_config = dqn_unsupported_action_regularization_config_from_args(args)
+    valid_action_mask_config = dqn_valid_action_mask_training_config_from_args(args)
     batch_sampling_config = batch_sampling_config_from_args(args)
     (
         experiences,
@@ -3123,7 +3271,7 @@ def main() -> None:
         source_stats,
     )
 
-    layers, train_stats, unsupported_action_regularization_stats = train_dqn(
+    layers, train_stats, unsupported_action_regularization_stats, valid_action_mask_stats = train_dqn(
         experiences,
         actions,
         action_counts,
@@ -3138,6 +3286,7 @@ def main() -> None:
         batch_sampling_config,
         args.dqn_target_mode,
         unsupported_action_regularization_config,
+        valid_action_mask_config,
         init_model.layers if init_model is not None else None,
     )
     batch_sampling_diag = batch_sampling_diagnostics(
@@ -3146,7 +3295,14 @@ def main() -> None:
         max(1, args.batch_size),
         batch_sampling_config,
     )
-    greedy_diag = evaluate_greedy_actions(layers, experiences, actions, args.eval_limit)
+    greedy_diag = evaluate_greedy_actions(
+        layers,
+        experiences,
+        actions,
+        args.eval_limit,
+        valid_action_mask_config,
+        valid_action_mask_stats,
+    )
     version = next_model_version(args.model_dir, args.model_version)
     reward_sources = ["hp-delta"]
     if reward_risk_config.profile != "none":
@@ -3243,6 +3399,8 @@ def main() -> None:
         "learning_rate": max(1e-8, args.learning_rate),
         "target_sync_steps": max(1, args.target_sync_steps),
         "dqn_target_mode": args.dqn_target_mode,
+        "dqn_valid_action_mask_config": valid_action_mask_config.as_metadata(),
+        "dqn_valid_action_mask_stats": valid_action_mask_stats.as_metadata(),
         "action_counts": action_counts,
         "action_rewards": action_rewards,
         "observed_action_counts": observed_action_counts,
@@ -3275,6 +3433,7 @@ def main() -> None:
         f"actions={len(actions)} "
         f"action_source={args.training_action_source} "
         f"target_mode={args.dqn_target_mode} "
+        f"valid_mask={valid_action_mask_config.mode} "
         f"init={'warm-start:' + str(init_model.version) if init_model is not None else 'random'} "
         f"batch_sampling={batch_sampling_diag.mode} "
         f"risk={reward_risk_config.profile} risk_cost={reward_risk_stats.total_cost:.1f} "
@@ -3366,6 +3525,21 @@ def main() -> None:
         f"ratios:{','.join(f'{group}:{batch_sampling_diag.ratios.get(group, 0.0):.2f}' for group in BATCH_GROUPS)} "
         f"target:{','.join(f'{group}:{batch_sampling_diag.target_counts.get(group, 0)}' for group in BATCH_GROUPS)} "
         f"pools:{','.join(f'{group}:{batch_sampling_diag.pool_counts.get(group, 0)}' for group in BATCH_GROUPS)}",
+        flush=True,
+    )
+    print(
+        "DQN diagnostics "
+        f"valid_action_mask=mode:{valid_action_mask_config.mode} "
+        f"target_states:{valid_action_mask_stats.target_states} "
+        f"target_empty:{valid_action_mask_stats.target_empty_masks} "
+        f"target_valid_total:{valid_action_mask_stats.target_valid_action_total} "
+        f"target_masked_total:{valid_action_mask_stats.target_masked_action_total} "
+        f"greedy_rows:{valid_action_mask_stats.greedy_rows} "
+        f"greedy_empty:{valid_action_mask_stats.greedy_empty_masks} "
+        f"greedy_valid_total:{valid_action_mask_stats.greedy_valid_action_total} "
+        f"greedy_masked_total:{valid_action_mask_stats.greedy_masked_action_total} "
+        f"target_masked:{format_counts(valid_action_mask_stats.target_masked_actions, valid_action_mask_stats.target_masked_action_total, args.diagnostic_top_n)} "
+        f"greedy_masked:{format_counts(valid_action_mask_stats.greedy_masked_actions, valid_action_mask_stats.greedy_masked_action_total, args.diagnostic_top_n)}",
         flush=True,
     )
     print(

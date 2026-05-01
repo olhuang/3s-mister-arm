@@ -2506,7 +2506,7 @@ Tasks:
 - [x] Add a v35a auto-retrain preset so close-pressure / anti-air tuning can be reused without long extra-arg commands
 - [x] Record V37b / V38 full-action support-prior training parameters and findings before continuing full action-set experiments
 - [x] Add DQN zero-sample / low-support action regularization so full-action output heads with no replay support cannot become top greedy actions
-- [ ] Add a shared DQN valid-action mask for train-time target selection and probe-time inference, starting with self-routine-aware jump-action gating
+- [x] Add a shared DQN valid-action mask for train-time target selection and probe-time inference, starting with self-routine-aware jump-action gating
 - [ ] After shared valid-action mask validation, split jump-in policy actions into ground jump-start actions and true airborne attack actions with observation-schema support
 - [ ] Review v24 live behavior before promoting it over v23; same-observation compare kept `stand-hk` suppressed but did not reduce the `tatsu-lk` replacement shift
 - [ ] Review v23's `tatsu-lk` / `crouch-mk` policy shift before any live promotion; `stand-hk` was suppressed, but the replacement action is not yet validated
@@ -2577,9 +2577,9 @@ Full-action DQN sparse-action plan:
     - compare raw greedy and strong support-prior greedy distributions.
 
 - Step 2: shared valid-action mask.
-  - Add a shared helper used by both trainer and probe inference:
+  - Added a shared helper used by both trainer and probe inference:
     `dqn_valid_actions_for_row(row, actions, mode)`.
-  - Initial conservative mask should use already-exported row fields:
+  - Initial conservative mask uses already-exported row fields:
     `obs_self_routine_1`, `obs_self_routine_2`,
     `obs_self_routine_attack_state`, and
     `obs_self_contact_reaction_state`.
@@ -2591,17 +2591,33 @@ Full-action DQN sparse-action plan:
     - when self is in attack, damage/contact, caught/catch, or other
       non-movable states, avoid treating a newly selected action as a valid
       action-start and keep target/inference max from using impossible actions.
-  - Apply the mask in two places:
+  - Applied the mask in three places:
     - train-time DQN bootstrapping: the target max action should only consider
       valid next-state actions.
     - probe-time DQN ranking: invalid actions should not be candidates before
       support-prior reranking.
-  - Keep the first implementation opt-in, with metadata recording mask mode,
+    - same-observation compare diagnostics.
+  - Kept the first implementation opt-in, with metadata recording mask mode,
     masked action counts, and fallback behavior when a mask removes every
     action.
   - Validation:
+    - `python3 -m py_compile tools/rl_probe_server.py tools/train_dqn_learner.py tools/compare_dqn_models.py`
+    - help output for all three tools shows `--dqn-valid-action-mask {off,self-routine-v1}`.
+    - helper smoke confirmed ground rows allow ground actions and mask
+      `jump-*`, jump-air rows allow `jump-*`, and attack/non-movable rows keep
+      only movement/guard hold candidates.
     - rerun same-observation comparison on V37b/V38-style logs with and without
       the mask.
+      - V38 on the first `5000` CPU-demo rows with `self-routine-v1` mask:
+        `jump-neutral-mk` fell from raw `80.7%` to `4.9%`; top action became
+        `guard-crouch 43.0%`.
+      - V40 masked training on the CPU-demo V38 recipe published
+        `model/dqn-cpudemo-schema-v3-full-actions-v40-mask`, version `40`.
+        Training diagnostics reported `target_empty=0`, `greedy_empty=0`, and
+        masked greedy top action `guard-crouch 23.3%`.
+      - same-observation masked compare for V38 -> V40 changed `378/5000`
+        actions and kept collapse status `ok`; V40 top action on those rows was
+        `guard-crouch 42.5%`.
     - run a live probe only after offline diagnostics show jump-action collapse
       is fixed without introducing guard/fireball collapse.
 

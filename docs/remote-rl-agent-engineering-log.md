@@ -2,6 +2,86 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-01: Train V41 Projectile-Aware Baseline
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / full action-set DQN experiments
+
+Files changed:
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+- `model/dqn-projectile-schema-v5-full-actions-v41-baseline/` (generated,
+  untracked)
+
+Purpose:
+- test the clean baseline before adding projectile-specific curriculum:
+  schema-v5 projectile features plus the existing full-action DQN recipe.
+- verify whether the model can learn anti-fireball `jump-*-start`, `back`, or
+  guard decisions from the targeted projectile smoke log without new reward
+  shaping.
+
+Training recipe:
+- source log:
+  `logs/rl-transitions-projectile-schema-v5-smoke-4-3-3.ndjson`
+- model dir:
+  `model/dqn-projectile-schema-v5-full-actions-v41-baseline`
+- model version: `41`
+- base recipe: V38/V40 full-action DQN settings.
+- key change from V40: `--dqn-valid-action-mask action-start-v1`, using the
+  schema-backed ground/jump/air action-start fields.
+- no projectile-specific reward shaping or projectile oversampling was added.
+
+Training result:
+- training completed and published version `41`.
+- rows: `7783`
+- experiences: `1937`
+- source mix: `human-demo=100%`
+- masked trainer greedy distribution on the eval slice:
+  - `shoryuken-hp 1367 / 1937 = 70.6%`
+  - `stand-mk 218 / 1937 = 11.3%`
+  - `back 149 / 1937 = 7.7%`
+- trainer emitted a collapse warning for `shoryuken-hp`.
+
+Validation:
+- same-log compare with `--dqn-valid-action-mask action-start-v1` reported:
+  - `shoryuken-hp 4228 / 7783 = 54.3%`
+  - `forward-hp 931 / 7783 = 12.0%`
+  - `stand-mk 910 / 7783 = 11.7%`
+  - `back 907 / 7783 = 11.7%`
+- targeted projectile-row diagnostic:
+  - incoming opponent projectile rows with `obs_self_jump_start_allowed=1`:
+    `343`
+  - top action on those rows:
+    `shoryuken-hp 309 / 343 = 90.1%`
+  - `jump_top=0 / 343`
+  - any `jump-*-start` in top five: `25 / 343`
+- strong support-prior diagnostic:
+  - used `min_count=300`, `count_penalty=0.15`,
+    `negative_mean_penalty=0.05`, exempting movement/guard actions.
+  - overall top action became `back 6191 / 7783 = 79.5%`.
+  - incoming projectile + jump-start-allowed rows still had
+    `shoryuken-hp 260 / 343 = 75.8%` and `jump_top=0`.
+
+Interpretation:
+- V41 is not promotable.
+- the schema-v5 projectile fields are available to the model, but the old
+  generic full-action recipe does not create a usable anti-fireball policy.
+- the immediate failure mode is sparse/full-action overestimation
+  (`shoryuken-hp` has no replay support but dominates legal ground rows), plus
+  no positive objective for safe jump-over timing.
+
+Follow-up:
+- implement an opt-in projectile response curriculum/reward profile before the
+  next training run.
+- candidate behavior:
+  - safe `jump-*-start` over an incoming projectile gets a bonus.
+  - late jump that leads to self damage gets an extra cost.
+  - close `back` / guard rows with no damage or chip get a small bonus.
+  - far/passive back rows remain controlled so the model does not collapse into
+    always walking back.
+  - projectile-focused diagnostics should report response counts by
+    `time_to_self` bucket and top greedy action on incoming ground rows.
+
 ## 2026-05-01: Add Projectile Guard Summary to Transition Analyzer
 
 Milestone:

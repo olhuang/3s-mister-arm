@@ -3094,6 +3094,32 @@ Full-action DQN sparse-action plan:
     - confirm jump-over demo rows label the action as `jump-*-start` while the
       projectile threat fields are visible in the decision row or recent
       preceding rows.
+  - V41 baseline training result 2026-05-01:
+    - trained `model/dqn-projectile-schema-v5-full-actions-v41-baseline`
+      version `41` from
+      `logs/rl-transitions-projectile-schema-v5-smoke-4-3-3.ndjson`.
+    - recipe intentionally used the existing V38/V40 full-action DQN settings
+      plus schema-backed `--dqn-valid-action-mask action-start-v1`; it did not
+      add projectile-specific reward shaping or oversampling.
+    - training built `1937` experiences from `7783` human-demo rows and
+      published successfully, but it is not promotable:
+      - masked greedy top action on the training eval slice was
+        `shoryuken-hp 1367 / 1937 = 70.6%`.
+      - same-log comparison with `action-start-v1` still chose
+        `shoryuken-hp 4228 / 7783 = 54.3%`.
+      - on incoming opponent projectile rows where
+        `obs_self_jump_start_allowed=1`, V41 chose
+        `shoryuken-hp 309 / 343 = 90.1%`, with `jump_top=0` and only
+        `25 / 343` rows having any `jump-*-start` inside the top five.
+      - a strong support-prior diagnostic reduced some sparse-action ranking
+        but collapsed the same-log distribution to `back 6191 / 7783 =
+        79.5%`; it did not make jump-over behavior emerge.
+    - conclusion: schema-v5 features are present, but the old generic
+      full-action reward recipe does not teach anti-fireball response. The
+      next training change should be an opt-in projectile curriculum/reward
+      profile that explicitly rewards safe jump-over timing, rewards close
+      guard/back no-damage responses, penalizes late jump-into-fireball
+      outcomes, and controls sparse action heads during projectile rows.
 
 - Step 4: train-time invalid-action Q penalty on the split action space.
   - Do this after Step 3, not before it.

@@ -2453,7 +2453,8 @@ Tasks:
 - [x] Train V55 with the targeted training-mode human-demo log; result: safe-jump Q-gap stayed strong, but urgent/borderline projectile rows still ranked jump too broadly
 - [x] Add clean human-demo projectile defensive expert margin support for V57/V58, including all-competitor mode and `projectile-response-v6` preset wiring
 - [x] Train and analyze V57/V58 defensive expert candidates; result: V57 moved defensive Q closer but leaked into specials, V58 preserved safe-jump but still did not make `guard`/`back` top-1 on urgent rows
-- [ ] V59 direction: add a stronger timing-aware inference/training path for urgent projectile rows, likely combining more `time_to_self <= 12` clean guard/back demo with a policy-time projectile defense prior or mask
+- [x] Add projectile-aware batch sampling plus a clean defensive-row selector so urgent projectile guard/back examples appear reliably in every training batch; V59/V60 result: Q gaps improve but top-1 still stays jump
+- [ ] V61 direction: add a policy-time projectile timing prior/mask or stronger filtered BC objective for `time_to_self <= 12`, because replay sampling alone did not flip urgent projectile decisions
 - [ ] Fix `rl_auto_retrain.py` replay planning for human-demo incremental retrain: add auto-available source ratios, log-level boost inputs, and replay-plan metadata
 - [ ] Review walk-forward/back macro actions after spacing-shaping A/B results
 - [ ] Review finer distance buckets after spacing-shaping sample-volume checks

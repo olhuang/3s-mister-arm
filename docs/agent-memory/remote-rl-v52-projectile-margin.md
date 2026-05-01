@@ -886,6 +886,171 @@ Recommended next steps:
 - continue to use V52/V55 as the safe-jump baseline; do not live-probe V57 or
   V58 as promotable candidates.
 
+## V59 Plan: Projectile Batch Group And Defensive Selector
+
+Date: 2026-05-01
+
+Status:
+- implemented and tested. V59/V60 are diagnostics, not promotable models.
+
+Goal:
+- keep V58's far/reliable projectile jump-over behavior.
+- increase the amount of urgent/borderline projectile defense signal seen by
+  every training batch.
+- avoid projectile-only fine-tuning so normal neutral/attack behavior is not
+  forgotten.
+
+Why:
+- V58 live finding: far fireballs are handled well by jump, but medium/close
+  fireballs are still weak.
+- V58 offline finding: `time_to_self <= 12` rows still mostly rank
+  `jump-neutral-start` top-1 even after defensive margin.
+- Existing `close_back_success` / `close_guard_success` oversampling is not
+  enough because the current success detector barely finds those events in the
+  training-mode demo log.
+
+Implementation plan:
+
+1. Add a projectile batch selector on built experiences.
+   - keep full episode context while building experiences.
+   - mark experiences after reward/lookahead attribution is available.
+   - do not raw-filter transition rows before `build_experiences`.
+
+2. Selector criteria for the first V59 experiment:
+   - incoming opponent projectile threat.
+   - action-start row.
+   - `obs_projectile_time_to_self <= 12` for defensive rows.
+   - defensive actions: `back`, `guard-stand`, `guard-crouch`.
+   - lookahead self damage <= `1`.
+   - source defaults to `human-demo`.
+   - include clean safe-jump projectile rows too, so the projectile group does
+     not contain only guard/back and erase V52/V58 safe-jump behavior.
+
+3. Add `projectile` as an optional balanced batch group.
+   - existing groups remain: `movement`, `normal`, `special`.
+   - if an experience is projectile-batch eligible, classify it as
+     `projectile` before the old action-family groups.
+   - ratios are opt-in; old recipes without `projectile=` keep their old
+     behavior.
+
+4. First V59 training recipe:
+   - warm-start from V58.
+   - learning rate: `0.0001`.
+   - steps: `800`.
+   - batch size: `64`.
+   - batch ratios:
+     - `projectile=0.40`
+     - `movement=0.20`
+     - `normal=0.25`
+     - `special=0.15`
+   - keep safe-jump expert margin.
+   - keep defensive expert margin, but do not increase its weight.
+
+Validation gates:
+- safe-jump Q-gap should stay near V58:
+  - target around `2770/2780` top-1.
+- urgent/borderline rows should improve:
+  - `0-6` jump rate should drop.
+  - `7-12` jump rate should drop.
+  - guard/back top-1 should increase.
+- no special leakage:
+  - `tatsu-mk` / `shoryuken-hp` should not become the dominant medium/close
+    projectile response.
+- non-projectile action mix should not collapse into guard/back.
+
+### V59/V60 Result
+
+Implementation:
+- added `projectile` as an optional balanced batch group.
+- added `--projectile-batch-group` and selector flags to
+  `tools/train_dqn_learner.py`.
+- added projectile batch diagnostics:
+  - eligible experiences.
+  - reason split.
+  - action split.
+  - time bucket split.
+- added auto-retrain preset `projectile-response-v7`.
+
+Selector used in V59/V60:
+- defensive-clean rows:
+  - `back`, `guard-stand`, `guard-crouch`
+  - incoming projectile threat.
+  - `time_to_self=0..12`.
+  - 12-decision lookahead self damage <= `1`.
+  - source `human-demo`.
+- late-jump-hit rows:
+  - jump-start rows with incoming projectile late-hit outcome.
+  - `time_to_self=0..12`.
+- safe-jump rows were intentionally not included in the projectile batch pool
+  because existing safe-jump oversampling and margin already preserve far
+  projectile jump behavior, and including safe-jump copies would drown out the
+  scarce urgent defensive rows.
+
+V59:
+- model:
+  - `model/dqn-projectile-schema-v5-full-actions-v59-projectile-batch-candidate`
+- warm-start:
+  - V58.
+- training:
+  - steps `800`.
+  - learning rate `0.0001`.
+  - batch ratios:
+    - `projectile=0.40`
+    - `movement=0.20`
+    - `normal=0.25`
+    - `special=0.15`
+- projectile pool:
+  - total `825`.
+  - defensive-clean `461`.
+  - late-jump-hit `364`.
+- result:
+  - safe-jump Q-gap stayed strong:
+    - top-1 `2770/2780`.
+  - urgent/borderline top-1 behavior did not change:
+    - `0-6`: jump `110/110`.
+    - `7-12`: jump `467/481`, special `14/481`.
+  - human-defense Q-gap improved but not enough:
+    - `0-6` mean competitor-minus-defense gap: V58 `0.0760` -> V59 `0.0630`.
+    - `7-12` mean competitor-minus-defense gap: V58 `0.0726` -> V59 `0.0600`.
+
+V60 stronger projectile-batch experiment:
+- model:
+  - `model/dqn-projectile-schema-v5-full-actions-v60-projectile-batch-strong-candidate`
+- warm-start:
+  - V58.
+- training:
+  - steps `1500`.
+  - learning rate `0.0003`.
+  - batch ratios:
+    - `projectile=0.60`
+    - `movement=0.15`
+    - `normal=0.15`
+    - `special=0.10`
+- result:
+  - safe-jump Q-gap still stayed strong:
+    - top-1 `2770/2780`.
+  - urgent/borderline top-1 still did not change:
+    - `0-6`: jump `110/110`.
+    - `7-12`: jump `467/481`, special `14/481`.
+  - human-defense Q-gap moved much closer:
+    - `0-6` mean competitor-minus-defense gap: V58 `0.0760` -> V60 `0.0265`.
+    - `7-12` mean competitor-minus-defense gap: V58 `0.0726` -> V60 `0.0240`.
+  - global greedy distribution shifted toward `back`, which is a caution flag:
+    - V60 eval top action: `back` `37.8%`, `forward` `31.1%`,
+      `jump-neutral-start` `24.6%`.
+
+Conclusion:
+- projectile-aware batch sampling and the defensive selector work as a data
+  delivery mechanism.
+- they are not sufficient by themselves to flip urgent/borderline projectile
+  decisions to `guard`/`back`.
+- V59/V60 are not promotable.
+- next step should be V61:
+  - either add a policy-time projectile timing prior/mask that demotes jump
+    for `time_to_self <= 12`, especially `0..6`;
+  - or add a stronger filtered BC/classification objective that directly makes
+    the defensive action group top-1 on clean urgent human-demo rows.
+
 ## Auto-Retrain Replay Plan Fix
 
 Date: 2026-05-01

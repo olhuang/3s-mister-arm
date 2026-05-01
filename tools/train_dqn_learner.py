@@ -33,6 +33,8 @@ class Experience:
     projectile_expert_margin_eligible: bool = False
     projectile_late_defensive_margin_eligible: bool = False
     projectile_defensive_expert_margin_eligible: bool = False
+    projectile_batch_eligible: bool = False
+    projectile_batch_reason: str = ""
 
 
 EXECUTION_SOURCE_NAMES = {
@@ -302,7 +304,7 @@ MOVEMENT_SPACING_ACTIONS = frozenset({"forward", "back"})
 PROJECTILE_OWNER_OPPONENT = 2
 REWARD_PROJECTILE_RESPONSE_PROFILES = ("off", "incoming-v1")
 BATCH_SAMPLING_MODES = ("uniform", "balanced")
-BATCH_GROUPS = ("movement", "normal", "special")
+BATCH_GROUPS = ("projectile", "movement", "normal", "special")
 SPECIAL_ACTION_PREFIXES = ("fireball-", "shoryuken-", "tatsu-")
 DQN_TARGET_MODES = ("standard", "double")
 
@@ -849,6 +851,83 @@ class ProjectileResponseOversampleStats:
             "close_guard_success_extra": self.close_guard_success_extra,
             "by_action_base": dict(sorted(self.by_action_base.items())),
             "by_action_extra": dict(sorted(self.by_action_extra.items())),
+        }
+
+
+@dataclass(frozen=True)
+class ProjectileBatchConfig:
+    requested: bool = False
+    min_time_to_self: int = 0
+    max_time_to_self: int = 12
+    window_decisions: int = 12
+    max_self_hp: int = 1
+    eligible_sources: frozenset[str] = field(default_factory=lambda: frozenset({"human-demo"}))
+    include_late_jump_hit: bool = True
+    include_safe_jump: bool = False
+    safe_jump_min_time_to_self: int = 13
+    safe_jump_max_time_to_self: int = 48
+
+    @property
+    def enabled(self) -> bool:
+        return self.requested
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "requested": self.requested,
+            "enabled": self.enabled,
+            "min_time_to_self": self.min_time_to_self,
+            "max_time_to_self": self.max_time_to_self,
+            "window_decisions": self.window_decisions,
+            "max_self_hp": self.max_self_hp,
+            "eligible_sources": sorted(self.eligible_sources),
+            "include_late_jump_hit": self.include_late_jump_hit,
+            "include_safe_jump": self.include_safe_jump,
+            "safe_jump_min_time_to_self": self.safe_jump_min_time_to_self,
+            "safe_jump_max_time_to_self": self.safe_jump_max_time_to_self,
+            "defensive_actions": sorted(DEFENSIVE_PROJECTILE_ACTIONS),
+            "jump_actions": sorted(JUMP_START_ACTIONS),
+        }
+
+
+@dataclass
+class ProjectileBatchStats:
+    eligible_experiences: int = 0
+    defensive_experiences: int = 0
+    late_jump_hit_experiences: int = 0
+    safe_jump_experiences: int = 0
+    by_reason: dict[str, int] = field(default_factory=dict)
+    by_action: dict[str, int] = field(default_factory=dict)
+    by_source: dict[str, int] = field(default_factory=dict)
+    by_time_bucket: dict[str, int] = field(default_factory=dict)
+
+    def add(self, exp: Experience, actions: tuple[str, ...]) -> None:
+        if not exp.projectile_batch_eligible:
+            return
+        self.eligible_experiences += 1
+        reason = exp.projectile_batch_reason or "unknown"
+        action = actions[exp.action_index] if 0 <= exp.action_index < len(actions) else "unknown"
+        bucket = projectile_time_to_self_bucket(exp.row)
+        self.by_reason[reason] = self.by_reason.get(reason, 0) + 1
+        self.by_action[action] = self.by_action.get(action, 0) + 1
+        self.by_source[exp.source_name] = self.by_source.get(exp.source_name, 0) + 1
+        self.by_time_bucket[bucket] = self.by_time_bucket.get(bucket, 0) + 1
+        if reason == "defensive-clean":
+            self.defensive_experiences += 1
+        elif reason == "late-jump-hit":
+            self.late_jump_hit_experiences += 1
+        elif reason == "safe-jump":
+            self.safe_jump_experiences += 1
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "eligible_experiences": self.eligible_experiences,
+            "defensive_experiences": self.defensive_experiences,
+            "late_jump_hit_experiences": self.late_jump_hit_experiences,
+            "safe_jump_experiences": self.safe_jump_experiences,
+            "by_reason": dict(sorted(self.by_reason.items())),
+            "by_action": dict(sorted(self.by_action.items())),
+            "by_source": dict(sorted(self.by_source.items())),
+            "by_time_bucket": dict(sorted(self.by_time_bucket.items())),
         }
 
 
@@ -1551,6 +1630,11 @@ def canonical_batch_group_name(raw_group: str) -> str | None:
         "guard": "movement",
         "movement-guard": "movement",
         "movement+guard": "movement",
+        "projectile": "projectile",
+        "projectiles": "projectile",
+        "proj": "projectile",
+        "projectile-defense": "projectile",
+        "projectile-def": "projectile",
         "normal": "normal",
         "normals": "normal",
         "normal-throw": "normal",
@@ -1594,6 +1678,25 @@ def batch_sampling_config_from_args(args: argparse.Namespace) -> BatchSamplingCo
         raise SystemExit(f"unknown --batch-sampling {mode!r}; expected one of {','.join(BATCH_SAMPLING_MODES)}")
     ratios = parse_batch_ratios(str(args.balanced_batch_ratios), "--balanced-batch-ratios")
     return BatchSamplingConfig(mode=mode, ratios=ratios)
+
+
+def projectile_batch_config_from_args(args: argparse.Namespace) -> ProjectileBatchConfig:
+    min_time = max(0, int(args.projectile_batch_min_time_to_self))
+    max_time = max(min_time, int(args.projectile_batch_max_time_to_self))
+    safe_min_time = max(0, int(args.projectile_batch_safe_jump_min_time_to_self))
+    safe_max_time = max(safe_min_time, int(args.projectile_batch_safe_jump_max_time_to_self))
+    return ProjectileBatchConfig(
+        requested=bool(args.projectile_batch_group),
+        min_time_to_self=min_time,
+        max_time_to_self=max_time,
+        window_decisions=max(0, int(args.projectile_batch_window_decisions)),
+        max_self_hp=max(0, int(args.projectile_batch_max_self_hp)),
+        eligible_sources=parse_source_name_set(str(args.projectile_batch_sources), "--projectile-batch-sources"),
+        include_late_jump_hit=bool(args.projectile_batch_include_late_jump_hit),
+        include_safe_jump=bool(args.projectile_batch_include_safe_jump),
+        safe_jump_min_time_to_self=safe_min_time,
+        safe_jump_max_time_to_self=safe_max_time,
+    )
 
 
 def parse_action_name_set(value: str, flag_name: str) -> frozenset[str]:
@@ -1648,6 +1751,14 @@ def action_batch_group(action_name: str) -> str:
     return "normal"
 
 
+def experience_batch_group(exp: Experience, actions: tuple[str, ...]) -> str:
+    if exp.projectile_batch_eligible:
+        return "projectile"
+    if 0 <= exp.action_index < len(actions):
+        return action_batch_group(actions[exp.action_index])
+    return "normal"
+
+
 def build_batch_pools(
     experiences: list[Experience],
     actions: tuple[str, ...],
@@ -1655,8 +1766,18 @@ def build_batch_pools(
     pools: dict[str, list[Experience]] = {group: [] for group in BATCH_GROUPS}
     for exp in experiences:
         if 0 <= exp.action_index < len(actions):
-            pools[action_batch_group(actions[exp.action_index])].append(exp)
+            pools[experience_batch_group(exp, actions)].append(exp)
     return pools
+
+
+def projectile_batch_stats_from_experiences(
+    experiences: list[Experience],
+    actions: tuple[str, ...],
+) -> ProjectileBatchStats:
+    stats = ProjectileBatchStats()
+    for exp in experiences:
+        stats.add(exp, actions)
+    return stats
 
 
 def balanced_target_counts(batch_size: int, ratios: dict[str, float]) -> dict[str, int]:
@@ -2122,6 +2243,52 @@ def projectile_late_defensive_margin_eligible(
     return True
 
 
+def projectile_batch_reason(
+    episode_rows: list[dict[str, object]],
+    row_index: int,
+    row: dict[str, object],
+    source_name: str,
+    action_name: str,
+    outcome: ProjectileResponseOutcome,
+    config: ProjectileBatchConfig,
+) -> str:
+    if not config.enabled:
+        return ""
+    if source_name not in config.eligible_sources:
+        return ""
+    if not outcome.threat:
+        return ""
+    time_to_self = int_field(row, "obs_projectile_time_to_self")
+
+    if action_name in DEFENSIVE_PROJECTILE_ACTIONS:
+        if time_to_self < config.min_time_to_self or time_to_self > config.max_time_to_self:
+            return ""
+        window_end = min(len(episode_rows), row_index + max(0, config.window_decisions) + 1)
+        lookahead = episode_rows[row_index:window_end]
+        self_damage = sum(int_field(lookahead_row, "delta_self_hp") for lookahead_row in lookahead)
+        if self_damage <= config.max_self_hp:
+            return "defensive-clean"
+        return ""
+
+    if (
+        config.include_late_jump_hit
+        and action_name in JUMP_START_ACTIONS
+        and outcome.late_jump_hit
+        and config.min_time_to_self <= time_to_self <= config.max_time_to_self
+    ):
+        return "late-jump-hit"
+
+    if (
+        config.include_safe_jump
+        and action_name in JUMP_START_ACTIONS
+        and outcome.safe_jump
+        and config.safe_jump_min_time_to_self <= time_to_self <= config.safe_jump_max_time_to_self
+    ):
+        return "safe-jump"
+
+    return ""
+
+
 def projectile_defensive_expert_margin_eligible(
     episode_rows: list[dict[str, object]],
     row_index: int,
@@ -2339,6 +2506,7 @@ def build_experiences(
     reward_position_config: RewardPositionConfig,
     reward_projectile_response_config: RewardProjectileResponseConfig,
     projectile_response_oversample_config: ProjectileResponseOversampleConfig,
+    projectile_batch_config: ProjectileBatchConfig,
     projectile_expert_margin_config: ProjectileExpertMarginConfig,
     projectile_late_defensive_margin_config: ProjectileLateDefensiveMarginConfig,
     projectile_defensive_expert_margin_config: ProjectileDefensiveExpertMarginConfig,
@@ -2566,6 +2734,15 @@ def build_experiences(
                         build_stats.macro_continuation_uncredited_reward_rows += 1
                 continue
 
+            projectile_batch_label = projectile_batch_reason(
+                episode_rows,
+                index,
+                row,
+                source_name,
+                action_name,
+                projectile_response_outcome_result,
+                projectile_batch_config,
+            )
             exp = Experience(
                 state=rl.dqn_feature_vector(row),
                 action_index=action_to_index[action_name],
@@ -2599,6 +2776,8 @@ def build_experiences(
                     projectile_response_outcome_result,
                     projectile_defensive_expert_margin_config,
                 ),
+                projectile_batch_eligible=bool(projectile_batch_label),
+                projectile_batch_reason=projectile_batch_label,
             )
             multiplier = projectile_response_oversample_config.multiplier_for(projectile_response_outcome_result)
             for _ in range(multiplier):
@@ -4227,9 +4406,76 @@ def main() -> None:
         default="movement=0.4,normal=0.3,special=0.3",
         help=(
             "Comma-separated group ratios used when --batch-sampling balanced, e.g. "
-            "movement=0.4,normal=0.3,special=0.3; movement includes forward/back/guard, "
-            "normal includes normals and throw, special includes fireball/shoryuken/tatsu"
+            "movement=0.4,normal=0.3,special=0.3 or "
+            "projectile=0.4,movement=0.2,normal=0.25,special=0.15; movement includes "
+            "forward/back/guard, normal includes normals and throw, special includes "
+            "fireball/shoryuken/tatsu"
         ),
+    )
+    parser.add_argument(
+        "--projectile-batch-group",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Mark selected projectile-defense experiences for the optional projectile balanced-batch group. "
+            "Use with --batch-sampling balanced and a projectile=... ratio."
+        ),
+    )
+    parser.add_argument(
+        "--projectile-batch-min-time-to-self",
+        type=int,
+        default=0,
+        help="Minimum obs_projectile_time_to_self for urgent projectile batch rows",
+    )
+    parser.add_argument(
+        "--projectile-batch-max-time-to-self",
+        type=int,
+        default=12,
+        help="Maximum obs_projectile_time_to_self for urgent projectile batch rows",
+    )
+    parser.add_argument(
+        "--projectile-batch-window-decisions",
+        type=int,
+        default=12,
+        help="Lookahead decision window used to accept low-damage defensive projectile batch rows",
+    )
+    parser.add_argument(
+        "--projectile-batch-max-self-hp",
+        type=int,
+        default=1,
+        help="Maximum self HP damage allowed for defensive projectile batch rows",
+    )
+    parser.add_argument(
+        "--projectile-batch-sources",
+        default="human-demo",
+        help="Comma-separated execution sources eligible for projectile batch rows",
+    )
+    parser.add_argument(
+        "--projectile-batch-include-late-jump-hit",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Include urgent/borderline late jump-hit projectile rows in the projectile batch group",
+    )
+    parser.add_argument(
+        "--projectile-batch-include-safe-jump",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Also include clean safe-jump projectile rows in the projectile batch group. "
+            "Default is off so oversampled safe jumps do not drown out urgent defensive rows."
+        ),
+    )
+    parser.add_argument(
+        "--projectile-batch-safe-jump-min-time-to-self",
+        type=int,
+        default=13,
+        help="Minimum obs_projectile_time_to_self for safe-jump projectile batch rows",
+    )
+    parser.add_argument(
+        "--projectile-batch-safe-jump-max-time-to-self",
+        type=int,
+        default=48,
+        help="Maximum obs_projectile_time_to_self for safe-jump projectile batch rows",
     )
     parser.add_argument("--hidden-sizes", default="64,64", help="Comma-separated hidden layer sizes")
     parser.add_argument(
@@ -4961,6 +5207,7 @@ def main() -> None:
     reward_position_config = reward_position_config_from_args(args)
     reward_projectile_response_config = reward_projectile_response_config_from_args(args)
     projectile_response_oversample_config = projectile_response_oversample_config_from_args(args)
+    projectile_batch_config = projectile_batch_config_from_args(args)
     projectile_expert_margin_config = projectile_expert_margin_config_from_args(args)
     projectile_late_defensive_margin_config = projectile_late_defensive_margin_config_from_args(args)
     projectile_defensive_expert_margin_config = projectile_defensive_expert_margin_config_from_args(args)
@@ -4996,6 +5243,7 @@ def main() -> None:
         reward_position_config,
         reward_projectile_response_config,
         projectile_response_oversample_config,
+        projectile_batch_config,
         projectile_expert_margin_config,
         projectile_late_defensive_margin_config,
         projectile_defensive_expert_margin_config,
@@ -5004,6 +5252,7 @@ def main() -> None:
     )
     if not experiences:
         raise SystemExit("No DQN experiences built from transition logs")
+    projectile_batch_stats = projectile_batch_stats_from_experiences(experiences, actions)
     conservative_action_penalty_stats = apply_conservative_action_penalty(
         experiences,
         actions,
@@ -5180,6 +5429,8 @@ def main() -> None:
         "reward_projectile_response_stats": reward_projectile_response_stats.as_metadata(),
         "projectile_response_oversample_config": projectile_response_oversample_config.as_metadata(),
         "projectile_response_oversample_stats": projectile_response_oversample_stats.as_metadata(),
+        "projectile_batch_config": projectile_batch_config.as_metadata(),
+        "projectile_batch_stats": projectile_batch_stats.as_metadata(),
         "projectile_expert_margin_config": projectile_expert_margin_config.as_metadata(),
         "projectile_expert_margin_stats": projectile_expert_margin_stats.as_metadata(),
         "projectile_expert_q_gap_diagnostics": projectile_expert_q_gap_diag.as_metadata(),
@@ -5257,6 +5508,7 @@ def main() -> None:
         f"projectile_net={reward_projectile_response_stats.net_adjustment:.1f} "
         f"projectile_oversample={projectile_response_oversample_stats.base_experiences}/"
         f"+{projectile_response_oversample_stats.extra_experiences} "
+        f"projectile_batch={projectile_batch_stats.eligible_experiences} "
         f"projectile_margin={projectile_expert_margin_stats.violation_events}/"
         f"{projectile_expert_margin_stats.sampled_events} "
         f"projectile_margin_loss={projectile_expert_margin_stats.last_loss:.6f} "
@@ -5353,6 +5605,27 @@ def main() -> None:
         f"ratios:{','.join(f'{group}:{batch_sampling_diag.ratios.get(group, 0.0):.2f}' for group in BATCH_GROUPS)} "
         f"target:{','.join(f'{group}:{batch_sampling_diag.target_counts.get(group, 0)}' for group in BATCH_GROUPS)} "
         f"pools:{','.join(f'{group}:{batch_sampling_diag.pool_counts.get(group, 0)}' for group in BATCH_GROUPS)}",
+        flush=True,
+    )
+    print(
+        "DQN diagnostics "
+        f"projectile_batch=enabled:{int(projectile_batch_config.enabled)} "
+        f"sources:{','.join(sorted(projectile_batch_config.eligible_sources)) or 'none'} "
+        f"time_to_self:{projectile_batch_config.min_time_to_self}-"
+        f"{projectile_batch_config.max_time_to_self} "
+        f"window:{projectile_batch_config.window_decisions} "
+        f"max_self_hp:{projectile_batch_config.max_self_hp} "
+        f"include_late_jump_hit:{int(projectile_batch_config.include_late_jump_hit)} "
+        f"include_safe_jump:{int(projectile_batch_config.include_safe_jump)} "
+        f"safe_t:{projectile_batch_config.safe_jump_min_time_to_self}-"
+        f"{projectile_batch_config.safe_jump_max_time_to_self} "
+        f"eligible:{projectile_batch_stats.eligible_experiences} "
+        f"defensive:{projectile_batch_stats.defensive_experiences} "
+        f"late_jump_hit:{projectile_batch_stats.late_jump_hit_experiences} "
+        f"safe_jump:{projectile_batch_stats.safe_jump_experiences} "
+        f"reason:{format_counts(projectile_batch_stats.by_reason, projectile_batch_stats.eligible_experiences, args.diagnostic_top_n)} "
+        f"action:{format_counts(projectile_batch_stats.by_action, projectile_batch_stats.eligible_experiences, args.diagnostic_top_n)} "
+        f"time:{format_counts(projectile_batch_stats.by_time_bucket, projectile_batch_stats.eligible_experiences, args.diagnostic_top_n)}",
         flush=True,
     )
     print(

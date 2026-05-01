@@ -24,6 +24,7 @@ REWARD_PRESETS = (
     "projectile-response-v4",
     "projectile-response-v5",
     "projectile-response-v6",
+    "projectile-response-v7",
 )
 
 
@@ -118,6 +119,7 @@ def reward_preset_args(name: str) -> list[str]:
         "projectile-response-v4",
         "projectile-response-v5",
         "projectile-response-v6",
+        "projectile-response-v7",
     }:
         raise SystemExit(f"unknown reward preset: {name}")
     original_name = name
@@ -129,6 +131,7 @@ def reward_preset_args(name: str) -> list[str]:
         "projectile-response-v4",
         "projectile-response-v5",
         "projectile-response-v6",
+        "projectile-response-v7",
     }:
         name = "ground-specials-v35a"
         safe_jump_bonus = (
@@ -140,6 +143,7 @@ def reward_preset_args(name: str) -> list[str]:
                 "projectile-response-v4",
                 "projectile-response-v5",
                 "projectile-response-v6",
+                "projectile-response-v7",
             }
             else "1.2"
         )
@@ -175,6 +179,7 @@ def reward_preset_args(name: str) -> list[str]:
             "projectile-response-v4",
             "projectile-response-v5",
             "projectile-response-v6",
+            "projectile-response-v7",
         }:
             projectile_response_args.extend(
                 [
@@ -193,6 +198,7 @@ def reward_preset_args(name: str) -> list[str]:
             "projectile-response-v4",
             "projectile-response-v5",
             "projectile-response-v6",
+            "projectile-response-v7",
         }:
             projectile_response_args.extend(
                 [
@@ -212,6 +218,7 @@ def reward_preset_args(name: str) -> list[str]:
                 "projectile-response-v4",
                 "projectile-response-v5",
                 "projectile-response-v6",
+                "projectile-response-v7",
             }:
                 projectile_response_args.extend(
                     [
@@ -221,7 +228,7 @@ def reward_preset_args(name: str) -> list[str]:
                         "48",
                     ]
                 )
-            if original_name in {"projectile-response-v5", "projectile-response-v6"}:
+            if original_name in {"projectile-response-v5", "projectile-response-v6", "projectile-response-v7"}:
                 projectile_response_args.extend(
                     [
                         "--projectile-late-defensive-margin-loss",
@@ -237,7 +244,7 @@ def reward_preset_args(name: str) -> list[str]:
                         "action-start-v1",
                     ]
                 )
-            if original_name == "projectile-response-v6":
+            if original_name in {"projectile-response-v6", "projectile-response-v7"}:
                 projectile_response_args.extend(
                     [
                         "--projectile-expert-margin-batch-size",
@@ -260,6 +267,22 @@ def reward_preset_args(name: str) -> list[str]:
                         "action-start-v1",
                     ]
                 )
+            if original_name == "projectile-response-v7":
+                projectile_response_args.extend(
+                    [
+                        "--balanced-batch-ratios",
+                        "projectile=0.40,movement=0.20,normal=0.25,special=0.15",
+                        "--projectile-batch-group",
+                        "--projectile-batch-max-time-to-self",
+                        "12",
+                        "--projectile-batch-window-decisions",
+                        "12",
+                        "--projectile-batch-max-self-hp",
+                        "1",
+                        "--projectile-batch-sources",
+                        "human-demo",
+                    ]
+                )
     if name == "ground-specials-v35a":
         guard_costs = ("0.4", "0.6")
         engine_action_windows = "fireball-lp=45,fireball-mp=45,fireball-hp=45,tatsu-lk=25,tatsu-mk=25,tatsu-hk=25,throw=8"
@@ -274,6 +297,7 @@ def reward_preset_args(name: str) -> list[str]:
             "projectile-response-v4",
             "projectile-response-v5",
             "projectile-response-v6",
+            "projectile-response-v7",
         }:
             engine_action_oversamples = (
                 "fireball-lp=4,fireball-mp=4,fireball-hp=4,"

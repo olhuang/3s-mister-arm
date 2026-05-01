@@ -9255,3 +9255,42 @@ Conclusion:
   `time_to_self <= 12` rows prefer `guard`/`back`.
 - V59 should use more tightly filtered clean defensive demos and/or a
   policy-time projectile timing prior instead of another blind margin increase.
+
+## 2026-05-01: V59/V60 Projectile Batch Group
+
+Milestone:
+- Milestone 6: higher-control-rate policy and projectile curriculum.
+
+Code:
+- added an opt-in `projectile` balanced batch group to
+  `tools/train_dqn_learner.py`.
+- added `--projectile-batch-group` selector flags.
+- added projectile batch diagnostics and metadata.
+- added auto-retrain preset `projectile-response-v7`.
+
+Validation:
+- `python3 -m py_compile tools/train_dqn_learner.py tools/rl_auto_retrain.py`
+- `tools/rl_auto_retrain.py --reward-preset projectile-response-v7 --dry-run`
+- smoke train:
+  - `/tmp/rl-v59-projectile-batch-smoke`
+- full trains:
+  - `model/dqn-projectile-schema-v5-full-actions-v59-projectile-batch-candidate`
+  - `model/dqn-projectile-schema-v5-full-actions-v60-projectile-batch-strong-candidate`
+
+Findings:
+- projectile batch pool was populated as intended:
+  - `825` projectile experiences.
+  - `461` defensive-clean.
+  - `364` late-jump-hit.
+- V59 kept safe-jump Q-gap but did not change urgent projectile top-1.
+- V60 stronger sampling moved human-defense Q gaps closer:
+  - `0-6` mean competitor-minus-defense gap: `0.0760` -> `0.0265`.
+  - `7-12` mean competitor-minus-defense gap: `0.0726` -> `0.0240`.
+- V60 still did not flip urgent/borderline top-1 away from jump.
+
+Conclusion:
+- projectile batch sampling is useful infrastructure, but replay sampling alone
+  is not enough to solve medium/close projectile defense.
+- V59/V60 are not promotable.
+- V61 should add a policy-time projectile timing prior/mask or a stronger
+  filtered BC/classification objective for `time_to_self <= 12`.

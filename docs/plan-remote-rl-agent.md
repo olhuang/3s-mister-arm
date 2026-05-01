@@ -2461,6 +2461,16 @@ Tasks:
 - [x] V61c live probe: move the safe jump window down to roughly `23-30`; result: `19-22` jump almost disappeared, `23-30` jump stayed mostly clean, and combined V61b/V61c data is enough for a V62 filtered retrain experiment
 - [ ] V62 direction: retrain with filtered V61b/V61c on-policy rows, preserving clean `23-30` jump and teaching defensive behavior for `<=22` and `31-48`; use filtered BC/classification only if margin/replay still cannot internalize the prior
 - [x] Document the from-scratch full-retrain data collection curriculum in [docs/agent-memory/remote-rl-retrain-data-collection-plan.md](agent-memory/remote-rl-retrain-data-collection-plan.md)
+- [ ] Full-retrain collection Phase 0: collect schema/label sanity logs and verify execution source, action labels, HP deltas, projectile fields, and action-start masks
+- [ ] Full-retrain collection Phase 1: collect movement and spacing curriculum logs and train/check the first movement baseline before attacks
+- [ ] Full-retrain collection Phase 2: collect basic normal attack curriculum logs with hit, whiff, blocked, and punished examples
+- [ ] Full-retrain collection Phase 3: collect specials curriculum logs for fireball, shoryuken, and tatsu good/bad contexts
+- [ ] Full-retrain collection Phase 4: collect basic defense logs for guard, back-evade, and post-block punish
+- [ ] Full-retrain collection Phase 5: collect projectile defense timing logs using the V61/V62 buckets, especially `0-12`, `13-22`, `23-30`, and `31-48`
+- [ ] Full-retrain collection Phase 6: collect anti-air and jump-defense logs before expecting reliable jump-in punishment
+- [ ] Full-retrain collection Phase 7: collect corner and pressure logs before treating corner behavior as solved
+- [ ] Full-retrain collection Phase 8: collect natural CPU-demo, human-demo, and on-policy integration logs after curriculum phases exist
+- [ ] Full-retrain training: run cumulative warm-start models M1-M8 and regression-check each stage before live promotion
 - [ ] Fix `rl_auto_retrain.py` replay planning for human-demo incremental retrain: add auto-available source ratios, log-level boost inputs, and replay-plan metadata
 - [ ] Review walk-forward/back macro actions after spacing-shaping A/B results
 - [ ] Review finer distance buckets after spacing-shaping sample-volume checks
@@ -3588,6 +3598,21 @@ Minimum useful reboot target:
 - preferred target: `80K-120K` effective experiences.
 - use effective action-start and outcome counts as collection gates, not raw row
   counts alone.
+
+Future task tracking:
+
+- [ ] Phase 0 sanity logs collected and analyzer-verified.
+- [ ] Phase 1 movement/spacing data collected and M1 movement baseline trained.
+- [ ] Phase 2 normals data collected and M2 attack baseline trained.
+- [ ] Phase 3 specials data collected and M3 specials baseline trained.
+- [ ] Phase 4 defense data collected and M4 defense baseline trained.
+- [ ] Phase 5 projectile timing data collected and M5 projectile baseline
+  trained.
+- [ ] Phase 6 anti-air data collected and M6 anti-air baseline trained.
+- [ ] Phase 7 corner/pressure data collected and M7 corner baseline trained.
+- [ ] Phase 8 natural/on-policy integration logs collected and M8 integration
+  baseline trained.
+- [ ] final M8 regression report recorded before any live promotion.
 
 ### Milestone 6 Move-Family Validation Table
 

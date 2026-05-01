@@ -2,6 +2,31 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-02: Add Full-Retrain Collection Plan To Future Task Tracking
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / controlled full
+  retrain data collection
+
+Files changed:
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- make the full-retrain data collection plan actionable in the main Milestone 6
+  task tracker instead of leaving it as a standalone reference document.
+
+Implementation:
+- added phase-level future tasks for Phase 0 through Phase 8 collection.
+- added a final cumulative M1-M8 warm-start training/regression tracking item.
+- mirrored the same phase checklist in the Full-Retrain Collection Plan section
+  so future agents can track collection status without re-reading the whole
+  agent-memory document first.
+
+Validation:
+- documentation-only change.
+- checked markdown diff and task links locally.
+
 ## 2026-05-02: Document Full-Retrain Data Collection Curriculum
 
 Milestone:

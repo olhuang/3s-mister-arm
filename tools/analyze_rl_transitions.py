@@ -401,6 +401,15 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--training-mode-hp-delta-mode",
+        choices=("raw", "damage-only"),
+        default="raw",
+        help=(
+            "Reward view for training-mode rows. raw preserves logged HP deltas; damage-only ignores "
+            "negative HP deltas from training recovery/reset effects"
+        ),
+    )
+    parser.add_argument(
         "--projectile-window-before",
         type=int,
         default=5,
@@ -1162,6 +1171,8 @@ def main() -> int:
     engine_state_source_counts: collections.Counter[tuple[str, str]] = collections.Counter()
     action_source_counts: collections.Counter[str] = collections.Counter()
     action_source_action_counts: dict[str, collections.Counter[str]] = collections.defaultdict(collections.Counter)
+    mode_type_counts: collections.Counter[int] = collections.Counter()
+    raw_hp_sign_counts: collections.Counter[str] = collections.Counter()
     rows: list[dict[str, object]] = []
 
     for row_index, line in enumerate(iter_lines(path, max(0, args.tail_rows)), start=1):
@@ -1191,13 +1202,28 @@ def main() -> int:
         if first_key is None:
             first_key = key
         last_key = key
+        mode_type_counts[int_field(row, "mode_type")] += 1
+        raw_self_hp = int_field(row, "delta_self_hp")
+        raw_opp_hp = int_field(row, "delta_opp_hp")
+        if raw_self_hp < 0:
+            raw_hp_sign_counts["self_negative"] += 1
+        elif raw_self_hp > 0:
+            raw_hp_sign_counts["self_positive"] += 1
+        else:
+            raw_hp_sign_counts["self_zero"] += 1
+        if raw_opp_hp < 0:
+            raw_hp_sign_counts["opp_negative"] += 1
+        elif raw_opp_hp > 0:
+            raw_hp_sign_counts["opp_positive"] += 1
+        else:
+            raw_hp_sign_counts["opp_zero"] += 1
 
         action_selection = rl.select_training_action(row, args.training_action_source)
         action = action_selection.name
         action_source_counts[action_selection.source] += 1
         if action is not None:
             action_source_action_counts[action_selection.source][action] += 1
-        reward = tabular_training_reward(row)
+        reward = tabular_training_reward(row, args.training_mode_hp_delta_mode)
         opp_hp = int_field(row, "delta_opp_hp")
         self_hp = int_field(row, "delta_self_hp")
         bucket = dx_bucket(row)
@@ -1305,6 +1331,11 @@ def main() -> int:
     print(
         f"action_label_source training_action_source={args.training_action_source} "
         f"counts={format_counter(action_source_counts, len(action_source_counts) or 1)}"
+    )
+    print(
+        f"mode_type_counts={format_counter(collections.Counter({str(k): v for k, v in mode_type_counts.items()}), len(mode_type_counts) or 1)} "
+        f"training_mode_hp_delta_mode={args.training_mode_hp_delta_mode} "
+        f"raw_hp_signs={format_counter(raw_hp_sign_counts, len(raw_hp_sign_counts) or 1)}"
     )
     if action_source_action_counts:
         for source in sorted(action_source_action_counts):

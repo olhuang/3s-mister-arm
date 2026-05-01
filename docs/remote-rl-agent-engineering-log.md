@@ -2,6 +2,62 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-01: Add Training Mode Demo Transition Logging
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / controlled demo data collection
+
+Files changed:
+- `src/rl/rl_session.c`
+- `tools/rl_probe_server.py`
+- `tools/train_dqn_learner.py`
+- `tools/analyze_rl_transitions.py`
+- `docs/agent-memory/remote-rl-training-mode-demo-log.md`
+- `docs/plan-remote-rl-agent.md`
+
+Purpose:
+- make training mode usable as a generic controlled-scenario transition source.
+- first workflow: human controls the configured agent side, built-in
+  dummy/CPU controls the opponent side, and the RL bridge records local demo
+  transitions.
+- keep remote DQN action override VS-only so training dummy/menu/record-replay
+  state is not mixed with remote autopilot control.
+
+Implementation:
+- added a separate local demo recording gate that accepts training mode when
+  gameplay is live (`mpp_w.inGame`, no pause, battle active).
+- kept `RLSession_CanOverrideGameplayInput()` VS-only for remote action
+  injection.
+- bumped C-side transition rows to schema v6 with `mode_type` and `play_mode`
+  metadata.
+- updated Python replay tooling to accept both schema v5 and v6 so existing
+  V52/V53/V54 logs remain trainable.
+- added analyzer and trainer `--training-mode-hp-delta-mode raw|damage-only`;
+  `damage-only` ignores negative HP deltas only for training-mode rows while
+  preserving raw logged deltas by default.
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py tools/train_dqn_learner.py tools/analyze_rl_transitions.py`
+- `python3 tools/analyze_rl_transitions.py logs/rl-transitions-human-demo-projectile-schema-v5-smoke-4-3-3.ndjson --tail-rows 200 --limit 5 --training-mode-hp-delta-mode damage-only`
+  - confirmed schema-v5 backward compatibility (`schemas=5:200`).
+  - old rows report `mode_type_counts=0:200`.
+- `python3 tools/train_dqn_learner.py logs/rl-transitions-human-demo-projectile-schema-v5-smoke-4-3-3.ndjson --model-dir /tmp/rl-training-mode-demo-smoke --model-version 60501 --limit 200 --steps 1 --batch-size 16 --hidden-sizes 8 --log-interval 0 --training-mode-hp-delta-mode damage-only`
+  - built `102` experiences from `200` schema-v5 rows.
+  - reported `training_mode_hp=mode:damage-only sanitized_rows:0` because the
+    old log has no training-mode metadata.
+- `tools/mister/build-game.sh --flavor telemetry`
+  - rebuilt `src/rl/rl_session.c`.
+  - package created at `build/mister-telemetry-package`.
+
+Follow-up:
+- hardware validation still needed: run training mode with
+  `rl-control-source = human-demo`, dummy/CPU opponent, and probe action output
+  disabled; confirm uploaded rows have `execution_source=4`,
+  `transition_schema_version=6`, and `mode_type=3` or `4`.
+- inspect the first real training-mode log's raw positive/negative HP delta
+  distribution before using `--training-mode-hp-delta-mode damage-only` in a
+  real V55 retrain.
+
 ## 2026-05-01: Plan Auto-Retrain Replay Fix For Human Demo Mix
 
 Milestone:

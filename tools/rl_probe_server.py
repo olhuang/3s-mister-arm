@@ -156,7 +156,9 @@ MODEL_POLICY_CHOICES = (
 POLICY_CHOICES = SCRIPTED_POLICY_CHOICES + MODEL_POLICY_CHOICES
 GUARD_MACRO_DECISION_STEPS = 6
 DEMO_EXECUTION_SOURCES = frozenset({4, 5})
-TRANSITION_SCHEMA_VERSION = 5
+TRANSITION_SCHEMA_VERSION = 6
+SUPPORTED_TRANSITION_SCHEMA_VERSIONS = frozenset({5, 6})
+TRAINING_MODE_TYPES = frozenset({3, 4})
 TRAINING_ACTION_SOURCES = ("auto", "policy", "input", "engine", "prefer-engine")
 
 TABULAR_ACTION_NAMES = (
@@ -1346,17 +1348,22 @@ def dqn_valid_action_indices_for_row(
 
 
 def is_current_transition_schema_row(row: dict[str, object]) -> bool:
-    return row_int_field(row, "transition_schema_version") == TRANSITION_SCHEMA_VERSION
+    return row_int_field(row, "transition_schema_version") in SUPPORTED_TRANSITION_SCHEMA_VERSIONS
 
 
 def require_current_transition_schema(row: dict[str, object], context: str = "transition row") -> None:
     version = row_int_field(row, "transition_schema_version")
-    if version != TRANSITION_SCHEMA_VERSION:
-        raise ValueError(f"{context}: transition_schema_version={version} expected={TRANSITION_SCHEMA_VERSION}")
+    if version not in SUPPORTED_TRANSITION_SCHEMA_VERSIONS:
+        supported = ",".join(str(item) for item in sorted(SUPPORTED_TRANSITION_SCHEMA_VERSIONS))
+        raise ValueError(f"{context}: transition_schema_version={version} expected one of {supported}")
 
 
 def is_demo_transition_row(row: dict[str, object]) -> bool:
     return row_int_field(row, "execution_source") in DEMO_EXECUTION_SOURCES
+
+
+def is_training_mode_transition_row(row: dict[str, object]) -> bool:
+    return row_int_field(row, "mode_type") in TRAINING_MODE_TYPES
 
 
 def action_name_from_policy_meta(action_id: int, sub_action_id: int) -> str | None:
@@ -1463,8 +1470,13 @@ def select_training_action(row: dict[str, object], source_mode: str = "auto") ->
     return ActionSelection(None, 0, "none")
 
 
-def tabular_training_reward(row: dict[str, object]) -> float:
-    return float(int(row.get("delta_opp_hp", 0) or 0) - int(row.get("delta_self_hp", 0) or 0))
+def tabular_training_reward(row: dict[str, object], training_mode_hp_delta_mode: str = "raw") -> float:
+    opp_delta = int(row.get("delta_opp_hp", 0) or 0)
+    self_delta = int(row.get("delta_self_hp", 0) or 0)
+    if training_mode_hp_delta_mode == "damage-only" and is_training_mode_transition_row(row):
+        opp_delta = max(0, opp_delta)
+        self_delta = max(0, self_delta)
+    return float(opp_delta - self_delta)
 
 
 def dqn_feature_value(row: dict[str, object], name: str) -> float:
@@ -1706,6 +1718,8 @@ def learner_replay_row(row: dict[str, object]) -> dict[str, object] | None:
         "episode_id": int(row.get("episode_id", 0) or 0),
         "decision_id": int(row.get("decision_id", 0) or 0),
         "round_num": int(row.get("round_num", 0) or 0),
+        "mode_type": int(row.get("mode_type", 0) or 0),
+        "play_mode": int(row.get("play_mode", 0) or 0),
         "obs_frame": int(row.get("obs_frame", 0) or 0),
         "transition_schema_version": int(row.get("transition_schema_version", 0) or 0),
         "agent_character_id": int(row.get("agent_character_id", 0) or 0),

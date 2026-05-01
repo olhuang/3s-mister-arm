@@ -2446,6 +2446,9 @@ Tasks:
 - [x] Add explicit late-jump-hit defensive margin for V54 so urgent/borderline projectile rows can prefer `guard-stand`/`guard-crouch`/`back` over jump when jump was hit
 - [x] Add an auto-retrain preset for V54/V55 so the same late defensive margin recipe can be used for live incremental retrain
 - [x] Train and compare V54 late defensive margin candidates against V52/V53 before live probe or live incremental retrain; result: trainer/preset ready, current old-demo-only V54 candidates are not promotable
+- [x] Document the training-mode demo transition logging plan in [docs/agent-memory/remote-rl-training-mode-demo-log.md](agent-memory/remote-rl-training-mode-demo-log.md)
+- [x] Add training-mode local demo transition logging for controlled human-vs-dummy data collection without enabling remote DQN action override
+- [x] Add trainer/analyzer support for opt-in training-mode damage-only HP delta rewards while preserving raw transition deltas for analysis
 - [ ] Collect targeted human-demo projectile defense rows for V55/live incremental retrain, especially `time_to_self <= 12` guard/back success examples
 - [ ] Fix `rl_auto_retrain.py` replay planning for human-demo incremental retrain: add auto-available source ratios, log-level boost inputs, and replay-plan metadata
 - [ ] Review walk-forward/back macro actions after spacing-shaping A/B results

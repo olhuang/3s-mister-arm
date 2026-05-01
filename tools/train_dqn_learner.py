@@ -223,6 +223,9 @@ class BuildDiagnostics:
     movable_filter_by_source: dict[str, int] = field(default_factory=dict)
     movable_filter_by_action: dict[str, int] = field(default_factory=dict)
     movable_filter_by_reason: dict[str, int] = field(default_factory=dict)
+    training_mode_hp_sanitized_rows: int = 0
+    training_mode_self_heal_ignored: int = 0
+    training_mode_opp_heal_ignored: int = 0
 
     def as_metadata(self) -> dict[str, object]:
         return {
@@ -249,6 +252,9 @@ class BuildDiagnostics:
             "movable_filter_by_source": dict(sorted(self.movable_filter_by_source.items())),
             "movable_filter_by_action": dict(sorted(self.movable_filter_by_action.items())),
             "movable_filter_by_reason": dict(sorted(self.movable_filter_by_reason.items())),
+            "training_mode_hp_sanitized_rows": self.training_mode_hp_sanitized_rows,
+            "training_mode_self_heal_ignored": self.training_mode_self_heal_ignored,
+            "training_mode_opp_heal_ignored": self.training_mode_opp_heal_ignored,
         }
 
 
@@ -1187,6 +1193,28 @@ def execution_source_name(row: dict[str, object]) -> str:
 
 def model_version_executed(row: dict[str, object]) -> int:
     return int_field(row, "model_version_executed")
+
+
+def apply_training_mode_hp_delta_mode(
+    row: dict[str, object],
+    mode: str,
+    stats: BuildDiagnostics,
+) -> None:
+    if mode != "damage-only" or not rl.is_training_mode_transition_row(row):
+        return
+    self_delta = int_field(row, "delta_self_hp")
+    opp_delta = int_field(row, "delta_opp_hp")
+    changed = False
+    if self_delta < 0:
+        row["delta_self_hp"] = 0
+        stats.training_mode_self_heal_ignored += -self_delta
+        changed = True
+    if opp_delta < 0:
+        row["delta_opp_hp"] = 0
+        stats.training_mode_opp_heal_ignored += -opp_delta
+        changed = True
+    if changed:
+        stats.training_mode_hp_sanitized_rows += 1
 
 
 def movable_action_filter_reason(row: dict[str, object]) -> str:
@@ -2194,6 +2222,7 @@ def build_experiences(
     rows: list[dict[str, object]],
     actions: tuple[str, ...],
     reward_scale: float,
+    training_mode_hp_delta_mode: str,
     training_action_source: str,
     reward_risk_config: RewardRiskConfig,
     reward_guard_config: RewardGuardConfig,
@@ -2222,16 +2251,18 @@ def build_experiences(
     EngineOutcomeStats,
 ]:
     action_to_index = {action: index for index, action in enumerate(actions)}
+    build_stats = BuildDiagnostics()
     by_episode: dict[tuple[int, int], list[dict[str, object]]] = collections.defaultdict(list)
     for row in rows:
-        by_episode[episode_key(row)].append(dict(row))
+        replay_row = dict(row)
+        apply_training_mode_hp_delta_mode(replay_row, training_mode_hp_delta_mode, build_stats)
+        by_episode[episode_key(replay_row)].append(replay_row)
 
     experiences: list[Experience] = []
     action_counts = {action: 0 for action in actions}
     action_rewards = {action: 0.0 for action in actions}
     observed_action_counts = {action: 0 for action in rl.TABULAR_ACTION_NAMES}
     observed_action_rewards = {action: 0.0 for action in rl.TABULAR_ACTION_NAMES}
-    build_stats = BuildDiagnostics()
     source_stats = SourceReplayDiagnostics()
     risk_stats = RewardRiskStats()
     guard_stats = RewardGuardStats()
@@ -2290,7 +2321,7 @@ def build_experiences(
             build_stats.action_source_counts[action_selection.source] = (
                 build_stats.action_source_counts.get(action_selection.source, 0) + 1
             )
-            base_reward = rl.tabular_training_reward(row) * reward_scale
+            base_reward = rl.tabular_training_reward(row, training_mode_hp_delta_mode) * reward_scale
             if (
                 action_start
                 and action_name is not None
@@ -3932,6 +3963,15 @@ def main() -> None:
     parser.add_argument("--gamma", type=float, default=0.95, help="DQN discounted future reward")
     parser.add_argument("--reward-scale", type=float, default=0.01, help="Scale applied to HP-delta reward during training")
     parser.add_argument(
+        "--training-mode-hp-delta-mode",
+        choices=("raw", "damage-only"),
+        default="raw",
+        help=(
+            "How to treat HP deltas on mode_type=training rows. raw preserves logged deltas; "
+            "damage-only ignores negative HP deltas caused by training-mode recovery/reset effects"
+        ),
+    )
+    parser.add_argument(
         "--conservative-action-penalty",
         type=float,
         default=0.0,
@@ -4595,6 +4635,7 @@ def main() -> None:
         rows,
         actions,
         args.reward_scale,
+        str(args.training_mode_hp_delta_mode),
         str(args.training_action_source),
         reward_risk_config,
         reward_guard_config,
@@ -4688,6 +4729,8 @@ def main() -> None:
         reward_sources.append("projectile-expert-margin")
     if projectile_late_defensive_margin_config.enabled:
         reward_sources.append("projectile-late-defensive-margin")
+    if str(args.training_mode_hp_delta_mode) == "damage-only":
+        reward_sources.append("training-mode-damage-only-hp")
     reward_source = "+".join(reward_sources)
     metadata = {
         "transition_logs": args.transition_logs,
@@ -4716,6 +4759,7 @@ def main() -> None:
         "delayed_rewards": build_stats.unrecognized_delayed_rewards + build_stats.macro_continuation_delayed_rewards,
         "reward_source": reward_source,
         "reward_scale": args.reward_scale,
+        "training_mode_hp_delta_mode": str(args.training_mode_hp_delta_mode),
         "reward_scale_applied_after_risk_cost": True,
         "reward_scale_applied_after_raw_adjustments": True,
         "conservative_action_penalty_config": conservative_action_penalty_config.as_metadata(),
@@ -4882,6 +4926,14 @@ def main() -> None:
         "DQN diagnostics "
         f"action_source_counts="
         f"{','.join(f'{key}:{value}' for key, value in sorted(build_stats.action_source_counts.items()))}",
+        flush=True,
+    )
+    print(
+        "DQN diagnostics "
+        f"training_mode_hp=mode:{args.training_mode_hp_delta_mode} "
+        f"sanitized_rows:{build_stats.training_mode_hp_sanitized_rows} "
+        f"self_heal_ignored:{build_stats.training_mode_self_heal_ignored} "
+        f"opp_heal_ignored:{build_stats.training_mode_opp_heal_ignored}",
         flush=True,
     )
     print(

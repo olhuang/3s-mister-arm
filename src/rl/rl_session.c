@@ -77,6 +77,8 @@ typedef struct RLDecisionLedgerEntry {
     u32 episode_id;
     u32 decision_id;
     u8 round_num;
+    u8 mode_type;
+    u8 play_mode;
     s16 start_self_hp;
     s16 start_opp_hp;
     s16 final_self_hp;
@@ -244,7 +246,7 @@ static const RLLocalFakeAction kLocalFakeAgentSequence[] = {
 #define RL_POLICY_SUB_ACTION_CROUCH 21u
 #define RL_DEMO_GUARD_THREAT_DX 144
 #define RL_CHARACTER_RYU 2u
-#define RL_TRANSITION_SCHEMA_VERSION 5u
+#define RL_TRANSITION_SCHEMA_VERSION 6u
 #define RL_INPUT_LABEL_SOURCE_NONE 0u
 #define RL_INPUT_LABEL_SOURCE_DEMO_INPUT 1u
 #define RL_DEMO_ATTRIBUTION_NONE 0u
@@ -401,6 +403,16 @@ static bool RLSession_IsRoundBattleActive() {
 static bool RLSession_CanOverrideGameplayInput() {
     return RLSession_IsActive() && Mode_Type == MODE_VERSUS && mpp_w.inGame && Play_Mode == 1 && Game_pause == 0 &&
            RLSession_IsRoundBattleActive();
+}
+
+static bool RLSession_CanRecordDemoInput() {
+    if (!RLSession_IsActive() || !mpp_w.inGame || Game_pause != 0 || !RLSession_IsRoundBattleActive()) {
+        return false;
+    }
+    if (Mode_Type == MODE_VERSUS) {
+        return Play_Mode == 1;
+    }
+    return Is_Training_Mode(Mode_Type);
 }
 
 static bool RLSession_HumanDemoEnabled() {
@@ -1301,7 +1313,7 @@ static int RLSession_FormatTransitionLogLine(const RLDecisionLedgerEntry* entry,
     return SDL_snprintf(line,
                         line_size,
                         "{\"run_id\":%" PRIu64 ",\"episode_id\":%u,\"decision_id\":%u,"
-                        "\"round_num\":%u,\"obs_frame\":%u,"
+                        "\"round_num\":%u,\"mode_type\":%u,\"play_mode\":%u,\"obs_frame\":%u,"
                         "\"transition_schema_version\":%u,"
                         "\"agent_character_id\":%u,\"opponent_character_id\":%u,"
                         "\"requested_action_wire\":%u,\"executed_action_wire\":%u,"
@@ -1354,6 +1366,8 @@ static int RLSession_FormatTransitionLogLine(const RLDecisionLedgerEntry* entry,
                         entry->episode_id,
                         entry->decision_id,
                         entry->round_num,
+                        entry->mode_type,
+                        entry->play_mode,
                         entry->obs_frame,
                         RL_TRANSITION_SCHEMA_VERSION,
                         entry->agent_character_id,
@@ -1499,9 +1513,9 @@ static void RLSession_FinalizeEpisodeLedger(u32 episode_id) {
         const s16 opp = RLSession_OpponentPlayerIndex();
         const s16 self_hp = SDL_max(0, plw[self].wu.vital_new);
         const s16 opp_hp = SDL_max(0, plw[opp].wu.vital_new);
-        if (opp_hp <= 0 && self_hp > 0) {
+        if (Mode_Type == MODE_VERSUS && opp_hp <= 0 && self_hp > 0) {
             active_ledger_entry->reward_accum += 100.0f;
-        } else if (self_hp <= 0 && opp_hp > 0) {
+        } else if (Mode_Type == MODE_VERSUS && self_hp <= 0 && opp_hp > 0) {
             active_ledger_entry->reward_accum -= 100.0f;
         }
     }
@@ -1531,7 +1545,7 @@ static void RLSession_FinalizeRuntimeBeforeReset() {
     if (!remote_runtime_initialized || remote_debug.run_id == 0 || remote_debug.episode_id == 0) {
         return;
     }
-    if (RLSession_IsRoundBattleActive() && Mode_Type == MODE_VERSUS && mpp_w.inGame && Play_Mode == 1) {
+    if (RLSession_CanRecordDemoInput()) {
         return;
     }
     RLSession_FinalizeEpisodeLedger(remote_debug.episode_id);
@@ -2045,7 +2059,7 @@ static void RLSession_RecordDemoInput(s16 agent, u16 sw, RLExecutionSource sourc
     u16 policy_action_id = RL_POLICY_ACTION_NEUTRAL;
     u16 policy_sub_action_id = RL_POLICY_SUB_ACTION_NONE;
 
-    if (!RLSession_CanOverrideGameplayInput()) {
+    if (!RLSession_CanRecordDemoInput()) {
         RLSession_FinalizeRuntimeBeforeReset();
         RLSession_ResetRemoteRuntime(false);
         return;
@@ -2087,6 +2101,8 @@ static void RLSession_RecordDemoInput(s16 agent, u16 sw, RLExecutionSource sourc
     ledger->episode_id = remote_debug.episode_id;
     ledger->decision_id = remote_debug.next_decision_id++;
     ledger->round_num = Round_num;
+    ledger->mode_type = (u8)Mode_Type;
+    ledger->play_mode = Play_Mode;
     ledger->start_self_hp = obs->self_hp;
     ledger->start_opp_hp = obs->opp_hp;
     ledger->final_self_hp = obs->self_hp;
@@ -2270,6 +2286,8 @@ bool RLSession_SendRemoteObservationIfDue() {
     ledger->episode_id = header.episode_id;
     ledger->decision_id = header.decision_id;
     ledger->round_num = Round_num;
+    ledger->mode_type = (u8)Mode_Type;
+    ledger->play_mode = Play_Mode;
     ledger->start_self_hp = obs->self_hp;
     ledger->start_opp_hp = obs->opp_hp;
     ledger->final_self_hp = obs->self_hp;
@@ -2291,7 +2309,7 @@ void RLSession_ApplyInputOverrideToBuffers() {
         return;
     }
     if (RLSession_CpuDemoEnabled()) {
-        if (!RLSession_CanOverrideGameplayInput()) {
+        if (!RLSession_CanRecordDemoInput()) {
             RLSession_FinalizeRuntimeBeforeReset();
             RLSession_ResetRemoteRuntime(false);
         }

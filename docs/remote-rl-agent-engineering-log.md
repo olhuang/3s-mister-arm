@@ -2,6 +2,55 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-01: Backfill Demo Air-Normal Engine Attribution
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / full action-set DQN experiments
+
+Files changed:
+- `src/rl/rl_session.c`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- fix the deployed schema-v4 demo-label smoke finding that air-normal labels
+  were under-counted after the ground-label gate cleanup.
+- preserve lockout/held-button suppression while still attributing real
+  air-normal routine starts.
+
+Smoke finding:
+- `logs/rl-transitions-cpu-human-demo-schema-v4-smoke-4-3-3.ndjson` had
+  `9` `R1=4/R2=3` common air-normal routine segments, but analyzer output only
+  counted `4` `air-*` labels: `air-hk=3`, `air-hp=1`.
+- the missing starts had `obs_self_air_attack_allowed=1` on the preceding
+  ledger row, then the attack button appeared after the routine had already
+  entered `R1=4/R2=3`. The input labeler correctly left these lockout rows as
+  neutral, but engine attribution only caught normal attacks with a fresh
+  `self_attack_started` edge.
+
+Implementation notes:
+- added `RLSession_IsCommonNormalAttackRoutine2()` for Ryu's common normal
+  attack routines currently observed as `R2=0/3/4`.
+- broadened `RLSession_MaybeAttributeDemoEngineAction()` so normal attack
+  attribution can trigger on either `self_attack_started` or a
+  `self_attack_routine_started` transition into one of those common normal
+  routines.
+- kept the special/throw routine mapper first, so `R2=16/17/18/22/23` still
+  attributes as fireball/shoryuken/tatsu/air-tatsu/joudan instead of falling
+  through to normal attribution.
+
+Validation:
+- existing-log inspection confirmed the pre-fix mismatch:
+  `9` air-normal routine segments versus `4` `air-*` labels.
+- follow-up validation still needs a rebuilt/deployed smoke capture to confirm
+  the live logger now emits roughly one `air-*` label per real
+  `R1=4/R2=3` air-normal segment.
+
+Follow-up:
+- re-record a short schema-v4 human/CPU smoke after deploying this build.
+- confirm `air-*` labels track the real air-normal routine-start count without
+  repeated labels through the rest of `R1=4/R2=3`.
+
 ## 2026-05-01: Gate Demo Ground-Attack Labels On Action-Start Allow
 
 Milestone:

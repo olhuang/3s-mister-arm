@@ -915,6 +915,10 @@ static bool RLSession_RyuSpecialPolicyMetaFromRoutine2(const RLDecisionLedgerEnt
     return false;
 }
 
+static bool RLSession_IsCommonNormalAttackRoutine2(u16 routine2) {
+    return routine2 == 0 || routine2 == 3 || routine2 == 4;
+}
+
 static bool RLSession_RyuNormalPolicyMetaFromIdentity(const RLDecisionLedgerEntry* entry,
                                                       const RLObservationV1* obs,
                                                       u16* action_id,
@@ -946,17 +950,23 @@ static void RLSession_MaybeAttributeDemoEngineAction(RLDecisionLedgerEntry* entr
     u16 sub_action_id = RL_POLICY_SUB_ACTION_NONE;
     u8 source = RL_DEMO_ATTRIBUTION_NONE;
     u32 lag_frames = 0;
+    bool normal_attack_start = false;
 
     if (entry == NULL || obs == NULL || !RLSession_IsDemoExecutionSource(entry->execution_source) ||
         entry->engine_label_source != RL_DEMO_ATTRIBUTION_NONE || entry->agent_character_id != RL_CHARACTER_RYU) {
         return;
     }
 
+    normal_attack_start =
+        obs->self_attack_started ||
+        (obs->self_attack_routine_started && obs->self_routine[1] == 4 &&
+         RLSession_IsCommonNormalAttackRoutine2(obs->self_routine[2]));
+
     if ((obs->self_attack_routine_started || obs->self_throw_started) &&
         RLSession_RyuSpecialPolicyMetaFromRoutine2(entry, obs->self_routine[2], obs->self_kind_of_waza, &action_id,
                                                    &sub_action_id)) {
         source = RL_DEMO_ATTRIBUTION_RYU_ENGINE_ROUTINE_START;
-    } else if (obs->self_attack_started &&
+    } else if (normal_attack_start &&
                RLSession_RyuNormalPolicyMetaFromIdentity(entry, obs, &action_id, &sub_action_id)) {
         source = RL_DEMO_ATTRIBUTION_RYU_ENGINE_NORMAL_ATTACK_START;
     } else {

@@ -2952,11 +2952,29 @@ Full-action DQN sparse-action plan:
       `jump-*-start` labels gated by `obs_self_jump_start_allowed`. If held
       ground attack input is observed during attack/recovery/lockout, leave the
       row as neutral/none instead of labeling another ground action start.
+    - follow-up deployed smoke
+      `logs/rl-transitions-cpu-human-demo-schema-v4-smoke-4-3-3.ndjson`
+      showed the ground gate working, but exposed an air-normal attribution
+      gap: the log had `9` `R1=4/R2=3` common air-normal routine segments, but
+      only `4` `air-*` labels (`air-hk=3`, `air-hp=1`). Several starts had
+      `obs_self_air_attack_allowed=1` on the previous ledger row, then the
+      attack button appeared after the routine had already switched to
+      `R1=4/R2=3`; input gating correctly suppressed repeated lockout labels,
+      but engine attribution only caught starts with a fresh
+      `self_attack_started` edge.
+    - fix: let Ryu demo engine normal attribution also trigger from
+      `self_attack_routine_started` when the new routine is a known common
+      normal attack routine (`R2=0/3/4`). Specials and throws still use the
+      explicit routine mapper first, so this only backfills normal attack
+      starts such as air normals.
     - next targeted smoke before V41 should confirm:
       - clean `stand-hk` and `crouch-hk` start rows appear with
         `(ground=1, jump=1, air=0)`.
       - attack routine/recovery rows no longer carry repeated input labels for
         `stand-hk`, `crouch-hk`, throw, or command normals.
+      - the number of `air-*` labels tracks the number of real air-normal
+        `R1=4/R2=3` routine-start segments, without repeated labels through
+        the rest of the air attack routine.
       - `jump-*-start`, `air-*`, and special engine labels remain separated.
 
 - Step 4: train-time invalid-action Q penalty on the split action space.

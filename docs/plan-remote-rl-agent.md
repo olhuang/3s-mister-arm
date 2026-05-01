@@ -2507,6 +2507,7 @@ Tasks:
 - [x] Record V37b / V38 full-action support-prior training parameters and findings before continuing full action-set experiments
 - [x] Add DQN zero-sample / low-support action regularization so full-action output heads with no replay support cannot become top greedy actions
 - [x] Add a shared DQN valid-action mask for train-time target selection and probe-time inference, starting with self-routine-aware jump-action gating
+- [ ] Add opt-in train-time invalid-action Q penalty so the raw DQN weights learn to suppress currently illegal action heads, while keeping the hard valid-action mask for live safety
 - [ ] After shared valid-action mask validation, split jump-in policy actions into ground jump-start actions and true airborne attack actions with observation-schema support
 - [ ] Review v24 live behavior before promoting it over v23; same-observation compare kept `stand-hk` suppressed but did not reduce the `tatsu-lk` replacement shift
 - [ ] Review v23's `tatsu-lk` / `crouch-mk` policy shift before any live promotion; `stand-hk` was suppressed, but the replacement action is not yet validated
@@ -2620,6 +2621,42 @@ Full-action DQN sparse-action plan:
         `guard-crouch 42.5%`.
     - run a live probe only after offline diagnostics show jump-action collapse
       is fixed without introducing guard/fireball collapse.
+
+- Step 2A: train-time invalid-action Q penalty.
+  - Goal:
+    - make the DQN weights themselves learn that illegal actions for the
+      current state should not have competitive raw Q values.
+    - this is a soft model-quality improvement, not a hard legality guarantee.
+      Live/probe inference should still keep the hard valid-action mask until
+      there is a deliberate replacement.
+  - Candidate training rule:
+    - for each replay state, compute valid and invalid actions with the same
+      shared valid-action helper used by target selection and probe inference.
+    - add an opt-in auxiliary loss that pushes invalid-action Q values below
+      the best valid-action Q by a configured margin, for example:
+      `max(0, q_invalid - max(q_valid) + margin)^2`.
+    - avoid applying the penalty when the valid set is empty; record those rows
+      as diagnostics instead of manufacturing a target.
+  - Why this differs from the V39 unsupported-action regularizer:
+    - V39 only penalized globally unsupported or low-support action heads.
+    - this penalty is state-conditioned: a jump/air-attack head can be valid in
+      an ordinary airborne state but invalid while grounded or non-movable.
+  - Implementation notes for later:
+    - keep it opt-in, with flags for enablement, margin, loss weight, and
+      optional cap/normalization strategy.
+    - record metadata and stdout diagnostics for penalized rows/actions,
+      empty-valid rows, total auxiliary loss, and raw-vs-masked greedy action
+      distributions.
+    - evaluate it first on the CPU-demo V38/V40 recipe before mixing live
+      replay.
+  - Validation target:
+    - raw `valid_mask=off` same-observation compare should no longer be
+      dominated by impossible ground-state `jump-*` / future `air-*` actions.
+    - masked inference should remain stable and should not collapse into a new
+      single guard/fireball action.
+    - even if raw behavior improves, live V40-style probing should continue to
+      pass `--dqn-valid-action-mask self-routine-v1` until a stronger serving
+      default or metadata auto-selection is implemented.
 
 - Step 3: post-mask jump-in action taxonomy split.
   - Do this only after the shared valid-action mask proves that

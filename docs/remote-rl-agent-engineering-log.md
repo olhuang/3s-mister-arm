@@ -2,6 +2,46 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-01: Record DQN Invalid-Action Weight-Regularization Follow-Up
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / full action-set DQN experiments
+
+Files changed:
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- record the follow-up needed to make the DQN raw weights learn that
+  state-illegal actions, such as grounded air attacks, should not receive
+  competitive Q values.
+- clarify that this is complementary to the shared valid-action mask, not a
+  replacement for live/probe legality gating.
+
+Plan notes:
+- add an opt-in train-time invalid-action Q penalty after the shared
+  valid-action mask path is validated.
+- compute valid and invalid actions per replay state using the same shared
+  helper used by target selection and probe inference.
+- penalize invalid action heads when their Q values exceed the best valid
+  action by a configured margin, for example
+  `max(0, q_invalid - max(q_valid) + margin)^2`.
+- treat this as state-conditioned regularization:
+  - a jump or future `air-*` action can be legal while airborne.
+  - the same action should be penalized while grounded or otherwise
+    non-movable.
+- keep the hard valid-action mask for live safety, because neural-network
+  weights alone cannot provide a strict legality guarantee under
+  out-of-distribution states or Q-scale drift.
+
+Validation target:
+- CPU-demo same-observation compare with `valid_mask=off` should stop being
+  dominated by impossible ground-state `jump-*` / future `air-*` actions.
+- masked inference should remain stable and should not collapse into a new
+  single guard/fireball action.
+- diagnostics should report penalized rows/actions, empty-valid rows, total
+  auxiliary loss, and raw-vs-masked greedy distributions.
+
 ## 2026-05-01: Shared DQN Valid-Action Mask And V40 CPU-Demo Masked Training
 
 Milestone:

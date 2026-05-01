@@ -2,6 +2,216 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-01: Add Projectile Oversampling And Train V47 Candidate
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / full action-set DQN experiments
+
+Files changed:
+- `tools/train_dqn_learner.py`
+- `tools/rl_auto_retrain.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+- `model/dqn-projectile-schema-v5-full-actions-v47-oversample-candidate/`
+  (generated, untracked)
+
+Purpose:
+- respond to V46 showing that standalone human projectile data is trainable but
+  still leaves incoming projectile rows dominated by `shoryuken-hp`.
+- add opt-in replay-copy oversampling for projectile-response outcomes so safe
+  jump-start rows are sampled directly, not only rewarded sparsely.
+- train a V47 candidate with safe-jump oversampling, late-jump-hit
+  oversampling, reduced Shoryuken engine-outcome oversampling, and a larger
+  safe-jump reward.
+
+Implementation notes:
+- added `ProjectileResponseOutcome` so reward shaping and oversampling share
+  the same classifier for incoming projectile response rows.
+- added trainer flags:
+  - `--projectile-response-safe-jump-oversample`
+  - `--projectile-response-late-jump-hit-oversample`
+  - `--projectile-response-close-back-oversample`
+  - `--projectile-response-close-guard-oversample`
+- default multiplier `1` preserves existing replay behavior.
+- when oversampling creates multiple copies of an action-start experience,
+  delayed reward and next-state updates are applied to every copy.
+- added `--reward-preset projectile-response-v2` to `tools/rl_auto_retrain.py`:
+  - `safe_jump_bonus=2.0`
+  - safe jump oversample `10`
+  - late jump-hit oversample `4`
+  - close back/guard oversample `3`
+  - Shoryuken engine oversamples reduced from `8/10/12` to `4/5/6`
+
+Validation:
+- `python3 -m py_compile tools/train_dqn_learner.py tools/rl_auto_retrain.py`
+- smoke training on the first `5000` rows completed:
+  - experiences: `3255`
+  - `projectile_oversample=96/+648`
+  - `safe_jump=60/+540`
+  - `late_jump_hit=36/+108`
+
+Training recipe:
+- source log:
+  `logs/rl-transitions-human-demo-projectile-schema-v5-smoke-4-3-3.ndjson`
+- model dir:
+  `model/dqn-projectile-schema-v5-full-actions-v47-oversample-candidate`
+- model version: `47`
+- full V47/v2 recipe:
+  - `--reward-projectile-safe-jump-bonus 2.0`
+  - `--projectile-response-safe-jump-oversample 10`
+  - `--projectile-response-late-jump-hit-oversample 4`
+  - `--projectile-response-close-back-oversample 3`
+  - `--projectile-response-close-guard-oversample 3`
+  - `--engine-outcome-action-oversamples` with Shoryuken `4/5/6`
+  - `--dqn-valid-action-mask action-start-v1`
+  - `--dqn-unsupported-action-regularization`
+
+Training result:
+- training completed and published version `47`.
+- rows: `59117`
+- experiences: `30844`
+- projectile shaping:
+  - `threat_rows=898`
+  - `safe_jump=183/366.0`
+  - `late_jump_hit=67/100.5`
+  - `close_back=0/0.0`
+  - `close_guard=3/2.4`
+  - `projectile_net=267.9`
+- projectile oversampling:
+  - `base=253`, `extra=1854`
+  - `safe_jump=183/+1647`
+  - `late_jump_hit=67/+201`
+  - `close_guard=3/+6`
+  - extra by action:
+    `jump-forward-start=972`,
+    `jump-neutral-start=630`,
+    `jump-back-start=246`,
+    `guard-stand=6`
+- trainer eval slice greedy distribution:
+  - `forward 2710 / 5000 = 54.2%`
+  - `back 849 / 5000 = 17.0%`
+  - `shoryuken-hp 791 / 5000 = 15.8%`
+
+Targeted validation:
+- incoming opponent projectile rows: `2953`
+- incoming + jump-start-allowed rows: `1557`
+- V46 incoming + jump-start-allowed:
+  `shoryuken-hp 1339 / 1557 = 86.0%`,
+  `jump_top1=0`, `jump_top5=204 / 1557 = 13.1%`
+- V47 incoming + jump-start-allowed:
+  `shoryuken-hp 1337 / 1557 = 85.9%`,
+  `forward 201 / 1557 = 12.9%`,
+  `jump_top1=0`, `jump_top5=204 / 1557 = 13.1%`
+- V47 projectile-shape threat + jump-start-allowed:
+  `shoryuken-hp 1313 / 1533 = 85.6%`,
+  `jump_top1=0`, `jump_top5=204 / 1533 = 13.3%`
+
+Interpretation:
+- V47 proves the oversampling machinery works and is stable, but it is not
+  promotable for the projectile-response goal.
+- The negative result is useful: simple replay-copy oversampling plus larger
+  safe-jump reward still does not make jump-start actions competitive on the
+  incoming projectile observations.
+- The failure mode is probably not just row scarcity. The next attempt should
+  inspect Q ranks/Q gaps on the actual safe-jump training rows and consider
+  either an explicit projectile-response action-target auxiliary loss or a
+  projectile-focused batch/eval path that trains only on threat rows.
+
+Follow-up:
+- do not promote V47 as the live model.
+- before V48, add diagnostics for same-row safe-jump training examples:
+  action label, model top action, jump action rank, and Q gap.
+- if diagnostics confirm jump rows still rank Shoryuken/forward above their
+  own action label, implement an explicit behavior-cloning or margin loss on
+  projectile-response rows rather than another reward-only retrain.
+
+## 2026-05-01: Train V46 Standalone Human Projectile Candidate
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / full action-set DQN experiments
+
+Files changed:
+- `model/dqn-projectile-schema-v5-full-actions-v46-standalone-candidate/`
+  (generated, untracked)
+
+Purpose:
+- train the first full v46 candidate from the larger standalone human-demo
+  projectile schema-v5 log instead of the smaller V41-V44 projectile smoke log.
+- verify whether the improved projectile-response support is enough by itself
+  to move incoming projectile rows away from Shoryuken collapse and toward
+  jump/back/guard responses.
+
+Training recipe:
+- source log:
+  `logs/rl-transitions-human-demo-projectile-schema-v5-smoke-4-3-3.ndjson`
+- model dir:
+  `model/dqn-projectile-schema-v5-full-actions-v46-standalone-candidate`
+- model version: `46`
+- base recipe: V45 standalone/full-action settings:
+  - `--reward-projectile-response-profile incoming-v1`
+  - `--dqn-valid-action-mask action-start-v1`
+  - `--dqn-unsupported-action-regularization`
+  - balanced batches with `movement=0.25,normal=0.45,special=0.30`
+
+Training result:
+- training completed and published version `46`.
+- rows: `59117`
+- experiences: `30185`
+- source mix: `human-demo=100%`
+- projectile shaping:
+  - `threat_rows=898`
+  - `safe_jump=183/219.6`
+  - `late_jump_hit=67/100.5`
+  - `close_back=0/0.0`
+  - `close_guard=3/2.4`
+  - `projectile_net=121.5`
+- trainer eval slice greedy distribution:
+  - `forward 2340 / 5000 = 46.8%`
+  - `shoryuken-hp 910 / 5000 = 18.2%`
+  - `back 902 / 5000 = 18.0%`
+  - `shoryuken-mp 305 / 5000 = 6.1%`
+
+Validation:
+- full same-log compare with `--dqn-valid-action-mask action-start-v1`:
+  - V45: `back 26061 / 59117 = 44.1%`,
+    `forward 17700 / 59117 = 29.9%`,
+    `shoryuken-hp 7609 / 59117 = 12.9%`
+  - V46: `forward 28639 / 59117 = 48.4%`,
+    `back 15506 / 59117 = 26.2%`,
+    `shoryuken-hp 5890 / 59117 = 10.0%`,
+    `shoryuken-mp 4843 / 59117 = 8.2%`
+  - changed rows: `16729 / 59117`
+- targeted incoming-projectile rows:
+  - incoming opponent projectile rows: `2953`
+  - incoming + jump-start-allowed rows: `1557`
+  - V45 incoming + jump-start-allowed:
+    `shoryuken-hp 1341 / 1557 = 86.1%`,
+    `jump_top1=0`, `jump_top5=204 / 1557 = 13.1%`
+  - V46 incoming + jump-start-allowed:
+    `shoryuken-hp 1339 / 1557 = 86.0%`,
+    `forward 201 / 1557 = 12.9%`,
+    `jump_top1=0`, `jump_top5=204 / 1557 = 13.1%`
+  - V46 projectile-shape threat + jump-start-allowed:
+    `shoryuken-hp 1315 / 1533 = 85.8%`,
+    `jump_top1=0`, `jump_top5=204 / 1533 = 13.3%`
+
+Interpretation:
+- V46 is trainable and avoids global single-action collapse, but it is not
+  promotable for the projectile-response goal.
+- The larger standalone human-demo log fixes the data-volume problem from
+  V41-V44, but the current reward/oversampling recipe still does not make
+  `jump-*-start` competitive on incoming projectile rows.
+- V46 mostly shifts global behavior from V45's `back` bias toward `forward`,
+  while projectile-threat rows remain dominated by `shoryuken-hp`.
+
+Follow-up:
+- do not promote V46 as the live model.
+- next attempt should add explicit projectile-response row oversampling or
+  action-target curriculum so safe jump-start rows are sampled directly, not
+  only rewarded sparsely.
+- consider separating projectile-response evaluation/training batches from the
+  general movement/attack balanced sampler before another full-action retrain.
+
 ## 2026-05-01: Train Projectile Response V42-V44 Candidates
 
 Milestone:

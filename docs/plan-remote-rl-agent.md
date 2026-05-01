@@ -2437,6 +2437,7 @@ Tasks:
 - [x] Add offline DQN spacing reward shaping for Phase 1 movement credit
 - [x] Add offline DQN corner position reward shaping for anti-turtle experiments
 - [x] Add opt-in offline DQN projectile response reward shaping for safe jump-over, close back/guard success, and late jump-hit penalties
+- [x] Add opt-in projectile-response replay oversampling for safe jump, late jump-hit, and close back/guard rows
 - [ ] Review walk-forward/back macro actions after spacing-shaping A/B results
 - [ ] Review finer distance buckets after spacing-shaping sample-volume checks
 - [ ] Collect targeted corner-escape demo data before treating corner anti-turtle shaping as solved
@@ -3406,6 +3407,16 @@ Implementation notes:
     - `--reward-projectile-close-back-success-bonus` rewards clean close-range `back` rows that increase spacing or clear/pass the projectile
     - `--reward-projectile-close-guard-success-bonus` rewards clean close-range `guard-stand` / `guard-crouch` rows, requiring guard contact by default
     - diagnostics print `projectile_shape=... safe_jump:<events>/<bonus> late_jump_hit:<events>/<cost> close_back:<events>/<bonus> close_guard:<events>/<bonus> net:<raw_adjustment>` and metadata records the projectile-response config/stat payload
+    - `--projectile-response-safe-jump-oversample`, `--projectile-response-late-jump-hit-oversample`,
+      `--projectile-response-close-back-oversample`, and
+      `--projectile-response-close-guard-oversample` can opt into replay-copy
+      oversampling for rows that satisfy the same projectile-response outcome
+      classifier used by reward shaping; default `1` preserves baseline replay
+      sampling.
+    - `tools/rl_auto_retrain.py --reward-preset projectile-response-v2` builds
+      on `projectile-response-v1` with safe-jump oversampling, late-jump-hit
+      oversampling, lower Shoryuken engine-outcome oversampling, and a larger
+      safe-jump bonus for focused anti-fireball candidates.
   - `--actions` trains and publishes a DQN action subset; excluded explicit actions are counted and reset delayed-credit attribution so their later neutral/recovery reward is not accidentally credited to the previous included action
   - DQN replay now treats high-level macro action starts as the training decision boundary:
     - only rows with `executed_policy_action_step == 0` create DQN experiences

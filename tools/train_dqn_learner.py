@@ -690,6 +690,15 @@ class RewardProjectileResponseConfig:
         )
 
 
+@dataclass(frozen=True)
+class ProjectileResponseOutcome:
+    threat: bool = False
+    safe_jump: bool = False
+    late_jump_hit: bool = False
+    close_back_success: bool = False
+    close_guard_success: bool = False
+
+
 @dataclass
 class RewardProjectileResponseStats:
     threat_action_rows: int = 0
@@ -732,6 +741,99 @@ class RewardProjectileResponseStats:
             "total_bonus": self.total_bonus,
             "total_cost": self.total_cost,
             "net_adjustment": self.net_adjustment,
+        }
+
+
+@dataclass(frozen=True)
+class ProjectileResponseOversampleConfig:
+    safe_jump: int = 1
+    late_jump_hit: int = 1
+    close_back_success: int = 1
+    close_guard_success: int = 1
+
+    @property
+    def enabled(self) -> bool:
+        return max(
+            self.safe_jump,
+            self.late_jump_hit,
+            self.close_back_success,
+            self.close_guard_success,
+        ) > 1
+
+    def multiplier_for(self, outcome: ProjectileResponseOutcome) -> int:
+        multiplier = 1
+        if outcome.safe_jump:
+            multiplier = max(multiplier, self.safe_jump)
+        if outcome.late_jump_hit:
+            multiplier = max(multiplier, self.late_jump_hit)
+        if outcome.close_back_success:
+            multiplier = max(multiplier, self.close_back_success)
+        if outcome.close_guard_success:
+            multiplier = max(multiplier, self.close_guard_success)
+        return max(1, multiplier)
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "enabled": self.enabled,
+            "safe_jump": self.safe_jump,
+            "late_jump_hit": self.late_jump_hit,
+            "close_back_success": self.close_back_success,
+            "close_guard_success": self.close_guard_success,
+        }
+
+
+@dataclass
+class ProjectileResponseOversampleStats:
+    base_experiences: int = 0
+    extra_experiences: int = 0
+    safe_jump_base: int = 0
+    safe_jump_extra: int = 0
+    late_jump_hit_base: int = 0
+    late_jump_hit_extra: int = 0
+    close_back_success_base: int = 0
+    close_back_success_extra: int = 0
+    close_guard_success_base: int = 0
+    close_guard_success_extra: int = 0
+    by_action_base: dict[str, int] = field(default_factory=dict)
+    by_action_extra: dict[str, int] = field(default_factory=dict)
+
+    def add(self, action_name: str, outcome: ProjectileResponseOutcome, multiplier: int) -> None:
+        safe_multiplier = max(1, int(multiplier))
+        extra = safe_multiplier - 1
+        if extra <= 0:
+            return
+
+        self.base_experiences += 1
+        self.extra_experiences += extra
+        self.by_action_base[action_name] = self.by_action_base.get(action_name, 0) + 1
+        self.by_action_extra[action_name] = self.by_action_extra.get(action_name, 0) + extra
+        if outcome.safe_jump:
+            self.safe_jump_base += 1
+            self.safe_jump_extra += extra
+        if outcome.late_jump_hit:
+            self.late_jump_hit_base += 1
+            self.late_jump_hit_extra += extra
+        if outcome.close_back_success:
+            self.close_back_success_base += 1
+            self.close_back_success_extra += extra
+        if outcome.close_guard_success:
+            self.close_guard_success_base += 1
+            self.close_guard_success_extra += extra
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "base_experiences": self.base_experiences,
+            "extra_experiences": self.extra_experiences,
+            "safe_jump_base": self.safe_jump_base,
+            "safe_jump_extra": self.safe_jump_extra,
+            "late_jump_hit_base": self.late_jump_hit_base,
+            "late_jump_hit_extra": self.late_jump_hit_extra,
+            "close_back_success_base": self.close_back_success_base,
+            "close_back_success_extra": self.close_back_success_extra,
+            "close_guard_success_base": self.close_guard_success_base,
+            "close_guard_success_extra": self.close_guard_success_extra,
+            "by_action_base": dict(sorted(self.by_action_base.items())),
+            "by_action_extra": dict(sorted(self.by_action_extra.items())),
         }
 
 
@@ -1568,25 +1670,22 @@ def projectile_cleared_or_passed(row: dict[str, object], config: RewardProjectil
     return int_field(row, "obs_projectile_rel_x") <= 0
 
 
-def reward_projectile_response_adjustment(
+def projectile_response_outcome(
     episode_rows: list[dict[str, object]],
     row_index: int,
     action_name: str,
     config: RewardProjectileResponseConfig,
-    stats: RewardProjectileResponseStats,
-) -> float:
+) -> ProjectileResponseOutcome:
     row = episode_rows[row_index]
     if not config.enabled or not is_action_start(row) or not incoming_projectile_threat(row, config):
-        return 0.0
+        return ProjectileResponseOutcome()
     if action_name not in JUMP_START_ACTIONS and action_name != "back" and action_name not in GUARD_ACTIONS:
-        return 0.0
+        return ProjectileResponseOutcome()
 
-    stats.threat_action_rows += 1
     window_end = min(len(episode_rows), row_index + max(0, config.window_decisions) + 1)
     lookahead = episode_rows[row_index:window_end]
     self_damage = sum(int_field(lookahead_row, "delta_self_hp") for lookahead_row in lookahead)
     clean_window = self_damage == 0
-    adjustment = 0.0
 
     if action_name in JUMP_START_ACTIONS:
         became_airborne = any(
@@ -1595,42 +1694,70 @@ def reward_projectile_response_adjustment(
             for lookahead_row in lookahead
         )
         projectile_cleared = any(projectile_cleared_or_passed(lookahead_row, config) for lookahead_row in lookahead[1:])
-        if clean_window and became_airborne and projectile_cleared and config.safe_jump_bonus > 0.0:
-            adjustment += config.safe_jump_bonus
-            stats.safe_jump_bonus_events += 1
-            stats.safe_jump_bonus_total += config.safe_jump_bonus
-        if self_damage > 0 and config.late_jump_hit_cost > 0.0:
-            adjustment -= config.late_jump_hit_cost
-            stats.late_jump_hit_cost_events += 1
-            stats.late_jump_hit_cost_total += config.late_jump_hit_cost
-        return adjustment
+        return ProjectileResponseOutcome(
+            threat=True,
+            safe_jump=clean_window and became_airborne and projectile_cleared,
+            late_jump_hit=self_damage > 0,
+        )
 
     current_dx = int_field(row, "obs_abs_dx")
     if current_dx > config.close_max_dx:
-        return adjustment
+        return ProjectileResponseOutcome(threat=True)
 
-    if action_name == "back" and clean_window and config.close_back_success_bonus > 0.0:
+    close_back_success = False
+    if action_name == "back" and clean_window:
         next_boundary = next_decision_boundary_row(episode_rows, row_index)
         next_row = next_boundary[1] if next_boundary is not None else lookahead[-1]
         next_dx = int_field(next_row, "obs_abs_dx")
-        if (
+        close_back_success = (
             next_dx >= current_dx + config.back_escape_min_dx_delta
             or any(projectile_cleared_or_passed(lookahead_row, config) for lookahead_row in lookahead[1:])
-        ):
-            adjustment += config.close_back_success_bonus
-            stats.close_back_success_bonus_events += 1
-            stats.close_back_success_bonus_total += config.close_back_success_bonus
+        )
 
-    if action_name in GUARD_ACTIONS and clean_window and config.close_guard_success_bonus > 0.0:
+    close_guard_success = False
+    if action_name in GUARD_ACTIONS and clean_window:
         guard_contact = any(
             int_field(lookahead_row, "obs_self_contact_reaction_state") != 0 for lookahead_row in lookahead
         )
-        if guard_contact or not config.guard_require_contact:
-            adjustment += config.close_guard_success_bonus
-            stats.close_guard_success_bonus_events += 1
-            stats.close_guard_success_bonus_total += config.close_guard_success_bonus
+        close_guard_success = guard_contact or not config.guard_require_contact
 
-    return adjustment
+    return ProjectileResponseOutcome(
+        threat=True,
+        close_back_success=close_back_success,
+        close_guard_success=close_guard_success,
+    )
+
+
+def reward_projectile_response_adjustment(
+    episode_rows: list[dict[str, object]],
+    row_index: int,
+    action_name: str,
+    config: RewardProjectileResponseConfig,
+    stats: RewardProjectileResponseStats,
+) -> tuple[float, ProjectileResponseOutcome]:
+    outcome = projectile_response_outcome(episode_rows, row_index, action_name, config)
+    if not outcome.threat:
+        return 0.0, outcome
+
+    stats.threat_action_rows += 1
+    adjustment = 0.0
+    if outcome.safe_jump and config.safe_jump_bonus > 0.0:
+        adjustment += config.safe_jump_bonus
+        stats.safe_jump_bonus_events += 1
+        stats.safe_jump_bonus_total += config.safe_jump_bonus
+    if outcome.late_jump_hit and config.late_jump_hit_cost > 0.0:
+        adjustment -= config.late_jump_hit_cost
+        stats.late_jump_hit_cost_events += 1
+        stats.late_jump_hit_cost_total += config.late_jump_hit_cost
+    if outcome.close_back_success and config.close_back_success_bonus > 0.0:
+        adjustment += config.close_back_success_bonus
+        stats.close_back_success_bonus_events += 1
+        stats.close_back_success_bonus_total += config.close_back_success_bonus
+    if outcome.close_guard_success and config.close_guard_success_bonus > 0.0:
+        adjustment += config.close_guard_success_bonus
+        stats.close_guard_success_bonus_events += 1
+        stats.close_guard_success_bonus_total += config.close_guard_success_bonus
+    return adjustment, outcome
 
 
 def add_delayed_reward(
@@ -1652,6 +1779,23 @@ def add_delayed_reward(
     return True
 
 
+def add_delayed_reward_to_indices(
+    experiences: list[Experience],
+    exp_indices: list[int],
+    reward: float,
+    actions: tuple[str, ...],
+    action_rewards: dict[str, float],
+    source_stats: SourceReplayDiagnostics | None = None,
+) -> bool:
+    if not exp_indices:
+        return False
+    added = False
+    for exp_index in exp_indices:
+        if add_delayed_reward(experiences, exp_index, reward, actions, action_rewards, source_stats):
+            added = True
+    return added
+
+
 def set_experience_next_state(
     experiences: list[Experience],
     exp_index: int | None,
@@ -1663,6 +1807,16 @@ def set_experience_next_state(
     experiences[exp_index].next_state = rl.dqn_feature_vector(row)
     experiences[exp_index].next_row = dict(row)
     experiences[exp_index].done = done
+
+
+def set_experience_next_state_for_indices(
+    experiences: list[Experience],
+    exp_indices: list[int],
+    row: dict[str, object],
+    done: bool,
+) -> None:
+    for exp_index in exp_indices:
+        set_experience_next_state(experiences, exp_index, row, done)
 
 
 def engine_outcome_window_for_action(action_name: str, config: EngineOutcomeConfig) -> int:
@@ -1792,6 +1946,7 @@ def build_experiences(
     reward_spacing_config: RewardSpacingConfig,
     reward_position_config: RewardPositionConfig,
     reward_projectile_response_config: RewardProjectileResponseConfig,
+    projectile_response_oversample_config: ProjectileResponseOversampleConfig,
     engine_outcome_config: EngineOutcomeConfig,
     action_filter_config: DQNActionFilterConfig,
 ) -> tuple[
@@ -1807,6 +1962,7 @@ def build_experiences(
     RewardSpacingStats,
     RewardPositionStats,
     RewardProjectileResponseStats,
+    ProjectileResponseOversampleStats,
     EngineOutcomeStats,
 ]:
     action_to_index = {action: index for index, action in enumerate(actions)}
@@ -1826,11 +1982,12 @@ def build_experiences(
     spacing_stats = RewardSpacingStats()
     position_stats = RewardPositionStats()
     projectile_response_stats = RewardProjectileResponseStats()
+    projectile_response_oversample_stats = ProjectileResponseOversampleStats()
     engine_outcome_stats = EngineOutcomeStats()
 
     for episode_rows in by_episode.values():
         episode_rows.sort(key=row_order_key)
-        last_exp_index: int | None = None
+        last_exp_indices: list[int] = []
         for index, row in enumerate(episode_rows):
             source_name = execution_source_name(row)
             model_version = model_version_executed(row)
@@ -1857,8 +2014,13 @@ def build_experiences(
                     model_version,
                 )
                 if engine_outcome_added:
-                    set_experience_next_state(experiences, last_exp_index, row, bool(row.get("done", False)))
-                    last_exp_index = None
+                    set_experience_next_state_for_indices(
+                        experiences,
+                        last_exp_indices,
+                        row,
+                        bool(row.get("done", False)),
+                    )
+                    last_exp_indices = []
                     continue
                 force_input_after_engine_outcome_excluded = True
                 build_stats.engine_outcome_input_fallback_rows += 1
@@ -1881,7 +2043,12 @@ def build_experiences(
                 build_stats.movable_filter_checked_rows += 1
                 filter_reason = movable_action_filter_reason(row)
                 if filter_reason:
-                    set_experience_next_state(experiences, last_exp_index, row, bool(row.get("done", False)))
+                    set_experience_next_state_for_indices(
+                        experiences,
+                        last_exp_indices,
+                        row,
+                        bool(row.get("done", False)),
+                    )
                     build_stats.movable_filter_filtered_rows += 1
                     build_stats.movable_filter_by_source[source_name] = (
                         build_stats.movable_filter_by_source.get(source_name, 0) + 1
@@ -1895,9 +2062,9 @@ def build_experiences(
                     if base_reward != 0.0:
                         build_stats.movable_filter_reward_rows += 1
                         build_stats.movable_filter_reward_sum += base_reward
-                        if add_delayed_reward(
+                        if add_delayed_reward_to_indices(
                             experiences,
-                            last_exp_index,
+                            last_exp_indices,
                             base_reward,
                             actions,
                             action_rewards,
@@ -1906,7 +2073,7 @@ def build_experiences(
                             build_stats.movable_filter_delayed_rewards += 1
                         else:
                             build_stats.movable_filter_uncredited_reward_rows += 1
-                    last_exp_index = None
+                    last_exp_indices = []
                     continue
                 build_stats.movable_filter_included_rows += 1
             risk_cost = (
@@ -1929,17 +2096,19 @@ def build_experiences(
                 if action_name is not None
                 else 0.0
             )
-            projectile_response_adjustment = (
-                reward_projectile_response_adjustment(
-                    episode_rows,
-                    index,
-                    action_name,
-                    reward_projectile_response_config,
-                    projectile_response_stats,
+            if action_name is not None:
+                projectile_response_adjustment, projectile_response_outcome_result = (
+                    reward_projectile_response_adjustment(
+                        episode_rows,
+                        index,
+                        action_name,
+                        reward_projectile_response_config,
+                        projectile_response_stats,
+                    )
                 )
-                if action_name is not None
-                else 0.0
-            )
+            else:
+                projectile_response_adjustment = 0.0
+                projectile_response_outcome_result = ProjectileResponseOutcome()
             reward = base_reward + (
                 -risk_cost
                 + guard_adjustment
@@ -1949,7 +2118,14 @@ def build_experiences(
             ) * reward_scale
             if action_name is None:
                 if reward != 0.0:
-                    if add_delayed_reward(experiences, last_exp_index, reward, actions, action_rewards, source_stats):
+                    if add_delayed_reward_to_indices(
+                        experiences,
+                        last_exp_indices,
+                        reward,
+                        actions,
+                        action_rewards,
+                        source_stats,
+                    ):
                         build_stats.unrecognized_delayed_rewards += 1
                     else:
                         build_stats.unrecognized_uncredited_reward_rows += 1
@@ -1960,14 +2136,19 @@ def build_experiences(
                 observed_action_rewards[action_name] += reward
 
             if action_start:
-                set_experience_next_state(experiences, last_exp_index, row, bool(row.get("done", False)))
+                set_experience_next_state_for_indices(
+                    experiences,
+                    last_exp_indices,
+                    row,
+                    bool(row.get("done", False)),
+                )
 
             if action_name not in action_to_index:
                 build_stats.excluded_action_rows += 1
                 if reward != 0.0:
                     build_stats.excluded_action_reward_rows += 1
                     build_stats.excluded_action_reward_sum += reward
-                last_exp_index = None
+                last_exp_indices = []
                 continue
 
             if not action_start:
@@ -1975,7 +2156,14 @@ def build_experiences(
                 if reward != 0.0:
                     build_stats.macro_continuation_reward_rows += 1
                     build_stats.macro_continuation_reward_sum += reward
-                    if add_delayed_reward(experiences, last_exp_index, reward, actions, action_rewards, source_stats):
+                    if add_delayed_reward_to_indices(
+                        experiences,
+                        last_exp_indices,
+                        reward,
+                        actions,
+                        action_rewards,
+                        source_stats,
+                    ):
                         build_stats.macro_continuation_delayed_rewards += 1
                     else:
                         build_stats.macro_continuation_uncredited_reward_rows += 1
@@ -1992,15 +2180,22 @@ def build_experiences(
                 row=dict(row),
                 next_row=dict(row),
             )
-            experiences.append(exp)
-            last_exp_index = len(experiences) - 1
+            multiplier = projectile_response_oversample_config.multiplier_for(projectile_response_outcome_result)
+            for _ in range(multiplier):
+                experiences.append(copy.deepcopy(exp))
+            last_exp_indices = list(range(len(experiences) - multiplier, len(experiences)))
             build_stats.included_action_rows += 1
-            action_counts[action_name] += 1
-            action_rewards[action_name] += reward
-            source_stats.add_experience(source_name, model_version, action_name, reward)
+            action_counts[action_name] += multiplier
+            action_rewards[action_name] += reward * multiplier
+            source_stats.add_experience(source_name, model_version, action_name, reward, multiplier)
+            projectile_response_oversample_stats.add(
+                action_name,
+                projectile_response_outcome_result,
+                multiplier,
+            )
 
         if episode_rows:
-            set_experience_next_state(experiences, last_exp_index, episode_rows[-1], True)
+            set_experience_next_state_for_indices(experiences, last_exp_indices, episode_rows[-1], True)
 
     return (
         experiences,
@@ -2015,6 +2210,7 @@ def build_experiences(
         spacing_stats,
         position_stats,
         projectile_response_stats,
+        projectile_response_oversample_stats,
         engine_outcome_stats,
     )
 
@@ -2154,6 +2350,15 @@ def reward_projectile_response_config_from_args(args: argparse.Namespace) -> Rew
         close_guard_success_bonus=max(0.0, float(args.reward_projectile_close_guard_success_bonus)),
         back_escape_min_dx_delta=max(0, int(args.reward_projectile_back_escape_min_dx_delta)),
         guard_require_contact=bool(args.reward_projectile_guard_require_contact),
+    )
+
+
+def projectile_response_oversample_config_from_args(args: argparse.Namespace) -> ProjectileResponseOversampleConfig:
+    return ProjectileResponseOversampleConfig(
+        safe_jump=max(1, int(args.projectile_response_safe_jump_oversample)),
+        late_jump_hit=max(1, int(args.projectile_response_late_jump_hit_oversample)),
+        close_back_success=max(1, int(args.projectile_response_close_back_oversample)),
+        close_guard_success=max(1, int(args.projectile_response_close_guard_oversample)),
     )
 
 
@@ -3342,6 +3547,36 @@ def main() -> None:
         help="Require obs_self_contact_reaction_state before awarding close guard projectile success",
     )
     parser.add_argument(
+        "--projectile-response-safe-jump-oversample",
+        type=int,
+        default=1,
+        help=(
+            "Replay copies to emit for safe jump-start responses to incoming projectiles; "
+            "1 keeps baseline sampling"
+        ),
+    )
+    parser.add_argument(
+        "--projectile-response-late-jump-hit-oversample",
+        type=int,
+        default=1,
+        help=(
+            "Replay copies to emit for jump-start responses that get hit by incoming projectiles; "
+            "1 keeps baseline sampling"
+        ),
+    )
+    parser.add_argument(
+        "--projectile-response-close-back-oversample",
+        type=int,
+        default=1,
+        help="Replay copies to emit for clean close back responses to incoming projectiles",
+    )
+    parser.add_argument(
+        "--projectile-response-close-guard-oversample",
+        type=int,
+        default=1,
+        help="Replay copies to emit for clean close guard responses to incoming projectiles",
+    )
+    parser.add_argument(
         "--engine-outcome-training-mode",
         default=None,
         help=(
@@ -3522,6 +3757,7 @@ def main() -> None:
     reward_spacing_config = reward_spacing_config_from_args(args)
     reward_position_config = reward_position_config_from_args(args)
     reward_projectile_response_config = reward_projectile_response_config_from_args(args)
+    projectile_response_oversample_config = projectile_response_oversample_config_from_args(args)
     engine_outcome_config = engine_outcome_config_from_args(args)
     conservative_action_penalty_config = conservative_action_penalty_config_from_args(args)
     unsupported_action_regularization_config = dqn_unsupported_action_regularization_config_from_args(args)
@@ -3540,6 +3776,7 @@ def main() -> None:
         reward_spacing_stats,
         reward_position_stats,
         reward_projectile_response_stats,
+        projectile_response_oversample_stats,
         engine_outcome_stats,
     ) = build_experiences(
         rows,
@@ -3551,6 +3788,7 @@ def main() -> None:
         reward_spacing_config,
         reward_position_config,
         reward_projectile_response_config,
+        projectile_response_oversample_config,
         engine_outcome_config,
         dqn_action_filter_config,
     )
@@ -3704,6 +3942,8 @@ def main() -> None:
         ),
         "reward_projectile_guard_require_contact": reward_projectile_response_config.guard_require_contact,
         "reward_projectile_response_stats": reward_projectile_response_stats.as_metadata(),
+        "projectile_response_oversample_config": projectile_response_oversample_config.as_metadata(),
+        "projectile_response_oversample_stats": projectile_response_oversample_stats.as_metadata(),
         "engine_outcome_training_mode": engine_outcome_config.training_mode,
         "engine_outcome_window_decisions": engine_outcome_config.window_decisions,
         "engine_outcome_action_windows": engine_outcome_config.action_windows,
@@ -3772,6 +4012,8 @@ def main() -> None:
         f"projectile_bonus={reward_projectile_response_stats.total_bonus:.1f} "
         f"projectile_cost={reward_projectile_response_stats.total_cost:.1f} "
         f"projectile_net={reward_projectile_response_stats.net_adjustment:.1f} "
+        f"projectile_oversample={projectile_response_oversample_stats.base_experiences}/"
+        f"+{projectile_response_oversample_stats.extra_experiences} "
         f"engine_outcome={engine_outcome_config.training_mode}:{engine_outcome_stats.included_events}/"
         f"{engine_outcome_stats.event_rows} "
         f"engine_outcome_net={engine_outcome_stats.net_adjustment:.1f} "
@@ -3966,6 +4208,27 @@ def main() -> None:
         f"close_guard:{reward_projectile_response_stats.close_guard_success_bonus_events}/"
         f"{reward_projectile_response_stats.close_guard_success_bonus_total:.1f} "
         f"net:{reward_projectile_response_stats.net_adjustment:.1f}",
+        flush=True,
+    )
+    print(
+        "DQN diagnostics "
+        f"projectile_oversample=enabled:{int(projectile_response_oversample_config.enabled)} "
+        f"multipliers:safe_jump={projectile_response_oversample_config.safe_jump},"
+        f"late_jump_hit={projectile_response_oversample_config.late_jump_hit},"
+        f"close_back={projectile_response_oversample_config.close_back_success},"
+        f"close_guard={projectile_response_oversample_config.close_guard_success} "
+        f"base:{projectile_response_oversample_stats.base_experiences} "
+        f"extra:{projectile_response_oversample_stats.extra_experiences} "
+        f"safe_jump:{projectile_response_oversample_stats.safe_jump_base}/"
+        f"+{projectile_response_oversample_stats.safe_jump_extra} "
+        f"late_jump_hit:{projectile_response_oversample_stats.late_jump_hit_base}/"
+        f"+{projectile_response_oversample_stats.late_jump_hit_extra} "
+        f"close_back:{projectile_response_oversample_stats.close_back_success_base}/"
+        f"+{projectile_response_oversample_stats.close_back_success_extra} "
+        f"close_guard:{projectile_response_oversample_stats.close_guard_success_base}/"
+        f"+{projectile_response_oversample_stats.close_guard_success_extra} "
+        f"by_action_base:{format_counts(projectile_response_oversample_stats.by_action_base, projectile_response_oversample_stats.base_experiences, args.diagnostic_top_n)} "
+        f"by_action_extra:{format_counts(projectile_response_oversample_stats.by_action_extra, projectile_response_oversample_stats.extra_experiences, args.diagnostic_top_n)}",
         flush=True,
     )
     print(

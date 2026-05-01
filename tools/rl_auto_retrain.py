@@ -14,7 +14,13 @@ import time
 from pathlib import Path
 
 
-REWARD_PRESETS = ("none", "ground-specials-v24", "ground-specials-v35a", "projectile-response-v1")
+REWARD_PRESETS = (
+    "none",
+    "ground-specials-v24",
+    "ground-specials-v35a",
+    "projectile-response-v1",
+    "projectile-response-v2",
+)
 
 
 def atomic_write_json(path: Path, payload: dict[str, object]) -> None:
@@ -99,11 +105,13 @@ def reward_preset_args(name: str) -> list[str]:
             "--engine-outcome-training-mode",
             "off",
         ]
-    if name not in {"ground-specials-v24", "ground-specials-v35a", "projectile-response-v1"}:
+    if name not in {"ground-specials-v24", "ground-specials-v35a", "projectile-response-v1", "projectile-response-v2"}:
         raise SystemExit(f"unknown reward preset: {name}")
+    original_name = name
     projectile_response_args: list[str] = []
-    if name == "projectile-response-v1":
+    if name in {"projectile-response-v1", "projectile-response-v2"}:
         name = "ground-specials-v35a"
+        safe_jump_bonus = "2.0" if original_name == "projectile-response-v2" else "1.2"
         projectile_response_args = [
             "--reward-projectile-response-profile",
             "incoming-v1",
@@ -120,7 +128,7 @@ def reward_preset_args(name: str) -> list[str]:
             "--reward-projectile-close-max-dx",
             "96",
             "--reward-projectile-safe-jump-bonus",
-            "1.2",
+            safe_jump_bonus,
             "--reward-projectile-late-jump-hit-cost",
             "1.5",
             "--reward-projectile-close-back-success-bonus",
@@ -130,6 +138,19 @@ def reward_preset_args(name: str) -> list[str]:
             "--reward-projectile-back-escape-min-dx-delta",
             "8",
         ]
+        if original_name == "projectile-response-v2":
+            projectile_response_args.extend(
+                [
+                    "--projectile-response-safe-jump-oversample",
+                    "10",
+                    "--projectile-response-late-jump-hit-oversample",
+                    "4",
+                    "--projectile-response-close-back-oversample",
+                    "3",
+                    "--projectile-response-close-guard-oversample",
+                    "3",
+                ]
+            )
     if name == "ground-specials-v35a":
         guard_costs = ("0.4", "0.6")
         engine_action_windows = "fireball-lp=45,fireball-mp=45,fireball-hp=45,tatsu-lk=25,tatsu-mk=25,tatsu-hk=25,throw=8"
@@ -138,6 +159,12 @@ def reward_preset_args(name: str) -> list[str]:
             "shoryuken-lp=8,shoryuken-mp=10,shoryuken-hp=12,"
             "tatsu-lk=6,tatsu-mk=6,tatsu-hk=6,throw=8"
         )
+        if original_name == "projectile-response-v2":
+            engine_action_oversamples = (
+                "fireball-lp=4,fireball-mp=4,fireball-hp=4,"
+                "shoryuken-lp=4,shoryuken-mp=5,shoryuken-hp=6,"
+                "tatsu-lk=6,tatsu-mk=6,tatsu-hk=6,throw=8"
+            )
         preset_args = [
             "--batch-sampling",
             "balanced",

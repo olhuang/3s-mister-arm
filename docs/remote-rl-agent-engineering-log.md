@@ -2,6 +2,58 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-01: DQN Verbose Mask Diagnostics And PING Log Throttling
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / full action-set DQN experiments
+
+Files changed:
+- `tools/rl_probe_server.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- make live V40 `jump-*` selections diagnosable from `--verbose` output.
+- reduce high-frequency PING log spam so OBS/DQN action-selection lines remain
+  readable during live probe sessions.
+
+Implementation notes:
+- DQN `OBS-ACTION` verbose output now appends:
+  - `dqn_action`
+  - `dqn_mask`
+  - `dqn_mask_source`
+  - `dqn_valid=<valid>/<total>`
+  - `dqn_phase`
+  - `self_r1`, `self_r2`, `self_atk`, and `self_contact`
+- `dqn_phase` is derived from the same self-routine mask helper:
+  - `jump-air`: ordinary airborne jump routine (`R1=0`, `R2=18..26`, no
+    attack/contact reaction), where the current taxonomy allows `jump-*`.
+  - `ordinary-movable`: ordinary movable state, where `jump-*` should be
+    masked out.
+  - `non-movable`: attack/contact/damage/caught/other state, where only
+    movement/guard hold candidates are considered.
+- added `--verbose-ping-interval`, default `120`, so `--verbose` logs the first
+  PING and then every Nth PING. Use `0` to suppress PING summaries or `1` for
+  old per-PING verbosity.
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py` passed.
+- `python3 tools/rl_probe_server.py --help` shows `--verbose-ping-interval`.
+- local V40 diagnostics smoke:
+  - grounded ordinary row:
+    `dqn_action=tatsu-hk ... dqn_valid=27/45 dqn_phase=ordinary-movable self_r1=0 self_r2=0`
+  - jump-air row:
+    `dqn_action=jump-neutral-mk ... dqn_valid=18/45 dqn_phase=jump-air self_r1=0 self_r2=20`
+- PING throttle helper smoke with interval `3` logged counts `1` and `3`, and
+  interval `0` suppressed PING summaries while still allowing non-PING packet
+  logs.
+
+Decision:
+- If live V40 still appears to choose repeated `jump-*` actions, first inspect
+  whether verbose says `dqn_phase=jump-air`. If yes, the current mask is
+  treating the state as airborne and the next likely fix is action-taxonomy /
+  observation-schema work, not metadata auto-selection.
+
 ## 2026-05-01: Probe Auto-Selects DQN Valid-Action Mask From Actor Metadata
 
 Milestone:

@@ -2508,6 +2508,7 @@ Tasks:
 - [x] Add DQN zero-sample / low-support action regularization so full-action output heads with no replay support cannot become top greedy actions
 - [x] Add a shared DQN valid-action mask for train-time target selection and probe-time inference, starting with self-routine-aware jump-action gating
 - [x] Let `rl_probe_server.py` auto-enable DQN valid-action masks from actor metadata so masked-trained actors do not require a manual probe flag
+- [x] Add DQN verbose action-mask diagnostics and reduce high-frequency verbose PING logging
 - [ ] Add opt-in train-time invalid-action Q penalty so the raw DQN weights learn to suppress currently illegal action heads, while keeping the hard valid-action mask for live safety
 - [ ] After shared valid-action mask validation, split jump-in policy actions into ground jump-start actions and true airborne attack actions with observation-schema support
 - [ ] Review v24 live behavior before promoting it over v23; same-observation compare kept `stand-hk` suppressed but did not reduce the `tatsu-lk` replacement shift
@@ -2635,6 +2636,24 @@ Full-action DQN sparse-action plan:
       `DQN valid-action mask self-routine-v1 source=metadata model_version=40`,
       so the normal V40 probe command no longer needs to pass
       `--dqn-valid-action-mask self-routine-v1`.
+  - Probe verbose diagnostics:
+    - DQN `OBS-ACTION` verbose lines now include:
+      - `dqn_action`
+      - `dqn_mask`
+      - `dqn_mask_source`
+      - `dqn_valid=<valid>/<total>`
+      - `dqn_phase`
+      - `self_r1`, `self_r2`, `self_atk`, and `self_contact`.
+    - Use these fields when a live V40 run appears to choose too many
+      `jump-*` actions:
+      - `dqn_phase=jump-air` means the mask believes the self player is in an
+        ordinary airborne jump state where current taxonomy allows only
+        `jump-*` actions.
+      - `dqn_phase=ordinary-movable` with a `jump-*` action would indicate the
+        mask was not applied or the selected action came from another path.
+    - `--verbose` PING summaries are now sampled by
+      `--verbose-ping-interval` with default `120`; set it to `0` to suppress
+      PING summaries entirely, or `1` to restore per-PING logs.
 
 - Step 2A: train-time invalid-action Q penalty.
   - Goal:

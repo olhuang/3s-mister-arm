@@ -1221,6 +1221,14 @@ def dqn_self_is_ordinary_movable(row: dict[str, object]) -> bool:
     )
 
 
+def dqn_self_mask_phase(row: dict[str, object]) -> str:
+    if dqn_self_is_ordinary_jump_air(row):
+        return "jump-air"
+    if dqn_self_is_ordinary_movable(row):
+        return "ordinary-movable"
+    return "non-movable"
+
+
 def dqn_valid_action_for_row(action: str, row: dict[str, object], config: DQNValidActionMaskConfig) -> bool:
     if not config.enabled:
         return True
@@ -2230,6 +2238,15 @@ def make_policy_action_frame(policy: str, action_wire: int, step: int = 0) -> Po
     )
 
 
+def policy_action_frame_name(frame: PolicyActionFrame) -> str:
+    if frame.policy_action_id == RL_POLICY_ACTION_NEUTRAL:
+        return "neutral"
+    return TABULAR_ACTION_NAMES_BY_POLICY_META.get(
+        (frame.policy_action_id, frame.policy_sub_action_id),
+        f"{frame.policy_action_id}/{frame.policy_sub_action_id}",
+    )
+
+
 def scripted_sequence(policy: str) -> tuple[int, ...] | None:
     jump_sequence = JUMP_NORMAL_ACTION_SEQUENCES.get(policy)
     if jump_sequence is not None:
@@ -2560,10 +2577,58 @@ def policy_action_wire(
     ).action_wire
 
 
+def format_dqn_verbose_diagnostics(
+    actor: ActorModel,
+    obs_row: dict[str, object] | None,
+    target_action: PolicyActionFrame,
+    valid_action_mask_config: DQNValidActionMaskConfig,
+    valid_action_mask_source: str,
+) -> str:
+    if actor.policy != "dqn":
+        return ""
+    action_name = policy_action_frame_name(target_action)
+    if obs_row is None:
+        return (
+            f" dqn_action={action_name}"
+            f" dqn_mask={valid_action_mask_config.label()}"
+            f" dqn_mask_source={valid_action_mask_source}"
+            " dqn_valid=n/a"
+            " self_r1=n/a self_r2=n/a self_atk=n/a self_contact=n/a"
+        )
+    valid_actions = dqn_valid_actions_for_row(obs_row, actor.actions, valid_action_mask_config)
+    return (
+        f" dqn_action={action_name}"
+        f" dqn_mask={valid_action_mask_config.label()}"
+        f" dqn_mask_source={valid_action_mask_source}"
+        f" dqn_valid={len(valid_actions)}/{len(actor.actions)}"
+        f" dqn_phase={dqn_self_mask_phase(obs_row)}"
+        f" self_r1={row_int_field(obs_row, 'obs_self_routine_1')}"
+        f" self_r2={row_int_field(obs_row, 'obs_self_routine_2')}"
+        f" self_atk={row_int_field(obs_row, 'obs_self_routine_attack_state')}"
+        f" self_contact={row_int_field(obs_row, 'obs_self_contact_reaction_state')}"
+    )
+
+
+def verbose_packet_log_decision(
+    packet_type: int,
+    ping_count: int,
+    ping_interval: int,
+) -> tuple[bool, int, str]:
+    if packet_type != TYPE_PING:
+        return True, ping_count, ""
+    ping_count += 1
+    if ping_interval <= 0:
+        return False, ping_count, ""
+    if ping_count == 1 or ping_count % ping_interval == 0:
+        return True, ping_count, f" ping_log_count={ping_count}"
+    return False, ping_count, ""
+
+
 def serve(
     host: str,
     port: int,
     verbose: bool,
+    verbose_ping_interval: int,
     action_port: int | None,
     action_mode: str,
     policy: str,
@@ -2663,6 +2728,7 @@ def serve(
             flush=True,
         )
     hello_count: dict[int, int] = {}
+    ping_verbose_count = 0
     policy_states: dict[tuple[int, int, int, str], dict[str, int]] = {}
     macro_states: dict[tuple[int, int, int], dict[str, int | str]] = {}
 
@@ -2768,6 +2834,13 @@ def serve(
                     )
                     sock.sendto(wrong_payload, target)
                 if verbose:
+                    dqn_verbose = format_dqn_verbose_diagnostics(
+                        active_model,
+                        obs_row,
+                        target_action,
+                        effective_dqn_valid_action_mask_config,
+                        dqn_valid_action_mask_source,
+                    )
                     print(
                         f"{target} OBS-ACTION policy={active_model.policy} reply={obs_reply_mode} "
                         f"run={run_id} ep={episode_id} dec={decision_id} obs={obs_frame} "
@@ -2777,6 +2850,7 @@ def serve(
                         f" wire=0x{target_action.action_wire:04x}"
                         f" action={target_action.policy_action_id}/{target_action.policy_sub_action_id}"
                         f" step={target_action.policy_action_step}"
+                        f"{dqn_verbose}"
                     )
             inference_stats.record(
                 time.perf_counter_ns() - inference_start_ns,
@@ -2815,10 +2889,16 @@ def serve(
             if action_mode in {"valid", "stale"}:
                 maybe_send_action(sock, addr, action_port, action_mode, nonce, sequence, model_store.current().version, verbose)
 
-        if verbose:
+        should_log_packet, ping_verbose_count, packet_extra = verbose_packet_log_decision(
+            packet_type,
+            ping_verbose_count,
+            verbose_ping_interval,
+        )
+        should_log_packet = verbose and should_log_packet
+        if should_log_packet:
             print(
                 f"{addr} {packet_name(packet_type)} nonce={nonce} seq={sequence} "
-                f"hash=0x{config_hash:08x}"
+                f"hash=0x{config_hash:08x}{packet_extra}"
             )
 
 
@@ -3012,7 +3092,17 @@ def main() -> None:
             "ground, jump-air, and non-movable action candidates"
         ),
     )
-    parser.add_argument("--verbose", action="store_true", help="Log every valid packet")
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Log valid packets; PING summaries are sampled by --verbose-ping-interval",
+    )
+    parser.add_argument(
+        "--verbose-ping-interval",
+        type=int,
+        default=120,
+        help="When --verbose is set, print one PING summary every N PING packets; 0 suppresses PING summaries",
+    )
     args = parser.parse_args()
     transition_log = args.transition_log
     if transition_log is None and (args.transition_pull_remote_path or args.transition_pull_local_source):
@@ -3049,6 +3139,7 @@ def main() -> None:
         args.host,
         args.port,
         args.verbose,
+        max(0, int(args.verbose_ping_interval)),
         args.action_port,
         args.action_mode,
         args.policy,

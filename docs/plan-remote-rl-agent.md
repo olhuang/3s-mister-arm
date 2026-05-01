@@ -2436,6 +2436,7 @@ Tasks:
 - [x] Add DQN replay filtering for initial repeat-delay-polluted episodes and clean-window guard costs
 - [x] Add offline DQN spacing reward shaping for Phase 1 movement credit
 - [x] Add offline DQN corner position reward shaping for anti-turtle experiments
+- [x] Add opt-in offline DQN projectile response reward shaping for safe jump-over, close back/guard success, and late jump-hit penalties
 - [ ] Review walk-forward/back macro actions after spacing-shaping A/B results
 - [ ] Review finer distance buckets after spacing-shaping sample-volume checks
 - [ ] Collect targeted corner-escape demo data before treating corner anti-turtle shaping as solved
@@ -3120,6 +3121,20 @@ Full-action DQN sparse-action plan:
       profile that explicitly rewards safe jump-over timing, rewards close
       guard/back no-damage responses, penalizes late jump-into-fireball
       outcomes, and controls sparse action heads during projectile rows.
+  - Trainer update 2026-05-01:
+    - `tools/train_dqn_learner.py` now has opt-in
+      `--reward-projectile-response-profile incoming-v1` shaping.
+    - The profile only scores action-start rows with an incoming opponent
+      projectile (`owner=opponent`, `rel_x > 0`, `vel_x < 0`, bounded
+      `time_to_self`, `rel_x`, and `rel_y`).
+    - It can add raw reward for clean `jump-*-start` rows that become airborne
+      and clear/pass the projectile, add raw reward for close clean `back`
+      spacing, add raw reward for close clean `guard-*` with contact, and
+      subtract raw reward when a jump-start projectile response takes self HP
+      damage.
+    - `tools/rl_auto_retrain.py --reward-preset projectile-response-v1` opts
+      into this shaping on top of the `ground-specials-v35a` recipe; existing
+      reward presets remain unchanged.
 
 - Step 4: train-time invalid-action Q penalty on the split action space.
   - Do this after Step 3, not before it.
@@ -3353,6 +3368,14 @@ Implementation notes:
     - position shaping applies only on `executed_policy_action_step == 0` and only when the short position window has no self HP damage
     - diagnostics print `position_shape=corner_back_edge<=<threshold> corner_guard:<events>/<cost> corner_back:<events>/<cost> escape:<events>/<bonus> net:<raw_adjustment>` and metadata records the position-shaping config/stat payload
     - first CPU-demo all-normal experiments showed this improves general far-range passivity but does not fully solve `corner + far + opp_attack=0` turtling, because the current CPU-demo dataset has insufficient successful corner-escape alternatives for the DQN to imitate
+  - projectile response reward shaping is available for offline anti-fireball DQN experiments without changing transition schema:
+    - `--reward-projectile-response-profile incoming-v1` enables the profile; default `off` preserves existing recipes
+    - incoming threats require opponent-owned active projectiles in front of self, moving toward self, within configurable `time_to_self`, `rel_x`, and `rel_y` bounds
+    - `--reward-projectile-safe-jump-bonus` rewards clean `jump-*-start` rows that become airborne and clear/pass the projectile inside the response window
+    - `--reward-projectile-late-jump-hit-cost` subtracts raw reward when a jump-start response to an incoming projectile takes self HP damage
+    - `--reward-projectile-close-back-success-bonus` rewards clean close-range `back` rows that increase spacing or clear/pass the projectile
+    - `--reward-projectile-close-guard-success-bonus` rewards clean close-range `guard-stand` / `guard-crouch` rows, requiring guard contact by default
+    - diagnostics print `projectile_shape=... safe_jump:<events>/<bonus> late_jump_hit:<events>/<cost> close_back:<events>/<bonus> close_guard:<events>/<bonus> net:<raw_adjustment>` and metadata records the projectile-response config/stat payload
   - `--actions` trains and publishes a DQN action subset; excluded explicit actions are counted and reset delayed-credit attribution so their later neutral/recovery reward is not accidentally credited to the previous included action
   - DQN replay now treats high-level macro action starts as the training decision boundary:
     - only rows with `executed_policy_action_step == 0` create DQN experiences

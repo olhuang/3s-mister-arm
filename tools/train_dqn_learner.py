@@ -284,6 +284,8 @@ REMOVED_ENGINE_OUTCOME_MODES = ("augment", "replace-demo")
 TRAINING_ACTION_SOURCES = rl.TRAINING_ACTION_SOURCES
 GUARD_ACTIONS = frozenset({"guard-stand", "guard-crouch"})
 MOVEMENT_SPACING_ACTIONS = frozenset({"forward", "back"})
+PROJECTILE_OWNER_OPPONENT = 2
+REWARD_PROJECTILE_RESPONSE_PROFILES = ("off", "incoming-v1")
 BATCH_SAMPLING_MODES = ("uniform", "balanced")
 BATCH_GROUPS = ("movement", "normal", "special")
 SPECIAL_ACTION_PREFIXES = ("fireball-", "shoryuken-", "tatsu-")
@@ -656,6 +658,77 @@ class RewardPositionStats:
             "corner_guard_cost_total": self.corner_guard_cost_total,
             "corner_back_cost_total": self.corner_back_cost_total,
             "corner_escape_bonus_total": self.corner_escape_bonus_total,
+            "total_bonus": self.total_bonus,
+            "total_cost": self.total_cost,
+            "net_adjustment": self.net_adjustment,
+        }
+
+
+@dataclass(frozen=True)
+class RewardProjectileResponseConfig:
+    profile: str
+    window_decisions: int
+    threat_min_time_to_self: int
+    threat_max_time_to_self: int
+    threat_max_dx: int
+    threat_max_abs_y: int
+    close_max_dx: int
+    safe_jump_bonus: float
+    late_jump_hit_cost: float
+    close_back_success_bonus: float
+    close_guard_success_bonus: float
+    back_escape_min_dx_delta: int
+    guard_require_contact: bool
+
+    @property
+    def enabled(self) -> bool:
+        return self.profile != "off" and (
+            self.safe_jump_bonus > 0.0
+            or self.late_jump_hit_cost > 0.0
+            or self.close_back_success_bonus > 0.0
+            or self.close_guard_success_bonus > 0.0
+        )
+
+
+@dataclass
+class RewardProjectileResponseStats:
+    threat_action_rows: int = 0
+    safe_jump_bonus_events: int = 0
+    late_jump_hit_cost_events: int = 0
+    close_back_success_bonus_events: int = 0
+    close_guard_success_bonus_events: int = 0
+    safe_jump_bonus_total: float = 0.0
+    late_jump_hit_cost_total: float = 0.0
+    close_back_success_bonus_total: float = 0.0
+    close_guard_success_bonus_total: float = 0.0
+
+    @property
+    def total_bonus(self) -> float:
+        return (
+            self.safe_jump_bonus_total
+            + self.close_back_success_bonus_total
+            + self.close_guard_success_bonus_total
+        )
+
+    @property
+    def total_cost(self) -> float:
+        return self.late_jump_hit_cost_total
+
+    @property
+    def net_adjustment(self) -> float:
+        return self.total_bonus - self.total_cost
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "threat_action_rows": self.threat_action_rows,
+            "safe_jump_bonus_events": self.safe_jump_bonus_events,
+            "late_jump_hit_cost_events": self.late_jump_hit_cost_events,
+            "close_back_success_bonus_events": self.close_back_success_bonus_events,
+            "close_guard_success_bonus_events": self.close_guard_success_bonus_events,
+            "safe_jump_bonus_total": self.safe_jump_bonus_total,
+            "late_jump_hit_cost_total": self.late_jump_hit_cost_total,
+            "close_back_success_bonus_total": self.close_back_success_bonus_total,
+            "close_guard_success_bonus_total": self.close_guard_success_bonus_total,
             "total_bonus": self.total_bonus,
             "total_cost": self.total_cost,
             "net_adjustment": self.net_adjustment,
@@ -1468,6 +1541,98 @@ def reward_position_adjustment(
     return adjustment
 
 
+def incoming_projectile_threat(row: dict[str, object], config: RewardProjectileResponseConfig) -> bool:
+    if not config.enabled:
+        return False
+    if int_field(row, "obs_projectile_active") == 0:
+        return False
+    if int_field(row, "obs_projectile_owner") != PROJECTILE_OWNER_OPPONENT:
+        return False
+
+    rel_x = int_field(row, "obs_projectile_rel_x")
+    rel_y = int_field(row, "obs_projectile_rel_y")
+    vel_x = int_field(row, "obs_projectile_vel_x")
+    time_to_self = int_field(row, "obs_projectile_time_to_self")
+    return (
+        rel_x > 0
+        and rel_x <= config.threat_max_dx
+        and abs(rel_y) <= config.threat_max_abs_y
+        and vel_x < 0
+        and config.threat_min_time_to_self <= time_to_self <= config.threat_max_time_to_self
+    )
+
+
+def projectile_cleared_or_passed(row: dict[str, object], config: RewardProjectileResponseConfig) -> bool:
+    if not incoming_projectile_threat(row, config):
+        return True
+    return int_field(row, "obs_projectile_rel_x") <= 0
+
+
+def reward_projectile_response_adjustment(
+    episode_rows: list[dict[str, object]],
+    row_index: int,
+    action_name: str,
+    config: RewardProjectileResponseConfig,
+    stats: RewardProjectileResponseStats,
+) -> float:
+    row = episode_rows[row_index]
+    if not config.enabled or not is_action_start(row) or not incoming_projectile_threat(row, config):
+        return 0.0
+    if action_name not in JUMP_START_ACTIONS and action_name != "back" and action_name not in GUARD_ACTIONS:
+        return 0.0
+
+    stats.threat_action_rows += 1
+    window_end = min(len(episode_rows), row_index + max(0, config.window_decisions) + 1)
+    lookahead = episode_rows[row_index:window_end]
+    self_damage = sum(int_field(lookahead_row, "delta_self_hp") for lookahead_row in lookahead)
+    clean_window = self_damage == 0
+    adjustment = 0.0
+
+    if action_name in JUMP_START_ACTIONS:
+        became_airborne = any(
+            int_field(lookahead_row, "obs_self_airborne") != 0
+            or int_field(lookahead_row, "obs_self_jump_phase") >= 2
+            for lookahead_row in lookahead
+        )
+        projectile_cleared = any(projectile_cleared_or_passed(lookahead_row, config) for lookahead_row in lookahead[1:])
+        if clean_window and became_airborne and projectile_cleared and config.safe_jump_bonus > 0.0:
+            adjustment += config.safe_jump_bonus
+            stats.safe_jump_bonus_events += 1
+            stats.safe_jump_bonus_total += config.safe_jump_bonus
+        if self_damage > 0 and config.late_jump_hit_cost > 0.0:
+            adjustment -= config.late_jump_hit_cost
+            stats.late_jump_hit_cost_events += 1
+            stats.late_jump_hit_cost_total += config.late_jump_hit_cost
+        return adjustment
+
+    current_dx = int_field(row, "obs_abs_dx")
+    if current_dx > config.close_max_dx:
+        return adjustment
+
+    if action_name == "back" and clean_window and config.close_back_success_bonus > 0.0:
+        next_boundary = next_decision_boundary_row(episode_rows, row_index)
+        next_row = next_boundary[1] if next_boundary is not None else lookahead[-1]
+        next_dx = int_field(next_row, "obs_abs_dx")
+        if (
+            next_dx >= current_dx + config.back_escape_min_dx_delta
+            or any(projectile_cleared_or_passed(lookahead_row, config) for lookahead_row in lookahead[1:])
+        ):
+            adjustment += config.close_back_success_bonus
+            stats.close_back_success_bonus_events += 1
+            stats.close_back_success_bonus_total += config.close_back_success_bonus
+
+    if action_name in GUARD_ACTIONS and clean_window and config.close_guard_success_bonus > 0.0:
+        guard_contact = any(
+            int_field(lookahead_row, "obs_self_contact_reaction_state") != 0 for lookahead_row in lookahead
+        )
+        if guard_contact or not config.guard_require_contact:
+            adjustment += config.close_guard_success_bonus
+            stats.close_guard_success_bonus_events += 1
+            stats.close_guard_success_bonus_total += config.close_guard_success_bonus
+
+    return adjustment
+
+
 def add_delayed_reward(
     experiences: list[Experience],
     exp_index: int | None,
@@ -1626,6 +1791,7 @@ def build_experiences(
     reward_guard_config: RewardGuardConfig,
     reward_spacing_config: RewardSpacingConfig,
     reward_position_config: RewardPositionConfig,
+    reward_projectile_response_config: RewardProjectileResponseConfig,
     engine_outcome_config: EngineOutcomeConfig,
     action_filter_config: DQNActionFilterConfig,
 ) -> tuple[
@@ -1640,6 +1806,7 @@ def build_experiences(
     RewardGuardStats,
     RewardSpacingStats,
     RewardPositionStats,
+    RewardProjectileResponseStats,
     EngineOutcomeStats,
 ]:
     action_to_index = {action: index for index, action in enumerate(actions)}
@@ -1658,6 +1825,7 @@ def build_experiences(
     guard_stats = RewardGuardStats()
     spacing_stats = RewardSpacingStats()
     position_stats = RewardPositionStats()
+    projectile_response_stats = RewardProjectileResponseStats()
     engine_outcome_stats = EngineOutcomeStats()
 
     for episode_rows in by_episode.values():
@@ -1761,8 +1929,23 @@ def build_experiences(
                 if action_name is not None
                 else 0.0
             )
+            projectile_response_adjustment = (
+                reward_projectile_response_adjustment(
+                    episode_rows,
+                    index,
+                    action_name,
+                    reward_projectile_response_config,
+                    projectile_response_stats,
+                )
+                if action_name is not None
+                else 0.0
+            )
             reward = base_reward + (
-                -risk_cost + guard_adjustment + spacing_adjustment + position_adjustment
+                -risk_cost
+                + guard_adjustment
+                + spacing_adjustment
+                + position_adjustment
+                + projectile_response_adjustment
             ) * reward_scale
             if action_name is None:
                 if reward != 0.0:
@@ -1831,6 +2014,7 @@ def build_experiences(
         guard_stats,
         spacing_stats,
         position_stats,
+        projectile_response_stats,
         engine_outcome_stats,
     )
 
@@ -1944,6 +2128,32 @@ def reward_position_config_from_args(args: argparse.Namespace) -> RewardPosition
         corner_back_cost=max(0.0, float(args.reward_corner_back_cost)),
         corner_escape_bonus=max(0.0, float(args.reward_corner_escape_bonus)),
         corner_escape_min_delta=max(0, int(args.reward_corner_escape_min_delta)),
+    )
+
+
+def reward_projectile_response_config_from_args(args: argparse.Namespace) -> RewardProjectileResponseConfig:
+    profile = str(args.reward_projectile_response_profile)
+    if profile not in REWARD_PROJECTILE_RESPONSE_PROFILES:
+        raise SystemExit(
+            f"unknown --reward-projectile-response-profile {profile!r}; "
+            f"expected one of {','.join(REWARD_PROJECTILE_RESPONSE_PROFILES)}"
+        )
+    min_time = max(0, int(args.reward_projectile_threat_min_time_to_self))
+    max_time = max(min_time, int(args.reward_projectile_threat_max_time_to_self))
+    return RewardProjectileResponseConfig(
+        profile=profile,
+        window_decisions=max(0, int(args.reward_projectile_response_window_decisions)),
+        threat_min_time_to_self=min_time,
+        threat_max_time_to_self=max_time,
+        threat_max_dx=max(0, int(args.reward_projectile_threat_max_dx)),
+        threat_max_abs_y=max(0, int(args.reward_projectile_threat_max_abs_y)),
+        close_max_dx=max(0, int(args.reward_projectile_close_max_dx)),
+        safe_jump_bonus=max(0.0, float(args.reward_projectile_safe_jump_bonus)),
+        late_jump_hit_cost=max(0.0, float(args.reward_projectile_late_jump_hit_cost)),
+        close_back_success_bonus=max(0.0, float(args.reward_projectile_close_back_success_bonus)),
+        close_guard_success_bonus=max(0.0, float(args.reward_projectile_close_guard_success_bonus)),
+        back_escape_min_dx_delta=max(0, int(args.reward_projectile_back_escape_min_dx_delta)),
+        guard_require_contact=bool(args.reward_projectile_guard_require_contact),
     )
 
 
@@ -3054,6 +3264,84 @@ def main() -> None:
         help="Minimum obs_self_back_edge_dist increase needed for --reward-corner-escape-bonus",
     )
     parser.add_argument(
+        "--reward-projectile-response-profile",
+        choices=REWARD_PROJECTILE_RESPONSE_PROFILES,
+        default="off",
+        help="Optional incoming projectile response shaping; off leaves existing reward recipes unchanged",
+    )
+    parser.add_argument(
+        "--reward-projectile-response-window-decisions",
+        type=int,
+        default=12,
+        help="Lookahead decisions used to score jump/back/guard responses to incoming opponent projectiles",
+    )
+    parser.add_argument(
+        "--reward-projectile-threat-min-time-to-self",
+        type=int,
+        default=1,
+        help="Minimum obs_projectile_time_to_self for incoming projectile response shaping",
+    )
+    parser.add_argument(
+        "--reward-projectile-threat-max-time-to-self",
+        type=int,
+        default=24,
+        help="Maximum obs_projectile_time_to_self for incoming projectile response shaping",
+    )
+    parser.add_argument(
+        "--reward-projectile-threat-max-dx",
+        type=int,
+        default=240,
+        help="Maximum obs_projectile_rel_x considered an incoming projectile threat",
+    )
+    parser.add_argument(
+        "--reward-projectile-threat-max-abs-y",
+        type=int,
+        default=48,
+        help="Maximum absolute obs_projectile_rel_y considered jump/guard relevant",
+    )
+    parser.add_argument(
+        "--reward-projectile-close-max-dx",
+        type=int,
+        default=96,
+        help="Maximum obs_abs_dx considered close range for back/guard projectile response bonuses",
+    )
+    parser.add_argument(
+        "--reward-projectile-safe-jump-bonus",
+        type=float,
+        default=0.0,
+        help="Positive raw reward bonus for jump-start actions that safely clear an incoming opponent projectile",
+    )
+    parser.add_argument(
+        "--reward-projectile-late-jump-hit-cost",
+        type=float,
+        default=0.0,
+        help="Positive raw reward cost subtracted when a jump-start response to an incoming projectile takes self HP damage",
+    )
+    parser.add_argument(
+        "--reward-projectile-close-back-success-bonus",
+        type=float,
+        default=0.0,
+        help="Positive raw reward bonus for clean close-range back movement against an incoming projectile",
+    )
+    parser.add_argument(
+        "--reward-projectile-close-guard-success-bonus",
+        type=float,
+        default=0.0,
+        help="Positive raw reward bonus for clean close-range guard against an incoming projectile",
+    )
+    parser.add_argument(
+        "--reward-projectile-back-escape-min-dx-delta",
+        type=int,
+        default=8,
+        help="Minimum obs_abs_dx increase needed to treat close-range back as successful projectile spacing",
+    )
+    parser.add_argument(
+        "--reward-projectile-guard-require-contact",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Require obs_self_contact_reaction_state before awarding close guard projectile success",
+    )
+    parser.add_argument(
         "--engine-outcome-training-mode",
         default=None,
         help=(
@@ -3233,6 +3521,7 @@ def main() -> None:
     reward_guard_config = reward_guard_config_from_args(args)
     reward_spacing_config = reward_spacing_config_from_args(args)
     reward_position_config = reward_position_config_from_args(args)
+    reward_projectile_response_config = reward_projectile_response_config_from_args(args)
     engine_outcome_config = engine_outcome_config_from_args(args)
     conservative_action_penalty_config = conservative_action_penalty_config_from_args(args)
     unsupported_action_regularization_config = dqn_unsupported_action_regularization_config_from_args(args)
@@ -3250,6 +3539,7 @@ def main() -> None:
         reward_guard_stats,
         reward_spacing_stats,
         reward_position_stats,
+        reward_projectile_response_stats,
         engine_outcome_stats,
     ) = build_experiences(
         rows,
@@ -3260,6 +3550,7 @@ def main() -> None:
         reward_guard_config,
         reward_spacing_config,
         reward_position_config,
+        reward_projectile_response_config,
         engine_outcome_config,
         dqn_action_filter_config,
     )
@@ -3319,6 +3610,8 @@ def main() -> None:
         reward_sources.append("spacing-shaping")
     if reward_position_stats.net_adjustment != 0.0:
         reward_sources.append("position-shaping")
+    if reward_projectile_response_stats.net_adjustment != 0.0:
+        reward_sources.append("projectile-response-shaping")
     if engine_outcome_config.training_mode != "off":
         reward_sources.append("engine-outcome")
     if conservative_action_penalty_stats.adjusted_experiences > 0:
@@ -3387,6 +3680,30 @@ def main() -> None:
         "reward_corner_escape_bonus": reward_position_config.corner_escape_bonus,
         "reward_corner_escape_min_delta": reward_position_config.corner_escape_min_delta,
         "reward_position_stats": reward_position_stats.as_metadata(),
+        "reward_projectile_response_profile": reward_projectile_response_config.profile,
+        "reward_projectile_response_window_decisions": reward_projectile_response_config.window_decisions,
+        "reward_projectile_threat_min_time_to_self": (
+            reward_projectile_response_config.threat_min_time_to_self
+        ),
+        "reward_projectile_threat_max_time_to_self": (
+            reward_projectile_response_config.threat_max_time_to_self
+        ),
+        "reward_projectile_threat_max_dx": reward_projectile_response_config.threat_max_dx,
+        "reward_projectile_threat_max_abs_y": reward_projectile_response_config.threat_max_abs_y,
+        "reward_projectile_close_max_dx": reward_projectile_response_config.close_max_dx,
+        "reward_projectile_safe_jump_bonus": reward_projectile_response_config.safe_jump_bonus,
+        "reward_projectile_late_jump_hit_cost": reward_projectile_response_config.late_jump_hit_cost,
+        "reward_projectile_close_back_success_bonus": (
+            reward_projectile_response_config.close_back_success_bonus
+        ),
+        "reward_projectile_close_guard_success_bonus": (
+            reward_projectile_response_config.close_guard_success_bonus
+        ),
+        "reward_projectile_back_escape_min_dx_delta": (
+            reward_projectile_response_config.back_escape_min_dx_delta
+        ),
+        "reward_projectile_guard_require_contact": reward_projectile_response_config.guard_require_contact,
+        "reward_projectile_response_stats": reward_projectile_response_stats.as_metadata(),
         "engine_outcome_training_mode": engine_outcome_config.training_mode,
         "engine_outcome_window_decisions": engine_outcome_config.window_decisions,
         "engine_outcome_action_windows": engine_outcome_config.action_windows,
@@ -3452,6 +3769,9 @@ def main() -> None:
         f"position_bonus={reward_position_stats.total_bonus:.1f} "
         f"position_cost={reward_position_stats.total_cost:.1f} "
         f"position_net={reward_position_stats.net_adjustment:.1f} "
+        f"projectile_bonus={reward_projectile_response_stats.total_bonus:.1f} "
+        f"projectile_cost={reward_projectile_response_stats.total_cost:.1f} "
+        f"projectile_net={reward_projectile_response_stats.net_adjustment:.1f} "
         f"engine_outcome={engine_outcome_config.training_mode}:{engine_outcome_stats.included_events}/"
         f"{engine_outcome_stats.event_rows} "
         f"engine_outcome_net={engine_outcome_stats.net_adjustment:.1f} "
@@ -3627,6 +3947,25 @@ def main() -> None:
         f"escape:{reward_position_stats.corner_escape_bonus_events}/"
         f"{reward_position_stats.corner_escape_bonus_total:.1f} "
         f"net:{reward_position_stats.net_adjustment:.1f}",
+        flush=True,
+    )
+    print(
+        "DQN diagnostics "
+        f"projectile_shape=profile:{reward_projectile_response_config.profile} "
+        f"threat_t:{reward_projectile_response_config.threat_min_time_to_self}-"
+        f"{reward_projectile_response_config.threat_max_time_to_self} "
+        f"threat_dx<={reward_projectile_response_config.threat_max_dx} "
+        f"close_dx<={reward_projectile_response_config.close_max_dx} "
+        f"threat_rows:{reward_projectile_response_stats.threat_action_rows} "
+        f"safe_jump:{reward_projectile_response_stats.safe_jump_bonus_events}/"
+        f"{reward_projectile_response_stats.safe_jump_bonus_total:.1f} "
+        f"late_jump_hit:{reward_projectile_response_stats.late_jump_hit_cost_events}/"
+        f"{reward_projectile_response_stats.late_jump_hit_cost_total:.1f} "
+        f"close_back:{reward_projectile_response_stats.close_back_success_bonus_events}/"
+        f"{reward_projectile_response_stats.close_back_success_bonus_total:.1f} "
+        f"close_guard:{reward_projectile_response_stats.close_guard_success_bonus_events}/"
+        f"{reward_projectile_response_stats.close_guard_success_bonus_total:.1f} "
+        f"net:{reward_projectile_response_stats.net_adjustment:.1f}",
         flush=True,
     )
     print(

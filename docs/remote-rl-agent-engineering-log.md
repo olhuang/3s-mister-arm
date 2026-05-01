@@ -2,6 +2,56 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-01: Add Opt-In Projectile Response Reward Shaping
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / full action-set DQN experiments
+
+Files changed:
+- `tools/train_dqn_learner.py`
+- `tools/rl_auto_retrain.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- stop blindly retraining the same generic full-action recipe after V41 showed
+  schema-v5 projectile features alone do not teach anti-fireball behavior.
+- add explicit trainer-side credit for safe jump-over, close successful
+  back/guard responses, and late jump-into-projectile failures.
+
+Implementation notes:
+- added `--reward-projectile-response-profile incoming-v1`, defaulting to
+  `off` so existing recipes keep identical reward behavior.
+- incoming threats require an opponent-owned active projectile in front of the
+  agent, moving toward the agent, with configurable `time_to_self`, `rel_x`,
+  and `rel_y` bounds.
+- `jump-*-start` gets an optional safe-jump bonus only when the response window
+  stays clean, the agent becomes airborne, and the projectile clears/passes.
+- `jump-*-start` gets an optional late-jump cost when the response window takes
+  self HP damage.
+- close `back` can receive a clean response bonus when spacing increases or
+  the projectile clears/passes.
+- close `guard-stand` / `guard-crouch` can receive a clean response bonus,
+  requiring guard contact by default.
+- added `--reward-preset projectile-response-v1` to `tools/rl_auto_retrain.py`;
+  it extends `ground-specials-v35a` with the projectile-response knobs rather
+  than changing older presets.
+
+Validation:
+- `python3 -m py_compile tools/train_dqn_learner.py tools/rl_auto_retrain.py tools/rl_probe_server.py`
+- direct synthetic `build_experiences` smoke:
+  - safe projectile response produced `jump-forward-start=+1.2`,
+    `back=+0.6`, and `guard-stand=+0.8`.
+  - late jump-hit smoke produced natural HP loss plus projectile cost:
+    `jump-forward-start=-11.5`, with `late_jump_hit_cost_total=1.5`.
+
+Follow-up:
+- train the first projectile-response model with
+  `--reward-preset projectile-response-v1` and compare same-log incoming
+  projectile rows against V41.
+- add projectile-row greedy diagnostics by `time_to_self` bucket if the first
+  shaped model still collapses into a non-response action.
+
 ## 2026-05-01: Train V41 Projectile-Aware Baseline
 
 Milestone:

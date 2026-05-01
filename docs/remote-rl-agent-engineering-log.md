@@ -2,6 +2,53 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-01: Probe Auto-Selects DQN Valid-Action Mask From Actor Metadata
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / full action-set DQN experiments
+
+Files changed:
+- `tools/rl_probe_server.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- make masked-trained DQN actors safer to serve by default.
+- let V40-style actors automatically reuse the `dqn_valid_action_mask_config`
+  recorded in their manifest metadata, so the probe command does not need a
+  manual `--dqn-valid-action-mask self-routine-v1` flag.
+
+Implementation notes:
+- changed `rl_probe_server.py --dqn-valid-action-mask` default from `off` to
+  `auto`.
+- `auto` resolves the effective mask from
+  `actor.metadata["dqn_valid_action_mask_config"]` when the active actor policy
+  is `dqn`.
+- `--dqn-valid-action-mask off` now explicitly disables mask inference for raw
+  diagnostics.
+- `--dqn-valid-action-mask self-routine-v1` still forces the mask from CLI,
+  independent of actor metadata.
+- probe startup and hot-swap paths log the resolved mode, source, and model
+  version, for example `source=metadata model_version=40`.
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py` passed.
+- `python3 tools/rl_probe_server.py --help` shows
+  `--dqn-valid-action-mask {auto,off,self-routine-v1}`.
+- metadata resolution smoke:
+  - V40 auto resolved to `self-routine-v1 source=metadata`.
+  - explicit CLI `off` resolved to `off source=cli`.
+- action-selection smoke on a grounded ordinary row:
+  - auto metadata mask selected `tatsu-hk`.
+  - explicit CLI `off` selected raw `jump-neutral-mk`.
+- short local UDP-bind startup smoke printed:
+  `DQN valid-action mask self-routine-v1 source=metadata model_version=40`.
+
+Decision:
+- V40 probe commands can now omit `--dqn-valid-action-mask self-routine-v1`.
+- keep `--dqn-valid-action-mask off` only for raw/unmasked diagnostic runs,
+  because V40 still has raw unmasked jump-action collapse.
+
 ## 2026-05-01: Record DQN Invalid-Action Weight-Regularization Follow-Up
 
 Milestone:
@@ -132,13 +179,12 @@ Decision:
 - shared valid-action masking is effective offline and should be the next
   full-action DQN path.
 - V40 still collapses if evaluated with `valid_mask=off`; any live/probe use of
-  this model must pass `--dqn-valid-action-mask self-routine-v1` until model
-  metadata auto-selection or a stronger default is implemented.
+  this model must use the actor metadata auto-mask or explicitly pass
+  `--dqn-valid-action-mask self-routine-v1`.
 
 Follow-up:
-- run a live probe only with `--dqn-valid-action-mask self-routine-v1`.
-- decide whether probe inference should automatically honor
-  `metadata.dqn_valid_action_mask_config` for models trained with a mask.
+- run a live probe using the actor metadata auto-mask; pass
+  `--dqn-valid-action-mask off` only for raw diagnostic comparisons.
 - after live/offline validation, continue with the recorded jump-start vs
   air-attack action taxonomy split and schema-versioned airborne features.
 

@@ -194,6 +194,7 @@ TABULAR_ACTION_WIRES = {
 DQN_MOVEMENT_GUARD_ACTIONS = frozenset({"forward", "back", "guard-stand", "guard-crouch"})
 DQN_JUMP_ATTACK_ACTIONS = frozenset(JUMP_NORMAL_ACTION_NAMES)
 DQN_VALID_ACTION_MASK_MODES = ("off", "self-routine-v1")
+DQN_VALID_ACTION_MASK_CLI_MODES = ("auto", *DQN_VALID_ACTION_MASK_MODES)
 TABULAR_ACTION_WIRES.update({f"stand-{name}": wire for name, wire, _ in RL_POLICY_BUTTONS})
 TABULAR_ACTION_WIRES.update({f"crouch-{name}": RL_MOVE_DOWN | wire for name, wire, _ in RL_POLICY_BUTTONS})
 TABULAR_ACTION_NAMES_BY_WIRE = {
@@ -1141,16 +1142,66 @@ def row_int_field(row: dict[str, object], name: str) -> int:
         return 0
 
 
+def normalize_dqn_valid_action_mask_mode(mode: object) -> str:
+    normalized = str(mode).strip().lower().replace("_", "-")
+    return normalized or "off"
+
+
 def parse_dqn_valid_action_mask_config(mode: str) -> DQNValidActionMaskConfig:
-    normalized = mode.strip().lower().replace("_", "-")
-    if not normalized:
-        normalized = "off"
+    normalized = normalize_dqn_valid_action_mask_mode(mode)
     if normalized not in DQN_VALID_ACTION_MASK_MODES:
         raise ValueError(
             f"unknown DQN valid-action mask mode {mode!r}; "
             f"expected one of {','.join(DQN_VALID_ACTION_MASK_MODES)}"
         )
     return DQNValidActionMaskConfig(mode=normalized)
+
+
+def parse_dqn_valid_action_mask_cli_config(mode: str) -> tuple[bool, DQNValidActionMaskConfig]:
+    normalized = normalize_dqn_valid_action_mask_mode(mode)
+    if normalized == "auto":
+        return True, DQNValidActionMaskConfig()
+    return False, parse_dqn_valid_action_mask_config(normalized)
+
+
+def metadata_flag_enabled(value: object) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    return str(value).strip().lower() not in {"", "0", "false", "no", "off", "disabled"}
+
+
+def dqn_valid_action_mask_config_from_metadata(
+    metadata: dict[str, object],
+) -> tuple[DQNValidActionMaskConfig, str]:
+    raw_config = metadata.get("dqn_valid_action_mask_config")
+    if not isinstance(raw_config, dict):
+        return DQNValidActionMaskConfig(), "metadata:none"
+    if not metadata_flag_enabled(raw_config.get("enabled")):
+        return DQNValidActionMaskConfig(), "metadata:disabled"
+    raw_mode = raw_config.get("mode", "off")
+    try:
+        config = parse_dqn_valid_action_mask_config(str(raw_mode))
+    except ValueError:
+        return DQNValidActionMaskConfig(), f"metadata:invalid:{normalize_dqn_valid_action_mask_mode(raw_mode)}"
+    if not config.enabled:
+        return config, "metadata:off"
+    return config, "metadata"
+
+
+def resolve_dqn_valid_action_mask_config(
+    actor: ActorModel,
+    cli_config: DQNValidActionMaskConfig,
+    auto_from_metadata: bool,
+) -> tuple[DQNValidActionMaskConfig, str]:
+    if not auto_from_metadata:
+        return cli_config, "cli"
+    if actor.policy != "dqn":
+        return DQNValidActionMaskConfig(), "auto:not-dqn"
+    return dqn_valid_action_mask_config_from_metadata(actor.metadata)
 
 
 def dqn_self_is_ordinary_jump_air(row: dict[str, object]) -> bool:
@@ -2544,6 +2595,7 @@ def serve(
     tabular_min_action_count: int,
     dqn_support_prior_config: DQNSupportPriorConfig,
     dqn_valid_action_mask_config: DQNValidActionMaskConfig,
+    dqn_valid_action_mask_auto: bool,
 ) -> None:
     inference_stats = InferenceStats()
     initial_actions = tabular_actions if policy == "tabular" else TABULAR_DEFAULT_ACTIONS
@@ -2596,8 +2648,20 @@ def serve(
     print(f"RL probe server listening on {host}:{port}")
     if dqn_support_prior_config.enabled:
         print(f"DQN support prior active {dqn_support_prior_config.label()}", flush=True)
-    if dqn_valid_action_mask_config.enabled:
-        print(f"DQN valid-action mask active {dqn_valid_action_mask_config.label()}", flush=True)
+    active_model = model_store.current()
+    initial_mask_config, initial_mask_source = resolve_dqn_valid_action_mask_config(
+        active_model,
+        dqn_valid_action_mask_config,
+        dqn_valid_action_mask_auto,
+    )
+    last_dqn_mask_status: tuple[int, str, str] | None = None
+    if active_model.policy == "dqn":
+        last_dqn_mask_status = (active_model.version, initial_mask_config.mode, initial_mask_source)
+        print(
+            f"DQN valid-action mask {initial_mask_config.label()} "
+            f"source={initial_mask_source} model_version={active_model.version}",
+            flush=True,
+        )
     hello_count: dict[int, int] = {}
     policy_states: dict[tuple[int, int, int, str], dict[str, int]] = {}
     macro_states: dict[tuple[int, int, int], dict[str, int | str]] = {}
@@ -2607,6 +2671,24 @@ def serve(
         if len(data) >= OBS_HEADER.size:
             inference_start_ns = time.perf_counter_ns()
             active_model = model_store.current()
+            effective_dqn_valid_action_mask_config, dqn_valid_action_mask_source = resolve_dqn_valid_action_mask_config(
+                active_model,
+                dqn_valid_action_mask_config,
+                dqn_valid_action_mask_auto,
+            )
+            if active_model.policy == "dqn":
+                dqn_mask_status = (
+                    active_model.version,
+                    effective_dqn_valid_action_mask_config.mode,
+                    dqn_valid_action_mask_source,
+                )
+                if dqn_mask_status != last_dqn_mask_status:
+                    last_dqn_mask_status = dqn_mask_status
+                    print(
+                        f"DQN valid-action mask {effective_dqn_valid_action_mask_config.label()} "
+                        f"source={dqn_valid_action_mask_source} model_version={active_model.version}",
+                        flush=True,
+                    )
             (
                 magic,
                 version,
@@ -2659,7 +2741,7 @@ def serve(
                     obs_state_key,
                     obs_row,
                     dqn_support_prior_config,
-                    dqn_valid_action_mask_config,
+                    effective_dqn_valid_action_mask_config,
                 )
                 payload = make_action_packet(
                     nonce,
@@ -2922,11 +3004,12 @@ def main() -> None:
     )
     parser.add_argument(
         "--dqn-valid-action-mask",
-        choices=DQN_VALID_ACTION_MASK_MODES,
-        default="off",
+        choices=DQN_VALID_ACTION_MASK_CLI_MODES,
+        default="auto",
         help=(
-            "Optional DQN action eligibility mask. self-routine-v1 uses current self routine/contact fields "
-            "to gate ground, jump-air, and non-movable action candidates"
+            "DQN action eligibility mask. auto reads metadata.dqn_valid_action_mask_config from the active "
+            "actor; off disables masking; self-routine-v1 uses current self routine/contact fields to gate "
+            "ground, jump-air, and non-movable action candidates"
         ),
     )
     parser.add_argument("--verbose", action="store_true", help="Log every valid packet")
@@ -2959,7 +3042,9 @@ def main() -> None:
             option_name="--dqn-support-prior-exempt-actions",
         ),
     )
-    dqn_valid_action_mask_config = parse_dqn_valid_action_mask_config(str(args.dqn_valid_action_mask))
+    dqn_valid_action_mask_auto, dqn_valid_action_mask_config = parse_dqn_valid_action_mask_cli_config(
+        str(args.dqn_valid_action_mask)
+    )
     serve(
         args.host,
         args.port,
@@ -2995,6 +3080,7 @@ def main() -> None:
         args.tabular_min_action_count,
         dqn_support_prior_config,
         dqn_valid_action_mask_config,
+        dqn_valid_action_mask_auto,
     )
 
 

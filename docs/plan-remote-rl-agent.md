@@ -2507,6 +2507,7 @@ Tasks:
 - [x] Record V37b / V38 full-action support-prior training parameters and findings before continuing full action-set experiments
 - [x] Add DQN zero-sample / low-support action regularization so full-action output heads with no replay support cannot become top greedy actions
 - [x] Add a shared DQN valid-action mask for train-time target selection and probe-time inference, starting with self-routine-aware jump-action gating
+- [x] Let `rl_probe_server.py` auto-enable DQN valid-action masks from actor metadata so masked-trained actors do not require a manual probe flag
 - [ ] Add opt-in train-time invalid-action Q penalty so the raw DQN weights learn to suppress currently illegal action heads, while keeping the hard valid-action mask for live safety
 - [ ] After shared valid-action mask validation, split jump-in policy actions into ground jump-start actions and true airborne attack actions with observation-schema support
 - [ ] Review v24 live behavior before promoting it over v23; same-observation compare kept `stand-hk` suppressed but did not reduce the `tatsu-lk` replacement shift
@@ -2603,7 +2604,10 @@ Full-action DQN sparse-action plan:
     action.
   - Validation:
     - `python3 -m py_compile tools/rl_probe_server.py tools/train_dqn_learner.py tools/compare_dqn_models.py`
-    - help output for all three tools shows `--dqn-valid-action-mask {off,self-routine-v1}`.
+    - help output showed the new flag on all three tools; after probe metadata
+      auto-selection, `rl_probe_server.py` shows
+      `--dqn-valid-action-mask {auto,off,self-routine-v1}`, while trainer and
+      compare diagnostics keep `{off,self-routine-v1}`.
     - helper smoke confirmed ground rows allow ground actions and mask
       `jump-*`, jump-air rows allow `jump-*`, and attack/non-movable rows keep
       only movement/guard hold candidates.
@@ -2621,6 +2625,16 @@ Full-action DQN sparse-action plan:
         `guard-crouch 42.5%`.
     - run a live probe only after offline diagnostics show jump-action collapse
       is fixed without introducing guard/fireball collapse.
+  - Probe metadata auto-selection:
+    - `rl_probe_server.py` now defaults `--dqn-valid-action-mask` to `auto`.
+    - `auto` reads `metadata.dqn_valid_action_mask_config` from the active DQN
+      actor manifest and applies the recorded mode when it is enabled.
+    - `--dqn-valid-action-mask off` remains the explicit escape hatch for
+      diagnostics that need raw unmasked inference.
+    - local V40 startup smoke printed
+      `DQN valid-action mask self-routine-v1 source=metadata model_version=40`,
+      so the normal V40 probe command no longer needs to pass
+      `--dqn-valid-action-mask self-routine-v1`.
 
 - Step 2A: train-time invalid-action Q penalty.
   - Goal:
@@ -2655,8 +2669,9 @@ Full-action DQN sparse-action plan:
     - masked inference should remain stable and should not collapse into a new
       single guard/fireball action.
     - even if raw behavior improves, live V40-style probing should continue to
-      pass `--dqn-valid-action-mask self-routine-v1` until a stronger serving
-      default or metadata auto-selection is implemented.
+      use the actor metadata auto-mask or an explicit
+      `--dqn-valid-action-mask self-routine-v1`; reserve
+      `--dqn-valid-action-mask off` for raw diagnostic runs.
 
 - Step 3: post-mask jump-in action taxonomy split.
   - Do this only after the shared valid-action mask proves that

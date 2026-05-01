@@ -859,6 +859,7 @@ class ProjectileBatchConfig:
     requested: bool = False
     min_time_to_self: int = 0
     max_time_to_self: int = 12
+    time_ranges: tuple[tuple[int, int], ...] = ()
     window_decisions: int = 12
     max_self_hp: int = 1
     eligible_sources: frozenset[str] = field(default_factory=lambda: frozenset({"human-demo"}))
@@ -877,6 +878,7 @@ class ProjectileBatchConfig:
             "enabled": self.enabled,
             "min_time_to_self": self.min_time_to_self,
             "max_time_to_self": self.max_time_to_self,
+            "time_ranges": format_time_ranges(self.time_ranges),
             "window_decisions": self.window_decisions,
             "max_self_hp": self.max_self_hp,
             "eligible_sources": sorted(self.eligible_sources),
@@ -941,6 +943,8 @@ class ProjectileExpertMarginConfig:
     equivalent_jump_actions: bool = True
     min_time_to_self: int = 0
     max_time_to_self: int = 32767
+    time_ranges: tuple[tuple[int, int], ...] = ()
+    eligible_sources: frozenset[str] = field(default_factory=lambda: frozenset({"human-demo"}))
     valid_action_mask_mode: str = "action-start-v1"
 
     @property
@@ -961,6 +965,8 @@ class ProjectileExpertMarginConfig:
             "equivalent_jump_actions": self.equivalent_jump_actions,
             "min_time_to_self": self.min_time_to_self,
             "max_time_to_self": self.max_time_to_self,
+            "time_ranges": format_time_ranges(self.time_ranges),
+            "eligible_sources": sorted(self.eligible_sources),
             "valid_action_mask_mode": self.valid_action_mask_mode,
         }
 
@@ -1075,6 +1081,7 @@ class ProjectileDefensiveExpertMarginConfig:
     batch_size: int = 0
     min_time_to_self: int = 0
     max_time_to_self: int = 12
+    time_ranges: tuple[tuple[int, int], ...] = ()
     window_decisions: int = 12
     max_self_hp: int = 1
     all_competitors: bool = False
@@ -1097,6 +1104,7 @@ class ProjectileDefensiveExpertMarginConfig:
             "batch_size": self.batch_size,
             "min_time_to_self": self.min_time_to_self,
             "max_time_to_self": self.max_time_to_self,
+            "time_ranges": format_time_ranges(self.time_ranges),
             "window_decisions": self.window_decisions,
             "max_self_hp": self.max_self_hp,
             "all_competitors": self.all_competitors,
@@ -1138,6 +1146,81 @@ class ProjectileDefensiveExpertMarginStats:
             "competitor_blocker_counts": dict(sorted(self.competitor_blocker_counts.items())),
             "sampled_by_time_bucket": dict(sorted(self.sampled_by_time_bucket.items())),
             "violation_by_time_bucket": dict(sorted(self.violation_by_time_bucket.items())),
+        }
+
+
+@dataclass(frozen=True)
+class ProjectileTimingGroupMarginConfig:
+    requested: bool = False
+    margin: float = 0.08
+    loss_weight: float = 1.0
+    batch_size: int = 0
+    defense_time_ranges: tuple[tuple[int, int], ...] = ()
+    jump_time_ranges: tuple[tuple[int, int], ...] = ()
+    eligible_sources: frozenset[str] = field(default_factory=lambda: frozenset({"remote"}))
+    valid_action_mask_mode: str = "action-start-v1"
+    threat_max_dx: int = 240
+    threat_max_abs_y: int = 96
+
+    @property
+    def enabled(self) -> bool:
+        return self.requested and self.margin > 0.0 and self.loss_weight > 0.0
+
+    def as_shared_mask_config(self) -> rl.DQNValidActionMaskConfig:
+        return rl.parse_dqn_valid_action_mask_config(self.valid_action_mask_mode)
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "requested": self.requested,
+            "enabled": self.enabled,
+            "margin": self.margin,
+            "loss_weight": self.loss_weight,
+            "batch_size": self.batch_size,
+            "defense_time_ranges": format_time_ranges(self.defense_time_ranges),
+            "jump_time_ranges": format_time_ranges(self.jump_time_ranges),
+            "eligible_sources": sorted(self.eligible_sources),
+            "valid_action_mask_mode": self.valid_action_mask_mode,
+            "threat_max_dx": self.threat_max_dx,
+            "threat_max_abs_y": self.threat_max_abs_y,
+            "defensive_actions": sorted(DEFENSIVE_PROJECTILE_ACTIONS),
+            "jump_actions": sorted(JUMP_START_ACTIONS),
+            "defensive_competitor_actions": sorted(PROJECTILE_DEFENSIVE_EXPERT_COMPETITOR_ACTIONS),
+        }
+
+
+@dataclass
+class ProjectileTimingGroupMarginStats:
+    eligible_experiences: int = 0
+    sampled_events: int = 0
+    violation_events: int = 0
+    empty_valid_events: int = 0
+    empty_target_events: int = 0
+    empty_competitor_events: int = 0
+    loss_total: float = 0.0
+    last_loss: float = 0.0
+    avg_loss: float = 0.0
+    sampled_by_target: dict[str, int] = field(default_factory=dict)
+    violation_by_target: dict[str, int] = field(default_factory=dict)
+    sampled_by_time_bucket: dict[str, int] = field(default_factory=dict)
+    violation_by_time_bucket: dict[str, int] = field(default_factory=dict)
+    blocker_counts: dict[str, int] = field(default_factory=dict)
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "eligible_experiences": self.eligible_experiences,
+            "sampled_events": self.sampled_events,
+            "violation_events": self.violation_events,
+            "empty_valid_events": self.empty_valid_events,
+            "empty_target_events": self.empty_target_events,
+            "empty_competitor_events": self.empty_competitor_events,
+            "loss_total": self.loss_total,
+            "last_loss": self.last_loss,
+            "avg_loss": self.avg_loss,
+            "sampled_by_target": dict(sorted(self.sampled_by_target.items())),
+            "violation_by_target": dict(sorted(self.violation_by_target.items())),
+            "sampled_by_time_bucket": dict(sorted(self.sampled_by_time_bucket.items())),
+            "violation_by_time_bucket": dict(sorted(self.violation_by_time_bucket.items())),
+            "blocker_counts": dict(sorted(self.blocker_counts.items())),
         }
 
 
@@ -1463,6 +1546,47 @@ def parse_source_ratios(value: str, flag_name: str) -> dict[str, float]:
     return {source: ratio / total if ratio > 0.0 else 0.0 for source, ratio in ratios.items()}
 
 
+def parse_time_ranges(value: str, flag_name: str) -> tuple[tuple[int, int], ...]:
+    ranges: list[tuple[int, int]] = []
+    if not value.strip():
+        return ()
+    for item in value.split(","):
+        token = item.strip()
+        if not token:
+            continue
+        if "-" in token:
+            raw_start, raw_end = (part.strip() for part in token.split("-", 1))
+        else:
+            raw_start = token
+            raw_end = token
+        try:
+            start = max(0, int(raw_start))
+            end = max(start, int(raw_end))
+        except ValueError as exc:
+            raise SystemExit(f"Invalid {flag_name} time range: {item!r}; expected START-END") from exc
+        ranges.append((start, end))
+    return tuple(ranges)
+
+
+def format_time_ranges(ranges: tuple[tuple[int, int], ...]) -> list[str]:
+    return [f"{start}-{end}" if start != end else str(start) for start, end in ranges]
+
+
+def time_to_self_in_ranges(time_to_self: int, ranges: tuple[tuple[int, int], ...]) -> bool:
+    return any(start <= time_to_self <= end for start, end in ranges)
+
+
+def time_to_self_allowed(
+    time_to_self: int,
+    min_time_to_self: int,
+    max_time_to_self: int,
+    ranges: tuple[tuple[int, int], ...],
+) -> bool:
+    if ranges:
+        return time_to_self_in_ranges(time_to_self, ranges)
+    return min_time_to_self <= time_to_self <= max_time_to_self
+
+
 def replay_source_mix_config_from_args(args: argparse.Namespace) -> ReplaySourceMixConfig:
     return ReplaySourceMixConfig(
         include_sources=parse_source_name_set(str(args.replay_source_include), "--replay-source-include"),
@@ -1689,6 +1813,7 @@ def projectile_batch_config_from_args(args: argparse.Namespace) -> ProjectileBat
         requested=bool(args.projectile_batch_group),
         min_time_to_self=min_time,
         max_time_to_self=max_time,
+        time_ranges=parse_time_ranges(str(args.projectile_batch_time_ranges), "--projectile-batch-time-ranges"),
         window_decisions=max(0, int(args.projectile_batch_window_decisions)),
         max_self_hp=max(0, int(args.projectile_batch_max_self_hp)),
         eligible_sources=parse_source_name_set(str(args.projectile_batch_sources), "--projectile-batch-sources"),
@@ -2206,7 +2331,7 @@ def projectile_expert_margin_eligible(
 ) -> bool:
     if not config.requested:
         return False
-    if source_name != "human-demo":
+    if source_name not in config.eligible_sources:
         return False
     if action_name not in JUMP_START_ACTIONS:
         return False
@@ -2217,7 +2342,12 @@ def projectile_expert_margin_eligible(
     if outcome.late_jump_hit:
         return False
     time_to_self = int_field(row, "obs_projectile_time_to_self")
-    if time_to_self < config.min_time_to_self or time_to_self > config.max_time_to_self:
+    if not time_to_self_allowed(
+        time_to_self,
+        config.min_time_to_self,
+        config.max_time_to_self,
+        config.time_ranges,
+    ):
         return False
     return True
 
@@ -2261,7 +2391,12 @@ def projectile_batch_reason(
     time_to_self = int_field(row, "obs_projectile_time_to_self")
 
     if action_name in DEFENSIVE_PROJECTILE_ACTIONS:
-        if time_to_self < config.min_time_to_self or time_to_self > config.max_time_to_self:
+        if not time_to_self_allowed(
+            time_to_self,
+            config.min_time_to_self,
+            config.max_time_to_self,
+            config.time_ranges,
+        ):
             return ""
         window_end = min(len(episode_rows), row_index + max(0, config.window_decisions) + 1)
         lookahead = episode_rows[row_index:window_end]
@@ -2274,7 +2409,12 @@ def projectile_batch_reason(
         config.include_late_jump_hit
         and action_name in JUMP_START_ACTIONS
         and outcome.late_jump_hit
-        and config.min_time_to_self <= time_to_self <= config.max_time_to_self
+        and time_to_self_allowed(
+            time_to_self,
+            config.min_time_to_self,
+            config.max_time_to_self,
+            config.time_ranges,
+        )
     ):
         return "late-jump-hit"
 
@@ -2307,7 +2447,12 @@ def projectile_defensive_expert_margin_eligible(
     if not outcome.threat:
         return False
     time_to_self = int_field(row, "obs_projectile_time_to_self")
-    if time_to_self < config.min_time_to_self or time_to_self > config.max_time_to_self:
+    if not time_to_self_allowed(
+        time_to_self,
+        config.min_time_to_self,
+        config.max_time_to_self,
+        config.time_ranges,
+    ):
         return False
 
     window_end = min(len(episode_rows), row_index + max(0, config.window_decisions) + 1)
@@ -2979,6 +3124,14 @@ def projectile_expert_margin_config_from_args(args: argparse.Namespace) -> Proje
         equivalent_jump_actions=bool(args.projectile_expert_margin_equivalent_jump_actions),
         min_time_to_self=min_time,
         max_time_to_self=max_time,
+        time_ranges=parse_time_ranges(
+            str(args.projectile_expert_margin_time_ranges),
+            "--projectile-expert-margin-time-ranges",
+        ),
+        eligible_sources=parse_source_name_set(
+            str(args.projectile_expert_margin_sources),
+            "--projectile-expert-margin-sources",
+        ),
         valid_action_mask_mode=mode,
     )
 
@@ -3027,6 +3180,10 @@ def projectile_defensive_expert_margin_config_from_args(
         batch_size=max(0, int(args.projectile_defensive_expert_margin_batch_size)),
         min_time_to_self=min_time,
         max_time_to_self=max_time,
+        time_ranges=parse_time_ranges(
+            str(args.projectile_defensive_expert_margin_time_ranges),
+            "--projectile-defensive-expert-margin-time-ranges",
+        ),
         window_decisions=max(0, int(args.projectile_defensive_expert_margin_window_decisions)),
         max_self_hp=max(0, int(args.projectile_defensive_expert_margin_max_self_hp)),
         all_competitors=bool(args.projectile_defensive_expert_margin_all_competitors),
@@ -3035,6 +3192,38 @@ def projectile_defensive_expert_margin_config_from_args(
             "--projectile-defensive-expert-margin-sources",
         ),
         valid_action_mask_mode=mode,
+    )
+
+
+def projectile_timing_group_margin_config_from_args(
+    args: argparse.Namespace,
+) -> ProjectileTimingGroupMarginConfig:
+    mode = str(args.projectile_timing_group_margin_valid_action_mask)
+    if mode not in rl.DQN_VALID_ACTION_MASK_MODES:
+        raise SystemExit(
+            f"unknown --projectile-timing-group-margin-valid-action-mask {mode!r}; "
+            f"expected one of {','.join(rl.DQN_VALID_ACTION_MASK_MODES)}"
+        )
+    return ProjectileTimingGroupMarginConfig(
+        requested=bool(args.projectile_timing_group_margin_loss),
+        margin=max(0.0, float(args.projectile_timing_group_margin)),
+        loss_weight=max(0.0, float(args.projectile_timing_group_margin_weight)),
+        batch_size=max(0, int(args.projectile_timing_group_margin_batch_size)),
+        defense_time_ranges=parse_time_ranges(
+            str(args.projectile_timing_group_margin_defense_time_ranges),
+            "--projectile-timing-group-margin-defense-time-ranges",
+        ),
+        jump_time_ranges=parse_time_ranges(
+            str(args.projectile_timing_group_margin_jump_time_ranges),
+            "--projectile-timing-group-margin-jump-time-ranges",
+        ),
+        eligible_sources=parse_source_name_set(
+            str(args.projectile_timing_group_margin_sources),
+            "--projectile-timing-group-margin-sources",
+        ),
+        valid_action_mask_mode=mode,
+        threat_max_dx=max(0, int(args.projectile_timing_group_margin_threat_max_dx)),
+        threat_max_abs_y=max(0, int(args.projectile_timing_group_margin_threat_max_abs_y)),
     )
 
 
@@ -3539,6 +3728,99 @@ def apply_projectile_defensive_expert_margin_loss(
     return weighted_loss
 
 
+def projectile_timing_group_target(exp: Experience, config: ProjectileTimingGroupMarginConfig) -> str:
+    if not config.enabled:
+        return ""
+    if exp.source_name not in config.eligible_sources:
+        return ""
+    row = exp.row
+    if int_field(row, "obs_projectile_active") == 0:
+        return ""
+    if int_field(row, "obs_projectile_owner") != PROJECTILE_OWNER_OPPONENT:
+        return ""
+    rel_x = int_field(row, "obs_projectile_rel_x")
+    rel_y = int_field(row, "obs_projectile_rel_y")
+    vel_x = int_field(row, "obs_projectile_vel_x")
+    if rel_x <= 0 or rel_x > config.threat_max_dx or abs(rel_y) > config.threat_max_abs_y or vel_x >= 0:
+        return ""
+    time_to_self = int_field(row, "obs_projectile_time_to_self")
+    if time_to_self_in_ranges(time_to_self, config.defense_time_ranges):
+        return "defense"
+    if time_to_self_in_ranges(time_to_self, config.jump_time_ranges):
+        return "jump"
+    return ""
+
+
+def apply_projectile_timing_group_margin_loss(
+    exp: Experience,
+    values: list[float],
+    actions: tuple[str, ...],
+    output_grad: list[float],
+    config: ProjectileTimingGroupMarginConfig,
+    shared_valid_action_mask_config: rl.DQNValidActionMaskConfig,
+    stats: ProjectileTimingGroupMarginStats,
+) -> float:
+    target_group = projectile_timing_group_target(exp, config)
+    if not target_group:
+        return 0.0
+
+    value_count = min(len(actions), len(values))
+    valid_indices = rl.dqn_valid_action_indices_for_row(
+        exp.row,
+        actions,
+        shared_valid_action_mask_config,
+        value_count,
+    )
+    if not valid_indices:
+        stats.empty_valid_events += 1
+        return 0.0
+
+    if target_group == "defense":
+        target_indices = tuple(index for index in valid_indices if actions[index] in DEFENSIVE_PROJECTILE_ACTIONS)
+        competitor_indices = tuple(
+            index for index in valid_indices if actions[index] in PROJECTILE_DEFENSIVE_EXPERT_COMPETITOR_ACTIONS
+        )
+    else:
+        target_indices = tuple(index for index in valid_indices if actions[index] in JUMP_START_ACTIONS)
+        competitor_indices = tuple(index for index in valid_indices if actions[index] not in JUMP_START_ACTIONS)
+    if not target_indices:
+        stats.empty_target_events += 1
+        return 0.0
+    if not competitor_indices:
+        stats.empty_competitor_events += 1
+        return 0.0
+
+    stats.sampled_events += 1
+    stats.sampled_by_target[target_group] = stats.sampled_by_target.get(target_group, 0) + 1
+    time_bucket = projectile_time_to_self_bucket(exp.row)
+    stats.sampled_by_time_bucket[time_bucket] = stats.sampled_by_time_bucket.get(time_bucket, 0) + 1
+    best_target_index = max(target_indices, key=lambda index: (values[index], actions[index]))
+    best_target_value = float(values[best_target_index])
+    competitor_gaps: list[tuple[int, float]] = []
+    for competitor_index in competitor_indices:
+        gap = float(values[competitor_index]) + config.margin - best_target_value
+        if gap > 0.0:
+            competitor_gaps.append((competitor_index, max(-10.0, min(10.0, gap))))
+    if not competitor_gaps:
+        return 0.0
+
+    competitor_scale = config.loss_weight / max(1, len(competitor_gaps))
+    weighted_loss = 0.0
+    for competitor_index, clipped_gap in competitor_gaps:
+        weighted_loss += competitor_scale * 0.5 * clipped_gap * clipped_gap
+        output_grad[competitor_index] += competitor_scale * clipped_gap
+        output_grad[best_target_index] -= competitor_scale * clipped_gap
+
+    blocker_index, _blocker_gap = max(competitor_gaps, key=lambda item: (item[1], actions[item[0]]))
+    blocker_action = actions[blocker_index]
+    stats.violation_events += 1
+    stats.loss_total += weighted_loss
+    stats.violation_by_target[target_group] = stats.violation_by_target.get(target_group, 0) + 1
+    stats.violation_by_time_bucket[time_bucket] = stats.violation_by_time_bucket.get(time_bucket, 0) + 1
+    stats.blocker_counts[blocker_action] = stats.blocker_counts.get(blocker_action, 0) + 1
+    return weighted_loss
+
+
 def projectile_expert_q_gap_diagnostics(
     layers: list[dict[str, object]],
     experiences: list[Experience],
@@ -3657,6 +3939,7 @@ def train_dqn(
     projectile_expert_margin_config: ProjectileExpertMarginConfig,
     projectile_late_defensive_margin_config: ProjectileLateDefensiveMarginConfig,
     projectile_defensive_expert_margin_config: ProjectileDefensiveExpertMarginConfig,
+    projectile_timing_group_margin_config: ProjectileTimingGroupMarginConfig,
     valid_action_mask_config: DQNValidActionMaskTrainingConfig,
     initial_layers: list[dict[str, object]] | None = None,
 ) -> tuple[
@@ -3666,6 +3949,7 @@ def train_dqn(
     ProjectileExpertMarginStats,
     ProjectileLateDefensiveMarginStats,
     ProjectileDefensiveExpertMarginStats,
+    ProjectileTimingGroupMarginStats,
     DQNValidActionMaskTrainingStats,
 ]:
     rng = random.Random(seed)
@@ -3692,6 +3976,8 @@ def train_dqn(
     avg_projectile_late_defensive_margin_loss = 0.0
     last_projectile_defensive_expert_margin_loss = 0.0
     avg_projectile_defensive_expert_margin_loss = 0.0
+    last_projectile_timing_group_margin_loss = 0.0
+    avg_projectile_timing_group_margin_loss = 0.0
     unsupported_action_indices, unsupported_action_regularization_stats = dqn_unsupported_action_indices(
         actions,
         action_counts,
@@ -3715,10 +4001,19 @@ def train_dqn(
     projectile_defensive_expert_margin_pool = [
         exp for exp in experiences if exp.projectile_defensive_expert_margin_eligible
     ]
+    projectile_timing_group_margin_stats = ProjectileTimingGroupMarginStats(
+        eligible_experiences=sum(
+            1 for exp in experiences if projectile_timing_group_target(exp, projectile_timing_group_margin_config)
+        )
+    )
+    projectile_timing_group_margin_pool = [
+        exp for exp in experiences if projectile_timing_group_target(exp, projectile_timing_group_margin_config)
+    ]
     shared_valid_action_mask_config = valid_action_mask_config.as_shared_config()
     projectile_expert_margin_mask_config = projectile_expert_margin_config.as_shared_mask_config()
     projectile_late_defensive_margin_mask_config = projectile_late_defensive_margin_config.as_shared_mask_config()
     projectile_defensive_expert_margin_mask_config = projectile_defensive_expert_margin_config.as_shared_mask_config()
+    projectile_timing_group_margin_mask_config = projectile_timing_group_margin_config.as_shared_mask_config()
     valid_action_mask_stats = DQNValidActionMaskTrainingStats()
 
     for step in range(1, steps + 1):
@@ -3736,6 +4031,7 @@ def train_dqn(
         projectile_margin_loss = 0.0
         projectile_late_defensive_margin_loss = 0.0
         projectile_defensive_expert_margin_loss = 0.0
+        projectile_timing_group_margin_loss = 0.0
         for exp in batch:
             values, activations, pre_activations = forward(layers, exp.state)
             next_values, _, _ = forward(target_layers, exp.next_state)
@@ -3842,6 +4138,17 @@ def train_dqn(
             )
             projectile_defensive_expert_margin_loss += exp_defensive_expert_margin_loss
             loss += exp_defensive_expert_margin_loss
+            exp_timing_group_margin_loss = apply_projectile_timing_group_margin_loss(
+                exp,
+                values,
+                actions,
+                output_grad,
+                projectile_timing_group_margin_config,
+                projectile_timing_group_margin_mask_config,
+                projectile_timing_group_margin_stats,
+            )
+            projectile_timing_group_margin_loss += exp_timing_group_margin_loss
+            loss += exp_timing_group_margin_loss
             add_backward_grads(layers, grads, activations, pre_activations, output_grad)
         if projectile_expert_margin_config.enabled and projectile_expert_margin_pool:
             for _ in range(max(0, projectile_expert_margin_config.batch_size)):
@@ -3897,6 +4204,24 @@ def train_dqn(
                 loss += exp_defensive_expert_margin_loss
                 if exp_defensive_expert_margin_loss > 0.0:
                     add_backward_grads(layers, grads, activations, pre_activations, output_grad)
+        if projectile_timing_group_margin_config.enabled and projectile_timing_group_margin_pool:
+            for _ in range(max(0, projectile_timing_group_margin_config.batch_size)):
+                exp = rng.choice(projectile_timing_group_margin_pool)
+                values, activations, pre_activations = forward(layers, exp.state)
+                output_grad = [0.0 for _ in values]
+                exp_timing_group_margin_loss = apply_projectile_timing_group_margin_loss(
+                    exp,
+                    values,
+                    actions,
+                    output_grad,
+                    projectile_timing_group_margin_config,
+                    projectile_timing_group_margin_mask_config,
+                    projectile_timing_group_margin_stats,
+                )
+                projectile_timing_group_margin_loss += exp_timing_group_margin_loss
+                loss += exp_timing_group_margin_loss
+                if exp_timing_group_margin_loss > 0.0:
+                    add_backward_grads(layers, grads, activations, pre_activations, output_grad)
         apply_grads(layers, grads, learning_rate, batch_size)
         last_loss = loss / max(1, batch_size)
         avg_loss = last_loss if step == 1 else (0.98 * avg_loss + 0.02 * last_loss)
@@ -3930,6 +4255,15 @@ def train_dqn(
                 + 0.02 * last_projectile_defensive_expert_margin_loss
             )
         )
+        last_projectile_timing_group_margin_loss = projectile_timing_group_margin_loss / max(1, batch_size)
+        avg_projectile_timing_group_margin_loss = (
+            last_projectile_timing_group_margin_loss
+            if step == 1
+            else (
+                0.98 * avg_projectile_timing_group_margin_loss
+                + 0.02 * last_projectile_timing_group_margin_loss
+            )
+        )
         if target_sync_steps > 0 and step % target_sync_steps == 0:
             target_layers = copy.deepcopy(layers)
         if log_interval > 0 and (step == 1 or step % log_interval == 0 or step == steps):
@@ -3938,7 +4272,8 @@ def train_dqn(
                 f"unsupported_reg={last_unsupported_regularization_loss:.6f} "
                 f"projectile_margin={last_projectile_margin_loss:.6f} "
                 f"projectile_late_def_margin={last_projectile_late_defensive_margin_loss:.6f} "
-                f"projectile_def_expert_margin={last_projectile_defensive_expert_margin_loss:.6f}",
+                f"projectile_def_expert_margin={last_projectile_defensive_expert_margin_loss:.6f} "
+                f"projectile_timing_group_margin={last_projectile_timing_group_margin_loss:.6f}",
                 flush=True,
             )
 
@@ -3956,6 +4291,8 @@ def train_dqn(
     projectile_late_defensive_margin_stats.avg_loss = avg_projectile_late_defensive_margin_loss
     projectile_defensive_expert_margin_stats.last_loss = last_projectile_defensive_expert_margin_loss
     projectile_defensive_expert_margin_stats.avg_loss = avg_projectile_defensive_expert_margin_loss
+    projectile_timing_group_margin_stats.last_loss = last_projectile_timing_group_margin_loss
+    projectile_timing_group_margin_stats.avg_loss = avg_projectile_timing_group_margin_loss
     return (
         layers,
         {
@@ -3967,6 +4304,7 @@ def train_dqn(
         projectile_expert_margin_stats,
         projectile_late_defensive_margin_stats,
         projectile_defensive_expert_margin_stats,
+        projectile_timing_group_margin_stats,
         valid_action_mask_stats,
     )
 
@@ -4434,6 +4772,14 @@ def main() -> None:
         help="Maximum obs_projectile_time_to_self for urgent projectile batch rows",
     )
     parser.add_argument(
+        "--projectile-batch-time-ranges",
+        default="",
+        help=(
+            "Optional comma-separated obs_projectile_time_to_self ranges for defensive/late-hit projectile "
+            "batch rows, e.g. 0-22,31-48. Overrides min/max when set."
+        ),
+    )
+    parser.add_argument(
         "--projectile-batch-window-decisions",
         type=int,
         default=12,
@@ -4890,6 +5236,22 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--projectile-expert-margin-time-ranges",
+        default="",
+        help=(
+            "Optional comma-separated obs_projectile_time_to_self ranges for projectile jump expert margin, "
+            "e.g. 23-30. Overrides min/max when set."
+        ),
+    )
+    parser.add_argument(
+        "--projectile-expert-margin-sources",
+        default="human-demo",
+        help=(
+            "Comma-separated execution sources eligible for projectile jump expert margin; "
+            "default keeps the legacy human-demo-only behavior"
+        ),
+    )
+    parser.add_argument(
         "--projectile-expert-margin-valid-action-mask",
         choices=rl.DQN_VALID_ACTION_MASK_MODES,
         default="action-start-v1",
@@ -4994,6 +5356,14 @@ def main() -> None:
         help="Maximum obs_projectile_time_to_self for defensive expert margin rows",
     )
     parser.add_argument(
+        "--projectile-defensive-expert-margin-time-ranges",
+        default="",
+        help=(
+            "Optional comma-separated obs_projectile_time_to_self ranges for defensive expert margin, "
+            "e.g. 0-22,31-48. Overrides min/max when set."
+        ),
+    )
+    parser.add_argument(
         "--projectile-defensive-expert-margin-window-decisions",
         type=int,
         default=12,
@@ -5024,6 +5394,75 @@ def main() -> None:
         choices=rl.DQN_VALID_ACTION_MASK_MODES,
         default="action-start-v1",
         help="Valid-action mask used for defensive expert margin competitors",
+    )
+    parser.add_argument(
+        "--projectile-timing-group-margin-loss",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Add a filtered group margin loss for incoming projectile timing: defense group wins in "
+            "configured defensive timing ranges, jump-start group wins in configured safe-jump timing ranges"
+        ),
+    )
+    parser.add_argument(
+        "--projectile-timing-group-margin",
+        type=float,
+        default=0.08,
+        help="Q margin required between the selected projectile timing group and its competitors",
+    )
+    parser.add_argument(
+        "--projectile-timing-group-margin-weight",
+        type=float,
+        default=1.0,
+        help="Auxiliary loss weight for --projectile-timing-group-margin-loss",
+    )
+    parser.add_argument(
+        "--projectile-timing-group-margin-batch-size",
+        type=int,
+        default=0,
+        help=(
+            "Extra incoming-projectile rows sampled per DQN step for timing group margin-only updates; "
+            "0 keeps loss limited to the normal replay batch"
+        ),
+    )
+    parser.add_argument(
+        "--projectile-timing-group-margin-defense-time-ranges",
+        default="",
+        help=(
+            "Comma-separated obs_projectile_time_to_self ranges where guard/back should rank above "
+            "jump-start and high-risk special competitors, e.g. 0-22,31-48"
+        ),
+    )
+    parser.add_argument(
+        "--projectile-timing-group-margin-jump-time-ranges",
+        default="",
+        help=(
+            "Comma-separated obs_projectile_time_to_self ranges where jump-start actions should rank "
+            "above other valid actions, e.g. 23-30"
+        ),
+    )
+    parser.add_argument(
+        "--projectile-timing-group-margin-sources",
+        default="remote",
+        help="Comma-separated execution sources eligible for projectile timing group margin rows",
+    )
+    parser.add_argument(
+        "--projectile-timing-group-margin-valid-action-mask",
+        choices=rl.DQN_VALID_ACTION_MASK_MODES,
+        default="action-start-v1",
+        help="Valid-action mask used for projectile timing group margin targets and competitors",
+    )
+    parser.add_argument(
+        "--projectile-timing-group-margin-threat-max-dx",
+        type=int,
+        default=240,
+        help="Maximum positive obs_projectile_rel_x for projectile timing group margin rows",
+    )
+    parser.add_argument(
+        "--projectile-timing-group-margin-threat-max-abs-y",
+        type=int,
+        default=96,
+        help="Maximum absolute obs_projectile_rel_y for projectile timing group margin rows",
     )
     parser.add_argument(
         "--engine-outcome-training-mode",
@@ -5211,6 +5650,7 @@ def main() -> None:
     projectile_expert_margin_config = projectile_expert_margin_config_from_args(args)
     projectile_late_defensive_margin_config = projectile_late_defensive_margin_config_from_args(args)
     projectile_defensive_expert_margin_config = projectile_defensive_expert_margin_config_from_args(args)
+    projectile_timing_group_margin_config = projectile_timing_group_margin_config_from_args(args)
     engine_outcome_config = engine_outcome_config_from_args(args)
     conservative_action_penalty_config = conservative_action_penalty_config_from_args(args)
     unsupported_action_regularization_config = dqn_unsupported_action_regularization_config_from_args(args)
@@ -5272,6 +5712,7 @@ def main() -> None:
         projectile_expert_margin_stats,
         projectile_late_defensive_margin_stats,
         projectile_defensive_expert_margin_stats,
+        projectile_timing_group_margin_stats,
         valid_action_mask_stats,
     ) = train_dqn(
         experiences,
@@ -5291,6 +5732,7 @@ def main() -> None:
         projectile_expert_margin_config,
         projectile_late_defensive_margin_config,
         projectile_defensive_expert_margin_config,
+        projectile_timing_group_margin_config,
         valid_action_mask_config,
         init_model.layers if init_model is not None else None,
     )
@@ -5336,6 +5778,8 @@ def main() -> None:
         reward_sources.append("projectile-late-defensive-margin")
     if projectile_defensive_expert_margin_config.enabled:
         reward_sources.append("projectile-defensive-expert-margin")
+    if projectile_timing_group_margin_config.enabled:
+        reward_sources.append("projectile-timing-group-margin")
     if str(args.training_mode_hp_delta_mode) == "damage-only":
         reward_sources.append("training-mode-damage-only-hp")
     reward_source = "+".join(reward_sources)
@@ -5438,6 +5882,8 @@ def main() -> None:
         "projectile_late_defensive_margin_stats": projectile_late_defensive_margin_stats.as_metadata(),
         "projectile_defensive_expert_margin_config": projectile_defensive_expert_margin_config.as_metadata(),
         "projectile_defensive_expert_margin_stats": projectile_defensive_expert_margin_stats.as_metadata(),
+        "projectile_timing_group_margin_config": projectile_timing_group_margin_config.as_metadata(),
+        "projectile_timing_group_margin_stats": projectile_timing_group_margin_stats.as_metadata(),
         "engine_outcome_training_mode": engine_outcome_config.training_mode,
         "engine_outcome_window_decisions": engine_outcome_config.window_decisions,
         "engine_outcome_action_windows": engine_outcome_config.action_windows,
@@ -5518,6 +5964,9 @@ def main() -> None:
         f"projectile_def_expert_margin={projectile_defensive_expert_margin_stats.violation_events}/"
         f"{projectile_defensive_expert_margin_stats.sampled_events} "
         f"projectile_def_expert_margin_loss={projectile_defensive_expert_margin_stats.last_loss:.6f} "
+        f"projectile_timing_group_margin={projectile_timing_group_margin_stats.violation_events}/"
+        f"{projectile_timing_group_margin_stats.sampled_events} "
+        f"projectile_timing_group_margin_loss={projectile_timing_group_margin_stats.last_loss:.6f} "
         f"engine_outcome={engine_outcome_config.training_mode}:{engine_outcome_stats.included_events}/"
         f"{engine_outcome_stats.event_rows} "
         f"engine_outcome_net={engine_outcome_stats.net_adjustment:.1f} "
@@ -5613,6 +6062,7 @@ def main() -> None:
         f"sources:{','.join(sorted(projectile_batch_config.eligible_sources)) or 'none'} "
         f"time_to_self:{projectile_batch_config.min_time_to_self}-"
         f"{projectile_batch_config.max_time_to_self} "
+        f"ranges:{','.join(format_time_ranges(projectile_batch_config.time_ranges)) or 'none'} "
         f"window:{projectile_batch_config.window_decisions} "
         f"max_self_hp:{projectile_batch_config.max_self_hp} "
         f"include_late_jump_hit:{int(projectile_batch_config.include_late_jump_hit)} "
@@ -5774,8 +6224,10 @@ def main() -> None:
         f"require_safe_jump:{int(projectile_expert_margin_config.require_safe_jump)} "
         f"equivalent_jump:{int(projectile_expert_margin_config.equivalent_jump_actions)} "
         f"valid_mask:{projectile_expert_margin_config.valid_action_mask_mode} "
+        f"sources:{','.join(sorted(projectile_expert_margin_config.eligible_sources)) or 'none'} "
         f"time_to_self:{projectile_expert_margin_config.min_time_to_self}-"
         f"{projectile_expert_margin_config.max_time_to_self} "
+        f"ranges:{','.join(format_time_ranges(projectile_expert_margin_config.time_ranges)) or 'none'} "
         f"eligible:{projectile_expert_margin_stats.eligible_experiences} "
         f"sampled:{projectile_expert_margin_stats.sampled_events} "
         f"violations:{projectile_expert_margin_stats.violation_events} "
@@ -5849,6 +6301,7 @@ def main() -> None:
         f"sources:{','.join(sorted(projectile_defensive_expert_margin_config.eligible_sources))} "
         f"time_to_self:{projectile_defensive_expert_margin_config.min_time_to_self}-"
         f"{projectile_defensive_expert_margin_config.max_time_to_self} "
+        f"ranges:{','.join(format_time_ranges(projectile_defensive_expert_margin_config.time_ranges)) or 'none'} "
         f"window:{projectile_defensive_expert_margin_config.window_decisions} "
         f"max_self_hp:{projectile_defensive_expert_margin_config.max_self_hp} "
         f"all_competitors:{int(projectile_defensive_expert_margin_config.all_competitors)} "
@@ -5865,6 +6318,35 @@ def main() -> None:
         f"blockers:{format_counts(projectile_defensive_expert_margin_stats.competitor_blocker_counts, projectile_defensive_expert_margin_stats.violation_events, args.diagnostic_top_n)} "
         f"sampled_t:{format_counts(projectile_defensive_expert_margin_stats.sampled_by_time_bucket, projectile_defensive_expert_margin_stats.sampled_events, args.diagnostic_top_n)} "
         f"violation_t:{format_counts(projectile_defensive_expert_margin_stats.violation_by_time_bucket, projectile_defensive_expert_margin_stats.violation_events, args.diagnostic_top_n)}",
+        flush=True,
+    )
+    print(
+        "DQN diagnostics "
+        f"projectile_timing_group_margin=enabled:{int(projectile_timing_group_margin_config.enabled)} "
+        f"requested:{int(projectile_timing_group_margin_config.requested)} "
+        f"margin:{projectile_timing_group_margin_config.margin:.6f} "
+        f"weight:{projectile_timing_group_margin_config.loss_weight:.6f} "
+        f"batch_size:{projectile_timing_group_margin_config.batch_size} "
+        f"valid_mask:{projectile_timing_group_margin_config.valid_action_mask_mode} "
+        f"sources:{','.join(sorted(projectile_timing_group_margin_config.eligible_sources)) or 'none'} "
+        f"def_t:{','.join(format_time_ranges(projectile_timing_group_margin_config.defense_time_ranges)) or 'none'} "
+        f"jump_t:{','.join(format_time_ranges(projectile_timing_group_margin_config.jump_time_ranges)) or 'none'} "
+        f"threat_dx<={projectile_timing_group_margin_config.threat_max_dx} "
+        f"threat_abs_y<={projectile_timing_group_margin_config.threat_max_abs_y} "
+        f"eligible:{projectile_timing_group_margin_stats.eligible_experiences} "
+        f"sampled:{projectile_timing_group_margin_stats.sampled_events} "
+        f"violations:{projectile_timing_group_margin_stats.violation_events} "
+        f"empty_valid:{projectile_timing_group_margin_stats.empty_valid_events} "
+        f"empty_target:{projectile_timing_group_margin_stats.empty_target_events} "
+        f"empty_competitor:{projectile_timing_group_margin_stats.empty_competitor_events} "
+        f"loss:{projectile_timing_group_margin_stats.loss_total:.6f} "
+        f"last:{projectile_timing_group_margin_stats.last_loss:.6f} "
+        f"avg:{projectile_timing_group_margin_stats.avg_loss:.6f} "
+        f"sampled_target:{format_counts(projectile_timing_group_margin_stats.sampled_by_target, projectile_timing_group_margin_stats.sampled_events, args.diagnostic_top_n)} "
+        f"violation_target:{format_counts(projectile_timing_group_margin_stats.violation_by_target, projectile_timing_group_margin_stats.violation_events, args.diagnostic_top_n)} "
+        f"blockers:{format_counts(projectile_timing_group_margin_stats.blocker_counts, projectile_timing_group_margin_stats.violation_events, args.diagnostic_top_n)} "
+        f"sampled_t:{format_counts(projectile_timing_group_margin_stats.sampled_by_time_bucket, projectile_timing_group_margin_stats.sampled_events, args.diagnostic_top_n)} "
+        f"violation_t:{format_counts(projectile_timing_group_margin_stats.violation_by_time_bucket, projectile_timing_group_margin_stats.violation_events, args.diagnostic_top_n)}",
         flush=True,
     )
     print(

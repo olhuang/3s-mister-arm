@@ -3513,6 +3513,54 @@ Implementation notes:
   - examples: walk-forward-then-attack, crouch-then-attack, short retreat-then-attack
 - do not promote all attack-outcome labels to learner-safe status yet; use the move-family pass set as evidence that the control path is stable enough to continue into prefix-based validation
 
+### Milestone 6 V62 Projectile Timing Update
+
+V62 adds a filtered projectile timing group margin objective to the DQN trainer.
+This is the first trainer-side attempt to internalize the V61c policy-time
+projectile timing rule:
+
+- defense target ranges: `time_to_self 0-22` and `31-48`.
+- safe-jump target range: `time_to_self 23-30`.
+- defense target group: `back`, `guard-stand`, `guard-crouch`.
+- jump target group: `jump-forward-start`, `jump-neutral-start`,
+  `jump-back-start`.
+
+Implementation status:
+
+- [x] Add timing-range selectors for projectile batch and expert-margin rows.
+- [x] Add `projectile_timing_group_margin` train-time objective.
+- [x] Train and analyze V62 candidates using V61b/V61c live probe logs.
+- [ ] Live-probe the best V62 candidate with a reduced policy-time prior.
+
+Current candidate decision:
+
+- best trained V62 candidate:
+  `model/dqn-projectile-schema-v5-full-actions-v62-group-margin-candidate`
+- rejected overshoot:
+  `model/dqn-projectile-schema-v5-full-actions-v62-group-margin-strong-candidate`
+- conclusion:
+  V62 standalone improves close and early-projectile buckets but is not yet
+  fully promotable without a small policy-time prior.
+
+Key analysis:
+
+- grounded live incoming projectile rows improved versus V60:
+  - `0-6` jump rate: `41.4% -> 20.7%`.
+  - `7-12` jump rate: `71.4% -> 35.2%`.
+  - `31-36` jump rate: `90.6% -> 69.4%`.
+  - `37-48` jump rate: `91.3% -> 67.4%`.
+- safe-jump preservation for the best candidate stayed acceptable:
+  human-demo safe-jump top-1 `495/504`.
+- the strong candidate overfit defense and broke safe-jump:
+  human-demo safe-jump top-1 `93/504`.
+
+Next probe recommendation:
+
+- use V62 group-margin candidate.
+- keep `--dqn-projectile-timing-prior` enabled, but reduce jump penalties to
+  around `0.02-0.03` for `0-22` and `31-48`.
+- leave `23-30` unpenalized so safe jump remains available.
+
 ### Milestone 6 Move-Family Validation Table
 
 Use this table to keep early attack-validation passes stable and comparable.

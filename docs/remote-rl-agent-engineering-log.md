@@ -9424,3 +9424,67 @@ Conclusion:
   - preserve jump for clean `23-30`.
   - avoid using all far `guard` rows blindly, because far guard often still
     takes chip or delayed damage.
+
+## 2026-05-01: V62 Projectile Timing Group Margin Retrain
+
+Milestone:
+- Milestone 6: higher-control-rate policy and projectile curriculum.
+
+Code:
+- extended `tools/train_dqn_learner.py` with reusable projectile timing
+  ranges:
+  - `--projectile-batch-time-ranges`
+  - `--projectile-expert-margin-time-ranges`
+  - `--projectile-expert-margin-sources`
+  - `--projectile-defensive-expert-margin-time-ranges`
+- added `--projectile-timing-group-margin-loss`, a filtered group margin
+  objective for incoming projectile rows:
+  - defense group target: `back`, `guard-stand`, `guard-crouch`.
+  - jump group target: `jump-forward-start`, `jump-neutral-start`,
+    `jump-back-start`.
+  - V62 recipe used defense ranges `0-22,31-48` and jump range `23-30`.
+
+Validation:
+- `python3 -m py_compile tools/train_dqn_learner.py`
+- `python3 tools/train_dqn_learner.py --help`
+- smoke train:
+  - `/tmp/rl-v62-group-margin-smoke`
+- full trains:
+  - `model/dqn-projectile-schema-v5-full-actions-v62-timing-window-retrain-candidate`
+  - `model/dqn-projectile-schema-v5-full-actions-v62-group-margin-candidate`
+  - `model/dqn-projectile-schema-v5-full-actions-v62-group-margin-strong-candidate`
+
+Findings:
+- the first V62 filtered retrain without the new group objective did not
+  materially change V60 top-1 behavior.
+- `v62-group-margin-candidate` did move the learned policy in the intended
+  direction without a severe global back-bias regression:
+  - training greedy distribution: `forward 43.9%`, `back 34.7%`,
+    `jump-neutral-start 10.9%`, `guard-stand 6.5%`.
+  - human-demo safe-jump top-1 stayed healthy: `495/504`.
+- grounded V61b/V61c live incoming-projectile rows improved versus V60:
+  - `0-6` jump rate: `41.4% -> 20.7%`; defense: `40.2% -> 72.4%`.
+  - `7-12` jump rate: `71.4% -> 35.2%`; defense: `14.8% -> 54.5%`.
+  - `31-36` jump rate: `90.6% -> 69.4%`; defense: `5.9% -> 30.6%`.
+  - `37-48` jump rate: `91.3% -> 67.4%`; defense: `1.5% -> 32.6%`.
+- `v62-group-margin-strong-candidate` overshot:
+  - training greedy distribution shifted to `guard-stand 18.6%`.
+  - safe-jump top-1 collapsed to `93/504`, with `guard-stand` blocking most
+    clean `23-30` jump rows.
+  - do not promote the strong candidate.
+- applying a small policy-time jump penalty on top of
+  `v62-group-margin-candidate` should be enough to finish the live behavior:
+  - synthetic grounded analysis with a `0.02` jump penalty in `0-22,31-48`
+    left `23-30` unchanged while reducing `31-36` jump to `0%` and
+    `37-48` jump to `11.4%`.
+  - a `0.03` penalty made `0-22` and `31-48` mostly defensive while still
+    leaving `23-30` unchanged.
+
+Conclusion:
+- V62 successfully added the missing trainer infrastructure and partially
+  internalized V61c timing behavior.
+- V62 standalone is not fully promotable yet because `13-22` and `31-48`
+  still jump too often.
+- recommended next live probe: use `v62-group-margin-candidate` with a much
+  lighter policy-time prior than V61c, starting around `0.02-0.03` for
+  `0-22` and `31-48`, with no penalty for `23-30`.

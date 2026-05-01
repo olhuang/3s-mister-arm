@@ -715,3 +715,122 @@ Live incremental retrain readiness:
 - old-demo-only actor: not ready for promotion.
 - next step: collect targeted human demo, then retrain with
   `projectile-response-v5` and compare again before live probe.
+
+## Auto-Retrain Replay Plan Fix
+
+Date: 2026-05-01
+
+Status:
+- design plan only.
+- needed before relying on human-demo-heavy live incremental retrain.
+
+### Problem
+
+`tools/rl_auto_retrain.py` currently resolves a single row-source ratio string
+and passes it to `tools/train_dqn_learner.py`.
+
+When no explicit ratio is configured, it falls back to:
+- `cpu-demo=0.50,human-demo=0.30,remote=0.20`
+
+This is fragile for targeted human demo retrain:
+- a human-demo incremental chunk may not contain `remote`.
+- a model/base recipe may not contain `cpu-demo`.
+- `train_dqn_learner.py --replay-source-ratios` intentionally errors if a
+  requested source has no rows.
+
+Result:
+- incremental retrain can fail even though the input log is valid.
+- targeted projectile human demo can also be diluted by older human-demo rows
+  because current ratios operate only on row `execution_source`, not on log
+  role.
+
+### Better Model
+
+Separate two concepts:
+
+1. Log-level replay role:
+- old base logs.
+- live incremental chunk.
+- targeted human-demo log.
+- filtered projectile-demo boost log.
+
+2. Row-level execution source:
+- `cpu-demo`
+- `human-demo`
+- `remote`
+- etc.
+
+The auto-retrain path should be able to say:
+- keep enough base replay to avoid forgetting general behavior.
+- include the new live/human-demo chunk.
+- boost a filtered projectile human-demo log.
+- only then apply source balancing among the sources that actually exist.
+
+### Implementation Plan
+
+Step 1: fix missing-source crashes.
+- add an `auto-available` replay source ratio mode in `rl_auto_retrain.py`.
+- default auto-retrain ratio should become `auto-available`, not the fixed
+  three-source ratio.
+- before building the train command, scan `base_logs + chunk_log` for available
+  execution sources.
+- start from preferred ratios:
+  - `cpu-demo=0.50`
+  - `human-demo=0.30`
+  - `remote=0.20`
+- drop sources that are absent.
+- renormalize the remaining preferred ratios.
+- if none of the preferred sources are present, leave source ratios empty and
+  let the trainer use raw rows.
+
+Examples:
+- only `human-demo`: use `human-demo=1.0`.
+- `remote + human-demo`: use `remote=0.40,human-demo=0.60` if based on the
+  preferred `0.20/0.30` weights.
+- all three: keep `cpu-demo=0.50,human-demo=0.30,remote=0.20`.
+
+Step 2: add log-level boost inputs.
+- add repeatable `--extra-base-log PATH` to `rl_auto_retrain.py`.
+- add optional `--extra-base-log-repeat N` or `--boost-log PATH=N`.
+- append the repeated paths after normal base logs and before the chunk.
+- write these boost logs into model metadata under replay recipe/auto retrain.
+
+Short-term usage:
+- full old base log once.
+- filtered projectile human-demo log 2-4 times.
+- live/human-demo chunk once.
+
+Step 3: preserve metadata.
+- store resolved source ratios, raw requested mode, base logs, extra/boost logs,
+  chunk log, and live source log in `metadata.auto_retrain`.
+- also write replay recipe fields so future dry-runs can reproduce the same
+  replay plan.
+
+Step 4: add dry-run diagnostics.
+- dry-run should print:
+  - detected sources by log.
+  - resolved auto-available ratio.
+  - final train command.
+  - base logs, boost logs, chunk log.
+
+### Acceptance Criteria
+
+- auto retrain with a human-demo-only source chunk does not fail because
+  `remote` or `cpu-demo` are absent.
+- auto retrain with remote-only chunks still works.
+- auto retrain with mixed remote/human-demo chunks resolves ratios only for
+  available sources.
+- targeted filtered projectile demo can be boosted without replacing the
+  general base replay.
+- model metadata records the resolved replay plan.
+
+### Interim Workaround
+
+Until this is implemented, pass an explicit ratio matching available sources:
+- human demo only:
+  - `--replay-source-ratios human-demo=1`
+- remote + human demo:
+  - `--replay-source-ratios remote=0.5,human-demo=0.5`
+
+Do not use the current fixed default for targeted human-demo incremental
+retrain.

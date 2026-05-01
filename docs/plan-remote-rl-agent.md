@@ -2447,6 +2447,7 @@ Tasks:
 - [x] Add an auto-retrain preset for V54/V55 so the same late defensive margin recipe can be used for live incremental retrain
 - [x] Train and compare V54 late defensive margin candidates against V52/V53 before live probe or live incremental retrain; result: trainer/preset ready, current old-demo-only V54 candidates are not promotable
 - [ ] Collect targeted human-demo projectile defense rows for V55/live incremental retrain, especially `time_to_self <= 12` guard/back success examples
+- [ ] Fix `rl_auto_retrain.py` replay planning for human-demo incremental retrain: add auto-available source ratios, log-level boost inputs, and replay-plan metadata
 - [ ] Review walk-forward/back macro actions after spacing-shaping A/B results
 - [ ] Review finer distance buckets after spacing-shaping sample-volume checks
 - [ ] Collect targeted corner-escape demo data before treating corner anti-turtle shaping as solved

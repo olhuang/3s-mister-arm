@@ -2,6 +2,50 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-01: Plan Auto-Retrain Replay Fix For Human Demo Mix
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / full action-set DQN experiments
+
+Files changed:
+- `docs/agent-memory/remote-rl-v52-projectile-margin.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Problem:
+- `tools/rl_auto_retrain.py` falls back to the fixed source ratio
+  `cpu-demo=0.50,human-demo=0.30,remote=0.20`.
+- `tools/train_dqn_learner.py --replay-source-ratios` errors when a requested
+  source has no rows.
+- human-demo incremental chunks or targeted projectile demo logs may therefore
+  fail even when the log is valid.
+- source ratios also operate only on row `execution_source`, so a targeted new
+  human-demo log can be diluted by older human-demo rows.
+
+Planned fix:
+- add `auto-available` source-ratio resolution in `rl_auto_retrain.py`.
+- make auto retrain default to `auto-available` instead of the fixed
+  three-source ratio.
+- scan `base_logs + chunk_log` for available execution sources before building
+  the trainer command.
+- drop absent preferred sources and renormalize the rest.
+- add log-level boost inputs such as repeatable `--extra-base-log` or
+  `--boost-log PATH=N` so filtered projectile demo logs can be upweighted
+  without removing general replay.
+- record requested/resolved ratios, boost logs, and final replay plan in model
+  metadata.
+- improve dry-run diagnostics to show detected sources and resolved replay
+  plan.
+
+Interim workaround:
+- for human-demo-only incremental retrain, pass
+  `--replay-source-ratios human-demo=1`.
+- for remote + human-demo, pass a ratio containing only those present sources.
+
+Status:
+- documented as the next code fix before relying on human-demo-heavy live
+  incremental retrain.
+
 ## 2026-05-01: Implement V54 Late Defensive Margin For Live Retrain Readiness
 
 Milestone:

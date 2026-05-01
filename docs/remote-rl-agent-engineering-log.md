@@ -9334,3 +9334,44 @@ Next:
 - run a live V61 probe with V60 weights plus the prior enabled.
 - collect on-policy close projectile `guard`/`back` success rows before doing
   another incremental retrain.
+
+## 2026-05-01: V61 Live Probe Analysis And V61b Timing Window
+
+Milestone:
+- Milestone 6: higher-control-rate policy and projectile curriculum.
+
+Input:
+- `logs/rl-transitions-v61-prior-live-probe.ndjson`
+- V60 weights with `--dqn-projectile-timing-prior`.
+
+Findings:
+- rows: `6,224`.
+- incoming opponent projectile rows within the usual threat gate: `1,855`.
+- grounded `time_to_self <= 12` rows where the prior could intervene: only `66`.
+- `0-6` prior-eligible rows already selected guard/crouch and had no immediate
+  damage in the sampled rows.
+- `7-12` still selected `jump-neutral-start` in `10` rows; half of those jump
+  starts took damage.
+- V60 raw Q gaps in `7-12` often exceeded the original `0.03` penalty:
+  - p50 jump-over-defense gap: about `0.0289`.
+  - p90: about `0.0496`.
+  - max: about `0.0845`.
+- The largest live failure mode was not close jump only; it was too-early far
+  jump timing:
+  - `19-24` jump-neutral starts: `0/62` damaged.
+  - `25-30`: `13/81` damaged.
+  - `31-36`: `64/82` damaged.
+  - `37-48`: `84/84` damaged.
+
+Code:
+- extended `tools/rl_probe_server.py` projectile timing prior with an optional
+  too-early far timing bucket:
+  - `--dqn-projectile-prior-early-jump-penalty`
+  - `--dqn-projectile-prior-early-min-time-to-self`
+  - `--dqn-projectile-prior-early-max-time-to-self`
+
+Conclusion:
+- the safe live jump window in this probe is closer to `time_to_self 19-30`,
+  not all `13+` rows.
+- V61b should use stronger close/borderline penalties and an optional
+  too-early penalty for `31-48`, while leaving `19-30` unpenalized.

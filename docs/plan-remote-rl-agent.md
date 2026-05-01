@@ -2455,7 +2455,9 @@ Tasks:
 - [x] Train and analyze V57/V58 defensive expert candidates; result: V57 moved defensive Q closer but leaked into specials, V58 preserved safe-jump but still did not make `guard`/`back` top-1 on urgent rows
 - [x] Add projectile-aware batch sampling plus a clean defensive-row selector so urgent projectile guard/back examples appear reliably in every training batch; V59/V60 result: Q gaps improve but top-1 still stays jump
 - [x] Add an opt-in V61 policy-time projectile timing prior for `time_to_self <= 12`: soft-penalize jump-start Q scores for close incoming opponent projectiles, skip airborne/jump-phase rows, and keep the default server behavior unchanged unless the CLI flag is enabled
-- [ ] V61 live probe: use V60 weights plus the projectile timing prior to collect on-policy close projectile guard/back success rows, then analyze bucket action distribution, `13+` safe-jump preservation, non-projectile behavior, and HP outcome before retraining
+- [x] Analyze the first V61 live probe; result: the prior helped close rows, but `7-12` penalty was too weak and the largest jump failures came from too-early `31-48` jump timing
+- [x] Add V61b timing-window prior controls so jump can be penalized both when too-late/close and when too-early/far, while leaving the live-safe `19-30` window unpenalized
+- [ ] V61b live probe: use V60 weights plus timing-window prior controls, then re-check `7-12`, `19-30`, `31-48`, non-projectile behavior, and HP outcome before retraining
 - [ ] V62 direction: if V61 live data confirms guard/back is correct, retrain with the new on-policy defensive rows and consider a filtered group BC/classification objective only after enough clean data exists
 - [ ] Fix `rl_auto_retrain.py` replay planning for human-demo incremental retrain: add auto-available source ratios, log-level boost inputs, and replay-plan metadata
 - [ ] Review walk-forward/back macro actions after spacing-shaping A/B results

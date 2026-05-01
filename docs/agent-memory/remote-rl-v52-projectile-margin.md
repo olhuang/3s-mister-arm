@@ -1218,3 +1218,40 @@ Probe target:
 Command note:
 - `--model-version` is an integer action-packet stamp. Use `--model-version 61`;
   keep descriptive labels such as `v61-prior` in paths.
+
+### V61 Live Finding And V61b Adjustment
+
+First V61 live probe:
+- file: `logs/rl-transitions-v61-prior-live-probe.ndjson`
+- rows: `6,224`
+- incoming opponent projectile rows: `1,855`
+- grounded `time_to_self <= 12` rows where the prior could intervene: `66`
+
+Findings:
+- `0-6` prior-eligible rows were already mostly guard/crouch and did not show
+  the main failure.
+- `7-12` still selected `jump-neutral-start` in `10` rows; `5/10` took damage.
+- V60 raw Q gap in `7-12` was often larger than the original `0.03` penalty:
+  p90 was about `0.0496`, max about `0.0845`.
+- jump-neutral live damage by timing bucket showed a timing-window problem:
+  - `7-12`: `5/10` damaged
+  - `13-18`: `14/40` damaged
+  - `19-24`: `0/62` damaged
+  - `25-30`: `13/81` damaged
+  - `31-36`: `64/82` damaged
+  - `37-48`: `84/84` damaged
+
+Conclusion:
+- the useful jump timing window in this probe is approximately `19-30`.
+- `31-48` is not "safe far jump"; it is often too-early jump, followed by
+  landing into the projectile.
+- V61b should penalize jump outside the live-safe timing window:
+  - too late / close: `0-12` stronger than V61
+  - transition-late: `13-18` moderate penalty
+  - safe window: `19-30` no penalty
+  - too early / far: `31-48` moderate penalty
+
+V61b server support:
+- `--dqn-projectile-prior-early-jump-penalty`
+- `--dqn-projectile-prior-early-min-time-to-self`
+- `--dqn-projectile-prior-early-max-time-to-self`

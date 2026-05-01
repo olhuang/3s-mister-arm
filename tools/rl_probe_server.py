@@ -425,17 +425,29 @@ class DQNProjectileTimingPriorConfig:
     borderline_max_time_to_self: int = 12
     urgent_jump_penalty: float = 0.05
     borderline_jump_penalty: float = 0.03
+    early_min_time_to_self: int = 31
+    early_max_time_to_self: int = 48
+    early_jump_penalty: float = 0.0
     threat_max_dx: int = 240
     threat_max_abs_y: int = 96
 
     def label(self) -> str:
         if not self.enabled:
             return "off"
+        penalties = [
+            f"{self.min_time_to_self}-{self.urgent_max_time_to_self}={self.urgent_jump_penalty:.3f}",
+            (
+                f"{self.urgent_max_time_to_self + 1}-{self.borderline_max_time_to_self}"
+                f"={self.borderline_jump_penalty:.3f}"
+            ),
+        ]
+        if self.early_jump_penalty > 0.0:
+            penalties.append(
+                f"{self.early_min_time_to_self}-{self.early_max_time_to_self}"
+                f"={self.early_jump_penalty:.3f}"
+            )
         return (
-            f"jump_penalty:{self.min_time_to_self}-{self.urgent_max_time_to_self}"
-            f"={self.urgent_jump_penalty:.3f},"
-            f"{self.urgent_max_time_to_self + 1}-{self.borderline_max_time_to_self}"
-            f"={self.borderline_jump_penalty:.3f}"
+            f"jump_penalty:{','.join(penalties)}"
             f"/dx<={self.threat_max_dx}/abs_y<={self.threat_max_abs_y}"
         )
 
@@ -1225,13 +1237,19 @@ def dqn_projectile_timing_prior_jump_penalty(
         or rel_x > config.threat_max_dx
         or abs(rel_y) > config.threat_max_abs_y
         or vel_x >= 0
-        or time_to_self < config.min_time_to_self
-        or time_to_self > config.borderline_max_time_to_self
     ):
         return 0.0
-    if time_to_self <= config.urgent_max_time_to_self:
+
+    if config.min_time_to_self <= time_to_self <= config.urgent_max_time_to_self:
         return max(0.0, config.urgent_jump_penalty)
-    return max(0.0, config.borderline_jump_penalty)
+    if time_to_self <= config.borderline_max_time_to_self:
+        return max(0.0, config.borderline_jump_penalty)
+    if (
+        config.early_jump_penalty > 0.0
+        and config.early_min_time_to_self <= time_to_self <= config.early_max_time_to_self
+    ):
+        return max(0.0, config.early_jump_penalty)
+    return 0.0
 
 
 def dqn_projectile_timing_prior_penalty(
@@ -3295,6 +3313,24 @@ def main() -> None:
         help="Maximum obs_projectile_time_to_self for the borderline projectile prior bucket",
     )
     parser.add_argument(
+        "--dqn-projectile-prior-early-jump-penalty",
+        type=float,
+        default=0.0,
+        help="Optional jump-start Q penalty for too-early far projectile timing",
+    )
+    parser.add_argument(
+        "--dqn-projectile-prior-early-min-time-to-self",
+        type=int,
+        default=31,
+        help="Minimum obs_projectile_time_to_self for the optional too-early projectile prior bucket",
+    )
+    parser.add_argument(
+        "--dqn-projectile-prior-early-max-time-to-self",
+        type=int,
+        default=48,
+        help="Maximum obs_projectile_time_to_self for the optional too-early projectile prior bucket",
+    )
+    parser.add_argument(
         "--dqn-projectile-prior-threat-max-dx",
         type=int,
         default=240,
@@ -3358,6 +3394,14 @@ def main() -> None:
         projectile_prior_urgent_max_time,
         int(args.dqn_projectile_prior_borderline_max_time_to_self),
     )
+    projectile_prior_early_min_time = max(
+        projectile_prior_borderline_max_time + 1,
+        int(args.dqn_projectile_prior_early_min_time_to_self),
+    )
+    projectile_prior_early_max_time = max(
+        projectile_prior_early_min_time,
+        int(args.dqn_projectile_prior_early_max_time_to_self),
+    )
     dqn_projectile_timing_prior_config = DQNProjectileTimingPriorConfig(
         enabled=bool(args.dqn_projectile_timing_prior),
         min_time_to_self=projectile_prior_min_time,
@@ -3365,6 +3409,9 @@ def main() -> None:
         borderline_max_time_to_self=projectile_prior_borderline_max_time,
         urgent_jump_penalty=max(0.0, float(args.dqn_projectile_prior_urgent_jump_penalty)),
         borderline_jump_penalty=max(0.0, float(args.dqn_projectile_prior_borderline_jump_penalty)),
+        early_min_time_to_self=projectile_prior_early_min_time,
+        early_max_time_to_self=projectile_prior_early_max_time,
+        early_jump_penalty=max(0.0, float(args.dqn_projectile_prior_early_jump_penalty)),
         threat_max_dx=max(0, int(args.dqn_projectile_prior_threat_max_dx)),
         threat_max_abs_y=max(0, int(args.dqn_projectile_prior_threat_max_abs_y)),
     )

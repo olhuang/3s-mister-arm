@@ -2693,9 +2693,41 @@ Full-action DQN sparse-action plan:
       instead of relying only on raw routine ids:
       - `obs_self_airborne`
       - `obs_self_jump_phase` or compact equivalent
-      - `obs_self_can_start_jump`
-      - `obs_self_can_air_attack`
+      - `obs_self_ground_action_start_allowed`
+      - `obs_self_jump_start_allowed`
+      - `obs_self_air_attack_allowed`
       - optional opponent counterparts for anti-air / jump-in curriculum.
+    - do not add `obs_self_action_start_allowed` as a separate schema field in
+      the first version, because it would duplicate the family-specific
+      allowed flags. Instead expose a shared helper such as:
+      `self_action_start_allowed(row) =
+      obs_self_ground_action_start_allowed || obs_self_jump_start_allowed ||
+      obs_self_air_attack_allowed || future_action_family_allowed`.
+    - first-version field semantics:
+      - `obs_self_ground_action_start_allowed`: self is grounded, movable, not
+        currently starting/active/recovering from an attack, and not in
+        hitstun/blockstun/contact/damage/caught state; this gates ground
+        normals, specials, throw, movement/guard starts, and other ground
+        action-start families.
+      - `obs_self_jump_start_allowed`: self can start a jump. For the first
+        implementation this may equal `obs_self_ground_action_start_allowed`,
+        but keep it separate so future exceptions can allow ground action while
+        blocking jump, or vice versa.
+      - `obs_self_air_attack_allowed`: self is airborne in an ordinary jump-air
+        phase and can start an airborne button press; this gates `air-*`.
+      - `obs_self_airborne` / `obs_self_jump_phase`: descriptive state fields
+        used for diagnostics, training features, and eligibility debugging.
+    - expected helper/mask semantics:
+      - if `self_action_start_allowed(row)` is false, do not allow new
+        attack/jump action starts; fall back to hold / movement / guard
+        behavior.
+      - if `obs_self_ground_action_start_allowed` is true, allow ground action
+        families but not `air-*`.
+      - if `obs_self_jump_start_allowed` is true, allow
+        `jump-forward-start`, `jump-neutral-start`, and `jump-back-start`.
+      - if `obs_self_air_attack_allowed` is true, allow `air-lp`, `air-mp`,
+        `air-hp`, `air-lk`, `air-mk`, and `air-hk`, but not ground actions or
+        `jump-*-start`.
     - update C-side OBS payload, transition rows, Python OBS parsing,
       `DQN_FEATURE_NAMES`, model metadata, analyzer diagnostics, and probe
       inference together so train-time and live-time action eligibility use

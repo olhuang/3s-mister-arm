@@ -2,6 +2,51 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-01: Refine Jump Root-Fix Action-Start Schema
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / full action-set DQN experiments
+
+Files changed:
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- refine the Step 3 action taxonomy / schema plan so the observation schema
+  does not carry a redundant global `obs_self_action_start_allowed` field.
+- keep the generic "can start any new high-level action" gate as a derived
+  helper while recording family-specific action-start flags in the schema.
+
+Plan notes:
+- Step 3 schema fields should include:
+  - `obs_self_airborne`
+  - `obs_self_jump_phase`
+  - `obs_self_ground_action_start_allowed`
+  - `obs_self_jump_start_allowed`
+  - `obs_self_air_attack_allowed`
+- do not add `obs_self_action_start_allowed` as a first-version OBS field.
+  Instead derive it in shared C/Python eligibility helpers as:
+  `ground_action_start_allowed || jump_start_allowed || air_attack_allowed ||
+  future_action_family_allowed`.
+- first-version semantics:
+  - `obs_self_ground_action_start_allowed`: self is grounded and can start a
+    ground action family; this should be false during attack startup/active/
+    recovery, hitstun, blockstun, contact/damage/caught, and similar lockout
+    states.
+  - `obs_self_jump_start_allowed`: self can start a jump. It may initially
+    equal `obs_self_ground_action_start_allowed`, but stays separate to support
+    future exceptions.
+  - `obs_self_air_attack_allowed`: self is in an ordinary airborne jump phase
+    and can start an air button action.
+- valid-action logic after the split:
+  - derived `self_action_start_allowed(row) == false` means no new attack/jump
+    action start; use hold / movement / guard fallback.
+  - ground allowed gates ground actions.
+  - jump-start allowed gates `jump-forward-start`, `jump-neutral-start`, and
+    `jump-back-start`.
+  - air-attack allowed gates `air-lp`, `air-mp`, `air-hp`, `air-lk`, `air-mk`,
+    and `air-hk`.
+
 ## 2026-05-01: Reorder Jump Root-Fix Before Raw DQN Penalty
 
 Milestone:
@@ -28,8 +73,9 @@ Plan change:
   step:
   - `obs_self_airborne`
   - `obs_self_jump_phase`
-  - `obs_self_can_start_jump`
-  - `obs_self_can_air_attack`
+  - `obs_self_ground_action_start_allowed`
+  - `obs_self_jump_start_allowed`
+  - `obs_self_air_attack_allowed`
   - optional opponent counterparts for anti-air / jump-in curriculum.
 - move the train-time invalid-action Q penalty after that split, so it learns
   clean state-conditioned legality:
@@ -316,9 +362,12 @@ Observation-schema follow-up:
 - add schema-versioned support before relying on the split in train/live DQN:
   - `obs_self_airborne`
   - `obs_self_jump_phase` or a compact equivalent
-  - `obs_self_can_start_jump`
-  - `obs_self_can_air_attack`
+  - `obs_self_ground_action_start_allowed`
+  - `obs_self_jump_start_allowed`
+  - `obs_self_air_attack_allowed`
   - optional opponent counterparts for anti-air and jump-in curriculum.
+- keep the generic action-start gate as a derived helper instead of a separate
+  first-version schema field.
 - update C OBS payloads, transition rows, Python OBS parsing,
   `DQN_FEATURE_NAMES`, metadata, analyzer diagnostics, and probe inference
   together so train and live action eligibility use the same features.

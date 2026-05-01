@@ -9220,3 +9220,38 @@ Notes:
 - [x] Choose `config_hash` algorithm
 - [x] Choose remote heuristic server location
 - [x] Choose transition log format
+
+## 2026-05-01: V57/V58 Projectile Defensive Expert Margin
+
+Milestone:
+- Milestone 6: higher-control-rate policy and projectile curriculum.
+
+Code:
+- added `--projectile-defensive-expert-margin-loss` to
+  `tools/train_dqn_learner.py`.
+- added defensive expert diagnostics and metadata.
+- added `--projectile-defensive-expert-margin-all-competitors`.
+- added `projectile-response-v6` to `tools/rl_auto_retrain.py`.
+
+Validation:
+- `python3 -m py_compile tools/train_dqn_learner.py tools/rl_auto_retrain.py`
+- smoke train:
+  - `/tmp/rl-v57-def-expert-smoke`
+  - `/tmp/rl-v58-allcomp-smoke`
+- full train:
+  - `model/dqn-projectile-schema-v5-full-actions-v57-defensive-expert-candidate`
+  - `model/dqn-projectile-schema-v5-full-actions-v58-defensive-allcomp-candidate`
+
+Findings:
+- V57 moved human-defense projectile Q gaps closer to defense but leaked into
+  `tatsu-mk` / `shoryuken-hp` and regressed safe-jump Q-gap.
+- V58 all-competitor mode fixed the special leakage and restored safe-jump
+  Q-gap (`2770/2780` top-1), but urgent/borderline rows still stayed jump top-1.
+- Neither V57 nor V58 is promotable.
+
+Conclusion:
+- targeted training-mode human-demo logging works and is useful.
+- current auxiliary defensive margin is not sufficient to make
+  `time_to_self <= 12` rows prefer `guard`/`back`.
+- V59 should use more tightly filtered clean defensive demos and/or a
+  policy-time projectile timing prior instead of another blind margin increase.

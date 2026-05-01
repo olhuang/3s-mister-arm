@@ -23,6 +23,7 @@ REWARD_PRESETS = (
     "projectile-response-v3",
     "projectile-response-v4",
     "projectile-response-v5",
+    "projectile-response-v6",
 )
 
 
@@ -116,6 +117,7 @@ def reward_preset_args(name: str) -> list[str]:
         "projectile-response-v3",
         "projectile-response-v4",
         "projectile-response-v5",
+        "projectile-response-v6",
     }:
         raise SystemExit(f"unknown reward preset: {name}")
     original_name = name
@@ -126,11 +128,19 @@ def reward_preset_args(name: str) -> list[str]:
         "projectile-response-v3",
         "projectile-response-v4",
         "projectile-response-v5",
+        "projectile-response-v6",
     }:
         name = "ground-specials-v35a"
         safe_jump_bonus = (
             "2.0"
-            if original_name in {"projectile-response-v2", "projectile-response-v3", "projectile-response-v4", "projectile-response-v5"}
+            if original_name
+            in {
+                "projectile-response-v2",
+                "projectile-response-v3",
+                "projectile-response-v4",
+                "projectile-response-v5",
+                "projectile-response-v6",
+            }
             else "1.2"
         )
         projectile_response_args = [
@@ -159,7 +169,13 @@ def reward_preset_args(name: str) -> list[str]:
             "--reward-projectile-back-escape-min-dx-delta",
             "8",
         ]
-        if original_name in {"projectile-response-v2", "projectile-response-v3", "projectile-response-v4", "projectile-response-v5"}:
+        if original_name in {
+            "projectile-response-v2",
+            "projectile-response-v3",
+            "projectile-response-v4",
+            "projectile-response-v5",
+            "projectile-response-v6",
+        }:
             projectile_response_args.extend(
                 [
                     "--projectile-response-safe-jump-oversample",
@@ -172,7 +188,12 @@ def reward_preset_args(name: str) -> list[str]:
                     "3",
                 ]
             )
-        if original_name in {"projectile-response-v3", "projectile-response-v4", "projectile-response-v5"}:
+        if original_name in {
+            "projectile-response-v3",
+            "projectile-response-v4",
+            "projectile-response-v5",
+            "projectile-response-v6",
+        }:
             projectile_response_args.extend(
                 [
                     "--projectile-expert-margin-loss",
@@ -187,7 +208,11 @@ def reward_preset_args(name: str) -> list[str]:
                     "action-start-v1",
                 ]
             )
-            if original_name in {"projectile-response-v4", "projectile-response-v5"}:
+            if original_name in {
+                "projectile-response-v4",
+                "projectile-response-v5",
+                "projectile-response-v6",
+            }:
                 projectile_response_args.extend(
                     [
                         "--projectile-expert-margin-min-time-to-self",
@@ -196,7 +221,7 @@ def reward_preset_args(name: str) -> list[str]:
                         "48",
                     ]
                 )
-            if original_name == "projectile-response-v5":
+            if original_name in {"projectile-response-v5", "projectile-response-v6"}:
                 projectile_response_args.extend(
                     [
                         "--projectile-late-defensive-margin-loss",
@@ -212,6 +237,29 @@ def reward_preset_args(name: str) -> list[str]:
                         "action-start-v1",
                     ]
                 )
+            if original_name == "projectile-response-v6":
+                projectile_response_args.extend(
+                    [
+                        "--projectile-expert-margin-batch-size",
+                        "64",
+                        "--projectile-defensive-expert-margin-loss",
+                        "--projectile-defensive-expert-margin",
+                        "0.08",
+                        "--projectile-defensive-expert-margin-weight",
+                        "1.0",
+                        "--projectile-defensive-expert-margin-batch-size",
+                        "64",
+                        "--projectile-defensive-expert-margin-max-time-to-self",
+                        "12",
+                        "--projectile-defensive-expert-margin-window-decisions",
+                        "12",
+                        "--projectile-defensive-expert-margin-max-self-hp",
+                        "1",
+                        "--projectile-defensive-expert-margin-all-competitors",
+                        "--projectile-defensive-expert-margin-valid-action-mask",
+                        "action-start-v1",
+                    ]
+                )
     if name == "ground-specials-v35a":
         guard_costs = ("0.4", "0.6")
         engine_action_windows = "fireball-lp=45,fireball-mp=45,fireball-hp=45,tatsu-lk=25,tatsu-mk=25,tatsu-hk=25,throw=8"
@@ -220,7 +268,13 @@ def reward_preset_args(name: str) -> list[str]:
             "shoryuken-lp=8,shoryuken-mp=10,shoryuken-hp=12,"
             "tatsu-lk=6,tatsu-mk=6,tatsu-hk=6,throw=8"
         )
-        if original_name in {"projectile-response-v2", "projectile-response-v3", "projectile-response-v4", "projectile-response-v5"}:
+        if original_name in {
+            "projectile-response-v2",
+            "projectile-response-v3",
+            "projectile-response-v4",
+            "projectile-response-v5",
+            "projectile-response-v6",
+        }:
             engine_action_oversamples = (
                 "fireball-lp=4,fireball-mp=4,fireball-hp=4,"
                 "shoryuken-lp=4,shoryuken-mp=5,shoryuken-hp=6,"

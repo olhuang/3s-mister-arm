@@ -2449,7 +2449,11 @@ Tasks:
 - [x] Document the training-mode demo transition logging plan in [docs/agent-memory/remote-rl-training-mode-demo-log.md](agent-memory/remote-rl-training-mode-demo-log.md)
 - [x] Add training-mode local demo transition logging for controlled human-vs-dummy data collection without enabling remote DQN action override
 - [x] Add trainer/analyzer support for opt-in training-mode damage-only HP delta rewards while preserving raw transition deltas for analysis
-- [ ] Collect targeted human-demo projectile defense rows for V55/live incremental retrain, especially `time_to_self <= 12` guard/back success examples
+- [x] Collect targeted human-demo projectile defense rows for V55/live incremental retrain, especially `time_to_self <= 12` guard/back success examples
+- [x] Train V55 with the targeted training-mode human-demo log; result: safe-jump Q-gap stayed strong, but urgent/borderline projectile rows still ranked jump too broadly
+- [x] Add clean human-demo projectile defensive expert margin support for V57/V58, including all-competitor mode and `projectile-response-v6` preset wiring
+- [x] Train and analyze V57/V58 defensive expert candidates; result: V57 moved defensive Q closer but leaked into specials, V58 preserved safe-jump but still did not make `guard`/`back` top-1 on urgent rows
+- [ ] V59 direction: add a stronger timing-aware inference/training path for urgent projectile rows, likely combining more `time_to_self <= 12` clean guard/back demo with a policy-time projectile defense prior or mask
 - [ ] Fix `rl_auto_retrain.py` replay planning for human-demo incremental retrain: add auto-available source ratios, log-level boost inputs, and replay-plan metadata
 - [ ] Review walk-forward/back macro actions after spacing-shaping A/B results
 - [ ] Review finer distance buckets after spacing-shaping sample-volume checks

@@ -716,6 +716,176 @@ Live incremental retrain readiness:
 - next step: collect targeted human demo, then retrain with
   `projectile-response-v5` and compare again before live probe.
 
+## V55/V57/V58 Training-Mode Human Demo Results
+
+Date: 2026-05-01
+
+New targeted demo log:
+- `logs/rl-transitions-training-human-demo-v55.ndjson`
+- rows: `23190`
+- episodes: `333`
+- schema: v6
+- source: `human-demo`
+- mode: training mode
+
+V55 model:
+- `model/dqn-projectile-schema-v5-full-actions-v55-training-demo-candidate`
+- base: V54 conservative
+- replay:
+  - `logs/rl-transitions-human-demo-projectile-schema-v5-smoke-4-3-3.ndjson`
+  - `logs/rl-transitions-training-human-demo-v55.ndjson`
+- steps: `1500`
+- batch size: `64`
+- learning rate: `0.0005`
+- HP mode: `--training-mode-hp-delta-mode damage-only`
+- safe-jump margin:
+  - `time_to_self=13..48`
+  - jump-start group equivalence
+  - batch size `32`
+- late defensive margin:
+  - margin `0.05`
+  - weight `0.25`
+  - batch size `8`
+  - max `time_to_self=12`
+
+V55 finding:
+- safe-jump expert Q-gap stayed strong:
+  - top-1: `2770/2780`
+  - positive gap: `10/2780`
+- urgent/borderline rows still ranked jump too broadly on the new training log:
+  - `0-6`: jump `110/110`
+  - `7-12`: jump `467/481`, special `14/481`
+- human defense rows were still not selected:
+  - `0-6` human-defense subset: jump `46/46`
+  - `7-12` human-defense subset: jump `151/155`, special `4/155`
+
+Conclusion:
+- adding the training-mode demo log and conservative late defensive margin did
+  not make `guard`/`back` top-1 for urgent projectile defense.
+- more explicit positive pressure on successful defensive demo rows was needed.
+
+### V57 Defensive Expert Margin
+
+Trainer change:
+- added `--projectile-defensive-expert-margin-loss`.
+- eligible rows:
+  - source in `--projectile-defensive-expert-margin-sources`, default
+    `human-demo`.
+  - incoming projectile threat.
+  - expert action is `back`, `guard-stand`, or `guard-crouch`.
+  - `obs_projectile_time_to_self` inside the configured window, default
+    `0..12`.
+  - lookahead damage is at most
+    `--projectile-defensive-expert-margin-max-self-hp`, default `1`.
+- objective:
+  - `Q(best_defensive) >= Q(best_projectile_competitor) + margin`
+  - defensive group: `back`, `guard-stand`, `guard-crouch`
+  - competitor group: jump-start, Shoryuken, and Tatsu actions
+- metadata/stat diagnostics record eligible rows, sampled rows, blockers,
+  losses, and timing buckets.
+
+V57 model:
+- `model/dqn-projectile-schema-v5-full-actions-v57-defensive-expert-candidate`
+- base: V54 conservative
+- defensive expert margin:
+  - margin `0.08`
+  - weight `1.0`
+  - batch size `32`
+  - max `time_to_self=12`
+  - max self HP `1`
+
+V57 finding:
+- defensive Q-gap improved on human-defense incoming rows:
+  - V55 `0-6` mean competitor-minus-defense gap: `0.1924`
+  - V57 `0-6` mean competitor-minus-defense gap: `0.0395`
+  - V55 `7-12` mean competitor-minus-defense gap: `0.1874`
+  - V57 `7-12` mean competitor-minus-defense gap: `0.0375`
+- however V57 did not make defense top-1. It often moved the top action from
+  jump to `tatsu-mk` or `shoryuken-hp`.
+- projectile bucket comparison on the new training log:
+  - `0-6`: jump `82/110`, special `28/110`
+  - `7-12`: jump `374/481`, special `107/481`
+  - `13-24`: jump `639/863`, special `222/863`
+  - `25-48`: special `297/445`, jump `148/445`
+- safe-jump expert Q-gap regressed:
+  - top-1: `2620/2780`
+  - positive gap: `160/2780`
+
+Conclusion:
+- V57 is not promotable.
+- The defensive objective moved Q values in the right direction, but the
+  single-best-competitor hinge let other specials become blockers and damaged
+  reliable safe-jump behavior.
+
+### V58 All-Competitor Defensive Expert Margin
+
+Trainer change:
+- added `--projectile-defensive-expert-margin-all-competitors`.
+- in this mode, every violating jump/Shoryuken/Tatsu competitor in the row
+  receives a margin gradient.
+- gradients are averaged across violating competitors so total force does not
+  scale with the number of action heads.
+
+Auto-retrain preset:
+- `projectile-response-v6`
+- base: `projectile-response-v5`
+- adds defensive expert margin:
+  - margin `0.08`
+  - weight `1.0`
+  - batch size `64`
+  - max `time_to_self=12`
+  - max self HP `1`
+  - all-competitor mode enabled
+  - overrides safe-jump expert margin batch size to `64`
+
+V58 model:
+- `model/dqn-projectile-schema-v5-full-actions-v58-defensive-allcomp-candidate`
+- base: V54 conservative
+- differences from V57 training:
+  - defensive expert all-competitor mode enabled.
+  - defensive expert margin batch size `64`.
+  - safe-jump expert margin batch size `64`.
+
+V58 finding:
+- safe-jump expert Q-gap recovered:
+  - top-1: `2770/2780`
+  - positive gap: `10/2780`
+  - remaining blocker: `shoryuken-hp`, `10` rows.
+- defensive Q-gap improved versus V55 but not enough to flip top-1:
+  - `0-6` human-defense mean competitor-minus-defense gap: `0.0760`
+  - `7-12` human-defense mean competitor-minus-defense gap: `0.0726`
+- projectile bucket comparison remained essentially V55-like:
+  - `0-6`: jump `110/110`
+  - `7-12`: jump `467/481`, special `14/481`
+  - `13-24`: jump `853/863`, special `8/863`
+  - `25-48`: jump `445/445`
+
+Conclusion:
+- V58 is not promotable either.
+- All-competitor defensive margin fixes the V57 special leakage and preserves
+  reliable safe jump, but it still does not make urgent/borderline rows choose
+  `guard`/`back`.
+- Current evidence says the issue is not only competitor switching; the TD
+  reward/replay mix still gives `guard`/`back` too little absolute Q support
+  relative to jump.
+
+### Next Direction
+
+V59 should not be another blind margin-weight increase.
+
+Recommended next steps:
+- collect more focused `time_to_self <= 12` clean guard/back human-demo rows
+  with fewer unrelated CPU actions between projectile situations.
+- add or test a policy-time projectile timing prior/mask for urgent rows:
+  - when incoming projectile `time_to_self <= 6`, demote jump-start unless the
+    state is explicitly known safe.
+  - keep jump-start available for `time_to_self >= 13`.
+- alternatively add a stronger BC-style classification objective on filtered
+  clean defensive rows, but gate it tightly by timing bucket so it does not
+  overwrite V52/V55 safe-jump behavior.
+- continue to use V52/V55 as the safe-jump baseline; do not live-probe V57 or
+  V58 as promotable candidates.
+
 ## Auto-Retrain Replay Plan Fix
 
 Date: 2026-05-01

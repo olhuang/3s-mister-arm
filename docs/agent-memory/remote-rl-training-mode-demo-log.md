@@ -100,3 +100,43 @@ For projectile defense data:
 - probe server: transition log enabled, action mode off
 - trainer: include only the filtered rows needed for the current curriculum
   and enable training-mode damage-only HP deltas only after log analysis
+
+## V55 Collection Finding
+
+Date: 2026-05-01
+
+Log:
+- `logs/rl-transitions-training-human-demo-v55.ndjson`
+
+Summary:
+- rows: `23190`
+- episodes: `333`
+- transition schema: v6
+- execution source: `human-demo`
+- mode: training mode rows only
+
+Projectile-relevant counts:
+- active projectile rows: `4780`
+- finite incoming projectile rows: `3365`
+- explicit incoming threat rows: `1216`
+- defense incoming rows: `648`
+- direct `guard`/`back` projectile rows: `475`
+  - no damage: `383`
+  - chip/low damage: `78`
+  - full hit: `14`
+- jump near incoming rows: `393`
+  - safe: `243`
+  - damaged: `150`
+
+Training use:
+- enable `--training-mode-hp-delta-mode damage-only` so auto-heal does not
+  become negative damage/reward.
+- keep raw captured HP deltas in the log for analysis.
+- the log is useful, but it is still not enough by itself to make urgent
+  `time_to_self <= 12` rows choose `guard`/`back` after V57/V58 training.
+
+Next collection target:
+- collect more clean `0-6` and `7-12` projectile guard/back examples with less
+  unrelated neutral movement between projectile appearances.
+- keep successful `13-48` jump-over examples so safe-jump behavior does not
+  regress while tuning urgent defensive behavior.

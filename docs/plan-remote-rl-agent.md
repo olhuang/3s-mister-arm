@@ -2439,6 +2439,9 @@ Tasks:
 - [x] Add opt-in offline DQN projectile response reward shaping for safe jump-over, close back/guard success, and late jump-hit penalties
 - [x] Add opt-in projectile-response replay oversampling for safe jump, late jump-hit, and close back/guard rows
 - [x] Add projectile expert Q-gap diagnostics and a valid-action-masked margin loss for safe human anti-fireball jump rows
+- [x] Record the V52 projectile expert margin recipe, parameters, offline findings, live-probe findings, and V53 direction in [docs/agent-memory/remote-rl-v52-projectile-margin.md](agent-memory/remote-rl-v52-projectile-margin.md)
+- [ ] Add projectile timing-bucket diagnostics for V53: action distribution, jump safe/damaged counts, after-current damage, Q gaps, and blockers by `obs_projectile_time_to_self` bucket
+- [ ] Train a V53 projectile timing-split candidate that keeps V52 jump-group margin, limits safe-jump margin to reliable timing buckets, and adds late-jump-hit negative diagnostics or loss
 - [ ] Review walk-forward/back macro actions after spacing-shaping A/B results
 - [ ] Review finer distance buckets after spacing-shaping sample-volume checks
 - [ ] Collect targeted corner-escape demo data before treating corner anti-turtle shaping as solved

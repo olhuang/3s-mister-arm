@@ -2,6 +2,43 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-01: Record V52 Projectile Margin Reference And V53 Direction
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / full action-set DQN experiments
+
+Files changed:
+- `docs/agent-memory/remote-rl-v52-projectile-margin.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+- `AGENTS.md`
+
+Purpose:
+- preserve the V52 projectile expert margin recipe as a named milestone so
+  future work can reproduce the exact training run instead of reconstructing it
+  from chat or scattered metadata.
+- record the live V52 probe findings and turn them into a concrete V53 timing
+  split plan.
+
+Reference:
+- [docs/agent-memory/remote-rl-v52-projectile-margin.md](agent-memory/remote-rl-v52-projectile-margin.md)
+
+Key points recorded:
+- full V52 trainer parameters and reproduction command.
+- why jump-start equivalence is part of the margin objective.
+- offline V48/V50/V51/V52 iteration findings.
+- V52 live probe findings from `logs/rl-transitions-v52-live-probe.ndjson`.
+- V53 direction:
+  - keep V52 jump-group margin.
+  - split incoming projectile rows by `obs_projectile_time_to_self`.
+  - avoid forcing jump in urgent/borderline buckets.
+  - keep safe-jump margin for reliable/setup buckets.
+  - add late-jump-hit diagnostics and possibly a defensive negative margin.
+
+Validation:
+- documentation links checked locally with `rg`.
+- no code changes in this documentation pass.
+
 ## 2026-05-01: Implement And Validate Projectile Expert Margin V52
 
 Milestone:
@@ -73,6 +110,8 @@ Decision:
 - do not promote V48/V49/V50/V51.
 - next validation should be a live probe/smoke on MiSTer before publishing as
   the default remote actor.
+- milestone reference after live probe:
+  [docs/agent-memory/remote-rl-v52-projectile-margin.md](agent-memory/remote-rl-v52-projectile-margin.md)
 
 ## 2026-05-01: V48 Projectile Expert Margin Plan
 

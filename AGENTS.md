@@ -39,6 +39,7 @@
 ## Memory Index
 
 - Load [docs/agent-memory/remote-rl-agent-rules.md](docs/agent-memory/remote-rl-agent-rules.md) when working on the remote RL agent, RL bridge, AI-vs-CPU automation, observation/action protocol, session handshake, decision ledger, or remote learner integration.
+- Load [docs/agent-memory/remote-rl-v52-projectile-margin.md](docs/agent-memory/remote-rl-v52-projectile-margin.md) when revisiting V52/V53 projectile-response training, anti-fireball safe-jump behavior, projectile expert margin loss, or timing-bucket follow-up work.
 - Load [docs/mister-runbook.md](docs/mister-runbook.md) when building, packaging, deploying, probing, or perf-sampling the MiSTer runtime on device. **This is the most important doc for fresh agents doing MiSTer work.**
 - Load [docs/building.md](docs/building.md) when you need baseline host build commands, MiSTer profile setup, or the desktop-vs-MiSTer build split.
 - Load [docs/performance-optimizations.md](docs/performance-optimizations.md) when investigating performance, understanding optimization history, or planning new perf work.

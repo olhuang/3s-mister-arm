@@ -30,6 +30,7 @@ class Experience:
     model_version: int = 0
     row: dict[str, object] = field(default_factory=dict)
     next_row: dict[str, object] = field(default_factory=dict)
+    projectile_expert_margin_eligible: bool = False
 
 
 EXECUTION_SOURCE_NAMES = {
@@ -834,6 +835,119 @@ class ProjectileResponseOversampleStats:
             "close_guard_success_extra": self.close_guard_success_extra,
             "by_action_base": dict(sorted(self.by_action_base.items())),
             "by_action_extra": dict(sorted(self.by_action_extra.items())),
+        }
+
+
+@dataclass(frozen=True)
+class ProjectileExpertMarginConfig:
+    requested: bool = False
+    margin: float = 0.1
+    loss_weight: float = 0.05
+    batch_size: int = 0
+    require_safe_jump: bool = True
+    equivalent_jump_actions: bool = True
+    valid_action_mask_mode: str = "action-start-v1"
+
+    @property
+    def enabled(self) -> bool:
+        return self.requested and self.margin > 0.0 and self.loss_weight > 0.0
+
+    def as_shared_mask_config(self) -> rl.DQNValidActionMaskConfig:
+        return rl.parse_dqn_valid_action_mask_config(self.valid_action_mask_mode)
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "requested": self.requested,
+            "enabled": self.enabled,
+            "margin": self.margin,
+            "loss_weight": self.loss_weight,
+            "batch_size": self.batch_size,
+            "require_safe_jump": self.require_safe_jump,
+            "equivalent_jump_actions": self.equivalent_jump_actions,
+            "valid_action_mask_mode": self.valid_action_mask_mode,
+        }
+
+
+@dataclass
+class ProjectileExpertMarginStats:
+    eligible_experiences: int = 0
+    sampled_events: int = 0
+    violation_events: int = 0
+    empty_valid_events: int = 0
+    expert_invalid_events: int = 0
+    loss_total: float = 0.0
+    last_loss: float = 0.0
+    avg_loss: float = 0.0
+    by_expert_action_events: dict[str, int] = field(default_factory=dict)
+    by_expert_action_loss: dict[str, float] = field(default_factory=dict)
+    blocker_counts: dict[str, int] = field(default_factory=dict)
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "eligible_experiences": self.eligible_experiences,
+            "sampled_events": self.sampled_events,
+            "violation_events": self.violation_events,
+            "empty_valid_events": self.empty_valid_events,
+            "expert_invalid_events": self.expert_invalid_events,
+            "loss_total": self.loss_total,
+            "last_loss": self.last_loss,
+            "avg_loss": self.avg_loss,
+            "by_expert_action_events": dict(sorted(self.by_expert_action_events.items())),
+            "by_expert_action_loss": dict(sorted(self.by_expert_action_loss.items())),
+            "blocker_counts": dict(sorted(self.blocker_counts.items())),
+        }
+
+
+@dataclass
+class ProjectileExpertQGapDiagnostics:
+    rows: int = 0
+    unique_rows: int = 0
+    top1_matches: int = 0
+    top5_matches: int = 0
+    positive_gap_rows: int = 0
+    invalid_expert_rows: int = 0
+    empty_valid_rows: int = 0
+    gap_sum: float = 0.0
+    positive_gap_sum: float = 0.0
+    gap_min: float | None = None
+    gap_max: float | None = None
+    expert_rank_sum: int = 0
+    by_expert_action: dict[str, int] = field(default_factory=dict)
+    top_action_counts: dict[str, int] = field(default_factory=dict)
+    blocker_counts: dict[str, int] = field(default_factory=dict)
+
+    @property
+    def mean_gap(self) -> float:
+        return self.gap_sum / self.rows if self.rows else 0.0
+
+    @property
+    def mean_positive_gap(self) -> float:
+        return self.positive_gap_sum / self.positive_gap_rows if self.positive_gap_rows else 0.0
+
+    @property
+    def mean_expert_rank(self) -> float:
+        return self.expert_rank_sum / self.rows if self.rows else 0.0
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "rows": self.rows,
+            "unique_rows": self.unique_rows,
+            "top1_matches": self.top1_matches,
+            "top5_matches": self.top5_matches,
+            "positive_gap_rows": self.positive_gap_rows,
+            "invalid_expert_rows": self.invalid_expert_rows,
+            "empty_valid_rows": self.empty_valid_rows,
+            "gap_sum": self.gap_sum,
+            "mean_gap": self.mean_gap,
+            "positive_gap_sum": self.positive_gap_sum,
+            "mean_positive_gap": self.mean_positive_gap,
+            "gap_min": self.gap_min if self.gap_min is not None else 0.0,
+            "gap_max": self.gap_max if self.gap_max is not None else 0.0,
+            "expert_rank_sum": self.expert_rank_sum,
+            "mean_expert_rank": self.mean_expert_rank,
+            "by_expert_action": dict(sorted(self.by_expert_action.items())),
+            "top_action_counts": dict(sorted(self.top_action_counts.items())),
+            "blocker_counts": dict(sorted(self.blocker_counts.items())),
         }
 
 
@@ -1760,6 +1874,27 @@ def reward_projectile_response_adjustment(
     return adjustment, outcome
 
 
+def projectile_expert_margin_eligible(
+    source_name: str,
+    action_name: str,
+    outcome: ProjectileResponseOutcome,
+    config: ProjectileExpertMarginConfig,
+) -> bool:
+    if not config.requested:
+        return False
+    if source_name != "human-demo":
+        return False
+    if action_name not in JUMP_START_ACTIONS:
+        return False
+    if not outcome.threat:
+        return False
+    if config.require_safe_jump and not outcome.safe_jump:
+        return False
+    if outcome.late_jump_hit:
+        return False
+    return True
+
+
 def add_delayed_reward(
     experiences: list[Experience],
     exp_index: int | None,
@@ -1947,6 +2082,7 @@ def build_experiences(
     reward_position_config: RewardPositionConfig,
     reward_projectile_response_config: RewardProjectileResponseConfig,
     projectile_response_oversample_config: ProjectileResponseOversampleConfig,
+    projectile_expert_margin_config: ProjectileExpertMarginConfig,
     engine_outcome_config: EngineOutcomeConfig,
     action_filter_config: DQNActionFilterConfig,
 ) -> tuple[
@@ -2179,6 +2315,12 @@ def build_experiences(
                 model_version=model_version,
                 row=dict(row),
                 next_row=dict(row),
+                projectile_expert_margin_eligible=projectile_expert_margin_eligible(
+                    source_name,
+                    action_name,
+                    projectile_response_outcome_result,
+                    projectile_expert_margin_config,
+                ),
             )
             multiplier = projectile_response_oversample_config.multiplier_for(projectile_response_outcome_result)
             for _ in range(multiplier):
@@ -2359,6 +2501,24 @@ def projectile_response_oversample_config_from_args(args: argparse.Namespace) ->
         late_jump_hit=max(1, int(args.projectile_response_late_jump_hit_oversample)),
         close_back_success=max(1, int(args.projectile_response_close_back_oversample)),
         close_guard_success=max(1, int(args.projectile_response_close_guard_oversample)),
+    )
+
+
+def projectile_expert_margin_config_from_args(args: argparse.Namespace) -> ProjectileExpertMarginConfig:
+    mode = str(args.projectile_expert_margin_valid_action_mask)
+    if mode not in rl.DQN_VALID_ACTION_MASK_MODES:
+        raise SystemExit(
+            f"unknown --projectile-expert-margin-valid-action-mask {mode!r}; "
+            f"expected one of {','.join(rl.DQN_VALID_ACTION_MASK_MODES)}"
+        )
+    return ProjectileExpertMarginConfig(
+        requested=bool(args.projectile_expert_margin_loss),
+        margin=max(0.0, float(args.projectile_expert_margin)),
+        loss_weight=max(0.0, float(args.projectile_expert_margin_weight)),
+        batch_size=max(0, int(args.projectile_expert_margin_batch_size)),
+        require_safe_jump=bool(args.projectile_expert_margin_require_safe_jump),
+        equivalent_jump_actions=bool(args.projectile_expert_margin_equivalent_jump_actions),
+        valid_action_mask_mode=mode,
     )
 
 
@@ -2624,6 +2784,179 @@ def dqn_masked_indices_for_row(
     return indices
 
 
+def projectile_expert_margin_group_indices(
+    expert_index: int,
+    valid_indices: tuple[int, ...],
+    actions: tuple[str, ...],
+    config: ProjectileExpertMarginConfig,
+) -> tuple[int, ...]:
+    if expert_index < 0 or expert_index >= len(actions):
+        return ()
+    expert_action = actions[expert_index]
+    if config.equivalent_jump_actions and expert_action in JUMP_START_ACTIONS:
+        return tuple(index for index in valid_indices if actions[index] in JUMP_START_ACTIONS)
+    return (expert_index,)
+
+
+def apply_projectile_expert_margin_loss(
+    exp: Experience,
+    values: list[float],
+    actions: tuple[str, ...],
+    output_grad: list[float],
+    config: ProjectileExpertMarginConfig,
+    shared_valid_action_mask_config: rl.DQNValidActionMaskConfig,
+    stats: ProjectileExpertMarginStats,
+) -> float:
+    if not config.enabled or not exp.projectile_expert_margin_eligible:
+        return 0.0
+
+    value_count = min(len(actions), len(values))
+    valid_indices = rl.dqn_valid_action_indices_for_row(
+        exp.row,
+        actions,
+        shared_valid_action_mask_config,
+        value_count,
+    )
+    if not valid_indices:
+        stats.empty_valid_events += 1
+        return 0.0
+    expert_index = exp.action_index
+    if expert_index >= value_count or expert_index not in valid_indices:
+        stats.expert_invalid_events += 1
+        return 0.0
+
+    expert_group_indices = projectile_expert_margin_group_indices(
+        expert_index,
+        valid_indices,
+        actions,
+        config,
+    )
+    if not expert_group_indices:
+        stats.expert_invalid_events += 1
+        return 0.0
+
+    competitor_indices = [index for index in valid_indices if index not in expert_group_indices]
+    if not competitor_indices:
+        return 0.0
+
+    stats.sampled_events += 1
+    best_expert_index = max(
+        expert_group_indices,
+        key=lambda index: (values[index], actions[index]),
+    )
+    best_competitor_index = max(
+        competitor_indices,
+        key=lambda index: (values[index], actions[index]),
+    )
+    gap = float(values[best_competitor_index]) + config.margin - float(values[best_expert_index])
+    if gap <= 0.0:
+        return 0.0
+
+    clipped_gap = max(-10.0, min(10.0, gap))
+    weighted_loss = config.loss_weight * 0.5 * clipped_gap * clipped_gap
+    output_grad[best_competitor_index] += config.loss_weight * clipped_gap
+    output_grad[best_expert_index] -= config.loss_weight * clipped_gap
+
+    expert_action = actions[expert_index]
+    blocker_action = actions[best_competitor_index]
+    stats.violation_events += 1
+    stats.loss_total += weighted_loss
+    stats.by_expert_action_events[expert_action] = stats.by_expert_action_events.get(expert_action, 0) + 1
+    stats.by_expert_action_loss[expert_action] = stats.by_expert_action_loss.get(expert_action, 0.0) + weighted_loss
+    stats.blocker_counts[blocker_action] = stats.blocker_counts.get(blocker_action, 0) + 1
+    return weighted_loss
+
+
+def projectile_expert_q_gap_diagnostics(
+    layers: list[dict[str, object]],
+    experiences: list[Experience],
+    actions: tuple[str, ...],
+    config: ProjectileExpertMarginConfig,
+) -> ProjectileExpertQGapDiagnostics:
+    stats = ProjectileExpertQGapDiagnostics()
+    if not config.requested:
+        return stats
+
+    shared_valid_action_mask_config = config.as_shared_mask_config()
+    unique_rows: set[tuple[int, int, int, int]] = set()
+    for exp in experiences:
+        if not exp.projectile_expert_margin_eligible:
+            continue
+        values, _, _ = forward(layers, exp.state)
+        value_count = min(len(actions), len(values))
+        valid_indices = rl.dqn_valid_action_indices_for_row(
+            exp.row,
+            actions,
+            shared_valid_action_mask_config,
+            value_count,
+        )
+        if not valid_indices:
+            stats.empty_valid_rows += 1
+            continue
+        expert_index = exp.action_index
+        if expert_index >= value_count or expert_index not in valid_indices:
+            stats.invalid_expert_rows += 1
+            continue
+        expert_group_indices = projectile_expert_margin_group_indices(
+            expert_index,
+            valid_indices,
+            actions,
+            config,
+        )
+        if not expert_group_indices:
+            stats.invalid_expert_rows += 1
+            continue
+
+        ranked = sorted(
+            valid_indices,
+            key=lambda index: (values[index], actions[index]),
+            reverse=True,
+        )
+        expert_rank = min(ranked.index(index) + 1 for index in expert_group_indices)
+        top_index = ranked[0]
+        top_action = actions[top_index]
+        expert_action = actions[expert_index]
+        best_expert_index = max(
+            expert_group_indices,
+            key=lambda index: (values[index], actions[index]),
+        )
+        competitor_indices = [index for index in valid_indices if index not in expert_group_indices]
+        best_competitor_index = (
+            max(competitor_indices, key=lambda index: (values[index], actions[index]))
+            if competitor_indices
+            else best_expert_index
+        )
+        gap = float(values[best_competitor_index]) - float(values[best_expert_index])
+
+        stats.rows += 1
+        unique_rows.add(
+            (
+                int_field(exp.row, "run_id"),
+                int_field(exp.row, "episode_id"),
+                int_field(exp.row, "decision_id"),
+                expert_index,
+            )
+        )
+        stats.expert_rank_sum += expert_rank
+        stats.gap_sum += gap
+        stats.gap_min = gap if stats.gap_min is None else min(stats.gap_min, gap)
+        stats.gap_max = gap if stats.gap_max is None else max(stats.gap_max, gap)
+        if gap > 0.0:
+            stats.positive_gap_rows += 1
+            stats.positive_gap_sum += gap
+        if expert_rank == 1:
+            stats.top1_matches += 1
+        if expert_rank <= 5:
+            stats.top5_matches += 1
+        stats.by_expert_action[expert_action] = stats.by_expert_action.get(expert_action, 0) + 1
+        stats.top_action_counts[top_action] = stats.top_action_counts.get(top_action, 0) + 1
+        if top_index not in expert_group_indices:
+            stats.blocker_counts[top_action] = stats.blocker_counts.get(top_action, 0) + 1
+
+    stats.unique_rows = len(unique_rows)
+    return stats
+
+
 def train_dqn(
     experiences: list[Experience],
     actions: tuple[str, ...],
@@ -2639,12 +2972,14 @@ def train_dqn(
     batch_sampling_config: BatchSamplingConfig,
     target_mode: str,
     unsupported_action_regularization_config: DQNUnsupportedActionRegularizationConfig,
+    projectile_expert_margin_config: ProjectileExpertMarginConfig,
     valid_action_mask_config: DQNValidActionMaskTrainingConfig,
     initial_layers: list[dict[str, object]] | None = None,
 ) -> tuple[
     list[dict[str, object]],
     dict[str, object],
     DQNUnsupportedActionRegularizationStats,
+    ProjectileExpertMarginStats,
     DQNValidActionMaskTrainingStats,
 ]:
     rng = random.Random(seed)
@@ -2665,12 +3000,21 @@ def train_dqn(
     avg_loss = 0.0
     last_unsupported_regularization_loss = 0.0
     avg_unsupported_regularization_loss = 0.0
+    last_projectile_margin_loss = 0.0
+    avg_projectile_margin_loss = 0.0
     unsupported_action_indices, unsupported_action_regularization_stats = dqn_unsupported_action_indices(
         actions,
         action_counts,
         unsupported_action_regularization_config,
     )
+    projectile_expert_margin_stats = ProjectileExpertMarginStats(
+        eligible_experiences=sum(1 for exp in experiences if exp.projectile_expert_margin_eligible)
+    )
+    projectile_expert_margin_pool = [
+        exp for exp in experiences if exp.projectile_expert_margin_eligible
+    ]
     shared_valid_action_mask_config = valid_action_mask_config.as_shared_config()
+    projectile_expert_margin_mask_config = projectile_expert_margin_config.as_shared_mask_config()
     valid_action_mask_stats = DQNValidActionMaskTrainingStats()
 
     for step in range(1, steps + 1):
@@ -2685,6 +3029,7 @@ def train_dqn(
         grads = zero_grads(layers)
         loss = 0.0
         unsupported_regularization_loss = 0.0
+        projectile_margin_loss = 0.0
         for exp in batch:
             values, activations, pre_activations = forward(layers, exp.state)
             next_values, _, _ = forward(target_layers, exp.next_state)
@@ -2758,7 +3103,36 @@ def train_dqn(
                     unsupported_action_regularization_stats.per_action_loss[action] = (
                         unsupported_action_regularization_stats.per_action_loss.get(action, 0.0) + weighted_loss
                     )
+            exp_projectile_margin_loss = apply_projectile_expert_margin_loss(
+                exp,
+                values,
+                actions,
+                output_grad,
+                projectile_expert_margin_config,
+                projectile_expert_margin_mask_config,
+                projectile_expert_margin_stats,
+            )
+            projectile_margin_loss += exp_projectile_margin_loss
+            loss += exp_projectile_margin_loss
             add_backward_grads(layers, grads, activations, pre_activations, output_grad)
+        if projectile_expert_margin_config.enabled and projectile_expert_margin_pool:
+            for _ in range(max(0, projectile_expert_margin_config.batch_size)):
+                exp = rng.choice(projectile_expert_margin_pool)
+                values, activations, pre_activations = forward(layers, exp.state)
+                output_grad = [0.0 for _ in values]
+                exp_projectile_margin_loss = apply_projectile_expert_margin_loss(
+                    exp,
+                    values,
+                    actions,
+                    output_grad,
+                    projectile_expert_margin_config,
+                    projectile_expert_margin_mask_config,
+                    projectile_expert_margin_stats,
+                )
+                projectile_margin_loss += exp_projectile_margin_loss
+                loss += exp_projectile_margin_loss
+                if exp_projectile_margin_loss > 0.0:
+                    add_backward_grads(layers, grads, activations, pre_activations, output_grad)
         apply_grads(layers, grads, learning_rate, batch_size)
         last_loss = loss / max(1, batch_size)
         avg_loss = last_loss if step == 1 else (0.98 * avg_loss + 0.02 * last_loss)
@@ -2768,12 +3142,19 @@ def train_dqn(
             if step == 1
             else (0.98 * avg_unsupported_regularization_loss + 0.02 * last_unsupported_regularization_loss)
         )
+        last_projectile_margin_loss = projectile_margin_loss / max(1, batch_size)
+        avg_projectile_margin_loss = (
+            last_projectile_margin_loss
+            if step == 1
+            else (0.98 * avg_projectile_margin_loss + 0.02 * last_projectile_margin_loss)
+        )
         if target_sync_steps > 0 and step % target_sync_steps == 0:
             target_layers = copy.deepcopy(layers)
         if log_interval > 0 and (step == 1 or step % log_interval == 0 or step == steps):
             print(
                 f"TRAIN step={step} loss={last_loss:.6f} avg_loss={avg_loss:.6f} "
-                f"unsupported_reg={last_unsupported_regularization_loss:.6f}",
+                f"unsupported_reg={last_unsupported_regularization_loss:.6f} "
+                f"projectile_margin={last_projectile_margin_loss:.6f}",
                 flush=True,
             )
 
@@ -2785,6 +3166,8 @@ def train_dqn(
     )
     unsupported_action_regularization_stats.last_loss = last_unsupported_regularization_loss
     unsupported_action_regularization_stats.avg_loss = avg_unsupported_regularization_loss
+    projectile_expert_margin_stats.last_loss = last_projectile_margin_loss
+    projectile_expert_margin_stats.avg_loss = avg_projectile_margin_loss
     return (
         layers,
         {
@@ -2793,6 +3176,7 @@ def train_dqn(
             "batch_sampling": batch_diag.as_metadata(),
         },
         unsupported_action_regularization_stats,
+        projectile_expert_margin_stats,
         valid_action_mask_stats,
     )
 
@@ -3577,6 +3961,57 @@ def main() -> None:
         help="Replay copies to emit for clean close guard responses to incoming projectiles",
     )
     parser.add_argument(
+        "--projectile-expert-margin-loss",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Add a valid-action-masked large-margin loss on safe human-demo jump-start responses "
+            "to incoming projectiles"
+        ),
+    )
+    parser.add_argument(
+        "--projectile-expert-margin",
+        type=float,
+        default=0.1,
+        help="Q margin required between the expert jump action and the best valid competitor",
+    )
+    parser.add_argument(
+        "--projectile-expert-margin-weight",
+        type=float,
+        default=0.05,
+        help="Auxiliary loss weight for --projectile-expert-margin-loss",
+    )
+    parser.add_argument(
+        "--projectile-expert-margin-batch-size",
+        type=int,
+        default=0,
+        help=(
+            "Extra safe human-demo projectile jump rows sampled per DQN step for margin-only updates; "
+            "0 keeps margin loss limited to the normal replay batch"
+        ),
+    )
+    parser.add_argument(
+        "--projectile-expert-margin-require-safe-jump",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Require the projectile response classifier to mark a clean safe jump before applying margin loss",
+    )
+    parser.add_argument(
+        "--projectile-expert-margin-equivalent-jump-actions",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Treat jump-forward/jump-neutral/jump-back starts as one acceptable expert group when "
+            "ranking safe projectile jump responses"
+        ),
+    )
+    parser.add_argument(
+        "--projectile-expert-margin-valid-action-mask",
+        choices=rl.DQN_VALID_ACTION_MASK_MODES,
+        default="action-start-v1",
+        help="Valid-action mask used for projectile expert margin competitors",
+    )
+    parser.add_argument(
         "--engine-outcome-training-mode",
         default=None,
         help=(
@@ -3758,6 +4193,7 @@ def main() -> None:
     reward_position_config = reward_position_config_from_args(args)
     reward_projectile_response_config = reward_projectile_response_config_from_args(args)
     projectile_response_oversample_config = projectile_response_oversample_config_from_args(args)
+    projectile_expert_margin_config = projectile_expert_margin_config_from_args(args)
     engine_outcome_config = engine_outcome_config_from_args(args)
     conservative_action_penalty_config = conservative_action_penalty_config_from_args(args)
     unsupported_action_regularization_config = dqn_unsupported_action_regularization_config_from_args(args)
@@ -3789,6 +4225,7 @@ def main() -> None:
         reward_position_config,
         reward_projectile_response_config,
         projectile_response_oversample_config,
+        projectile_expert_margin_config,
         engine_outcome_config,
         dqn_action_filter_config,
     )
@@ -3806,7 +4243,13 @@ def main() -> None:
         source_stats,
     )
 
-    layers, train_stats, unsupported_action_regularization_stats, valid_action_mask_stats = train_dqn(
+    (
+        layers,
+        train_stats,
+        unsupported_action_regularization_stats,
+        projectile_expert_margin_stats,
+        valid_action_mask_stats,
+    ) = train_dqn(
         experiences,
         actions,
         action_counts,
@@ -3821,6 +4264,7 @@ def main() -> None:
         batch_sampling_config,
         args.dqn_target_mode,
         unsupported_action_regularization_config,
+        projectile_expert_margin_config,
         valid_action_mask_config,
         init_model.layers if init_model is not None else None,
     )
@@ -3838,6 +4282,12 @@ def main() -> None:
         valid_action_mask_config,
         valid_action_mask_stats,
     )
+    projectile_expert_q_gap_diag = projectile_expert_q_gap_diagnostics(
+        layers,
+        experiences,
+        actions,
+        projectile_expert_margin_config,
+    )
     version = next_model_version(args.model_dir, args.model_version)
     reward_sources = ["hp-delta"]
     if reward_risk_config.profile != "none":
@@ -3854,6 +4304,8 @@ def main() -> None:
         reward_sources.append("engine-outcome")
     if conservative_action_penalty_stats.adjusted_experiences > 0:
         reward_sources.append("conservative-action-penalty")
+    if projectile_expert_margin_config.enabled:
+        reward_sources.append("projectile-expert-margin")
     reward_source = "+".join(reward_sources)
     metadata = {
         "transition_logs": args.transition_logs,
@@ -3944,6 +4396,9 @@ def main() -> None:
         "reward_projectile_response_stats": reward_projectile_response_stats.as_metadata(),
         "projectile_response_oversample_config": projectile_response_oversample_config.as_metadata(),
         "projectile_response_oversample_stats": projectile_response_oversample_stats.as_metadata(),
+        "projectile_expert_margin_config": projectile_expert_margin_config.as_metadata(),
+        "projectile_expert_margin_stats": projectile_expert_margin_stats.as_metadata(),
+        "projectile_expert_q_gap_diagnostics": projectile_expert_q_gap_diag.as_metadata(),
         "engine_outcome_training_mode": engine_outcome_config.training_mode,
         "engine_outcome_window_decisions": engine_outcome_config.window_decisions,
         "engine_outcome_action_windows": engine_outcome_config.action_windows,
@@ -4014,6 +4469,9 @@ def main() -> None:
         f"projectile_net={reward_projectile_response_stats.net_adjustment:.1f} "
         f"projectile_oversample={projectile_response_oversample_stats.base_experiences}/"
         f"+{projectile_response_oversample_stats.extra_experiences} "
+        f"projectile_margin={projectile_expert_margin_stats.violation_events}/"
+        f"{projectile_expert_margin_stats.sampled_events} "
+        f"projectile_margin_loss={projectile_expert_margin_stats.last_loss:.6f} "
         f"engine_outcome={engine_outcome_config.training_mode}:{engine_outcome_stats.included_events}/"
         f"{engine_outcome_stats.event_rows} "
         f"engine_outcome_net={engine_outcome_stats.net_adjustment:.1f} "
@@ -4229,6 +4687,47 @@ def main() -> None:
         f"+{projectile_response_oversample_stats.close_guard_success_extra} "
         f"by_action_base:{format_counts(projectile_response_oversample_stats.by_action_base, projectile_response_oversample_stats.base_experiences, args.diagnostic_top_n)} "
         f"by_action_extra:{format_counts(projectile_response_oversample_stats.by_action_extra, projectile_response_oversample_stats.extra_experiences, args.diagnostic_top_n)}",
+        flush=True,
+    )
+    print(
+        "DQN diagnostics "
+        f"projectile_expert_margin=enabled:{int(projectile_expert_margin_config.enabled)} "
+        f"requested:{int(projectile_expert_margin_config.requested)} "
+        f"margin:{projectile_expert_margin_config.margin:.6f} "
+        f"weight:{projectile_expert_margin_config.loss_weight:.6f} "
+        f"batch_size:{projectile_expert_margin_config.batch_size} "
+        f"require_safe_jump:{int(projectile_expert_margin_config.require_safe_jump)} "
+        f"equivalent_jump:{int(projectile_expert_margin_config.equivalent_jump_actions)} "
+        f"valid_mask:{projectile_expert_margin_config.valid_action_mask_mode} "
+        f"eligible:{projectile_expert_margin_stats.eligible_experiences} "
+        f"sampled:{projectile_expert_margin_stats.sampled_events} "
+        f"violations:{projectile_expert_margin_stats.violation_events} "
+        f"empty_valid:{projectile_expert_margin_stats.empty_valid_events} "
+        f"expert_invalid:{projectile_expert_margin_stats.expert_invalid_events} "
+        f"loss:{projectile_expert_margin_stats.loss_total:.6f} "
+        f"last:{projectile_expert_margin_stats.last_loss:.6f} "
+        f"avg:{projectile_expert_margin_stats.avg_loss:.6f} "
+        f"by_expert:{format_counts(projectile_expert_margin_stats.by_expert_action_events, projectile_expert_margin_stats.sampled_events, args.diagnostic_top_n)} "
+        f"blockers:{format_counts(projectile_expert_margin_stats.blocker_counts, projectile_expert_margin_stats.violation_events, args.diagnostic_top_n)}",
+        flush=True,
+    )
+    print(
+        "DQN diagnostics "
+        f"projectile_expert_qgap=rows:{projectile_expert_q_gap_diag.rows} "
+        f"unique:{projectile_expert_q_gap_diag.unique_rows} "
+        f"top1:{projectile_expert_q_gap_diag.top1_matches} "
+        f"top5:{projectile_expert_q_gap_diag.top5_matches} "
+        f"positive_gap:{projectile_expert_q_gap_diag.positive_gap_rows} "
+        f"mean_gap:{projectile_expert_q_gap_diag.mean_gap:.6f} "
+        f"mean_positive_gap:{projectile_expert_q_gap_diag.mean_positive_gap:.6f} "
+        f"gap_min:{(projectile_expert_q_gap_diag.gap_min if projectile_expert_q_gap_diag.gap_min is not None else 0.0):.6f} "
+        f"gap_max:{(projectile_expert_q_gap_diag.gap_max if projectile_expert_q_gap_diag.gap_max is not None else 0.0):.6f} "
+        f"mean_rank:{projectile_expert_q_gap_diag.mean_expert_rank:.2f} "
+        f"invalid_expert:{projectile_expert_q_gap_diag.invalid_expert_rows} "
+        f"empty_valid:{projectile_expert_q_gap_diag.empty_valid_rows} "
+        f"by_expert:{format_counts(projectile_expert_q_gap_diag.by_expert_action, projectile_expert_q_gap_diag.rows, args.diagnostic_top_n)} "
+        f"top:{format_counts(projectile_expert_q_gap_diag.top_action_counts, projectile_expert_q_gap_diag.rows, args.diagnostic_top_n)} "
+        f"blockers:{format_counts(projectile_expert_q_gap_diag.blocker_counts, projectile_expert_q_gap_diag.positive_gap_rows, args.diagnostic_top_n)}",
         flush=True,
     )
     print(

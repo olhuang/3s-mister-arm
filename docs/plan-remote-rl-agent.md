@@ -2438,6 +2438,7 @@ Tasks:
 - [x] Add offline DQN corner position reward shaping for anti-turtle experiments
 - [x] Add opt-in offline DQN projectile response reward shaping for safe jump-over, close back/guard success, and late jump-hit penalties
 - [x] Add opt-in projectile-response replay oversampling for safe jump, late jump-hit, and close back/guard rows
+- [x] Add projectile expert Q-gap diagnostics and a valid-action-masked margin loss for safe human anti-fireball jump rows
 - [ ] Review walk-forward/back macro actions after spacing-shaping A/B results
 - [ ] Review finer distance buckets after spacing-shaping sample-volume checks
 - [ ] Collect targeted corner-escape demo data before treating corner anti-turtle shaping as solved

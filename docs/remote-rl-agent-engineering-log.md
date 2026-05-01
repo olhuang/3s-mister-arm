@@ -2,6 +2,119 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-01: Implement And Validate Projectile Expert Margin V52
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / full action-set DQN experiments
+
+Files changed:
+- `tools/train_dqn_learner.py`
+- `tools/rl_auto_retrain.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+- generated candidates under `model/dqn-projectile-schema-v5-full-actions-v48-*`,
+  `v49-*`, `v50-*`, `v51-*`, and `v52-*` (untracked)
+
+Implementation:
+- added projectile expert margin eligibility on clean safe human-demo
+  jump-start responses to incoming projectiles.
+- added model metadata/stdout diagnostics for:
+  - sampled margin events, violations, loss, invalid/empty masks.
+  - expert Q-gap rows, unique rows, top-1/top-5 matches, mean gap, mean rank,
+    and blocker action counts.
+- added `--projectile-expert-margin-batch-size` so each DQN step can draw an
+  extra margin-only minibatch from safe-jump expert rows. Normal replay
+  sampling saw too few expert rows.
+- added `--projectile-expert-margin-equivalent-jump-actions` and made it the
+  default for projectile expert margin. Safe anti-fireball behavior needs the
+  jump-start group to beat non-jump actions; forcing
+  `jump-forward-start`/`jump-neutral-start`/`jump-back-start` to beat each
+  other created unnecessary conflicts.
+- updated `tools/rl_auto_retrain.py --reward-preset projectile-response-v3` to
+  use the V52 recipe:
+  - V47 projectile-response-v2 reward/oversampling base.
+  - `--projectile-expert-margin-loss`
+  - `--projectile-expert-margin 0.1`
+  - `--projectile-expert-margin-weight 1.0`
+  - `--projectile-expert-margin-batch-size 32`
+  - `--projectile-expert-margin-equivalent-jump-actions`
+  - `--projectile-expert-margin-valid-action-mask action-start-v1`
+
+Validation:
+- `python3 -m py_compile tools/train_dqn_learner.py tools/rl_auto_retrain.py`
+- smoke training with `--limit 5000 --steps 8` and margin batch `32` completed.
+- `tools/rl_auto_retrain.py --help` lists `projectile-response-v3`.
+- external targeted comparison over
+  `logs/rl-transitions-human-demo-projectile-schema-v5-smoke-4-3-3.ndjson`.
+
+Iteration results:
+- V48 (`weight=0.05`, normal replay batch only) was too weak:
+  - safe expert rows still top-1 `0/1830`; mean group-unaware gap about `0.147`.
+- V50 (`weight=5.0`, normal replay batch only) proved the direction was right
+  but still under-sampled:
+  - safe expert top-1 improved to `120/1830`; mean gap `0.044`.
+- V51 (`weight=1.0`, margin batch `32`, exact action margin) made jump viable
+  but exposed jump-direction conflicts:
+  - safe-jump unique rows any-jump top-1 `151/181` (`83.4%`).
+  - remaining blockers included `tatsu-mk` and `shoryuken-hp`.
+- V52 (`weight=1.0`, margin batch `32`, jump-start equivalence) resolves the
+  original failure mode:
+  - model metadata safe-jump group Q-gap: top-1 `1820/1830` (`99.5%`),
+    top-5 `1830/1830`, positive gap `10/1830`, mean gap `-0.097`.
+  - targeted safe-jump unique rows: any-jump top-1 `180/181` (`99.4%`),
+    `shoryuken-hp` top-1 `1/181` (`0.6%`), `tatsu-mk` top-1 `0/181`.
+  - incoming projectile + jump-start-allowed rows: any-jump top-1
+    `1508/1533` (`98.4%`), `shoryuken-hp` top-1 `11/1533` (`0.7%`),
+    `tatsu-mk` top-1 `13/1533` (`0.8%`).
+
+Decision:
+- keep V52 / `projectile-response-v3` as the current offline candidate recipe
+  for anti-fireball jump behavior.
+- do not promote V48/V49/V50/V51.
+- next validation should be a live probe/smoke on MiSTer before publishing as
+  the default remote actor.
+
+## 2026-05-01: V48 Projectile Expert Margin Plan
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / full action-set DQN experiments
+
+Purpose:
+- turn the V47 negative result into a targeted fix: first measure whether safe
+  human anti-fireball jump labels lose the model's Q ranking, then train with
+  an explicit valid-action-masked expert margin loss on those rows only.
+
+Plan:
+- add Q-gap diagnostics for projectile expert rows:
+  - source must be `human-demo`.
+  - action must be `jump-forward-start`, `jump-neutral-start`, or
+    `jump-back-start`.
+  - row must satisfy the incoming projectile response threat classifier.
+  - by default the outcome must be a clean safe jump, not a late jump-hit.
+  - report expert rank, top action, top-vs-expert Q gap, positive-gap counts,
+    and blocker action counts.
+- add opt-in margin training:
+  - apply only to projectile expert rows above.
+  - use the same schema-backed action-start valid-action mask for competitors.
+  - use a max-violator hinge:
+    `max(0, max_a(Q(s,a)+margin) - Q(s,expert))`.
+  - keep the margin small and Q-scale-aware; start with `margin=0.1` and
+    `weight=0.05`.
+  - record loss/event diagnostics in stdout and model metadata.
+- train V48 from the V47 projectile-response-v2 recipe plus the margin loss.
+
+Expected effect:
+- on safe-jump expert rows, the expert jump rank should move toward top-1 and
+  `Q(top)-Q(expert)` should shrink or become negative.
+- on incoming projectile + jump-start-allowed rows, `jump_top1` should become
+  nonzero and `jump_top5` should improve beyond the V46/V47 `13.1%` baseline.
+
+Risk / side effect:
+- if margin is too strong or too broad, the model may over-prefer jump in
+  unrelated states.
+- mitigation: opt-in only, safe-jump-only by default, human-demo-only, and
+  valid-action-masked competitors.
+
 ## 2026-05-01: Add Projectile Oversampling And Train V47 Candidate
 
 Milestone:

@@ -31,6 +31,7 @@ PROJECTILE_OWNER_NAMES = {
     2: "opponent",
 }
 JUMP_START_ACTIONS = frozenset(rl.JUMP_START_ACTION_NAMES)
+PROJECTILE_GUARD_RESPONSE_ACTIONS = frozenset({"back", "guard", "guard-stand", "guard-crouch"})
 PROJECTILE_FIREBALL_ACTIONS = frozenset(
     {
         "fireball-lp",
@@ -303,6 +304,27 @@ class JumpProjectileStats:
             self.damaged += 1
         else:
             self.safe += 1
+
+
+@dataclass
+class ProjectileGuardStats:
+    rows: int = 0
+    no_damage_rows: int = 0
+    chip_rows: int = 0
+    full_hit_rows: int = 0
+    self_hp_sum: int = 0
+    opp_hp_sum: int = 0
+
+    def add(self, self_hp: int, opp_hp: int) -> None:
+        self.rows += 1
+        self.self_hp_sum += self_hp
+        self.opp_hp_sum += opp_hp
+        if self_hp <= 0:
+            self.no_damage_rows += 1
+        elif self_hp <= 2:
+            self.chip_rows += 1
+        else:
+            self.full_hit_rows += 1
 
 
 def parse_args() -> argparse.Namespace:
@@ -684,6 +706,14 @@ def projectile_rel_x_bucket(rel_x: int) -> str:
     return "front-very-far"
 
 
+def projectile_guard_damage_bucket(self_hp: int) -> str:
+    if self_hp <= 0:
+        return "none"
+    if self_hp <= 2:
+        return "chip"
+    return "full-hit"
+
+
 def projectile_active(row: dict[str, object]) -> bool:
     return bool(int_field(row, "obs_projectile_active"))
 
@@ -771,6 +801,10 @@ def analyze_projectiles(rows: list[dict[str, object]], args: argparse.Namespace)
     owner_stats: dict[int, ProjectileOwnerStats] = {}
     segment_stats: dict[int, ProjectileSegmentStats] = {}
     fireball_label_counts: collections.Counter[str] = collections.Counter()
+    guard_stats = ProjectileGuardStats()
+    guard_by_action: dict[str, ProjectileGuardStats] = {}
+    guard_by_time: dict[str, ProjectileGuardStats] = {}
+    guard_event_lines: list[str] = []
     jump_stats = JumpProjectileStats()
     jump_by_action: dict[str, JumpProjectileStats] = {}
     jump_by_time: dict[str, JumpProjectileStats] = {}
@@ -816,6 +850,26 @@ def analyze_projectiles(rows: list[dict[str, object]], args: argparse.Namespace)
             flush_segment()
 
         action_selection = rl.select_training_action(row, args.training_action_source)
+        if incoming_opponent_projectile(row) and action_selection.name in PROJECTILE_GUARD_RESPONSE_ACTIONS:
+            self_hp = int_field(row, "delta_self_hp")
+            opp_hp = int_field(row, "delta_opp_hp")
+            time_bucket = projectile_time_bucket(int_field(row, "obs_projectile_time_to_self"))
+            action_name = action_selection.name or "none"
+
+            guard_stats.add(self_hp, opp_hp)
+            guard_by_action.setdefault(action_name, ProjectileGuardStats()).add(self_hp, opp_hp)
+            guard_by_time.setdefault(time_bucket, ProjectileGuardStats()).add(self_hp, opp_hp)
+
+            if len(guard_event_lines) < args.limit:
+                guard_event_lines.append(
+                    f"  idx={index} ep={int_field(row, 'episode_id')} dec={int_field(row, 'decision_id')} "
+                    f"action={action_name} rel_x={int_field(row, 'obs_projectile_rel_x')} "
+                    f"vel_x={int_field(row, 'obs_projectile_vel_x')} "
+                    f"t={int_field(row, 'obs_projectile_time_to_self')} bucket={time_bucket} "
+                    f"damage={projectile_guard_damage_bucket(self_hp)} self_hp={self_hp} "
+                    f"self_r={int_field(row, 'obs_self_routine_1')}/{int_field(row, 'obs_self_routine_2')}"
+                )
+
         if action_selection.name not in JUMP_START_ACTIONS:
             continue
 
@@ -906,6 +960,50 @@ def analyze_projectiles(rows: list[dict[str, object]], args: argparse.Namespace)
                 f"{projectile_owner_name(owner):<10} segments={stats.segments:5d} "
                 f"rows={stats.rows:6d} len_min/avg/max={min_len}/{stats.mean_len:.1f}/{stats.max_len}"
             )
+
+    print("\nPROJECTILE_GUARD_SUMMARY")
+    print(
+        f"guard_rows={guard_stats.rows} no_damage_rows={guard_stats.no_damage_rows} "
+        f"chip_rows={guard_stats.chip_rows} full_hit_rows={guard_stats.full_hit_rows} "
+        f"self_hp={guard_stats.self_hp_sum} opp_hp={guard_stats.opp_hp_sum} "
+        f"actions={','.join(sorted(PROJECTILE_GUARD_RESPONSE_ACTIONS))}"
+    )
+
+    print("\nPROJECTILE_GUARD_BY_ACTION")
+    if not guard_by_action:
+        print("  none")
+    else:
+        sorted_guard_actions = sorted(
+            guard_by_action.items(),
+            key=lambda item: (item[1].rows, item[1].self_hp_sum),
+            reverse=True,
+        )
+        for action, stats in sorted_guard_actions:
+            print(
+                f"{action:<24} rows={stats.rows:5d} no_damage={stats.no_damage_rows:5d} "
+                f"chip={stats.chip_rows:5d} full_hit={stats.full_hit_rows:5d} "
+                f"self_hp={stats.self_hp_sum:5d} opp_hp={stats.opp_hp_sum:5d}"
+            )
+
+    print("\nPROJECTILE_GUARD_BY_TIME_BUCKET")
+    if not guard_by_time:
+        print("  none")
+    else:
+        for time_bucket, stats in sorted(guard_by_time.items()):
+            print(
+                f"t={time_bucket:<8} rows={stats.rows:5d} no_damage={stats.no_damage_rows:5d} "
+                f"chip={stats.chip_rows:5d} full_hit={stats.full_hit_rows:5d} "
+                f"self_hp={stats.self_hp_sum:5d}"
+            )
+
+    print("\nPROJECTILE_GUARD_EVENTS")
+    if not guard_event_lines:
+        print("  none")
+    else:
+        for line in guard_event_lines:
+            print(line)
+        if guard_stats.rows > len(guard_event_lines):
+            print(f"  ... {guard_stats.rows - len(guard_event_lines)} more")
 
     print(
         "\nPROJECTILE_JUMP_START_SUMMARY "

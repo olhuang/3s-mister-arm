@@ -2,6 +2,56 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-01: Add Projectile Guard Summary to Transition Analyzer
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / full action-set DQN experiments
+
+Files changed:
+- `tools/analyze_rl_transitions.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- make fireball-response demo quality easier to judge before training the
+  first projectile-aware DQN model.
+- separate incoming-projectile guard/back rows from jump-start rows so we can
+  verify the replay set contains both "jump over the fireball" and
+  "block/hold back because it is too close" examples.
+
+Implementation notes:
+- added `PROJECTILE_GUARD_SUMMARY`, `PROJECTILE_GUARD_BY_ACTION`,
+  `PROJECTILE_GUARD_BY_TIME_BUCKET`, and `PROJECTILE_GUARD_EVENTS` sections to
+  `tools/analyze_rl_transitions.py`.
+- guard diagnostics currently count incoming opponent projectile rows whose
+  selected training action is `back`, `guard`, `guard-stand`, or
+  `guard-crouch`.
+- damage buckets use the row's `delta_self_hp`:
+  - `none`: no self HP loss.
+  - `chip`: 1-2 HP self loss.
+  - `full-hit`: more than 2 HP self loss.
+- this is analyzer-only; it does not change C observation packing, probe
+  behavior, label derivation, or DQN training.
+
+Validation:
+- `python3 -m py_compile tools/analyze_rl_transitions.py` passed.
+- `python3 tools/analyze_rl_transitions.py
+  logs/rl-transitions-projectile-schema-v5-smoke-4-3-3.ndjson --limit 18`
+  passed and reported:
+  - `schemas=5:7783`
+  - `active=805/7783`
+  - `incoming_opp=464/805`
+  - `owners=opponent:547,self:258`
+  - `guard_rows=72`, `no_damage_rows=69`, `chip_rows=3`,
+    `full_hit_rows=0`
+  - `PROJECTILE_GUARD_BY_ACTION` currently shows those rows under `back`.
+
+Interpretation:
+- the current projectile smoke contains clean block/hold-back examples against
+  incoming fireballs, plus a small number of chip rows.
+- no full-hit guard rows appeared in this pass; full-hit cases are still
+  visible through the existing jump-start damaged/safe projectile summary.
+
 ## 2026-05-01: Add Projectile Diagnostics to Transition Analyzer
 
 Milestone:

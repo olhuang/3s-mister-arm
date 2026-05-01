@@ -3071,6 +3071,17 @@ Full-action DQN sparse-action plan:
       output for schema-v5 logs: owner counts, projectile segments,
       incoming-projectile time buckets, fireball engine-label counts, and
       jump-start near-projectile damaged/safe row diagnostics.
+    - added `PROJECTILE_GUARD_SUMMARY` diagnostics to the analyzer so
+      incoming-projectile `back` / guard rows are counted separately from
+      jump-start rows. This is a data-quality tool, not a training-behavior
+      change: it verifies whether the replay set contains close/late fireball
+      responses where blocking is safer than jumping.
+    - latest schema-v5 projectile smoke
+      `logs/rl-transitions-projectile-schema-v5-smoke-4-3-3.ndjson` reported
+      `guard_rows=72`, `no_damage_rows=69`, `chip_rows=3`,
+      `full_hit_rows=0`; all guard-response rows were currently labeled
+      `back`, which matches the present demo labeler behavior for held-back
+      blocking.
   - Validation before training:
     - record a targeted human-demo smoke with Ryu fireballs, neutral/forward
       jump-over responses, blocked/failed jumps, and no-projectile baseline

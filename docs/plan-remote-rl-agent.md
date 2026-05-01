@@ -2874,10 +2874,31 @@ Full-action DQN sparse-action plan:
     - `git diff --check`
     - `tools/mister/build-game.sh --flavor telemetry`
   - Remaining data validation before first split-taxonomy training:
-    - collect a short CPU-demo schema-v4 log and confirm that
-      `obs_self_air_attack_allowed=1` appears during ordinary jump-air rows
-      (`R1=0`, `R2=18..26`) and that analyzer output separates
-      `jump-*-start` from `air-*`.
+    - schema-v4 smoke log
+      `logs/rl-transitions-cpu-demo-schema-v4-smoke-4-3-3.ndjson` confirmed:
+      all rows use transition schema `4`; all new observation fields are
+      present; jump phase mapping is coherent (`phase=1` for ordinary jump
+      ready, `phase=2` for ordinary jump-air, `phase=3` for other airborne
+      states); old `jump-neutral-mk` / `jump-back-hk` style labels no longer
+      appear; and air-normal labels can appear as separate `air-*` actions.
+    - blocker found in that first smoke: `obs_self_ground_action_start_allowed`
+      and `obs_self_jump_start_allowed` were true on only `8 / 2579` rows, and
+      `obs_self_air_attack_allowed` was true on only `19 / 2579` rows. The
+      split schema was working, but the first C derivation was too strict for
+      training V41 because it also gated on raw `self_do_not_move`,
+      `self_current_attack == 0`, and `self_throw_active`.
+    - follow-up fix: derive the first-version action-start flags from the same
+      routine-first state family used by the validated shared mask:
+      `valid && R1=0 && !routine_attack && !contact_reaction && !hit_stop`,
+      then apply family-specific checks for grounded, jump-ready/jump-air, and
+      airborne jump-air. Keep raw movement/attack/throw fields for diagnostics
+      and future refinements instead of making them hard blockers in the first
+      schema-v4 gate.
+    - before V41/Vnext training, re-record a short CPU-demo schema-v4 log and
+      confirm the fixed C fields have useful density: ground/jump-start allow
+      rows should be much closer to the routine-based estimate, ordinary
+      jump-air rows should expose `obs_self_air_attack_allowed=1`, and analyzer
+      output should continue to separate `jump-*-start` from `air-*`.
 
 - Step 4: train-time invalid-action Q penalty on the split action space.
   - Do this after Step 3, not before it.

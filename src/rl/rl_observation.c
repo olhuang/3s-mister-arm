@@ -103,7 +103,7 @@ static u8 derive_jump_phase(const RLObservationV1* obs) {
 }
 
 static void derive_action_start_flags(RLObservationV1* obs) {
-    bool ordinary_unlocked = false;
+    bool ordinary_action_state = false;
     bool jump_ready = false;
     bool jump_air = false;
 
@@ -112,17 +112,15 @@ static void derive_action_start_flags(RLObservationV1* obs) {
     }
 
     obs->self_jump_phase = derive_jump_phase(obs);
-    ordinary_unlocked = obs->valid && obs->self_routine[1] == 0 && !obs->self_routine_attack_state &&
-                        !obs->self_contact_reaction_state && !obs->self_hit_stop &&
-                        !obs->self_do_not_move && obs->self_current_attack == 0 &&
-                        !obs->self_throw_active;
+    ordinary_action_state = obs->valid && obs->self_routine[1] == 0 && !obs->self_routine_attack_state &&
+                            !obs->self_contact_reaction_state && !obs->self_hit_stop;
     jump_ready = is_ordinary_jump_ready_routine(obs->self_routine[1], obs->self_routine[2]);
     jump_air = is_ordinary_jump_air_routine(obs->self_routine[1], obs->self_routine[2]);
 
     obs->self_ground_action_start_allowed =
-        (u8)(ordinary_unlocked && !obs->self_airborne && !jump_ready && !jump_air);
+        (u8)(ordinary_action_state && !obs->self_airborne && !jump_ready && !jump_air);
     obs->self_jump_start_allowed = obs->self_ground_action_start_allowed;
-    obs->self_air_attack_allowed = (u8)(ordinary_unlocked && obs->self_airborne && jump_air);
+    obs->self_air_attack_allowed = (u8)(ordinary_action_state && obs->self_airborne && jump_air);
 }
 
 static s16 clamp_s16_nonnegative(s16 value) {

@@ -2,6 +2,62 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-01: Fix Schema-V4 Action-Start Allow Gate
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / full action-set DQN experiments
+
+Files changed:
+- `src/rl/rl_observation.c`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- fix the first schema-v4 data-smoke finding before training V41/Vnext.
+- keep the jump-start / air-normal action split, but make the new allow fields
+  dense enough to be useful for shared masks and offline DQN features.
+
+Smoke finding:
+- `logs/rl-transitions-cpu-demo-schema-v4-smoke-4-3-3.ndjson` passed the
+  schema/action split checks:
+  - all rows used transition schema `4`.
+  - all new schema-v4 observation fields were present.
+  - jump phase mapping was coherent: phase `1` for ordinary jump-ready,
+    phase `2` for ordinary jump-air, and phase `3` for other airborne states.
+  - old mixed jump-attack labels no longer appeared.
+  - `air-*` labels can appear separately from `jump-*-start`.
+- the allow flags were too sparse for training:
+  - `obs_self_ground_action_start_allowed=1`: `8 / 2579` rows.
+  - `obs_self_jump_start_allowed=1`: `8 / 2579` rows.
+  - `obs_self_air_attack_allowed=1`: `19 / 2579` rows.
+- a routine-first estimate on the same log found the intended signal should be
+  much denser, roughly `718` ground/jump-start rows and `436` air-attack rows.
+
+Implementation notes:
+- changed `derive_action_start_flags()` to use the routine-first eligibility
+  gate that matched the validated shared mask:
+  `valid && R1=0 && !routine_attack && !contact_reaction && !hit_stop`.
+- stopped making raw `self_do_not_move`, `self_current_attack == 0`, and
+  `self_throw_active` hard blockers for the first schema-v4 allow fields. The
+  smoke log showed those raw fields were too strict for ordinary actionable
+  rows, so keep them as diagnostics / future refinements instead.
+- ground/jump-start allow still requires grounded state and excludes ordinary
+  jump-ready / jump-air routines.
+- air-attack allow still requires airborne ordinary jump-air
+  (`R1=0`, `R2=18..26`).
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py tools/train_dqn_learner.py tools/compare_dqn_models.py tools/analyze_rl_transitions.py tools/rl_auto_retrain.py`
+- routine-first estimate on the existing smoke log recovered useful allow
+  density for the next data smoke.
+- `git diff --check`
+- `tools/mister/build-game.sh --flavor telemetry`
+
+Follow-up:
+- rebuild/deploy and re-record a short schema-v4 CPU-demo smoke before V41.
+- confirm the live C-emitted fields now show useful allow density and still
+  separate `jump-*-start` labels from `air-*` labels.
+
 ## 2026-05-01: Implement Jump-Start / Air-Normal Action Split
 
 Milestone:

@@ -2524,6 +2524,15 @@ Tasks:
 - [x] Train a v18 candidate from a declared source-mix recipe and compare against v9 before live use
 - [x] Review v18 source-mix results before using live-policy replay as a default training input
 - [x] Collect a clean live replay with v9 plus a conservative action-support prior before the next live-replay retrain
+- [x] Add entropy regularization (`--dqn-entropy-reg-weight`) to DQN trainer to prevent action collapse
+- [x] Add adaptive unsupported-action Q ceiling (`--dqn-unsupported-action-adaptive-ceiling`) computed from movement action mean Q
+- [x] Assess engine-state label coverage for BC pre-training: 70.6% actionable coverage on P3 data, exceeding 30-50% threshold
+- [x] Implement BC (Behavioral Cloning) training mode in `train_dqn_learner.py` with `--training-mode bc`, engine state + input label derivation, and cross-entropy training
+- [x] Train BC baseline model on full retrain data (M3bc v320): 66,756 labeled rows, CE loss 3.74→1.41
+- [x] DQN fine-tune from BC baseline (M3bc+dqn v330): first-ever special moves at top-1 greedy (shoryuken-lp 52.8%), confirming BC+DQN approach works
+- [ ] Balance shoryuken over-concentration (52.8%) and fireball suppression (0%) via better fireball data and/or entropy tuning
+- [ ] Collect fireball-good scenario data (far range, opponent grounded) to improve fireball hit rate in training distribution
+- [ ] Run M3bc+dqn-v2 with improved fireball/shoryuken data balance and report M3 quality gate results
 - [x] Train the next live-replay candidate only from declared clean source ratios and compare it against raw v9 plus reranked v9 before live use
 - [x] Add opt-in movable action-start filtering for selected DQN replay sources so recovery-state policy selections do not become valid action samples
 - [x] Train v20 from the clean support-prior live replay with remote-only movable action-start filtering and compare it against v9/v18/v19 before live use
@@ -3621,21 +3630,20 @@ Future task tracking:
 - [x] Phase 1 movement/spacing data collected and M1 movement baseline trained.
 - [x] Phase 2 normals and far-whiff negative data collected; M2 v4c attack
   baseline trained and raw-validated without support-prior.
-- [ ] Phase 3 specials data collected; first M3 training attempts rejected
-  because v1-v3 were too conservative, v4 polluted M1, and v5/v6 did not
-  produce clean special top-1 behavior. M3 v7 also failed after removing
-  specials from movement regression: M1 attack rate stayed too high and P3
-  still had no special top-1. Stop recipe-only tuning and switch to the
-  incremental M3 curriculum: M3a fireball-only, M3b add shoryuken, M3c add
-  tatsu, with split logs and prior-stage replay mixed into every stage. M3a1
-  extracted-log probe also failed, so formal fireball-good/bad collection is
-  still required before another M3a training attempt. The mixed-log extractor
-  is now move-family-agnostic, so the same tool can be reused for provisional
-  shoryuken/tatsu split probes after the fireball collection step. Formal
-  fireball data has now been collected and split; M3a v1-v6 on that data were
-  rejected. The data is usable, but recipe-only training is stuck between M1/P2
-  pollution and fireball suppression, so the next M3a pass needs trainer or
-  feature changes rather than another pure reward/oversample sweep.
+- [x] Phase 3 specials data collected; first seven M3 training attempts (v1-v6,
+  M3a) all rejected because DQN could not produce special top-1 behavior without
+  destroying M1/M2 movement replay. Root cause: context blindness — DQN MLP
+  cannot distinguish "good special range" from "movement states" with current
+  observation features, and engine labels cover only 2.7% of rows. BC
+  pre-training approach validated: engine state (obs_self routine) + input labels
+  provide 70.6% actionable label coverage. BC pre-training on full retrain data
+  (M3bc v320, 66,756 labeled rows) followed by DQN conservative fine-tuning
+  (M3bc+dqn v330, LR 1e-4) produced the **first-ever special-move top-1 greedy**:
+  shoryuken-lp 52.8%, back 44.5%, forward 2.7%. BC prior successfully prevents
+  action collapse; DQN amplifies positive-reward shoryuken and suppresses
+  negative-reward fireball. Shoryuken concentration (52.8%) and fireball
+  suppression (0%) need further balancing with better fireball data and/or
+  entropy regularization. See engineering log 2026-05-03 entries for full details.
 - [ ] Phase 4 defense data collected and M4 defense baseline trained.
 - [ ] Phase 5 projectile timing data collected by visual cue, post-hoc bucketed
   by timing/recovery, and M5 projectile baseline trained.

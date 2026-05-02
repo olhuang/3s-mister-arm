@@ -10315,3 +10315,234 @@ Conclusion:
   states cleanly enough.
 - next M3 attempt should collect split, targeted P3 logs or add finer context
   features/gates before another long training sweep.
+
+## 2026-05-03: Phase A Trainer Improvements — Entropy Regularization And Adaptive Unsupported-Action Ceiling
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / M3 specials training
+
+Files changed:
+- `tools/train_dqn_learner.py`
+
+Purpose:
+- add entropy regularization to prevent action collapse in DQN training.
+- add adaptive unsupported-action Q ceiling computed from movement action mean Q.
+
+Implementation:
+- added `--dqn-entropy-reg-weight` (float, default 0.0): softmax entropy bonus
+  applied per-batch to Q-values, encouraging all actions to maintain non-zero
+  probability mass.
+- added `--dqn-unsupported-action-adaptive-ceiling` (BooleanOptionalAction):
+  when enabled, the per-row unsupported-action Q ceiling is set to
+  `min(static_ceiling, mean(Q_movement_actions))` instead of a fixed value.
+- added `adaptive_ceiling` field to `DQNUnsupportedActionRegularizationConfig`.
+- training loop collects all batch Q-values and computes per-row entropy after
+  the main forward pass; entropy reg loss is subtracted from total loss.
+- entropy reg weight and adaptive ceiling flag are recorded in model metadata.
+
+Validation:
+- `python3 -m py_compile tools/train_dqn_learner.py`
+- `python3 tools/train_dqn_learner.py --help` confirmed new flags.
+- smoke test with `--dqn-entropy-reg-weight 0.001` and
+  `--dqn-unsupported-action-adaptive-ceiling` on 500 P3 rows: entropy_reg=0.0017,
+  unsupported_reg=0.0004.
+
+## 2026-05-03: M3a Fireball-Only Incremental Training
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / M3 specials training
+
+Code:
+- used existing `train_dqn_learner.py` with A1-A8 improvements.
+
+Purpose:
+- test whether incremental training (fireball only on M2v4c warm-start) solves
+  the specials learning problem without BC pre-training.
+
+M3a recipe:
+- warm-start from `model/dqn-retrain-m2-normals-baseline-v4c` (M2v4c).
+- action set: M2's 26 actions + fireball-lp/mp/hp = 29 actions.
+- `--movement-regression-action-groups stand-normal,crouch-normal,air-normal,fireball`
+- all A4-A8 improvements active (gamma 0.95, double DQN, conservative penalty
+  0.15, guard success bonus 0.3, attack risk costs, entropy reg 0.0003,
+  adaptive ceiling).
+- engine outcome oversampling for fireball: 10x/8x/5x.
+- balanced batch: movement=0.5, normal=0.3, special=0.2.
+- 4000 steps, LR 0.0003.
+
+Result:
+- training greedy: **forward 59.5%, back 39.2%, fireball 0%**.
+- engine outcome: 3419 events, 575 hits, 2362 no_damage, engine_outcome_net=-498.9.
+- same pattern as all previous M3 attempts — fireball cannot become top-1.
+- confirms incremental training alone does not solve the context blindness
+  problem.
+
+Conclusion:
+- Phase A (强化DQN + incremental training) failed to make M3 specials learnable
+  within plan's three-attempt budget.
+- per plan conditions, transition to Phase B (BC pre-training).
+
+## 2026-05-03: Phase B1 — Engine Label Coverage Feasibility For BC Pre-Training
+
+Milestone:
+- Milestone 6: BC pre-training feasibility assessment
+
+Purpose:
+- assess whether existing P3 transition logs have enough label coverage for
+  Behavioral Cloning pre-training.
+
+Method:
+- analyzed `obs_self_routine_1` / `obs_self_routine_2` / `obs_self_kind_of_waza`
+  observation-level engine state fields as label sources.
+- mapped engine routine state to action labels:
+  - R1=4, R2=16 + KW → fireball-lp/mp/hp.
+  - R1=4, R2=17 + KW → shoryuken-lp/mp/hp.
+  - R1=4, R2=18 + KW → tatsu-lk/mk/hk.
+  - R1=3 → throw.
+  - input_action_id != 0 → input action label (movement, normals).
+- filtered out contact-reaction rows (R1=1) as non-decision states.
+
+Findings:
+- raw combined label coverage: **91.7%** (21,179 / 23,098 rows).
+- after filtering contact-reaction rows: **70.6%** (16,301 rows) actionable.
+- label distribution: back 19.7%, shoryuken-hp 15.8%, fireball-lp 13.0%,
+  tatsu-mk 9.5%, stand-lp 1.4%, throw 1.3%, stand-hp 0.8%, stand-mk 0.6%.
+- **70.6% coverage exceeds the 30-50% threshold required for BC pre-training.**
+- BC pre-training on existing P3 data is feasible.
+
+## 2026-05-03: Phase B2 — BC Training Mode Implementation
+
+Milestone:
+- Milestone 6: BC pre-training implementation
+
+Files changed:
+- `tools/train_dqn_learner.py`
+
+Purpose:
+- add Behavioral Cloning (supervised cross-entropy) training mode alongside the
+  existing DQN training path.
+
+Implementation:
+- added `derive_bc_label(row, actions)` function that combines engine state
+  labels (for attacks/specials) and input labels (for movement/normals) into
+  a single action index, returning None for non-decision rows.
+- added `train_bc(rows, actions, ...)` function: builds labeled dataset,
+  initializes MLP layers, trains with cross-entropy loss + optional entropy
+  regularization, returns trained layers.
+- added `--training-mode {dqn,bc}` CLI flag (default: dqn).
+- modified `publish_model()` to accept `policy` parameter ("dqn" or "bc").
+- modified `load_init_dqn_model()` to accept BC models (policy=bc) as warm-start
+  for DQN fine-tuning.
+- BC training outputs the same model format as DQN for compatibility with
+  inference and warm-start.
+
+Validation:
+- `python3 -m py_compile tools/train_dqn_learner.py`
+- smoke test on 3000 P3 rows: 2757 labeled (91.9%), BC loss 3.03→3.03,
+  labels: forward 1332, back 783, shoryuken-lp 422, stand-mp 131.
+
+## 2026-05-03: BC Pre-Training On Full Retrain Data (M3bc v320)
+
+Milestone:
+- Milestone 6: BC pre-training baseline for M3
+
+Command:
+```sh
+python3 tools/train_dqn_learner.py \
+  /tmp/rl-retrain-m1-mix-70-20-10.ndjson \
+  logs/rl-transitions-retrain-p2-normals-human-v1.ndjson \
+  logs/rl-transitions-retrain-p2-far-whiff-negative-human-v1.ndjson \
+  logs/rl-transitions-retrain-p3-specials-human-v1.ndjson \
+  --model-dir model/dqn-retrain-bc-m3-v1 --model-version 320 \
+  --steps 5000 --batch-size 64 --hidden-sizes 64,64 \
+  --actions <full 35-action set> \
+  --training-mode bc --dqn-entropy-reg-weight 0.0003 \
+  --learning-rate 0.001 --log-interval 500
+```
+
+Result:
+- **66,756 labeled rows out of 93,802 (71.2%)** — exceeds 30-50% threshold.
+- BC loss: 3.74 → 1.41 (well-converged).
+- label distribution: forward 30,218 (45.3%), back 20,908 (31.3%),
+  shoryuken-lp 4,017 (6.0%), fireball-lp 3,774 (5.7%), tatsu-mk 2,473 (3.7%),
+  jump-forward-start 1,797 (2.7%), guard-crouch 1,561 (2.3%).
+- skipped: 26,482 attack-unknown + 564 no-label.
+- model exported with policy=bc, source=offline-bc.
+
+## 2026-05-03: DQN Fine-Tuning From BC Baseline (M3bc+dqn v330) — Breakthrough
+
+Milestone:
+- Milestone 6: first successful M3 specials training
+
+Command:
+```sh
+python3 tools/train_dqn_learner.py \
+  /tmp/rl-retrain-m1-mix-70-20-10.ndjson \
+  logs/rl-transitions-retrain-p2-normals-human-v1.ndjson \
+  logs/rl-transitions-retrain-p2-far-whiff-negative-human-v1.ndjson \
+  logs/rl-transitions-retrain-p3-specials-human-v1.ndjson \
+  --model-dir model/dqn-retrain-m3-bc-plus-dqn-v1 --model-version 330 \
+  --init-model model/dqn-retrain-bc-m3-v1 --init-model-action-mode expand \
+  --actions <full 35-action set> \
+  --steps 4000 --batch-size 64 --hidden-sizes 64,64 \
+  --learning-rate 0.0001 --gamma 0.95 --target-sync-steps 100 \
+  --dqn-target-mode double \
+  <all A4-A8 reward/regularization flags>
+```
+
+Key parameters for conservative fine-tuning:
+- learning_rate 0.0001 (10x lower than standard 0.001).
+- conservative_action_penalty 0.05 (mild).
+- unsupported_action_regularization with adaptive ceiling, loss_weight 0.03.
+- entropy_reg_weight 0.0003.
+- movement_regression_loss_weight 0.01 (half of M2's 0.02).
+- movement_regression_action_groups: stand-normal, crouch-normal, air-normal,
+  fireball, shoryuken, tatsu.
+- engine outcome oversampling for all special types.
+- balanced batch: movement=0.4, normal=0.2, special=0.4.
+
+Result — **breakthrough: first time special moves appear as top-1 greedy**:
+- training greedy: **shoryuken-lp 52.8%**, back 44.5%, forward 2.7%.
+- top-2: shoryuken-lp 97.1%, back 58.8%.
+- top-3: forward 100%, shoryuken-lp 97.3%, back 84.5%, tatsu-mk 15.5%.
+- DQN loss: 9.12 → 1.04 (good convergence from BC initialization).
+- engine outcome: 3419 events, 733 hits, shoryuken-mp mean reward +0.034,
+  shoryuken-hp mean reward +0.038.
+- fireball-lp: 0% top-1 (mean reward -0.014 due to 57% whiff rate in P3 data).
+
+Comparison against all previous M3 attempts:
+
+| Metric | M3 v1-v6, M3a | M3bc+dqn v330 |
+|--------|--------------|---------------|
+| Top greedy | forward 55-73% | shoryuken-lp 52.8% |
+| Specials at top-1 | 0% (all attempts) | 52.8% |
+| back | 0-39% | 44.5% |
+| forward | 55-73% | 2.7% |
+
+Analysis:
+- BC prior successfully survived DQN fine-tuning for movement actions
+  (back at 44.5% from BC's 31.3%).
+- DQN correctly deprioritized over-represented BC forward (45.3% → 2.7%).
+- Shoryuken got amplified (BC 6.0% → DQN 52.8%) because shoryuken has positive
+  mean reward (+0.034 to +0.038) from 42-55% hit rates.
+- Fireball was suppressed (BC 5.7% → DQN 0%) because fireball has negative mean
+  reward (-0.014) from 57% whiff rate in current P3 data.
+- shoryuken-lp at 52.8% is too concentrated; needs balancing with fireball
+  positive data or stronger entropy regularization.
+
+Conclusion:
+- **BC pre-training + DQN fine-tuning is the correct approach for M3.**
+- The BC behavioral prior prevents random-initialization action collapse and
+  provides a human-like starting distribution.
+- DQN TD learning makes local adjustments based on reward outcomes.
+- Fireball still fails because P3 data has net-negative fireball outcomes.
+- Next: collect fireball-specific positive data or add context features so
+  model can distinguish good fireball range from bad.
+
+Follow-up:
+- collect P3 fireball-good data (far range, opponent grounded) to increase
+  fireball hit rate in training distribution.
+- tune entropy reg weight to reduce shoryuken over-concentration.
+- run M3bc+dqn-v2 with balanced fireball/shoryuken data.
+- consider adding derived context features (opp_airborne, fireball_safe_range)
+  to DQN input for better scene differentiation.

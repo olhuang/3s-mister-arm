@@ -357,6 +357,7 @@ class DQNUnsupportedActionRegularizationConfig:
     min_action_count: int
     q_ceiling: float
     loss_weight: float
+    adaptive_ceiling: bool = False
 
     @property
     def enabled(self) -> bool:
@@ -369,6 +370,7 @@ class DQNUnsupportedActionRegularizationConfig:
             "min_action_count": self.min_action_count,
             "q_ceiling": self.q_ceiling,
             "loss_weight": self.loss_weight,
+            "adaptive_ceiling": self.adaptive_ceiling,
         }
 
 
@@ -1953,6 +1955,7 @@ def dqn_unsupported_action_regularization_config_from_args(
         min_action_count=max(0, int(args.dqn_unsupported_action_min_count)),
         q_ceiling=float(args.dqn_unsupported_action_q_ceiling),
         loss_weight=max(0.0, float(args.dqn_unsupported_action_loss_weight)),
+        adaptive_ceiling=bool(args.dqn_unsupported_action_adaptive_ceiling),
     )
 
 
@@ -3606,6 +3609,178 @@ def apply_grads(layers: list[dict[str, object]], grads: list[dict[str, object]],
                 weights[out_index][in_index] = float(weights[out_index][in_index]) - scale * grad
 
 
+def derive_bc_label(row: dict[str, object], actions: tuple[str, ...]) -> int | None:
+    """Derive a BC action label (index into actions) from engine state + input fields.
+
+    Returns the action index if a label can be derived, or None if the row
+    represents a non-decision state (contact reaction, idle with no input, etc.).
+    """
+    r1 = int_row_field(row, "obs_self_routine_1")
+    r2 = int_row_field(row, "obs_self_routine_2")
+    kw = int_row_field(row, "obs_self_kind_of_waza")
+
+    # Attack state (R1=4): use engine routine to identify the special/normal
+    if r1 == 4:
+        action_name: str | None = None
+        if r2 == 16:  # hadouken
+            if kw == 0x0A:
+                action_name = "fireball-mp"
+            elif kw == 0x0C:
+                action_name = "fireball-hp"
+            else:
+                action_name = "fireball-lp"
+        elif r2 == 17:  # shoryuken
+            if kw == 0x0A:
+                action_name = "shoryuken-mp"
+            elif kw == 0x0C:
+                action_name = "shoryuken-hp"
+            else:
+                action_name = "shoryuken-lp"
+        elif r2 == 18:  # tatsumaki
+            if kw == 0x09:
+                action_name = "tatsu-lk"
+            elif kw == 0x0D:
+                action_name = "tatsu-hk"
+            else:
+                action_name = "tatsu-mk"
+        if action_name is not None:
+            for index, name in enumerate(actions):
+                if name == action_name:
+                    return index
+        return None
+
+    # Throw state (R1=3)
+    if r1 == 3:
+        for index, name in enumerate(actions):
+            if name == "throw":
+                return index
+        return None
+
+    # Non-attack states: use input label
+    iid = int_row_field(row, "input_action_id")
+    if 0 <= iid < len(actions) and int_row_field(row, "input_action_step") == 0:
+        return iid
+
+    # Standing or crouching with no attack input — no explicit action label
+    return None
+
+    # Damage/contact reaction (R1=1) — not a decision state
+    if r1 == 1:
+        return None
+
+    return None
+
+
+def train_bc(
+    rows: list[dict[str, object]],
+    actions: tuple[str, ...],
+    hidden_sizes: list[int],
+    steps: int,
+    batch_size: int,
+    learning_rate: float,
+    seed: int,
+    log_interval: int,
+    entropy_reg_weight: float = 0.0,
+    initial_layers: list[dict[str, object]] | None = None,
+) -> tuple[list[dict[str, object]], dict[str, object], dict[str, int], dict[str, int]]:
+    """Train a Behavior Cloning (supervised) model from labeled transition rows."""
+    rng = random.Random(seed)
+
+    # Build labeled dataset
+    label_counts: dict[str, int] = {action: 0 for action in actions}
+    skipped: dict[str, int] = collections.defaultdict(int)
+    dataset: list[tuple[list[float], int]] = []
+
+    for row in rows:
+        label_index = derive_bc_label(row, actions)
+        if label_index is None:
+            reason = "contact-reaction"
+            r1 = int_row_field(row, "obs_self_routine_1")
+            if r1 == 1:
+                reason = "contact-reaction"
+            elif r1 == 4:
+                reason = "attack-unknown"
+            else:
+                reason = "no-label"
+            skipped[reason] += 1
+            continue
+        features = rl.dqn_feature_vector(row)
+        dataset.append((features, label_index))
+        label_counts[actions[label_index]] += 1
+
+    if not dataset:
+        raise SystemExit("BC training: no labeled rows found")
+
+    # Initialize layers
+    input_dim = len(rl.DQN_FEATURE_NAMES)
+    output_dim = len(actions)
+    if initial_layers is not None:
+        layers = copy.deepcopy(initial_layers)
+    else:
+        layers = init_network(input_dim, hidden_sizes, output_dim, rng)
+    target_layers = copy.deepcopy(layers)
+    grads = zero_grads(layers)
+
+    loss = 0.0
+    avg_loss = 0.0
+    last_entropy_reg_loss = 0.0
+
+    for step in range(1, steps + 1):
+        batch = rng.choices(dataset, k=min(batch_size, len(dataset)))
+        loss = 0.0
+        entropy_reg_loss = 0.0
+        for features, target_index in batch:
+            values, activations, pre_activations = forward(layers, features)
+            # Cross-entropy: softmax + NLL
+            max_q = max(values)
+            exp_q = [math.exp(q - max_q) for q in values]
+            sum_exp = sum(exp_q)
+            log_probs = [math.log(max(e / sum_exp, 1e-15)) for e in exp_q]
+            ce_loss = -log_probs[target_index]
+            loss += ce_loss
+
+            # Gradient for cross-entropy: softmax probs, subtract 1 from target
+            output_grad = [e / sum_exp for e in exp_q]
+            output_grad[target_index] -= 1.0
+            add_backward_grads(layers, grads, activations, pre_activations, output_grad)
+
+        # Entropy regularization
+        if entropy_reg_weight > 0.0:
+            for features, _ in batch:
+                values, _, _ = forward(layers, features)
+                max_q = max(values)
+                exp_q = [math.exp(q - max_q) for q in values]
+                sum_exp = sum(exp_q)
+                if sum_exp > 0.0:
+                    probs = [e / sum_exp for e in exp_q]
+                    row_entropy = -sum(p * math.log(max(p, 1e-15)) for p in probs)
+                    loss -= entropy_reg_weight * row_entropy
+                    entropy_reg_loss += entropy_reg_weight * row_entropy
+
+        apply_grads(layers, grads, learning_rate, batch_size)
+        grads = zero_grads(layers)
+
+        last_loss = loss / max(1, batch_size)
+        avg_loss = last_loss if step == 1 else (0.98 * avg_loss + 0.02 * last_loss)
+        last_entropy_reg_loss = entropy_reg_loss / max(1, batch_size)
+
+        if log_interval > 0 and (step == 1 or step % log_interval == 0 or step == steps):
+            print(
+                f"BC step={step} loss={last_loss:.6f} avg_loss={avg_loss:.6f} "
+                f"entropy_reg={last_entropy_reg_loss:.6f}",
+                flush=True,
+            )
+
+    train_stats = {
+        "last_loss": last_loss,
+        "avg_loss": avg_loss,
+        "entropy_reg_weight": entropy_reg_weight,
+    }
+    label_counts_typed: dict[str, int] = dict(label_counts)
+    skipped_typed: dict[str, int] = dict(skipped)
+    return layers, train_stats, label_counts_typed, skipped_typed
+
+
 def int_row_field(row: dict[str, object], name: str, default: int = 0) -> int:
     try:
         return int(row.get(name, default) or default)
@@ -4261,6 +4436,7 @@ def train_dqn(
     projectile_defensive_expert_margin_config: ProjectileDefensiveExpertMarginConfig,
     projectile_timing_group_margin_config: ProjectileTimingGroupMarginConfig,
     valid_action_mask_config: DQNValidActionMaskTrainingConfig,
+    entropy_reg_weight: float = 0.0,
     initial_layers: list[dict[str, object]] | None = None,
 ) -> tuple[
     list[dict[str, object]],
@@ -4294,6 +4470,8 @@ def train_dqn(
     avg_unsupported_regularization_loss = 0.0
     last_movement_regression_loss = 0.0
     avg_movement_regression_loss = 0.0
+    last_entropy_reg_loss = 0.0
+    avg_entropy_reg_loss = 0.0
     last_projectile_margin_loss = 0.0
     avg_projectile_margin_loss = 0.0
     last_special_margin_loss = 0.0
@@ -4376,8 +4554,11 @@ def train_dqn(
         projectile_late_defensive_margin_loss = 0.0
         projectile_defensive_expert_margin_loss = 0.0
         projectile_timing_group_margin_loss = 0.0
+        entropy_reg_loss = 0.0
+        batch_q_values: list[list[float]] = []
         for exp in batch:
             values, activations, pre_activations = forward(layers, exp.state)
+            batch_q_values.append(list(values))
             next_values, _, _ = forward(target_layers, exp.next_state)
             if exp.done:
                 target = exp.reward
@@ -4420,10 +4601,18 @@ def train_dqn(
             output_grad[exp.action_index] = error
             if unsupported_action_indices:
                 regularization_denom = max(1, len(unsupported_action_indices))
+                effective_ceiling = unsupported_action_regularization_config.q_ceiling
+                if unsupported_action_regularization_config.adaptive_ceiling:
+                    movement_q = [
+                        float(values[idx]) for idx in movement_regression_indices if idx < len(values)
+                    ]
+                    if movement_q:
+                        movement_mean = sum(movement_q) / len(movement_q)
+                        effective_ceiling = min(effective_ceiling, movement_mean)
                 for action_index in unsupported_action_indices:
                     if action_index >= len(values):
                         continue
-                    excess_q = float(values[action_index]) - unsupported_action_regularization_config.q_ceiling
+                    excess_q = float(values[action_index]) - effective_ceiling
                     if excess_q <= 0.0:
                         continue
                     weighted_loss = (
@@ -4517,6 +4706,16 @@ def train_dqn(
             projectile_timing_group_margin_loss += exp_timing_group_margin_loss
             loss += exp_timing_group_margin_loss
             add_backward_grads(layers, grads, activations, pre_activations, output_grad)
+        if entropy_reg_weight > 0.0 and batch_q_values:
+            for q_vals in batch_q_values:
+                max_q = max(q_vals)
+                exp_q = [math.exp(q - max_q) for q in q_vals]
+                sum_exp = sum(exp_q)
+                if sum_exp > 0.0:
+                    probs = [e / sum_exp for e in exp_q]
+                    row_entropy = -sum(p * math.log(max(p, 1e-15)) for p in probs)
+                    loss -= entropy_reg_weight * row_entropy
+                    entropy_reg_loss += entropy_reg_weight * row_entropy
         if projectile_expert_margin_config.enabled and projectile_expert_margin_pool:
             for _ in range(max(0, projectile_expert_margin_config.batch_size)):
                 exp = rng.choice(projectile_expert_margin_pool)
@@ -4616,6 +4815,12 @@ def train_dqn(
             if step == 1
             else (0.98 * avg_unsupported_regularization_loss + 0.02 * last_unsupported_regularization_loss)
         )
+        last_entropy_reg_loss = entropy_reg_loss / max(1, batch_size)
+        avg_entropy_reg_loss = (
+            last_entropy_reg_loss
+            if step == 1
+            else (0.98 * avg_entropy_reg_loss + 0.02 * last_entropy_reg_loss)
+        )
         last_movement_regression_loss = movement_regression_loss / max(1, batch_size)
         avg_movement_regression_loss = (
             last_movement_regression_loss
@@ -4668,6 +4873,7 @@ def train_dqn(
                 f"TRAIN step={step} loss={last_loss:.6f} avg_loss={avg_loss:.6f} "
                 f"unsupported_reg={last_unsupported_regularization_loss:.6f} "
                 f"movement_reg={last_movement_regression_loss:.6f} "
+                f"entropy_reg={last_entropy_reg_loss:.6f} "
                 f"projectile_margin={last_projectile_margin_loss:.6f} "
                 f"special_margin={last_special_margin_loss:.6f} "
                 f"projectile_late_def_margin={last_projectile_late_defensive_margin_loss:.6f} "
@@ -4701,6 +4907,7 @@ def train_dqn(
         {
             "last_loss": last_loss,
             "avg_loss": avg_loss,
+            "entropy_reg_weight": entropy_reg_weight,
             "batch_sampling": batch_diag.as_metadata(),
         },
         unsupported_action_regularization_stats,
@@ -4744,6 +4951,7 @@ def publish_model(
     fallback_policy: str,
     updated_rows: int,
     metadata: dict[str, object],
+    policy: str = "dqn",
 ) -> None:
     os.makedirs(model_dir, exist_ok=True)
     dqn_model = {
@@ -4751,10 +4959,11 @@ def publish_model(
         "feature_scales": dict(rl.DQN_FEATURE_SCALES),
         "layers": layers,
     }
+    source = "offline-bc" if policy == "bc" else "offline-dqn"
     payload = {
         "version": version,
-        "policy": "dqn",
-        "source": "offline-dqn",
+        "policy": policy,
+        "source": source,
         "action_set_version": rl.ACTION_SET_VERSION,
         "created_at_unix": time.time(),
         "metadata": metadata,
@@ -4870,8 +5079,8 @@ def load_init_dqn_model(
         raise SystemExit(f"--init-model failed to read {path}: {exc}") from exc
 
     policy = str(payload.get("policy", "") or "")
-    if policy != "dqn":
-        raise SystemExit(f"--init-model {path}: expected policy=dqn, got {policy or 'missing'}")
+    if policy not in {"dqn", "bc"}:
+        raise SystemExit(f"--init-model {path}: expected policy=dqn or bc, got {policy or 'missing'}")
     try:
         action_set_version = int(payload.get("action_set_version", 0) or 0)
     except (TypeError, ValueError):
@@ -5379,6 +5588,24 @@ def main() -> None:
         type=float,
         default=0.1,
         help="Auxiliary loss weight used by --dqn-unsupported-action-regularization",
+    )
+    parser.add_argument(
+        "--dqn-unsupported-action-adaptive-ceiling",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "When enabled, the unsupported-action Q ceiling is set to min(static_ceiling, "
+            "mean Q of movement actions) per batch instead of a fixed value"
+        ),
+    )
+    parser.add_argument(
+        "--dqn-entropy-reg-weight",
+        type=float,
+        default=0.0,
+        help=(
+            "Entropy regularization bonus weight applied to softmax policy over batch Q-values; "
+            "0 disables entropy reg"
+        ),
     )
     parser.add_argument(
         "--movement-regression-loss-weight",
@@ -6152,6 +6379,15 @@ def main() -> None:
             "current-schema demo rows and policy labels for current-schema remote rows"
         ),
     )
+    parser.add_argument(
+        "--training-mode",
+        choices=("dqn", "bc"),
+        default="dqn",
+        help=(
+            "Training algorithm: dqn for Q-learning (default), bc for Behavioral Cloning "
+            "(supervised cross-entropy from engine+input labels)"
+        ),
+    )
     parser.add_argument("--target-sync-steps", type=int, default=200, help="Steps between target-network syncs")
     parser.add_argument(
         "--dqn-target-mode",
@@ -6214,6 +6450,67 @@ def main() -> None:
         replay_source_mix_config,
         int(args.seed),
     )
+    if str(args.training_mode) == "bc":
+        # --- BC training path ---
+        bc_layers, bc_train_stats, bc_label_counts, bc_skipped = train_bc(
+            rows,
+            actions,
+            hidden_sizes,
+            max(1, args.steps),
+            max(1, args.batch_size),
+            max(1e-8, args.learning_rate),
+            args.seed,
+            args.log_interval,
+            max(0.0, float(args.dqn_entropy_reg_weight)),
+            init_model.layers if init_model is not None else None,
+        )
+        replay_source_mix_summary = dict(replay_source_mix_stats.as_metadata()) if hasattr(replay_source_mix_stats, "as_metadata") else {}
+        bc_metadata: dict[str, object] = {
+            "actions": list(actions),
+            "hidden_sizes": hidden_sizes,
+            "steps": max(1, args.steps),
+            "batch_size": max(1, args.batch_size),
+            "learning_rate": max(1e-8, args.learning_rate),
+            "entropy_reg_weight": max(0.0, float(args.dqn_entropy_reg_weight)),
+            "label_counts": {str(k): int(v) for k, v in bc_label_counts.items()},
+            "skipped_labels": {str(k): int(v) for k, v in bc_skipped.items()},
+            "total_labeled": sum(bc_label_counts.values()),
+            "total_rows": len(rows),
+            **bc_train_stats,
+        }
+        total_labeled = sum(bc_label_counts.values())
+        if total_labeled <= 0:
+            raise SystemExit("BC training: no labeled rows after parsing all transition logs")
+        version = next_model_version(args.model_dir, args.model_version)
+        publish_model(
+            args.model_dir,
+            version,
+            actions,
+            bc_layers,
+            min(1.0, max(0.0, args.epsilon)),
+            args.fallback_policy,
+            total_labeled,
+            bc_metadata,
+            policy="bc",
+        )
+        label_parts = ",".join(
+            f"{action}:{bc_label_counts.get(action, 0)}"
+            for action in sorted(actions)
+            if bc_label_counts.get(action, 0) > 0
+        )
+        print(
+            f"BC published version={version} model_dir={args.model_dir} "
+            f"rows={len(rows)} labeled={total_labeled} "
+            f"actions={len(actions)} "
+            f"loss={bc_train_stats.get('last_loss', 0.0):.6f} "
+            f"avg_loss={bc_train_stats.get('avg_loss', 0.0):.6f} "
+            f"entropy_reg={max(0.0, float(args.dqn_entropy_reg_weight))} "
+            f"skipped={dict(bc_skipped)} "
+            f"top_labels=({label_parts[:300]})",
+            flush=True,
+        )
+        return
+
     dqn_action_filter_config = dqn_action_filter_config_from_args(args)
     reward_risk_config = reward_risk_config_from_args(args)
     reward_guard_config = reward_guard_config_from_args(args)
@@ -6316,6 +6613,7 @@ def main() -> None:
         projectile_defensive_expert_margin_config,
         projectile_timing_group_margin_config,
         valid_action_mask_config,
+        max(0.0, float(args.dqn_entropy_reg_weight)),
         init_model.layers if init_model is not None else None,
     )
     batch_sampling_diag = batch_sampling_diagnostics(

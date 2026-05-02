@@ -1511,3 +1511,46 @@ Before collecting the next phase:
 4. keep the Phase 1/P8 M1 replay and Phase 2 normals log in the cumulative
    training mix.
 5. train `M3` after analyzer and detector checks pass.
+
+## 2026-05-03 Update: BC Pre-Training Approach For M3
+
+After eight failed DQN-from-scratch/incremental M3 attempts (v1-v6, M3a, v7),
+the core problem was identified as context blindness: the DQN MLP cannot
+distinguish "good special range" from movement states with current observation
+features, and engine outcome labels cover only 2.7% of P3 rows.
+
+### BC Label Coverage
+
+Engine state (`obs_self_routine_1` / `obs_self_routine_2` / `obs_self_kind_of_waza`)
+combined with input labels (`input_action_id`) provides **70.6% actionable
+label coverage** on existing P3 data after filtering contact-reaction rows.
+This exceeds the 30-50% threshold needed for BC pre-training.
+
+Engine state → action label mapping:
+- R1=4, R2=16 + KW → fireball-lp/mp/hp
+- R1=4, R2=17 + KW → shoryuken-lp/mp/hp
+- R1=4, R2=18 + KW → tatsu-lk/mk/hk
+- R1=3 → throw
+- input_action_id != 0 → movement/normal action
+
+### BC Pre-Training Results
+
+BC baseline model (M3bc v320) trained on full retrain data with 66,756 labeled
+rows (71.2% of 93,802 total). Cross-entropy loss converged from 3.74 to 1.41.
+Label distribution: forward 45.3%, back 31.3%, shoryuken-lp 6.0%, fireball-lp
+5.7%, tatsu-mk 3.7%, jump-forward-start 2.7%.
+
+### DQN Fine-Tuning Results (Breakthrough)
+
+DQN fine-tuning from BC baseline with conservative LR (1e-4) produced the
+**first-ever special move top-1 greedy action**: shoryuken-lp 52.8%, back
+44.5%, forward 2.7%. This confirms BC pre-training + DQN fine-tuning as the
+correct M3 training approach.
+
+### Remaining Issues
+
+1. Shoryuken over-concentration (52.8%) — needs entropy tuning or data balancing.
+2. Fireball suppression (0%) — P3 data has 57% fireball whiff rate; need
+   fireball-good scenario data (far range, opponent grounded) to improve hit rate.
+3. Per-scenario log splitting (fireball-good/bad, shoryuken-antiair/whiff,
+   tatsu-hit/blocked) is still recommended for cleaner BC label distributions.

@@ -2462,15 +2462,15 @@ Tasks:
 - [ ] V62 direction: retrain with filtered V61b/V61c on-policy rows, preserving clean `23-30` jump and teaching defensive behavior for `<=22` and `31-48`; use filtered BC/classification only if margin/replay still cannot internalize the prior
 - [x] Document the from-scratch full-retrain data collection curriculum in [docs/agent-memory/remote-rl-retrain-data-collection-plan.md](agent-memory/remote-rl-retrain-data-collection-plan.md)
 - [ ] Full-retrain collection Phase 0: collect schema/label sanity logs and verify execution source, action labels, HP deltas, projectile fields, action-start masks, and detector dry-run hit rates
-- [ ] Full-retrain collection Phase 1: collect movement and spacing curriculum logs and train/check the first movement baseline before attacks
-- [ ] Full-retrain collection Phase 2: collect basic normal attack curriculum logs with hit, whiff, blocked, and punished examples
+- [x] Full-retrain collection Phase 1: collect movement and spacing curriculum logs and train/check the first movement baseline before attacks
+- [x] Full-retrain collection Phase 2: collect basic normal attack curriculum logs with hit, whiff, blocked, and punished examples
 - [ ] Full-retrain collection Phase 3: collect specials curriculum logs for fireball, shoryuken, and tatsu good/bad contexts
 - [ ] Full-retrain collection Phase 4: collect basic defense logs for guard, back-evade, and post-block punish
 - [ ] Full-retrain collection Phase 5: collect projectile defense timing logs with human-visible close/mid/far fireball cues, then split post-hoc into `time_to_self` buckets and opponent-recovery labels
 - [ ] Full-retrain collection Phase 6: collect anti-air and jump-defense logs, and verify M5 did not generalize projectile guard behavior to opponent jump-ins
 - [ ] Full-retrain collection Phase 7: collect corner, pressure, and oki/wakeup logs before treating pressure behavior as solved
 - [ ] Full-retrain collection Phase 8: collect high-quality CPU-demo, serious human-demo, structured mixed, and on-policy integration logs after curriculum phases exist
-- [ ] Full-retrain training: run cumulative warm-start models M1-M8 and regression-check each stage before live promotion
+- [ ] Full-retrain training: run cumulative warm-start models M1-M8 and regression-check each stage before live promotion; M1 and M2 are complete, with M2 v4c passing raw M1/P2 gates without support-prior
 - [ ] Fix `rl_auto_retrain.py` replay planning for human-demo incremental retrain: add auto-available source ratios, log-level boost inputs, and replay-plan metadata
 - [ ] Review walk-forward/back macro actions after spacing-shaping A/B results
 - [ ] Review finer distance buckets after spacing-shaping sample-volume checks
@@ -3594,6 +3594,9 @@ effective-experience quotas":
 
 Important collection constraints:
 
+- Operator-facing per-phase commands, log filenames, action restrictions,
+  config notes, and pass gates are documented in
+  [docs/agent-memory/remote-rl-retrain-data-collection-plan.md](agent-memory/remote-rl-retrain-data-collection-plan.md#operator-collection-runbook).
 - Phase 5 is collected with human-visible projectile cues, not by trying to aim
   exact `time_to_self` buckets during play.
 - Phase 5 post-analysis must split logs by `time_to_self` and opponent
@@ -3615,8 +3618,9 @@ Future task tracking:
 
 - [ ] Phase 0 sanity logs collected, analyzer-verified, and detector dry-run
   checked.
-- [ ] Phase 1 movement/spacing data collected and M1 movement baseline trained.
-- [ ] Phase 2 normals data collected and M2 attack baseline trained.
+- [x] Phase 1 movement/spacing data collected and M1 movement baseline trained.
+- [x] Phase 2 normals and far-whiff negative data collected; M2 v4c attack
+  baseline trained and raw-validated without support-prior.
 - [ ] Phase 3 specials data collected and M3 specials baseline trained.
 - [ ] Phase 4 defense data collected and M4 defense baseline trained.
 - [ ] Phase 5 projectile timing data collected by visual cue, post-hoc bucketed

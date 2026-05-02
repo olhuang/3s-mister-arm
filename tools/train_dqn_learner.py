@@ -175,6 +175,7 @@ class InitDQNModel:
     actions: tuple[str, ...]
     feature_names: tuple[str, ...]
     layers: list[dict[str, object]]
+    action_mode: str = "exact"
 
 
 @dataclass(frozen=True)
@@ -301,6 +302,15 @@ PROJECTILE_DEFENSIVE_EXPERT_COMPETITOR_ACTIONS = (
     | frozenset(action for action in rl.TABULAR_ACTION_NAMES if action.startswith("tatsu-"))
 )
 MOVEMENT_SPACING_ACTIONS = frozenset({"forward", "back"})
+MOVEMENT_REGRESSION_MOVEMENT_ACTIONS = frozenset(
+    {"forward", "back", "guard-stand", "guard-crouch"}
+) | JUMP_START_ACTIONS
+MOVEMENT_REGRESSION_ACTION_GROUPS = frozenset(("stand-normal", "crouch-normal", "air-normal"))
+MOVEMENT_REGRESSION_ACTION_GROUP_ACTIONS = {
+    "stand-normal": frozenset(getattr(rl, "STAND_NORMAL_ACTION_NAMES", ())) | frozenset({"forward-hp"}),
+    "crouch-normal": frozenset(getattr(rl, "CROUCH_NORMAL_ACTION_NAMES", ())),
+    "air-normal": frozenset(getattr(rl, "AIR_NORMAL_ACTION_NAMES", ())),
+}
 PROJECTILE_OWNER_OPPONENT = 2
 REWARD_PROJECTILE_RESPONSE_PROFILES = ("off", "incoming-v1")
 BATCH_SAMPLING_MODES = ("uniform", "balanced")
@@ -350,6 +360,47 @@ class DQNUnsupportedActionRegularizationConfig:
             "min_action_count": self.min_action_count,
             "q_ceiling": self.q_ceiling,
             "loss_weight": self.loss_weight,
+        }
+
+
+@dataclass(frozen=True)
+class MovementRegressionLossConfig:
+    loss_weight: float
+    target_q_margin: float
+    far_dx_threshold: int
+    action_groups: frozenset[str]
+
+    @property
+    def enabled(self) -> bool:
+        return self.loss_weight > 0.0 and self.target_q_margin >= 0.0 and self.far_dx_threshold > 0
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "enabled": self.enabled,
+            "loss_weight": self.loss_weight,
+            "target_q_margin": self.target_q_margin,
+            "far_dx_threshold": self.far_dx_threshold,
+            "action_groups": sorted(self.action_groups),
+        }
+
+
+@dataclass
+class MovementRegressionLossStats:
+    eligible_experiences: int = 0
+    sampled_events: int = 0
+    violation_events: int = 0
+    loss_total: float = 0.0
+    last_loss: float = 0.0
+    avg_loss: float = 0.0
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "eligible_experiences": self.eligible_experiences,
+            "sampled_events": self.sampled_events,
+            "violation_events": self.violation_events,
+            "loss_total": self.loss_total,
+            "last_loss": self.last_loss,
+            "avg_loss": self.avg_loss,
         }
 
 
@@ -1860,6 +1911,36 @@ def dqn_unsupported_action_regularization_config_from_args(
         min_action_count=max(0, int(args.dqn_unsupported_action_min_count)),
         q_ceiling=float(args.dqn_unsupported_action_q_ceiling),
         loss_weight=max(0.0, float(args.dqn_unsupported_action_loss_weight)),
+    )
+
+
+def parse_movement_regression_action_groups(value: str) -> frozenset[str]:
+    groups: set[str] = set()
+    if not value.strip():
+        return frozenset()
+    invalid: list[str] = []
+    for raw_item in value.split(","):
+        group = raw_item.strip()
+        if not group:
+            continue
+        if group not in MOVEMENT_REGRESSION_ACTION_GROUPS:
+            invalid.append(group)
+        else:
+            groups.add(group)
+    if invalid:
+        raise SystemExit(
+            "--movement-regression-action-groups contains unknown groups: "
+            f"{','.join(invalid)}; expected {','.join(sorted(MOVEMENT_REGRESSION_ACTION_GROUPS))}"
+        )
+    return frozenset(groups)
+
+
+def movement_regression_loss_config_from_args(args: argparse.Namespace) -> MovementRegressionLossConfig:
+    return MovementRegressionLossConfig(
+        loss_weight=max(0.0, float(args.movement_regression_loss_weight)),
+        target_q_margin=max(0.0, float(args.movement_regression_target_q_margin)),
+        far_dx_threshold=max(0, int(args.movement_regression_far_dx_threshold)),
+        action_groups=parse_movement_regression_action_groups(str(args.movement_regression_action_groups)),
     )
 
 
@@ -3431,6 +3512,77 @@ def apply_grads(layers: list[dict[str, object]], grads: list[dict[str, object]],
                 weights[out_index][in_index] = float(weights[out_index][in_index]) - scale * grad
 
 
+def int_row_field(row: dict[str, object], name: str, default: int = 0) -> int:
+    try:
+        return int(row.get(name, default) or default)
+    except (TypeError, ValueError):
+        return default
+
+
+def movement_regression_action_indices(
+    actions: tuple[str, ...],
+    config: MovementRegressionLossConfig,
+) -> tuple[tuple[int, ...], tuple[int, ...]]:
+    if not config.enabled:
+        return (), ()
+    movement_indices = tuple(
+        index for index, action in enumerate(actions) if action in MOVEMENT_REGRESSION_MOVEMENT_ACTIONS
+    )
+    attack_actions: set[str] = set()
+    for group in config.action_groups:
+        attack_actions.update(MOVEMENT_REGRESSION_ACTION_GROUP_ACTIONS.get(group, frozenset()))
+    attack_indices = tuple(index for index, action in enumerate(actions) if action in attack_actions)
+    return movement_indices, attack_indices
+
+
+def is_movement_regression_context(exp: Experience, config: MovementRegressionLossConfig) -> bool:
+    if not config.enabled:
+        return False
+    row = exp.row
+    if abs(int_row_field(row, "obs_abs_dx")) < config.far_dx_threshold:
+        return False
+    if int_row_field(row, "obs_self_airborne") != 0:
+        return False
+    if int_row_field(row, "obs_projectile_active") != 0:
+        return False
+    if int_row_field(row, "obs_opp_routine_1") == 4:
+        return False
+    if int_row_field(row, "obs_opp_routine_attack_state") != 0:
+        return False
+    return True
+
+
+def apply_movement_regression_loss(
+    exp: Experience,
+    values: list[float],
+    actions: tuple[str, ...],
+    output_grad: list[float],
+    movement_indices: tuple[int, ...],
+    attack_indices: tuple[int, ...],
+    config: MovementRegressionLossConfig,
+    stats: MovementRegressionLossStats,
+) -> float:
+    if not movement_indices or not attack_indices or not is_movement_regression_context(exp, config):
+        return 0.0
+    value_count = len(values)
+    valid_movement_indices = tuple(index for index in movement_indices if index < value_count)
+    valid_attack_indices = tuple(index for index in attack_indices if index < value_count)
+    if not valid_movement_indices or not valid_attack_indices:
+        return 0.0
+    stats.sampled_events += 1
+    best_movement_index = max(valid_movement_indices, key=lambda index: (values[index], actions[index]))
+    best_attack_index = max(valid_attack_indices, key=lambda index: (values[index], actions[index]))
+    violation = float(values[best_attack_index]) - float(values[best_movement_index]) + config.target_q_margin
+    if violation <= 0.0:
+        return 0.0
+    loss = config.loss_weight * 0.5 * violation * violation
+    output_grad[best_attack_index] += config.loss_weight * violation
+    output_grad[best_movement_index] -= config.loss_weight * violation
+    stats.violation_events += 1
+    stats.loss_total += loss
+    return loss
+
+
 def dqn_unsupported_action_indices(
     actions: tuple[str, ...],
     action_counts: dict[str, int],
@@ -3936,6 +4088,7 @@ def train_dqn(
     batch_sampling_config: BatchSamplingConfig,
     target_mode: str,
     unsupported_action_regularization_config: DQNUnsupportedActionRegularizationConfig,
+    movement_regression_config: MovementRegressionLossConfig,
     projectile_expert_margin_config: ProjectileExpertMarginConfig,
     projectile_late_defensive_margin_config: ProjectileLateDefensiveMarginConfig,
     projectile_defensive_expert_margin_config: ProjectileDefensiveExpertMarginConfig,
@@ -3946,6 +4099,7 @@ def train_dqn(
     list[dict[str, object]],
     dict[str, object],
     DQNUnsupportedActionRegularizationStats,
+    MovementRegressionLossStats,
     ProjectileExpertMarginStats,
     ProjectileLateDefensiveMarginStats,
     ProjectileDefensiveExpertMarginStats,
@@ -3970,6 +4124,8 @@ def train_dqn(
     avg_loss = 0.0
     last_unsupported_regularization_loss = 0.0
     avg_unsupported_regularization_loss = 0.0
+    last_movement_regression_loss = 0.0
+    avg_movement_regression_loss = 0.0
     last_projectile_margin_loss = 0.0
     avg_projectile_margin_loss = 0.0
     last_projectile_late_defensive_margin_loss = 0.0
@@ -3982,6 +4138,15 @@ def train_dqn(
         actions,
         action_counts,
         unsupported_action_regularization_config,
+    )
+    movement_regression_indices, movement_regression_attack_indices = movement_regression_action_indices(
+        actions,
+        movement_regression_config,
+    )
+    movement_regression_stats = MovementRegressionLossStats(
+        eligible_experiences=sum(
+            1 for exp in experiences if is_movement_regression_context(exp, movement_regression_config)
+        )
     )
     projectile_expert_margin_stats = ProjectileExpertMarginStats(
         eligible_experiences=sum(1 for exp in experiences if exp.projectile_expert_margin_eligible)
@@ -4028,6 +4193,7 @@ def train_dqn(
         grads = zero_grads(layers)
         loss = 0.0
         unsupported_regularization_loss = 0.0
+        movement_regression_loss = 0.0
         projectile_margin_loss = 0.0
         projectile_late_defensive_margin_loss = 0.0
         projectile_defensive_expert_margin_loss = 0.0
@@ -4105,6 +4271,18 @@ def train_dqn(
                     unsupported_action_regularization_stats.per_action_loss[action] = (
                         unsupported_action_regularization_stats.per_action_loss.get(action, 0.0) + weighted_loss
                     )
+            exp_movement_regression_loss = apply_movement_regression_loss(
+                exp,
+                values,
+                actions,
+                output_grad,
+                movement_regression_indices,
+                movement_regression_attack_indices,
+                movement_regression_config,
+                movement_regression_stats,
+            )
+            movement_regression_loss += exp_movement_regression_loss
+            loss += exp_movement_regression_loss
             exp_projectile_margin_loss = apply_projectile_expert_margin_loss(
                 exp,
                 values,
@@ -4231,6 +4409,12 @@ def train_dqn(
             if step == 1
             else (0.98 * avg_unsupported_regularization_loss + 0.02 * last_unsupported_regularization_loss)
         )
+        last_movement_regression_loss = movement_regression_loss / max(1, batch_size)
+        avg_movement_regression_loss = (
+            last_movement_regression_loss
+            if step == 1
+            else (0.98 * avg_movement_regression_loss + 0.02 * last_movement_regression_loss)
+        )
         last_projectile_margin_loss = projectile_margin_loss / max(1, batch_size)
         avg_projectile_margin_loss = (
             last_projectile_margin_loss
@@ -4270,6 +4454,7 @@ def train_dqn(
             print(
                 f"TRAIN step={step} loss={last_loss:.6f} avg_loss={avg_loss:.6f} "
                 f"unsupported_reg={last_unsupported_regularization_loss:.6f} "
+                f"movement_reg={last_movement_regression_loss:.6f} "
                 f"projectile_margin={last_projectile_margin_loss:.6f} "
                 f"projectile_late_def_margin={last_projectile_late_defensive_margin_loss:.6f} "
                 f"projectile_def_expert_margin={last_projectile_defensive_expert_margin_loss:.6f} "
@@ -4285,6 +4470,8 @@ def train_dqn(
     )
     unsupported_action_regularization_stats.last_loss = last_unsupported_regularization_loss
     unsupported_action_regularization_stats.avg_loss = avg_unsupported_regularization_loss
+    movement_regression_stats.last_loss = last_movement_regression_loss
+    movement_regression_stats.avg_loss = avg_movement_regression_loss
     projectile_expert_margin_stats.last_loss = last_projectile_margin_loss
     projectile_expert_margin_stats.avg_loss = avg_projectile_margin_loss
     projectile_late_defensive_margin_stats.last_loss = last_projectile_late_defensive_margin_loss
@@ -4301,6 +4488,7 @@ def train_dqn(
             "batch_sampling": batch_diag.as_metadata(),
         },
         unsupported_action_regularization_stats,
+        movement_regression_stats,
         projectile_expert_margin_stats,
         projectile_late_defensive_margin_stats,
         projectile_defensive_expert_margin_stats,
@@ -4411,7 +4599,52 @@ def actor_model_path(value: str) -> Path:
     return path
 
 
-def load_init_dqn_model(value: str, actions: tuple[str, ...], hidden_sizes: list[int]) -> InitDQNModel:
+def expand_init_dqn_layers(
+    init_layers: list[dict[str, object]],
+    init_actions: tuple[str, ...],
+    actions: tuple[str, ...],
+    rng: random.Random,
+) -> list[dict[str, object]]:
+    init_action_to_index = {action: index for index, action in enumerate(init_actions)}
+    init_output = init_layers[-1]
+    init_weights = init_output["weights"]
+    init_bias = init_output["bias"]
+    assert isinstance(init_weights, list)
+    assert isinstance(init_bias, list)
+    if not init_weights:
+        raise SystemExit("--init-model expand: init model has an empty output layer")
+    row_width = len(init_weights[0])
+    mean_weights = [
+        sum(float(row[col]) for row in init_weights) / max(1, len(init_weights))
+        for col in range(row_width)
+    ]
+    min_bias = min(float(value) for value in init_bias) if init_bias else 0.0
+    expanded_layers = copy.deepcopy(init_layers)
+    expanded_weights: list[list[float]] = []
+    expanded_bias: list[float] = []
+    for action in actions:
+        init_index = init_action_to_index.get(action)
+        if init_index is not None:
+            expanded_weights.append([float(value) for value in init_weights[init_index]])
+            expanded_bias.append(float(init_bias[init_index]))
+        else:
+            expanded_weights.append([value + rng.gauss(0.0, 0.01) for value in mean_weights])
+            expanded_bias.append(min_bias)
+    expanded_layers[-1] = {
+        "weights": expanded_weights,
+        "bias": expanded_bias,
+        "activation": str(init_output.get("activation", "linear") or "linear"),
+    }
+    return expanded_layers
+
+
+def load_init_dqn_model(
+    value: str,
+    actions: tuple[str, ...],
+    hidden_sizes: list[int],
+    action_mode: str,
+    seed: int,
+) -> InitDQNModel:
     path = actor_model_path(value)
     try:
         with path.open("r", encoding="utf-8") as stream:
@@ -4434,8 +4667,18 @@ def load_init_dqn_model(value: str, actions: tuple[str, ...], hidden_sizes: list
     if not isinstance(raw_actions, list):
         raise SystemExit(f"--init-model {path}: missing actions list")
     init_actions = tuple(str(action) for action in raw_actions)
-    if init_actions != actions:
+    clean_action_mode = str(action_mode or "exact")
+    if clean_action_mode not in {"exact", "expand"}:
+        raise SystemExit(f"--init-model-action-mode expected exact or expand, got {clean_action_mode!r}")
+    if clean_action_mode == "exact" and init_actions != actions:
         raise SystemExit("--init-model actions do not exactly match --actions order")
+    if clean_action_mode == "expand":
+        missing_actions = [action for action in init_actions if action not in set(actions)]
+        if missing_actions:
+            raise SystemExit(
+                "--init-model expand requires init actions to be a subset of --actions; "
+                f"missing from target={','.join(missing_actions)}"
+            )
 
     raw_dqn = payload.get("dqn")
     if not isinstance(raw_dqn, dict):
@@ -4450,13 +4693,23 @@ def load_init_dqn_model(value: str, actions: tuple[str, ...], hidden_sizes: list
             f"--init-model {path}: feature schema mismatch "
             f"got={len(feature_names)} expected={len(expected_feature_names)}"
         )
+    init_output_dim = len(init_actions) if clean_action_mode == "expand" else len(actions)
     layers = validate_dqn_layers(
         raw_dqn.get("layers"),
         len(expected_feature_names),
         hidden_sizes,
-        len(actions),
+        init_output_dim,
         f"--init-model {path}",
     )
+    if clean_action_mode == "expand" and init_actions != actions:
+        layers = expand_init_dqn_layers(layers, init_actions, actions, random.Random(seed))
+        layers = validate_dqn_layers(
+            layers,
+            len(expected_feature_names),
+            hidden_sizes,
+            len(actions),
+            f"--init-model {path} expanded",
+        )
     try:
         version = max(0, int(payload.get("version", 0) or 0))
     except (TypeError, ValueError):
@@ -4470,6 +4723,7 @@ def load_init_dqn_model(value: str, actions: tuple[str, ...], hidden_sizes: list
         actions=init_actions,
         feature_names=feature_names,
         layers=layers,
+        action_mode=clean_action_mode,
     )
 
 
@@ -4661,6 +4915,15 @@ def main() -> None:
         "--init-model",
         default="",
         help="Optional DQN actor JSON or model directory whose layers are used as the training warm-start",
+    )
+    parser.add_argument(
+        "--init-model-action-mode",
+        choices=("exact", "expand"),
+        default="exact",
+        help=(
+            "How --init-model handles action-list differences. exact requires identical order; "
+            "expand allows init actions to be a subset of --actions and expands only the output layer"
+        ),
     )
     parser.add_argument(
         "--replay-recipe-name",
@@ -4899,6 +5162,35 @@ def main() -> None:
         type=float,
         default=0.1,
         help="Auxiliary loss weight used by --dqn-unsupported-action-regularization",
+    )
+    parser.add_argument(
+        "--movement-regression-loss-weight",
+        type=float,
+        default=0.0,
+        help=(
+            "Auxiliary loss weight that pushes normal-attack Q below movement Q in far, grounded, "
+            "non-threat contexts; 0 disables the loss"
+        ),
+    )
+    parser.add_argument(
+        "--movement-regression-target-q-margin",
+        type=float,
+        default=0.5,
+        help="Required Q margin between best movement action and best attack action for movement regression loss",
+    )
+    parser.add_argument(
+        "--movement-regression-far-dx-threshold",
+        type=int,
+        default=120,
+        help="Minimum obs_abs_dx considered a far movement context for movement regression loss",
+    )
+    parser.add_argument(
+        "--movement-regression-action-groups",
+        default="stand-normal,crouch-normal,air-normal",
+        help=(
+            "Comma-separated attack groups regularized by movement regression loss: "
+            "stand-normal,crouch-normal,air-normal"
+        ),
     )
     parser.add_argument(
         "--reward-risk-profile",
@@ -5625,7 +5917,17 @@ def main() -> None:
 
     actions = parse_action_subset(args.actions)
     hidden_sizes = parse_hidden_sizes(args.hidden_sizes)
-    init_model = load_init_dqn_model(str(args.init_model), actions, hidden_sizes) if str(args.init_model).strip() else None
+    init_model = (
+        load_init_dqn_model(
+            str(args.init_model),
+            actions,
+            hidden_sizes,
+            str(args.init_model_action_mode),
+            int(args.seed),
+        )
+        if str(args.init_model).strip()
+        else None
+    )
     rows = read_transition_rows(args.transition_logs, args.limit)
     rows_read_before_episode_drop = len(rows)
     rows, dropped_initial_episode_rows, dropped_initial_episodes = drop_initial_episodes_per_run(
@@ -5654,6 +5956,7 @@ def main() -> None:
     engine_outcome_config = engine_outcome_config_from_args(args)
     conservative_action_penalty_config = conservative_action_penalty_config_from_args(args)
     unsupported_action_regularization_config = dqn_unsupported_action_regularization_config_from_args(args)
+    movement_regression_config = movement_regression_loss_config_from_args(args)
     valid_action_mask_config = dqn_valid_action_mask_training_config_from_args(args)
     batch_sampling_config = batch_sampling_config_from_args(args)
     (
@@ -5709,6 +6012,7 @@ def main() -> None:
         layers,
         train_stats,
         unsupported_action_regularization_stats,
+        movement_regression_stats,
         projectile_expert_margin_stats,
         projectile_late_defensive_margin_stats,
         projectile_defensive_expert_margin_stats,
@@ -5729,6 +6033,7 @@ def main() -> None:
         batch_sampling_config,
         args.dqn_target_mode,
         unsupported_action_regularization_config,
+        movement_regression_config,
         projectile_expert_margin_config,
         projectile_late_defensive_margin_config,
         projectile_defensive_expert_margin_config,
@@ -5780,6 +6085,8 @@ def main() -> None:
         reward_sources.append("projectile-defensive-expert-margin")
     if projectile_timing_group_margin_config.enabled:
         reward_sources.append("projectile-timing-group-margin")
+    if movement_regression_config.enabled:
+        reward_sources.append("movement-regression-loss")
     if str(args.training_mode_hp_delta_mode) == "damage-only":
         reward_sources.append("training-mode-damage-only-hp")
     reward_source = "+".join(reward_sources)
@@ -5791,7 +6098,10 @@ def main() -> None:
         "init_model_source": init_model.source if init_model is not None else "",
         "init_model_feature_count": len(init_model.feature_names) if init_model is not None else 0,
         "init_model_action_count": len(init_model.actions) if init_model is not None else 0,
-        "init_model_validation": "exact-action-feature-layer-match" if init_model is not None else "none",
+        "init_model_action_mode": init_model.action_mode if init_model is not None else str(args.init_model_action_mode),
+        "init_model_validation": (
+            f"{init_model.action_mode}-action-feature-layer-match" if init_model is not None else "none"
+        ),
         "replay_recipe": build_replay_recipe_metadata(args, replay_source_mix_config, init_model),
         "rows_read": len(rows),
         "rows_read_before_episode_drop": rows_read_before_episode_drop,
@@ -5817,6 +6127,8 @@ def main() -> None:
         "conservative_action_penalty_stats": conservative_action_penalty_stats.as_metadata(),
         "dqn_unsupported_action_regularization_config": unsupported_action_regularization_config.as_metadata(),
         "dqn_unsupported_action_regularization_stats": unsupported_action_regularization_stats.as_metadata(),
+        "movement_regression_loss_config": movement_regression_config.as_metadata(),
+        "movement_regression_loss_stats": movement_regression_stats.as_metadata(),
         "training_action_source": str(args.training_action_source),
         "reward_risk_profile": reward_risk_config.profile,
         "reward_risk_window_decisions": reward_risk_config.window_decisions,
@@ -5976,6 +6288,9 @@ def main() -> None:
         f"unsupported_reg={unsupported_action_regularization_stats.regularized_events}/"
         f"{unsupported_action_regularization_stats.eligible_action_count} "
         f"unsupported_loss={unsupported_action_regularization_stats.last_loss:.6f} "
+        f"movement_reg={movement_regression_stats.violation_events}/"
+        f"{movement_regression_stats.sampled_events} "
+        f"movement_loss={movement_regression_stats.last_loss:.6f} "
         f"loss={train_stats['last_loss']:.6f} avg_loss={train_stats['avg_loss']:.6f} "
         f"included={build_stats.included_action_rows} excluded={build_stats.excluded_action_rows} "
         f"engine_input_fallback={build_stats.engine_outcome_input_fallback_rows} "

@@ -2,6 +2,36 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-02: Add Full-Retrain Collection Operator Runbook
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / controlled full
+  retrain data collection
+
+Files changed:
+- `docs/agent-memory/remote-rl-retrain-data-collection-plan.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- make the full-retrain collection process executable from the documentation
+  without relying on chat history.
+- record per-phase log filenames, PowerShell probe commands, MiSTer config
+  notes, action restrictions, collection content, CPU difficulty guidance, and
+  pass gates.
+
+Implementation:
+- added an operator-facing runbook to the full-retrain collection plan.
+- documented separate logs for curriculum, CPU-demo natural, human-demo
+  natural, and on-policy correction data.
+- recorded that M1 should keep Phase 1 movement data separate from Phase 8
+  natural logs and mix them at training time.
+- added a plan index link to the new runbook.
+
+Validation:
+- documentation-only change.
+- reviewed markdown snippets and command/log names locally.
+
 ## 2026-05-02: Refine Full-Retrain Collection Plan Risk Gates
 
 Milestone:
@@ -9602,3 +9632,273 @@ Conclusion:
 - recommended next live probe: use `v62-group-margin-candidate` with a much
   lighter policy-time prior than V61c, starting around `0.02-0.03` for
   `0-22` and `31-48`, with no penalty for `23-30`.
+
+## 2026-05-02: Full-Retrain M1 Movement Baseline
+
+Milestone:
+- Milestone 6: full-retrain staged curriculum.
+
+Input:
+- `logs/rl-transitions-retrain-p1-movement-human-v1.ndjson`
+- `logs/rl-transitions-retrain-p8-natural-cpudemo-v1.ndjson`
+- `logs/rl-transitions-retrain-p8-natural-human-v1.ndjson`
+
+Replay mix:
+- created deterministic local replay
+  `/tmp/rl-retrain-m1-mix-70-20-10.ndjson` with seed `7`.
+- rows:
+  - Phase 1 movement: `12,533` rows, `70.0%`.
+  - natural CPU-demo: sampled `3,581` rows, `20.0%`.
+  - natural human-demo: sampled `1,790` rows, `10.0%`.
+- source mix by execution source is `human-demo 80%`, `cpu-demo 20%`, because
+  Phase 1 and natural human are both `human-demo`; log-level sampling was
+  needed to preserve the intended `70/20/10` file mix.
+
+Model:
+- `model/dqn-retrain-m1-movement-baseline-v1`
+- version: `101`.
+- action set:
+  `forward`, `back`, `guard-stand`, `guard-crouch`, `jump-forward-start`,
+  `jump-neutral-start`, `jump-back-start`.
+
+Training command notes:
+- `--steps 3000`
+- `--batch-size 64`
+- `--hidden-sizes 64,64`
+- `--training-mode-hp-delta-mode damage-only`
+- `--batch-sampling balanced`
+- `--balanced-batch-ratios movement=1.0,normal=0.0,special=0.0`
+- `--dqn-valid-action-mask action-start-v1`
+- spacing shaping:
+  `target_dx=50-120`, improve `0.5`, worsen `0.2`, maintain `0.1`,
+  close-threat-back `0.3`.
+
+Validation:
+- full train completed.
+- training experiences: `8,269`.
+- training greedy distribution:
+  `forward 51.6%`, `guard-crouch 26.9%`, `back 16.6%`,
+  `jump-forward-start 4.8%`.
+- no top-1 collapse by the `70%` threshold.
+- natural-log comparison:
+  `back 44.6%`, `guard-crouch 26.2%`, `forward 25.9%`,
+  `jump-forward-start 1.8%`.
+- natural close non-attacking rows:
+  `guard-crouch 64.5%`, `back 16.7%`, `forward 15.7%`.
+- Phase 1 curriculum-only comparison:
+  `forward 58.1%`, `guard-crouch 23.1%`, `back 15.0%`.
+
+Findings:
+- M1 is acceptable as a movement/spacing base, not as a live fighting policy.
+- The full action-set smoke collapsed to `fireball-lp`; M1 should stay
+  movement-only until Phase 2 normals and Phase 3 specials are intentionally
+  added.
+- Phase 1-only rows still skew toward forward, but the natural holdout is more
+  balanced and does not attack.
+
+Next:
+- collect Phase 2 normals:
+  `logs/rl-transitions-retrain-p2-normals-human-v1.ndjson`.
+- include hit, whiff, blocked, and punished examples for stand/crouch normals.
+- warm-start M2 from `model/dqn-retrain-m1-movement-baseline-v1` and keep the
+  M1 replay mix in the cumulative training set.
+
+## 2026-05-02: Full-Retrain M2 Normals Baseline
+
+Milestone:
+- Milestone 6: full-retrain staged curriculum.
+
+Input:
+- `/tmp/rl-retrain-m1-mix-70-20-10.ndjson`
+- `logs/rl-transitions-retrain-p2-normals-human-v1.ndjson`
+
+Phase 2 data gate:
+- rows: `38,801`.
+- `execution_source = 4`.
+- engine-labeled rows: `1,713`.
+- projectile active rate: `5.6%`.
+- normal coverage includes hit, whiff, and punished examples across standing,
+  crouching, and air normals.
+
+Training attempts:
+- warm-start from `model/dqn-retrain-m1-movement-baseline-v1` failed because
+  `tools/train_dqn_learner.py` currently requires exact action-list matches for
+  `--init-model`.
+- `model/dqn-retrain-m2-normals-baseline-v1`:
+  - full normals action set without throw.
+  - raw model trained, but M1 movement replay attack rate was `21.5%`.
+  - rejected as a standalone candidate.
+- `model/dqn-retrain-m2-normals-baseline-v2`:
+  - stronger attack-risk shaping and more movement batch weight.
+  - raw M1 replay attack rate improved to `13.8%`, still too high for a
+    movement-regression pass.
+  - with support-prior rerank, M1 replay attack rate dropped to `4.4%`.
+  - accepted as the current M2 candidate only when support-prior is enabled.
+- `model/dqn-retrain-m2-normals-baseline-v3`:
+  - added conservative action penalty.
+  - did not solve the movement regression enough to beat v2 plus support-prior.
+- `model/dqn-retrain-m2-ground-normals-baseline-v1`:
+  - excluded air normals and throw.
+  - P2 replay attack rate was low, but M1 replay attack rate rose to `38.3%`
+    due to ground-normal overgeneralization.
+  - rejected.
+
+Accepted M2 evaluation condition:
+- model: `model/dqn-retrain-m2-normals-baseline-v2`.
+- use:
+  - `--dqn-valid-action-mask action-start-v1`
+  - `--dqn-support-prior-min-count 300`
+  - `--dqn-support-prior-count-penalty 0.05`
+  - `--dqn-support-prior-negative-mean-penalty 0.05`
+  - `--dqn-support-prior-exempt-actions forward,back,guard-stand,guard-crouch,jump-forward-start,jump-neutral-start,jump-back-start`
+
+Accepted training command:
+- `python3 tools/train_dqn_learner.py /tmp/rl-retrain-m1-mix-70-20-10.ndjson logs/rl-transitions-retrain-p2-normals-human-v1.ndjson --model-dir model/dqn-retrain-m2-normals-baseline-v2 --model-version 202 --steps 3000 --batch-size 64 --hidden-sizes 64,64 --actions forward,back,guard-stand,guard-crouch,jump-forward-start,jump-neutral-start,jump-back-start,stand-lp,stand-mp,stand-hp,stand-lk,stand-mk,stand-hk,forward-hp,crouch-lp,crouch-mp,crouch-hp,crouch-lk,crouch-mk,crouch-hk,air-lp,air-mp,air-hp,air-lk,air-mk,air-hk --learning-rate 0.001 --gamma 0.9 --target-sync-steps 200 --dqn-target-mode standard --training-mode-hp-delta-mode damage-only --training-action-source auto --reward-risk-profile all-attacks --reward-risk-window-decisions 15 --reward-attack-no-damage-cost 0.3 --reward-attack-punished-cost 1.0 --reward-shoryuken-no-damage-extra-cost 0.0 --reward-shoryuken-punished-extra-cost 0.0 --reward-jump-attack-no-damage-extra-cost 0.5 --reward-jump-attack-punished-extra-cost 1.0 --reward-guard-success-bonus 0.0 --reward-guard-success-window-decisions 6 --reward-guard-threat-max-dx 120 --reward-passive-guard-cost 0.3 --reward-far-guard-cost 0.5 --reward-spacing-target-min-dx 50 --reward-spacing-target-max-dx 120 --reward-spacing-improve-bonus 0.5 --reward-spacing-worsen-cost 0.2 --reward-spacing-maintain-bonus 0.1 --reward-spacing-threat-back-bonus 0.3 --engine-outcome-training-mode prefer-engine-action --engine-outcome-window-decisions 10 --engine-outcome-action-windows forward-hp=12 --engine-outcome-hit-bonus 0.7 --engine-outcome-no-damage-cost 0.2 --engine-outcome-punished-cost 1.0 --engine-outcome-oversample 1 --batch-sampling balanced --balanced-batch-ratios movement=0.45,normal=0.55,special=0.0 --dqn-valid-action-mask action-start-v1 --dqn-unsupported-action-regularization --dqn-unsupported-action-min-count 50 --dqn-unsupported-action-q-ceiling 0.0 --dqn-unsupported-action-loss-weight 0.05 --epsilon 0.05 --fallback-policy back --seed 7 --log-interval 500 --eval-limit 5000 --diagnostic-top-n 12 --replay-recipe-name retrain-m2-normals-no-throw-risk-v2 --replay-recipe-base-logs logs/rl-transitions-retrain-p1-movement-human-v1.ndjson,logs/rl-transitions-retrain-p8-natural-cpudemo-v1.ndjson,logs/rl-transitions-retrain-p8-natural-human-v1.ndjson,logs/rl-transitions-retrain-p2-normals-human-v1.ndjson`
+
+Parameter rationale:
+- `throw` was excluded because the first M2 smoke collapsed to throw.
+- specials were excluded because they belong to Phase 3.
+- `movement=0.45,normal=0.55` kept movement replay present while allowing normal
+  events to influence batches.
+- attack risk costs were raised versus the first smoke to reduce random normals
+  in movement-only states.
+- jump-attack extra risk costs were added after air normals overgeneralized into
+  movement states.
+- engine outcome training used `prefer-engine-action` to train from engine
+  normal labels when available.
+- `forward-hp=12` used a shorter explicit window than specials; specials are
+  not in M2.
+
+Validation:
+- M1 replay comparison with support-prior:
+  - `attack_rate 4.4%`
+  - `forward 62.6%`
+  - `jump-forward-start 23.2%`
+  - `back 9.6%`
+  - no top-action collapse.
+- P2 replay comparison with support-prior:
+  - `attack_rate 9.0%`
+  - `forward 53.7%`
+  - `back 30.7%`
+  - `air-lp 6.1%`
+  - `guard-crouch 4.0%`
+  - no top-action collapse.
+
+Validation commands:
+- M1 movement regression:
+  - `python3 tools/compare_dqn_models.py /tmp/rl-retrain-m1-mix-70-20-10.ndjson --model M2v2=model/dqn-retrain-m2-normals-baseline-v2 --limit 10000 --top-n 12 --focus-actions forward,back,guard-stand,guard-crouch,jump-forward-start,stand-mp,stand-hp,stand-mk,stand-hk,forward-hp,crouch-mp,crouch-hp,crouch-mk,crouch-hk --focus-rank-limit 3 --training-action-source auto --dqn-valid-action-mask action-start-v1 --dqn-support-prior-min-count 300 --dqn-support-prior-count-penalty 0.05 --dqn-support-prior-negative-mean-penalty 0.05 --dqn-support-prior-exempt-actions forward,back,guard-stand,guard-crouch,jump-forward-start,jump-neutral-start,jump-back-start`
+- P2 normals behavior:
+  - `python3 tools/compare_dqn_models.py logs/rl-transitions-retrain-p2-normals-human-v1.ndjson --model M2v2=model/dqn-retrain-m2-normals-baseline-v2 --limit 12000 --top-n 12 --focus-actions forward,back,guard-stand,guard-crouch,jump-forward-start,stand-mp,stand-hp,stand-mk,stand-hk,forward-hp,crouch-mp,crouch-hp,crouch-mk,crouch-hk --focus-rank-limit 3 --training-action-source auto --dqn-valid-action-mask action-start-v1 --dqn-support-prior-min-count 300 --dqn-support-prior-count-penalty 0.05 --dqn-support-prior-negative-mean-penalty 0.05 --dqn-support-prior-exempt-actions forward,back,guard-stand,guard-crouch,jump-forward-start,jump-neutral-start,jump-back-start`
+
+Quality gates used:
+- no single top action at or above `70%`.
+- M1 movement replay attack rate below about `5%` with support-prior.
+- P2 normals replay attack rate nonzero but modest.
+- no throw/special action in the M2 action set.
+- reject candidates that overgeneralize normals into M1 movement-only rows.
+- reject candidates that require raw-model behavior without support-prior; M2
+  v2 is accepted only with support-prior.
+
+Findings:
+- P2 data is good enough for a first M2 baseline.
+- M2 should not be live-tested without support-prior yet.
+- The trainer needs an action-expansion warm-start or a context-aware
+  no-attack/movement regression objective before later stages can cleanly add
+  larger action sets without rerank help.
+
+Next:
+- collect Phase 3 specials:
+  `logs/rl-transitions-retrain-p3-specials-human-v1.ndjson`.
+- keep M2 v2 as the current cumulative baseline and carry the support-prior
+  condition into probe commands and offline comparisons.
+
+## 2026-05-02: Full-Retrain M2v4 Raw Support-Prior-Free Baseline
+
+Milestone:
+- Milestone 6: full-retrain staged curriculum.
+
+Files changed:
+- `tools/train_dqn_learner.py`
+- `docs/agent-memory/remote-rl-retrain-data-collection-plan.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- remove the M2 dependency on inference-time support-prior reranking by adding
+  trainer support for action-expansion warm-start and a context-aware movement
+  regression loss.
+
+Implementation notes:
+- added `--init-model-action-mode exact|expand`.
+  - `exact` preserves the old behavior.
+  - `expand` allows an init model whose action list is a subset of the target
+    action list; shared action output rows are copied and new action rows are
+    initialized from the existing output-row mean plus small deterministic
+    noise, with low output bias.
+- added movement regression loss flags:
+  - `--movement-regression-loss-weight`
+  - `--movement-regression-target-q-margin`
+  - `--movement-regression-far-dx-threshold`
+  - `--movement-regression-action-groups`
+- the movement regression loss applies only in far, grounded,
+  no-projectile, non-opponent-attack contexts. It penalizes the best selected
+  normal-attack Q when it exceeds the best movement/guard/jump-start Q by the
+  configured margin.
+
+Validation:
+- syntax/CLI:
+  - `python3 -m py_compile tools/train_dqn_learner.py`
+  - `python3 tools/train_dqn_learner.py --help | rg "init-model-action-mode|movement-regression"`
+- smoke:
+  - `/tmp/rl-m2v4-smoke`, version `1`, trained for `10` steps with
+    `--init-model model/dqn-retrain-m1-movement-baseline-v1`
+    and `--init-model-action-mode expand`.
+  - result: published successfully; `init=warm-start:101`; movement regression
+    and unsupported-action regularization both produced nonzero training loss.
+- rejected candidates:
+  - `model/dqn-retrain-m2-normals-baseline-v4`, version `204`:
+    M1 raw attack rate `0.0%`, but P2 raw attack rate also `0.0%`; too
+    conservative.
+  - `model/dqn-retrain-m2-normals-baseline-v4b`, version `205`:
+    lighter M1-expand warm-start remained too conservative; P2 raw attack
+    rate stayed `0.0%`.
+- accepted candidate:
+  - `model/dqn-retrain-m2-normals-baseline-v4c`, version `206`.
+  - initialized from attack-capable `model/dqn-retrain-m2-normals-baseline-v2`
+    rather than M1, then retrained with:
+    `/tmp/rl-retrain-m1-mix-70-20-10.ndjson`,
+    `logs/rl-transitions-retrain-p2-normals-human-v1.ndjson`, and
+    `logs/rl-transitions-retrain-p2-far-whiff-negative-human-v1.ndjson`.
+  - training used Double DQN, LR `0.0003`, `3500` steps,
+    balanced batch `movement=0.50,normal=0.50`, attack risk cost
+    `0.5/1.0`, jump attack extra cost `0.8/1.0`,
+    engine outcome `hit=1.0,no-damage=0.3,punished=1.0`, and movement
+    regression `weight=0.02,margin=0.5,far_dx=120`.
+- raw validation without support-prior:
+  - M1 replay:
+    `attack_rate 4.7%`, `forward 63.1%`, `back 31.9%`,
+    `air-lp 4.2%`, no top-action collapse.
+  - P2 normals replay:
+    `attack_rate 11.2%`, `forward 56.4%`, `back 31.1%`,
+    `air-lp 6.0%`, `crouch-lp 2.0%`, `air-hk 1.7%`,
+    `stand-hk 1.2%`, no top-action collapse.
+  - far-whiff negative replay:
+    `attack_rate 8.0%`, mostly `air-lp`; this is a residual risk to monitor,
+    but the primary M1/P2 gates pass.
+
+Findings:
+- partial M1->M2 action expansion works mechanically, but M1-only warm-start
+  was too conservative for this M2 data mix.
+- starting from M2v2 preserved attack knowledge while the far-whiff negative
+  log and movement regression loss internalized enough of the old
+  support-prior behavior to pass raw gates.
+- support-prior is no longer required for M2v4c replay validation/probe, but
+  `--dqn-valid-action-mask action-start-v1` remains required.
+
+Next:
+- use `model/dqn-retrain-m2-normals-baseline-v4c` as the M2 baseline for Phase
+  3 specials.
+- before live probing, remember that M2 still lacks specials, projectile
+  defense, anti-air, corner, and oki stages.
+- watch the far-whiff residual `air-lp` rate during later live or holdout
+  checks; finer distance buckets may still be useful.

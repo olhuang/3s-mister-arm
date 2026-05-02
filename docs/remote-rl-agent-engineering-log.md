@@ -2,6 +2,94 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-02: M3a Fireball Formal Split Training Attempts
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / full-retrain Phase
+  3 M3a fireball
+
+Files changed:
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Inputs:
+- collected mixed formal fireball log:
+  `logs/rl-transitions-retrain-p3-fireball-human-v1.ndjson`.
+- extracted split logs with `tools/extract_move_context_logs.py`:
+  - `logs/rl-transitions-retrain-p3-fireball-good-human-v1.ndjson`
+  - `logs/rl-transitions-retrain-p3-fireball-bad-human-v1.ndjson`
+- also extracted event-only diagnostics:
+  - `/tmp/rl-p3-fireball-good-events.ndjson`
+  - `/tmp/rl-p3-fireball-bad-events.ndjson`
+
+Data quality:
+- source log: `12364` rows, `14` episodes, skipped JSON `0`.
+- engine-labeled fireballs:
+  - `fireball-hp 198`
+  - `fireball-lp 127`
+  - `fireball-mp 121`
+- split extraction:
+  - good: `375` events, `7173` context rows after overlap removal.
+  - bad: `69` events, `1213` context rows after overlap removal.
+- good split is clean:
+  - no positive self-HP damage.
+  - fireball outcome windows have `0%` punished.
+- bad split is useful:
+  - self HP damage is present.
+  - fireball punished rates are roughly `61-75%` by strength.
+
+Training attempts:
+- `model/dqn-retrain-m3a-fireball-human-v1`, version `312`:
+  rejected. Fireball pressure was too global:
+  - M1 replay attack rate `84.9%`.
+  - M1 top action `fireball-lp 77.5%`.
+  - fireball-good context replay still did not make fireball top-1.
+- `model/dqn-retrain-m3a-fireball-human-v2`, version `313`:
+  rejected. Conservative settings overcorrected:
+  - train summary collapsed to `forward 100%`.
+  - fireball-good event rows also became `forward 98.4%`.
+- `model/dqn-retrain-m3a-fireball-human-v3`, version `314`:
+  rejected. M1 was safe but fireball did not activate:
+  - M1 replay attack rate `6.6%`.
+  - fireball-good event rows had no fireball top-1.
+- `model/dqn-retrain-m3a-fireball-human-v4`, version `315`:
+  rejected. Event-only training kept M1 near the gate but still failed the
+  fireball-good gate:
+  - M1 replay attack rate `9.9%`.
+  - fireball-good event rows still had no fireball top-1.
+- `model/dqn-retrain-m3a-fireball-human-v5`, version `316`:
+  rejected. Offensive event-only settings brought fireball back, but polluted
+  old skills:
+  - M1 replay attack rate `46.6%`.
+  - P2 replay attack rate `24.6%`.
+  - fireball-good event rows still favored normals/forward more than fireball.
+- `model/dqn-retrain-m3a-fireball-human-v6`, version `317`:
+  rejected. Lowering special expert min reward increased eligibility but did
+  not solve the gate conflict:
+  - M1 replay attack rate `11.6%`.
+  - fireball-good event rows still had no fireball top-1.
+
+Conclusion:
+- the formal fireball log is good enough; the blocker is not collection
+  quality.
+- recipe-only tuning is stuck between two failure modes:
+  - strong special pressure teaches fireball-like actions outside fireball
+    contexts and regresses M1/P2.
+  - conservative movement regression preserves M1/P2 but suppresses fireball
+    even on clean fireball-good event rows.
+- the next M3a step should change trainer/features instead of running another
+  reward-only sweep.
+
+Likely code directions:
+- add a move-family expert-margin mode that can target only selected
+  event-source files or selector-tagged rows, instead of treating all eligible
+  special examples as one global pressure.
+- add explicit fireball context features or gates, such as opponent jump/attack
+  recovery, projectile lane state, and current self fireball recovery/state, so
+  the model can distinguish "zone now" from generic far movement.
+- add a negative expert/ranking loss for bad fireball rows that suppresses
+  fireball without teaching unrelated normals as the universal alternative.
+
 ## 2026-05-02: Remove Old Fireball-Named Extractor Entry Point
 
 Milestone:

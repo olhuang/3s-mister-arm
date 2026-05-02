@@ -3631,7 +3631,11 @@ Future task tracking:
   extracted-log probe also failed, so formal fireball-good/bad collection is
   still required before another M3a training attempt. The mixed-log extractor
   is now move-family-agnostic, so the same tool can be reused for provisional
-  shoryuken/tatsu split probes after the fireball collection step.
+  shoryuken/tatsu split probes after the fireball collection step. Formal
+  fireball data has now been collected and split; M3a v1-v6 on that data were
+  rejected. The data is usable, but recipe-only training is stuck between M1/P2
+  pollution and fireball suppression, so the next M3a pass needs trainer or
+  feature changes rather than another pure reward/oversample sweep.
 - [ ] Phase 4 defense data collected and M4 defense baseline trained.
 - [ ] Phase 5 projectile timing data collected by visual cue, post-hoc bucketed
   by timing/recovery, and M5 projectile baseline trained.

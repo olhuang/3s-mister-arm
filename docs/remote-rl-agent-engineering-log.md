@@ -73,6 +73,25 @@ Conclusion:
   collect targeted split P3 logs, starting with fireball-good and fireball-bad,
   then analyze each split before another M3 training sweep.
 
+Follow-up review decision:
+- adopt incremental action-space expansion for Phase 3 instead of one
+  all-specials M3 run.
+- `M3a`: initialize from accepted M2 v4c and add only
+  `fireball-lp/fireball-mp/fireball-hp`.
+- `M3b`: initialize from accepted M3a and add
+  `shoryuken-lp/shoryuken-mp/shoryuken-hp`.
+- `M3c`: initialize from accepted M3b and add
+  `tatsu-lk/tatsu-mk/tatsu-hk`.
+- keep M1/M2 and prior-stage split logs in each later stage's replay mix to
+  reduce catastrophic forgetting.
+- implementation note: `--movement-regression-action-groups` accepts group
+  names (`fireball`, `shoryuken`, `tatsu`), not individual action names such as
+  `fireball-lp`.
+- next immediate step: collect and analyzer-verify
+  `logs/rl-transitions-retrain-p3-fireball-good-human-v1.ndjson` and
+  `logs/rl-transitions-retrain-p3-fireball-bad-human-v1.ndjson`, then train
+  M3a before collecting shoryuken/tatsu-heavy follow-up logs.
+
 ## 2026-05-02: Add Full-Retrain Collection Operator Runbook
 
 Milestone:

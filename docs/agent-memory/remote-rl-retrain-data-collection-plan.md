@@ -613,9 +613,10 @@ Current conclusion:
   outcome/margin recipe cannot produce a clean model that both preserves M1 and
   chooses specials in P3 contexts.
 - Recipe-only tuning should stop for now. M3 v7 showed that removing specials
-  from movement regression is not enough. The next step is targeted split P3
-  collection with clearer state separation, then optional special-specific
-  context features/gates before another full M3 training attempt.
+  from movement regression is not enough. The next step is an incremental P3
+  curriculum: collect targeted split P3 logs, train `M3a` on fireball first,
+  then add shoryuken as `M3b`, then tatsu as `M3c`. Do not start another
+  all-specials M3 sweep until each family has a readable regression trail.
 
 M3 v7 diagnostic plan:
 
@@ -674,6 +675,49 @@ Split P3 validation gates:
 - Prefer training the first follow-up M3 model on fireball-good/bad only before
   adding shoryuken or tatsu, so each special family has a readable regression
   trail.
+
+Incremental M3 curriculum:
+
+- `M3a`: fireball only.
+  - Initialize from accepted `model/dqn-retrain-m2-normals-baseline-v4c`.
+  - Action set: M2 v4c actions plus `fireball-lp`, `fireball-mp`, and
+    `fireball-hp`.
+  - Replay mix: M1/M2 baseline logs plus `p3-fireball-good` and
+    `p3-fireball-bad`; the mixed `p3-specials-human-v1` log may be used only as
+    auxiliary diagnostic/bootstrap data if analyzer selectors can isolate clean
+    fireball contexts.
+  - Initial movement-regression groups:
+    `stand-normal,crouch-normal,air-normal,fireball`. The trainer currently
+    accepts action-group names, not individual action names, for this flag.
+  - Gate: M1 attack rate below `8-10%`, M2/P2 attack behavior does not regress
+    materially, fireball reaches top-1 in fireball-good contexts, and
+    fireball-bad does not collapse into fireball.
+- `M3b`: add shoryuken.
+  - Initialize from accepted M3a.
+  - Action set: M3a actions plus `shoryuken-lp`, `shoryuken-mp`, and
+    `shoryuken-hp`.
+  - Replay mix: M1/M2 plus accepted fireball split logs plus
+    `p3-shoryuken-antiair` and `p3-shoryuken-whiff`.
+  - Gate: M1/M2 and M3a fireball gates still pass, and shoryuken appears in
+    jump-in / anti-air contexts without replacing grounded movement/fireball.
+- `M3c`: add tatsu.
+  - Initialize from accepted M3b.
+  - Action set: full M3 special set.
+  - Replay mix: M1/M2 plus accepted M3a/M3b split logs plus `p3-tatsu-hit` and
+    `p3-tatsu-blocked`.
+  - Gate: M1/M2/M3a/M3b regression checks still pass, and tatsu appears only in
+    selected mid/approach contexts without replacing fireball or shoryuken.
+
+Incremental training rules:
+
+- Each new stage must keep prior-stage replay in the training mix to reduce
+  catastrophic forgetting.
+- Each stage should use its split logs as the primary new signal; avoid using
+  one mixed P3 file as the main training source.
+- If a stage fails, inspect that stage's split log detectors and context
+  features before changing the next family.
+- Treat larger model capacity as a later A/B after split data and incremental
+  action expansion have been tested.
 
 ### Phase 4: Basic Defense
 

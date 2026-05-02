@@ -3625,8 +3625,9 @@ Future task tracking:
   because v1-v3 were too conservative, v4 polluted M1, and v5/v6 did not
   produce clean special top-1 behavior. M3 v7 also failed after removing
   specials from movement regression: M1 attack rate stayed too high and P3
-  still had no special top-1. Stop recipe-only tuning and collect targeted
-  split P3 logs before promotion.
+  still had no special top-1. Stop recipe-only tuning and switch to the
+  incremental M3 curriculum: M3a fireball-only, M3b add shoryuken, M3c add
+  tatsu, with split logs and prior-stage replay mixed into every stage.
 - [ ] Phase 4 defense data collected and M4 defense baseline trained.
 - [ ] Phase 5 projectile timing data collected by visual cue, post-hoc bucketed
   by timing/recovery, and M5 projectile baseline trained.

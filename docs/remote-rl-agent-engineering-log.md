@@ -2,6 +2,77 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-02: Plan M3 v7 Specials Diagnostic And Split P3 Collection
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / full-retrain Phase
+  3 specials
+
+Files changed:
+- `docs/agent-memory/remote-rl-retrain-data-collection-plan.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- turn the M3 review feedback into an executable next-step plan.
+- test whether M3 v5/v6 stayed too conservative because specials were included
+  in movement regression.
+- define split P3 logs so future collection separates special families and
+  good/bad contexts instead of relying on one mixed `p3-specials` log.
+
+Planned M3 v7 diagnostic:
+- keep the v6-style recipe shape and train from accepted M2 v4c plus P3.
+- change only the movement-regression action groups to
+  `stand-normal,crouch-normal,air-normal`.
+- keep `--special-expert-margin-loss` enabled.
+- treat v7 as diagnostic unless both gates pass:
+  - M1 replay attack rate below `10%`.
+  - P3 replay attack rate materially above v5/v6 with at least one special
+    reaching top-1 on meaningful P3 contexts.
+
+Split P3 collection plan:
+- `logs/rl-transitions-retrain-p3-fireball-good-human-v1.ndjson`
+- `logs/rl-transitions-retrain-p3-fireball-bad-human-v1.ndjson`
+- `logs/rl-transitions-retrain-p3-shoryuken-antiair-human-v1.ndjson`
+- `logs/rl-transitions-retrain-p3-shoryuken-whiff-human-v1.ndjson`
+- `logs/rl-transitions-retrain-p3-tatsu-hit-human-v1.ndjson`
+- `logs/rl-transitions-retrain-p3-tatsu-blocked-human-v1.ndjson`
+
+Validation plan:
+- run M3 v7 locally against the existing replay set.
+- compare M3 v7 on the M1 movement mix and the P3 specials log.
+- if v7 fails either gate, stop recipe-only tuning and collect split P3 logs.
+
+Validation results:
+- trained `model/dqn-retrain-m3-specials-baseline-v7`, version `307`.
+- command changed the v6-style recipe by setting
+  `--movement-regression-action-groups stand-normal,crouch-normal,air-normal`.
+- trainer completed `4000` steps and published the model.
+- training summary:
+  - replay rows: `93802`.
+  - experiences: `31999`.
+  - top greedy action: `forward 53.5%`.
+  - special margin sampled/violated: `106924/106924`.
+  - movement regression sampled/violated: `140098/140098`.
+- M1 comparison:
+  - command:
+    `python3 tools/compare_dqn_models.py /tmp/rl-retrain-m1-mix-70-20-10.ndjson --model M3v7=model/dqn-retrain-m3-specials-baseline-v7 --limit 10000 --top-n 12 --focus-actions forward,back,guard-stand,guard-crouch,jump-forward-start,stand-mp,stand-hp,stand-mk,stand-hk,forward-hp,crouch-mp,crouch-hp,crouch-mk,crouch-hk,fireball-lp,fireball-mp,fireball-hp,shoryuken-lp,shoryuken-mp,shoryuken-hp,tatsu-lk,tatsu-mk,tatsu-hk --focus-rank-limit 3 --training-action-source auto --dqn-valid-action-mask action-start-v1`
+  - result: attack rate `13.9%`, top `forward 59.8%`, no shoryuken top-1.
+  - gate: failed the tentative M1 attack-rate gate of `<10%`.
+- P3 comparison:
+  - command:
+    `python3 tools/compare_dqn_models.py logs/rl-transitions-retrain-p3-specials-human-v1.ndjson --model M3v7=model/dqn-retrain-m3-specials-baseline-v7 --limit 12000 --top-n 12 --focus-actions forward,back,guard-stand,guard-crouch,jump-forward-start,stand-mp,stand-hp,stand-mk,stand-hk,forward-hp,crouch-mp,crouch-hp,crouch-mk,crouch-hk,fireball-lp,fireball-mp,fireball-hp,shoryuken-lp,shoryuken-mp,shoryuken-hp,tatsu-lk,tatsu-mk,tatsu-hk --focus-rank-limit 3 --training-action-source auto --dqn-valid-action-mask action-start-v1`
+  - result: attack rate `11.4%`, top `forward 53.4%`, no special top-1.
+  - gate: failed because specials still did not become top-1 in P3 contexts.
+
+Conclusion:
+- M3 v7 is rejected.
+- Removing specials from movement regression was not enough to resolve the M3
+  seesaw.
+- Stop recipe-only tuning on the mixed P3 log. The next executable step is to
+  collect targeted split P3 logs, starting with fireball-good and fireball-bad,
+  then analyze each split before another M3 training sweep.
+
 ## 2026-05-02: Add Full-Retrain Collection Operator Runbook
 
 Milestone:

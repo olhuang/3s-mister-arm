@@ -603,15 +603,77 @@ Training status:
   P3 (`5.2%` attack rate and no special top-1).
 - M3 v6 added special-aware movement regression, but still missed both gates:
   M1 attack rate `13.1%`, P3 attack rate `8.6%`, and no special top-1.
+- M3 v7 removed specials from movement regression while keeping the v6-style
+  special margin. This also missed both gates: M1 replay attack rate `13.9%`,
+  P3 replay attack rate `11.4%`, and no special top-1.
 
 Current conclusion:
 
 - Do not promote any M3 candidate yet. The current P3 data plus scalar
   outcome/margin recipe cannot produce a clean model that both preserves M1 and
   chooses specials in P3 contexts.
-- Next viable options are either more targeted split P3 logs with clearer
-  state separation, or finer context features/gates before another full M3
-  training attempt.
+- Recipe-only tuning should stop for now. M3 v7 showed that removing specials
+  from movement regression is not enough. The next step is targeted split P3
+  collection with clearer state separation, then optional special-specific
+  context features/gates before another full M3 training attempt.
+
+M3 v7 diagnostic plan:
+
+- Purpose: test whether including `fireball`, `shoryuken`, and `tatsu` in
+  `--movement-regression-action-groups` is the main reason v5/v6 stayed too
+  conservative on P3.
+- Single intended variable: keep the v6-style recipe shape, but change
+  `--movement-regression-action-groups` to
+  `stand-normal,crouch-normal,air-normal`.
+- Keep `--special-expert-margin-loss` enabled so v7 still tests whether
+  positive engine-labeled specials can rise without being directly suppressed
+  by movement regression.
+- Treat v7 as a diagnostic, not a promotable model by default. If P3 specials
+  appear but M1 attack rate explodes, the result confirms the current data /
+  feature mix still cannot separate special contexts from movement contexts.
+- Result: v7 failed both gates. It did not create special top-1 behavior on P3
+  and still exceeded the M1 attack-rate gate.
+
+M3 v7 pass gates:
+
+- M1 replay attack rate remains below `10%`.
+- P3 replay attack rate rises materially above v5/v6 and at least one special
+  reaches top-1 on meaningful P3 contexts.
+- No single action collapses the P3 summary above the existing warning
+  threshold unless the collapse is explicitly the expected diagnostic failure.
+- If v7 misses either gate, stop recipe-only tuning and move to split P3 data.
+
+Split P3 collection checklist:
+
+- `logs/rl-transitions-retrain-p3-fireball-good-human-v1.ndjson`: mid/far
+  useful-range fireballs, mostly LP/MP/HP fireball plus movement to reset range;
+  avoid shoryuken, tatsu, normal-heavy exchanges, and corner drills.
+- `logs/rl-transitions-retrain-p3-fireball-bad-human-v1.ndjson`: close-range
+  bad fireballs, fireballs jumped over, blocked, or punished; include a small
+  number of correct no-fireball movement resets so the contrast is visible.
+- `logs/rl-transitions-retrain-p3-shoryuken-antiair-human-v1.ndjson`: repeated
+  opponent jump-in states with correctly timed LP/MP/HP shoryuken anti-air
+  hits; avoid grounded DP fishing.
+- `logs/rl-transitions-retrain-p3-shoryuken-whiff-human-v1.ndjson`: grounded or
+  poorly spaced shoryuken whiffs and punished shoryukens, with enough recovery
+  punishment for risk windows to attach.
+- `logs/rl-transitions-retrain-p3-tatsu-hit-human-v1.ndjson`: tatsu used as a
+  deliberate approach/hit tool from plausible spacing; avoid mixing in
+  fireball zoning goals.
+- `logs/rl-transitions-retrain-p3-tatsu-blocked-human-v1.ndjson`: blocked,
+  whiffed, and punished tatsu examples, with recovery punishment visible to the
+  analyzer.
+
+Split P3 validation gates:
+
+- Run the analyzer for each split log before training.
+- Record row count, episodes, execution source, action distribution, engine
+  action counts, HP-delta signs, and risk/outcome detector counts.
+- Do not merge split logs into a cumulative M3 run until each split log's
+  analyzer output matches the intended scenario.
+- Prefer training the first follow-up M3 model on fireball-good/bad only before
+  adding shoryuken or tatsu, so each special family has a readable regression
+  trail.
 
 ### Phase 4: Basic Defense
 

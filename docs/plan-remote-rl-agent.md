@@ -3621,7 +3621,10 @@ Future task tracking:
 - [x] Phase 1 movement/spacing data collected and M1 movement baseline trained.
 - [x] Phase 2 normals and far-whiff negative data collected; M2 v4c attack
   baseline trained and raw-validated without support-prior.
-- [ ] Phase 3 specials data collected and M3 specials baseline trained.
+- [ ] Phase 3 specials data collected; first M3 training attempts rejected
+  because v1-v3 were too conservative, v4 polluted M1, and v5/v6 did not
+  produce clean special top-1 behavior. Needs targeted split P3 data or finer
+  context features before promotion.
 - [ ] Phase 4 defense data collected and M4 defense baseline trained.
 - [ ] Phase 5 projectile timing data collected by visual cue, post-hoc bucketed
   by timing/recovery, and M5 projectile baseline trained.

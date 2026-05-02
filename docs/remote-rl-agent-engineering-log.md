@@ -9902,3 +9902,68 @@ Next:
   defense, anti-air, corner, and oki stages.
 - watch the far-whiff residual `air-lp` rate during later live or holdout
   checks; finer distance buckets may still be useful.
+
+## 2026-05-02 - Remote RL full retrain M3 specials first attempts
+
+Purpose:
+- train Phase 3 / M3 on top of accepted M2v4c using
+  `logs/rl-transitions-retrain-p3-specials-human-v1.ndjson`.
+
+P3 data gate:
+- accepted for first-pass training.
+- rows: `23098`; episodes: `32`; skipped JSON: `0`.
+- execution source: all `human-demo`.
+- engine-labeled special coverage included:
+  `fireball-lp 131`, `fireball-mp 64`, `fireball-hp 27`,
+  `shoryuken-lp 97`, `shoryuken-mp 53`, `shoryuken-hp 64`,
+  `tatsu-lk 47`, `tatsu-mk 57`, `tatsu-hk 33`.
+
+Trainer changes:
+- added `--special-expert-margin-loss` and related flags:
+  `--special-expert-margin`, `--special-expert-margin-weight`,
+  `--special-expert-margin-batch-size`, `--special-expert-margin-min-reward`,
+  `--special-expert-margin-sources`, and
+  `--special-expert-margin-valid-action-mask`.
+- positive special expert rows are engine-labeled `fireball-*`,
+  `shoryuken-*`, or `tatsu-*` experiences whose scaled reward is at least the
+  configured minimum.
+- added `fireball`, `shoryuken`, and `tatsu` to
+  `--movement-regression-action-groups`.
+- added `--movement-regression-exclude-special-expert-eligible` so successful
+  special examples can be exempted from anti-attack movement regression.
+
+Validation:
+- `python3 -m py_compile tools/train_dqn_learner.py`
+- `python3 tools/train_dqn_learner.py --help | rg "movement-regression-action-groups|movement-regression-exclude|special-expert-margin"`
+- short smoke with `/tmp/rl-m3-special-margin-smoke` confirmed
+  `special_margin` triggers and reports eligible rows.
+
+M3 candidates:
+- `model/dqn-retrain-m3-specials-baseline-v1`, version `301`:
+  preserved M1/M2, but P3 was too conservative; P3 attack rate `2.2%` and no
+  special top-1.
+- `model/dqn-retrain-m3-specials-baseline-v2`, version `302`:
+  stronger special oversampling moved `fireball-lp` into top-2/top-3 but P3
+  still had only `0.2%` `fireball-lp` top-1 and `forward` collapsed to
+  `72.5%`.
+- `model/dqn-retrain-m3-specials-baseline-v3`, version `303`:
+  disabled spacing shaping; P3 `fireball-lp` improved only to `0.6%`, still
+  no usable specials.
+- `model/dqn-retrain-m3-specials-baseline-v4`, version `304`:
+  direct special margin made specials top-1 (`fireball-lp 42.7%` on training
+  summary; P3 `fireball-lp 10.1%`) but polluted M1 replay badly:
+  M1 attack rate `83.0%`.
+- `model/dqn-retrain-m3-specials-baseline-v5`, version `305`:
+  softened margin; M1 replay recovered to `5.5%` attack rate, but P3 remained
+  too conservative (`5.2%` attack rate and no special top-1).
+- `model/dqn-retrain-m3-specials-baseline-v6`, version `306`:
+  added special-aware movement regression; still failed both gates:
+  M1 attack rate `13.1%`, P3 attack rate `8.6%`, no special top-1.
+
+Conclusion:
+- no M3 candidate is promoted.
+- direct special margin proves the trainer can force specials, but the current
+  data/features do not separate "use special now" from M1-style movement
+  states cleanly enough.
+- next M3 attempt should collect split, targeted P3 logs or add finer context
+  features/gates before another long training sweep.

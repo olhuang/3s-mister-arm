@@ -31,6 +31,7 @@ class Experience:
     row: dict[str, object] = field(default_factory=dict)
     next_row: dict[str, object] = field(default_factory=dict)
     projectile_expert_margin_eligible: bool = False
+    special_expert_margin_eligible: bool = False
     projectile_late_defensive_margin_eligible: bool = False
     projectile_defensive_expert_margin_eligible: bool = False
     projectile_batch_eligible: bool = False
@@ -305,17 +306,25 @@ MOVEMENT_SPACING_ACTIONS = frozenset({"forward", "back"})
 MOVEMENT_REGRESSION_MOVEMENT_ACTIONS = frozenset(
     {"forward", "back", "guard-stand", "guard-crouch"}
 ) | JUMP_START_ACTIONS
-MOVEMENT_REGRESSION_ACTION_GROUPS = frozenset(("stand-normal", "crouch-normal", "air-normal"))
+MOVEMENT_REGRESSION_ACTION_GROUPS = frozenset(
+    ("stand-normal", "crouch-normal", "air-normal", "fireball", "shoryuken", "tatsu")
+)
 MOVEMENT_REGRESSION_ACTION_GROUP_ACTIONS = {
     "stand-normal": frozenset(getattr(rl, "STAND_NORMAL_ACTION_NAMES", ())) | frozenset({"forward-hp"}),
     "crouch-normal": frozenset(getattr(rl, "CROUCH_NORMAL_ACTION_NAMES", ())),
     "air-normal": frozenset(getattr(rl, "AIR_NORMAL_ACTION_NAMES", ())),
+    "fireball": frozenset(action for action in rl.TABULAR_ACTION_NAMES if action.startswith("fireball-")),
+    "shoryuken": SHORYUKEN_ACTIONS,
+    "tatsu": frozenset(action for action in rl.TABULAR_ACTION_NAMES if action.startswith("tatsu-")),
 }
 PROJECTILE_OWNER_OPPONENT = 2
 REWARD_PROJECTILE_RESPONSE_PROFILES = ("off", "incoming-v1")
 BATCH_SAMPLING_MODES = ("uniform", "balanced")
 BATCH_GROUPS = ("projectile", "movement", "normal", "special")
 SPECIAL_ACTION_PREFIXES = ("fireball-", "shoryuken-", "tatsu-")
+SPECIAL_ACTIONS = frozenset(
+    action for action in rl.TABULAR_ACTION_NAMES if action.startswith(SPECIAL_ACTION_PREFIXES)
+)
 DQN_TARGET_MODES = ("standard", "double")
 
 
@@ -369,6 +378,7 @@ class MovementRegressionLossConfig:
     target_q_margin: float
     far_dx_threshold: int
     action_groups: frozenset[str]
+    exclude_special_expert_eligible: bool = False
 
     @property
     def enabled(self) -> bool:
@@ -381,6 +391,7 @@ class MovementRegressionLossConfig:
             "target_q_margin": self.target_q_margin,
             "far_dx_threshold": self.far_dx_threshold,
             "action_groups": sorted(self.action_groups),
+            "exclude_special_expert_eligible": self.exclude_special_expert_eligible,
         }
 
 
@@ -1053,6 +1064,37 @@ class ProjectileExpertMarginStats:
             "blocker_counts": dict(sorted(self.blocker_counts.items())),
             "sampled_by_time_bucket": dict(sorted(self.sampled_by_time_bucket.items())),
             "violation_by_time_bucket": dict(sorted(self.violation_by_time_bucket.items())),
+        }
+
+
+@dataclass(frozen=True)
+class SpecialExpertMarginConfig:
+    requested: bool = False
+    margin: float = 0.08
+    loss_weight: float = 0.5
+    batch_size: int = 0
+    min_reward: float = 0.0
+    eligible_sources: frozenset[str] = field(default_factory=lambda: frozenset({"human-demo", "cpu-demo"}))
+    valid_action_mask_mode: str = "action-start-v1"
+
+    @property
+    def enabled(self) -> bool:
+        return self.requested and self.margin > 0.0 and self.loss_weight > 0.0
+
+    def as_shared_mask_config(self) -> rl.DQNValidActionMaskConfig:
+        return rl.parse_dqn_valid_action_mask_config(self.valid_action_mask_mode)
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "requested": self.requested,
+            "enabled": self.enabled,
+            "margin": self.margin,
+            "loss_weight": self.loss_weight,
+            "batch_size": self.batch_size,
+            "min_reward": self.min_reward,
+            "eligible_sources": sorted(self.eligible_sources),
+            "valid_action_mask_mode": self.valid_action_mask_mode,
+            "special_actions": sorted(SPECIAL_ACTIONS),
         }
 
 
@@ -1941,6 +1983,7 @@ def movement_regression_loss_config_from_args(args: argparse.Namespace) -> Movem
         target_q_margin=max(0.0, float(args.movement_regression_target_q_margin)),
         far_dx_threshold=max(0, int(args.movement_regression_far_dx_threshold)),
         action_groups=parse_movement_regression_action_groups(str(args.movement_regression_action_groups)),
+        exclude_special_expert_eligible=bool(args.movement_regression_exclude_special_expert_eligible),
     )
 
 
@@ -2433,6 +2476,21 @@ def projectile_expert_margin_eligible(
     return True
 
 
+def special_expert_margin_eligible(
+    action_name: str,
+    source_name: str,
+    reward: float,
+    config: SpecialExpertMarginConfig,
+) -> bool:
+    if not config.requested:
+        return False
+    if source_name not in config.eligible_sources:
+        return False
+    if action_name not in SPECIAL_ACTIONS:
+        return False
+    return reward >= config.min_reward
+
+
 def projectile_late_defensive_margin_eligible(
     row: dict[str, object],
     source_name: str,
@@ -2618,6 +2676,7 @@ def add_engine_outcome_experience(
     action_to_index: dict[str, int],
     reward_scale: float,
     config: EngineOutcomeConfig,
+    special_expert_margin_config: SpecialExpertMarginConfig,
     stats: EngineOutcomeStats,
     experiences: list[Experience],
     action_counts: dict[str, int],
@@ -2704,6 +2763,12 @@ def add_engine_outcome_experience(
                 model_version=model_version,
                 row=dict(row),
                 next_row=dict(next_row),
+                special_expert_margin_eligible=special_expert_margin_eligible(
+                    action_name,
+                    source_name,
+                    reward,
+                    special_expert_margin_config,
+                ),
             )
         )
     stats.included_events += 1
@@ -2734,6 +2799,7 @@ def build_experiences(
     projectile_response_oversample_config: ProjectileResponseOversampleConfig,
     projectile_batch_config: ProjectileBatchConfig,
     projectile_expert_margin_config: ProjectileExpertMarginConfig,
+    special_expert_margin_config: SpecialExpertMarginConfig,
     projectile_late_defensive_margin_config: ProjectileLateDefensiveMarginConfig,
     projectile_defensive_expert_margin_config: ProjectileDefensiveExpertMarginConfig,
     engine_outcome_config: EngineOutcomeConfig,
@@ -2796,6 +2862,7 @@ def build_experiences(
                     action_to_index,
                     reward_scale,
                     engine_outcome_config,
+                    special_expert_margin_config,
                     engine_outcome_stats,
                     experiences,
                     action_counts,
@@ -2985,6 +3052,12 @@ def build_experiences(
                     action_name,
                     projectile_response_outcome_result,
                     projectile_expert_margin_config,
+                ),
+                special_expert_margin_eligible=special_expert_margin_eligible(
+                    action_name,
+                    source_name,
+                    reward,
+                    special_expert_margin_config,
                 ),
                 projectile_late_defensive_margin_eligible=projectile_late_defensive_margin_eligible(
                     row,
@@ -3212,6 +3285,27 @@ def projectile_expert_margin_config_from_args(args: argparse.Namespace) -> Proje
         eligible_sources=parse_source_name_set(
             str(args.projectile_expert_margin_sources),
             "--projectile-expert-margin-sources",
+        ),
+        valid_action_mask_mode=mode,
+    )
+
+
+def special_expert_margin_config_from_args(args: argparse.Namespace) -> SpecialExpertMarginConfig:
+    mode = str(args.special_expert_margin_valid_action_mask)
+    if mode not in rl.DQN_VALID_ACTION_MASK_MODES:
+        raise SystemExit(
+            f"unknown --special-expert-margin-valid-action-mask {mode!r}; "
+            f"expected one of {','.join(rl.DQN_VALID_ACTION_MASK_MODES)}"
+        )
+    return SpecialExpertMarginConfig(
+        requested=bool(args.special_expert_margin_loss),
+        margin=max(0.0, float(args.special_expert_margin)),
+        loss_weight=max(0.0, float(args.special_expert_margin_weight)),
+        batch_size=max(0, int(args.special_expert_margin_batch_size)),
+        min_reward=float(args.special_expert_margin_min_reward),
+        eligible_sources=parse_source_name_set(
+            str(args.special_expert_margin_sources),
+            "--special-expert-margin-sources",
         ),
         valid_action_mask_mode=mode,
     )
@@ -3538,6 +3632,8 @@ def movement_regression_action_indices(
 def is_movement_regression_context(exp: Experience, config: MovementRegressionLossConfig) -> bool:
     if not config.enabled:
         return False
+    if config.exclude_special_expert_eligible and exp.special_expert_margin_eligible:
+        return False
     row = exp.row
     if abs(int_row_field(row, "obs_abs_dx")) < config.far_dx_threshold:
         return False
@@ -3739,6 +3835,76 @@ def apply_projectile_expert_margin_loss(
     stats.by_expert_action_loss[expert_action] = stats.by_expert_action_loss.get(expert_action, 0.0) + weighted_loss
     stats.blocker_counts[blocker_action] = stats.blocker_counts.get(blocker_action, 0) + 1
     stats.violation_by_time_bucket[time_bucket] = stats.violation_by_time_bucket.get(time_bucket, 0) + 1
+    return weighted_loss
+
+
+def special_margin_bucket(action_name: str) -> str:
+    for prefix in SPECIAL_ACTION_PREFIXES:
+        if action_name.startswith(prefix):
+            return prefix.rstrip("-")
+    return "special"
+
+
+def apply_special_expert_margin_loss(
+    exp: Experience,
+    values: list[float],
+    actions: tuple[str, ...],
+    output_grad: list[float],
+    config: SpecialExpertMarginConfig,
+    shared_valid_action_mask_config: rl.DQNValidActionMaskConfig,
+    stats: ProjectileExpertMarginStats,
+) -> float:
+    if not config.enabled or not exp.special_expert_margin_eligible:
+        return 0.0
+
+    value_count = min(len(actions), len(values))
+    valid_indices = rl.dqn_valid_action_indices_for_row(
+        exp.row,
+        actions,
+        shared_valid_action_mask_config,
+        value_count,
+    )
+    if not valid_indices:
+        stats.empty_valid_events += 1
+        return 0.0
+
+    expert_index = exp.action_index
+    if expert_index >= value_count or expert_index not in valid_indices:
+        stats.expert_invalid_events += 1
+        return 0.0
+
+    expert_action = actions[expert_index]
+    if expert_action not in SPECIAL_ACTIONS:
+        stats.expert_invalid_events += 1
+        return 0.0
+
+    competitor_indices = [index for index in valid_indices if index != expert_index]
+    if not competitor_indices:
+        return 0.0
+
+    stats.sampled_events += 1
+    bucket = special_margin_bucket(expert_action)
+    stats.sampled_by_time_bucket[bucket] = stats.sampled_by_time_bucket.get(bucket, 0) + 1
+    best_competitor_index = max(
+        competitor_indices,
+        key=lambda index: (values[index], actions[index]),
+    )
+    gap = float(values[best_competitor_index]) + config.margin - float(values[expert_index])
+    if gap <= 0.0:
+        return 0.0
+
+    clipped_gap = max(-10.0, min(10.0, gap))
+    weighted_loss = config.loss_weight * 0.5 * clipped_gap * clipped_gap
+    output_grad[best_competitor_index] += config.loss_weight * clipped_gap
+    output_grad[expert_index] -= config.loss_weight * clipped_gap
+
+    blocker_action = actions[best_competitor_index]
+    stats.violation_events += 1
+    stats.loss_total += weighted_loss
+    stats.by_expert_action_events[expert_action] = stats.by_expert_action_events.get(expert_action, 0) + 1
+    stats.by_expert_action_loss[expert_action] = stats.by_expert_action_loss.get(expert_action, 0.0) + weighted_loss
+    stats.blocker_counts[blocker_action] = stats.blocker_counts.get(blocker_action, 0) + 1
+    stats.violation_by_time_bucket[bucket] = stats.violation_by_time_bucket.get(bucket, 0) + 1
     return weighted_loss
 
 
@@ -4090,6 +4256,7 @@ def train_dqn(
     unsupported_action_regularization_config: DQNUnsupportedActionRegularizationConfig,
     movement_regression_config: MovementRegressionLossConfig,
     projectile_expert_margin_config: ProjectileExpertMarginConfig,
+    special_expert_margin_config: SpecialExpertMarginConfig,
     projectile_late_defensive_margin_config: ProjectileLateDefensiveMarginConfig,
     projectile_defensive_expert_margin_config: ProjectileDefensiveExpertMarginConfig,
     projectile_timing_group_margin_config: ProjectileTimingGroupMarginConfig,
@@ -4100,6 +4267,7 @@ def train_dqn(
     dict[str, object],
     DQNUnsupportedActionRegularizationStats,
     MovementRegressionLossStats,
+    ProjectileExpertMarginStats,
     ProjectileExpertMarginStats,
     ProjectileLateDefensiveMarginStats,
     ProjectileDefensiveExpertMarginStats,
@@ -4128,6 +4296,8 @@ def train_dqn(
     avg_movement_regression_loss = 0.0
     last_projectile_margin_loss = 0.0
     avg_projectile_margin_loss = 0.0
+    last_special_margin_loss = 0.0
+    avg_special_margin_loss = 0.0
     last_projectile_late_defensive_margin_loss = 0.0
     avg_projectile_late_defensive_margin_loss = 0.0
     last_projectile_defensive_expert_margin_loss = 0.0
@@ -4154,6 +4324,12 @@ def train_dqn(
     projectile_expert_margin_pool = [
         exp for exp in experiences if exp.projectile_expert_margin_eligible
     ]
+    special_expert_margin_stats = ProjectileExpertMarginStats(
+        eligible_experiences=sum(1 for exp in experiences if exp.special_expert_margin_eligible)
+    )
+    special_expert_margin_pool = [
+        exp for exp in experiences if exp.special_expert_margin_eligible
+    ]
     projectile_late_defensive_margin_stats = ProjectileLateDefensiveMarginStats(
         eligible_experiences=sum(1 for exp in experiences if exp.projectile_late_defensive_margin_eligible)
     )
@@ -4176,6 +4352,7 @@ def train_dqn(
     ]
     shared_valid_action_mask_config = valid_action_mask_config.as_shared_config()
     projectile_expert_margin_mask_config = projectile_expert_margin_config.as_shared_mask_config()
+    special_expert_margin_mask_config = special_expert_margin_config.as_shared_mask_config()
     projectile_late_defensive_margin_mask_config = projectile_late_defensive_margin_config.as_shared_mask_config()
     projectile_defensive_expert_margin_mask_config = projectile_defensive_expert_margin_config.as_shared_mask_config()
     projectile_timing_group_margin_mask_config = projectile_timing_group_margin_config.as_shared_mask_config()
@@ -4195,6 +4372,7 @@ def train_dqn(
         unsupported_regularization_loss = 0.0
         movement_regression_loss = 0.0
         projectile_margin_loss = 0.0
+        special_margin_loss = 0.0
         projectile_late_defensive_margin_loss = 0.0
         projectile_defensive_expert_margin_loss = 0.0
         projectile_timing_group_margin_loss = 0.0
@@ -4294,6 +4472,17 @@ def train_dqn(
             )
             projectile_margin_loss += exp_projectile_margin_loss
             loss += exp_projectile_margin_loss
+            exp_special_margin_loss = apply_special_expert_margin_loss(
+                exp,
+                values,
+                actions,
+                output_grad,
+                special_expert_margin_config,
+                special_expert_margin_mask_config,
+                special_expert_margin_stats,
+            )
+            special_margin_loss += exp_special_margin_loss
+            loss += exp_special_margin_loss
             exp_late_defensive_margin_loss = apply_projectile_late_defensive_margin_loss(
                 exp,
                 values,
@@ -4345,6 +4534,24 @@ def train_dqn(
                 projectile_margin_loss += exp_projectile_margin_loss
                 loss += exp_projectile_margin_loss
                 if exp_projectile_margin_loss > 0.0:
+                    add_backward_grads(layers, grads, activations, pre_activations, output_grad)
+        if special_expert_margin_config.enabled and special_expert_margin_pool:
+            for _ in range(max(0, special_expert_margin_config.batch_size)):
+                exp = rng.choice(special_expert_margin_pool)
+                values, activations, pre_activations = forward(layers, exp.state)
+                output_grad = [0.0 for _ in values]
+                exp_special_margin_loss = apply_special_expert_margin_loss(
+                    exp,
+                    values,
+                    actions,
+                    output_grad,
+                    special_expert_margin_config,
+                    special_expert_margin_mask_config,
+                    special_expert_margin_stats,
+                )
+                special_margin_loss += exp_special_margin_loss
+                loss += exp_special_margin_loss
+                if exp_special_margin_loss > 0.0:
                     add_backward_grads(layers, grads, activations, pre_activations, output_grad)
         if projectile_late_defensive_margin_config.enabled and projectile_late_defensive_margin_pool:
             for _ in range(max(0, projectile_late_defensive_margin_config.batch_size)):
@@ -4421,6 +4628,12 @@ def train_dqn(
             if step == 1
             else (0.98 * avg_projectile_margin_loss + 0.02 * last_projectile_margin_loss)
         )
+        last_special_margin_loss = special_margin_loss / max(1, batch_size)
+        avg_special_margin_loss = (
+            last_special_margin_loss
+            if step == 1
+            else (0.98 * avg_special_margin_loss + 0.02 * last_special_margin_loss)
+        )
         last_projectile_late_defensive_margin_loss = projectile_late_defensive_margin_loss / max(1, batch_size)
         avg_projectile_late_defensive_margin_loss = (
             last_projectile_late_defensive_margin_loss
@@ -4456,6 +4669,7 @@ def train_dqn(
                 f"unsupported_reg={last_unsupported_regularization_loss:.6f} "
                 f"movement_reg={last_movement_regression_loss:.6f} "
                 f"projectile_margin={last_projectile_margin_loss:.6f} "
+                f"special_margin={last_special_margin_loss:.6f} "
                 f"projectile_late_def_margin={last_projectile_late_defensive_margin_loss:.6f} "
                 f"projectile_def_expert_margin={last_projectile_defensive_expert_margin_loss:.6f} "
                 f"projectile_timing_group_margin={last_projectile_timing_group_margin_loss:.6f}",
@@ -4474,6 +4688,8 @@ def train_dqn(
     movement_regression_stats.avg_loss = avg_movement_regression_loss
     projectile_expert_margin_stats.last_loss = last_projectile_margin_loss
     projectile_expert_margin_stats.avg_loss = avg_projectile_margin_loss
+    special_expert_margin_stats.last_loss = last_special_margin_loss
+    special_expert_margin_stats.avg_loss = avg_special_margin_loss
     projectile_late_defensive_margin_stats.last_loss = last_projectile_late_defensive_margin_loss
     projectile_late_defensive_margin_stats.avg_loss = avg_projectile_late_defensive_margin_loss
     projectile_defensive_expert_margin_stats.last_loss = last_projectile_defensive_expert_margin_loss
@@ -4490,6 +4706,7 @@ def train_dqn(
         unsupported_action_regularization_stats,
         movement_regression_stats,
         projectile_expert_margin_stats,
+        special_expert_margin_stats,
         projectile_late_defensive_margin_stats,
         projectile_defensive_expert_margin_stats,
         projectile_timing_group_margin_stats,
@@ -5189,7 +5406,16 @@ def main() -> None:
         default="stand-normal,crouch-normal,air-normal",
         help=(
             "Comma-separated attack groups regularized by movement regression loss: "
-            "stand-normal,crouch-normal,air-normal"
+            "stand-normal,crouch-normal,air-normal,fireball,shoryuken,tatsu"
+        ),
+    )
+    parser.add_argument(
+        "--movement-regression-exclude-special-expert-eligible",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Exclude positive special-expert-margin rows from movement regression so successful "
+            "special examples do not receive conflicting anti-attack margin"
         ),
     )
     parser.add_argument(
@@ -5548,6 +5774,53 @@ def main() -> None:
         choices=rl.DQN_VALID_ACTION_MASK_MODES,
         default="action-start-v1",
         help="Valid-action mask used for projectile expert margin competitors",
+    )
+    parser.add_argument(
+        "--special-expert-margin-loss",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Add a valid-action-masked large-margin loss on positive fireball/shoryuken/tatsu "
+            "engine-labeled experiences"
+        ),
+    )
+    parser.add_argument(
+        "--special-expert-margin",
+        type=float,
+        default=0.08,
+        help="Q margin required between the expert special action and the best valid competitor",
+    )
+    parser.add_argument(
+        "--special-expert-margin-weight",
+        type=float,
+        default=0.5,
+        help="Auxiliary loss weight for --special-expert-margin-loss",
+    )
+    parser.add_argument(
+        "--special-expert-margin-batch-size",
+        type=int,
+        default=0,
+        help=(
+            "Extra positive special rows sampled per DQN step for margin-only updates; "
+            "0 keeps margin loss limited to the normal replay batch"
+        ),
+    )
+    parser.add_argument(
+        "--special-expert-margin-min-reward",
+        type=float,
+        default=0.0,
+        help="Minimum scaled reward required for a special experience to receive expert margin loss",
+    )
+    parser.add_argument(
+        "--special-expert-margin-sources",
+        default="human-demo,cpu-demo",
+        help="Comma-separated execution sources eligible for special expert margin",
+    )
+    parser.add_argument(
+        "--special-expert-margin-valid-action-mask",
+        choices=rl.DQN_VALID_ACTION_MASK_MODES,
+        default="action-start-v1",
+        help="Valid-action mask used for special expert margin competitors",
     )
     parser.add_argument(
         "--projectile-late-defensive-margin-loss",
@@ -5950,6 +6223,7 @@ def main() -> None:
     projectile_response_oversample_config = projectile_response_oversample_config_from_args(args)
     projectile_batch_config = projectile_batch_config_from_args(args)
     projectile_expert_margin_config = projectile_expert_margin_config_from_args(args)
+    special_expert_margin_config = special_expert_margin_config_from_args(args)
     projectile_late_defensive_margin_config = projectile_late_defensive_margin_config_from_args(args)
     projectile_defensive_expert_margin_config = projectile_defensive_expert_margin_config_from_args(args)
     projectile_timing_group_margin_config = projectile_timing_group_margin_config_from_args(args)
@@ -5988,6 +6262,7 @@ def main() -> None:
         projectile_response_oversample_config,
         projectile_batch_config,
         projectile_expert_margin_config,
+        special_expert_margin_config,
         projectile_late_defensive_margin_config,
         projectile_defensive_expert_margin_config,
         engine_outcome_config,
@@ -6014,6 +6289,7 @@ def main() -> None:
         unsupported_action_regularization_stats,
         movement_regression_stats,
         projectile_expert_margin_stats,
+        special_expert_margin_stats,
         projectile_late_defensive_margin_stats,
         projectile_defensive_expert_margin_stats,
         projectile_timing_group_margin_stats,
@@ -6035,6 +6311,7 @@ def main() -> None:
         unsupported_action_regularization_config,
         movement_regression_config,
         projectile_expert_margin_config,
+        special_expert_margin_config,
         projectile_late_defensive_margin_config,
         projectile_defensive_expert_margin_config,
         projectile_timing_group_margin_config,
@@ -6079,6 +6356,8 @@ def main() -> None:
         reward_sources.append("conservative-action-penalty")
     if projectile_expert_margin_config.enabled:
         reward_sources.append("projectile-expert-margin")
+    if special_expert_margin_config.enabled:
+        reward_sources.append("special-expert-margin")
     if projectile_late_defensive_margin_config.enabled:
         reward_sources.append("projectile-late-defensive-margin")
     if projectile_defensive_expert_margin_config.enabled:
@@ -6190,6 +6469,8 @@ def main() -> None:
         "projectile_expert_margin_config": projectile_expert_margin_config.as_metadata(),
         "projectile_expert_margin_stats": projectile_expert_margin_stats.as_metadata(),
         "projectile_expert_q_gap_diagnostics": projectile_expert_q_gap_diag.as_metadata(),
+        "special_expert_margin_config": special_expert_margin_config.as_metadata(),
+        "special_expert_margin_stats": special_expert_margin_stats.as_metadata(),
         "projectile_late_defensive_margin_config": projectile_late_defensive_margin_config.as_metadata(),
         "projectile_late_defensive_margin_stats": projectile_late_defensive_margin_stats.as_metadata(),
         "projectile_defensive_expert_margin_config": projectile_defensive_expert_margin_config.as_metadata(),
@@ -6270,6 +6551,9 @@ def main() -> None:
         f"projectile_margin={projectile_expert_margin_stats.violation_events}/"
         f"{projectile_expert_margin_stats.sampled_events} "
         f"projectile_margin_loss={projectile_expert_margin_stats.last_loss:.6f} "
+        f"special_margin={special_expert_margin_stats.violation_events}/"
+        f"{special_expert_margin_stats.sampled_events} "
+        f"special_margin_loss={special_expert_margin_stats.last_loss:.6f} "
         f"projectile_late_def_margin={projectile_late_defensive_margin_stats.violation_events}/"
         f"{projectile_late_defensive_margin_stats.sampled_events} "
         f"projectile_late_def_margin_loss={projectile_late_defensive_margin_stats.last_loss:.6f} "
@@ -6577,6 +6861,30 @@ def main() -> None:
         f"positive_gap_t:{format_counts(projectile_expert_q_gap_diag.positive_gap_by_time_bucket, projectile_expert_q_gap_diag.positive_gap_rows, args.diagnostic_top_n)} "
         f"top:{format_counts(projectile_expert_q_gap_diag.top_action_counts, projectile_expert_q_gap_diag.rows, args.diagnostic_top_n)} "
         f"blockers:{format_counts(projectile_expert_q_gap_diag.blocker_counts, projectile_expert_q_gap_diag.positive_gap_rows, args.diagnostic_top_n)}",
+        flush=True,
+    )
+    print(
+        "DQN diagnostics "
+        f"special_expert_margin=enabled:{int(special_expert_margin_config.enabled)} "
+        f"requested:{int(special_expert_margin_config.requested)} "
+        f"margin:{special_expert_margin_config.margin:.6f} "
+        f"weight:{special_expert_margin_config.loss_weight:.6f} "
+        f"batch_size:{special_expert_margin_config.batch_size} "
+        f"min_reward:{special_expert_margin_config.min_reward:.6f} "
+        f"valid_mask:{special_expert_margin_config.valid_action_mask_mode} "
+        f"sources:{','.join(sorted(special_expert_margin_config.eligible_sources)) or 'none'} "
+        f"eligible:{special_expert_margin_stats.eligible_experiences} "
+        f"sampled:{special_expert_margin_stats.sampled_events} "
+        f"violations:{special_expert_margin_stats.violation_events} "
+        f"empty_valid:{special_expert_margin_stats.empty_valid_events} "
+        f"expert_invalid:{special_expert_margin_stats.expert_invalid_events} "
+        f"loss:{special_expert_margin_stats.loss_total:.6f} "
+        f"last:{special_expert_margin_stats.last_loss:.6f} "
+        f"avg:{special_expert_margin_stats.avg_loss:.6f} "
+        f"by_expert:{format_counts(special_expert_margin_stats.by_expert_action_events, special_expert_margin_stats.sampled_events, args.diagnostic_top_n)} "
+        f"sampled_group:{format_counts(special_expert_margin_stats.sampled_by_time_bucket, special_expert_margin_stats.sampled_events, args.diagnostic_top_n)} "
+        f"violation_group:{format_counts(special_expert_margin_stats.violation_by_time_bucket, special_expert_margin_stats.violation_events, args.diagnostic_top_n)} "
+        f"blockers:{format_counts(special_expert_margin_stats.blocker_counts, special_expert_margin_stats.violation_events, args.diagnostic_top_n)}",
         flush=True,
     )
     print(

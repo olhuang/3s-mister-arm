@@ -587,6 +587,32 @@ Pass gates:
 - shoryuken/tatsu whiff punish rows are visible to the analyzer.
 - close bad fireball rows are distinguishable from good-range fireballs.
 
+Training status:
+
+- `logs/rl-transitions-retrain-p3-specials-human-v1.ndjson` passed the data
+  gate for first-pass training: `23098` rows, `32` episodes, all
+  `human-demo`, and engine labels for fireball, shoryuken, and tatsu.
+- M3 v1-v3 recipe-only attempts preserved M1/M2 too strongly and did not make
+  specials greedy on the P3 replay.
+- Added trainer support for `--special-expert-margin-loss`, plus optional
+  fireball/shoryuken/tatsu action groups in movement regression, to test a
+  direct ranking signal for positive engine-labeled specials.
+- M3 v4 proved the margin can make specials top-1, but it polluted M1 badly:
+  M1 replay attack rate rose to `83.0%`.
+- M3 v5 was safe enough on M1 (`5.5%` attack rate) but was too conservative on
+  P3 (`5.2%` attack rate and no special top-1).
+- M3 v6 added special-aware movement regression, but still missed both gates:
+  M1 attack rate `13.1%`, P3 attack rate `8.6%`, and no special top-1.
+
+Current conclusion:
+
+- Do not promote any M3 candidate yet. The current P3 data plus scalar
+  outcome/margin recipe cannot produce a clean model that both preserves M1 and
+  chooses specials in P3 contexts.
+- Next viable options are either more targeted split P3 logs with clearer
+  state separation, or finer context features/gates before another full M3
+  training attempt.
+
 ### Phase 4: Basic Defense
 
 Purpose:

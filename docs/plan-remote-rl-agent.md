@@ -3629,7 +3629,9 @@ Future task tracking:
   incremental M3 curriculum: M3a fireball-only, M3b add shoryuken, M3c add
   tatsu, with split logs and prior-stage replay mixed into every stage. M3a1
   extracted-log probe also failed, so formal fireball-good/bad collection is
-  still required before another M3a training attempt.
+  still required before another M3a training attempt. The mixed-log extractor
+  is now move-family-agnostic, so the same tool can be reused for provisional
+  shoryuken/tatsu split probes after the fireball collection step.
 - [ ] Phase 4 defense data collected and M4 defense baseline trained.
 - [ ] Phase 5 projectile timing data collected by visual cue, post-hoc bucketed
   by timing/recovery, and M5 projectile baseline trained.

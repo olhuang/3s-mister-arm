@@ -720,10 +720,11 @@ Incremental training rules:
   catastrophic forgetting.
 - Each stage should use its split logs as the primary new signal; avoid using
   one mixed P3 file as the main training source.
-- `tools/extract_m3a_fireball_logs.py` can extract provisional fireball
-  good/bad context logs from a mixed P3 file for dry-run analysis or bootstrap
-  experiments, but extracted logs are not a substitute for formal split
-  collection.
+- `tools/extract_move_context_logs.py` can now extract provisional good/bad
+  context logs for any move family from a mixed P3 file by configuring
+  `--actions`, `--action-prefixes`, and custom `--good-rule` / `--bad-rule`
+  filters. Use it for dry-run analysis or bootstrap experiments, but extracted
+  logs are not a substitute for formal split collection.
 - If a stage fails, inspect that stage's split log detectors and context
   features before changing the next family.
 - Treat larger model capacity as a later A/B after split data and incremental

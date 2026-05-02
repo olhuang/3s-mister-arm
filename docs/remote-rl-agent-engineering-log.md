@@ -2,6 +2,85 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-02: Remove Old Fireball-Named Extractor Entry Point
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / full-retrain Phase
+  3 specials tooling
+
+Files changed:
+- `tools/extract_move_context_logs.py`
+- `tools/extract_m3a_fireball_logs.py`
+- `docs/agent-memory/remote-rl-retrain-data-collection-plan.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- finish the tool rename by removing the old fireball-specific script path.
+- keep one canonical extractor entrypoint so future docs and commands do not
+  drift between two names.
+
+Implementation:
+- deleted `tools/extract_m3a_fireball_logs.py`.
+- kept `tools/extract_move_context_logs.py` as the only supported extractor.
+- removed compatibility-wrapper wording from the collection plan.
+
+Validation:
+- `python3 -m py_compile tools/extract_move_context_logs.py`
+- `python3 tools/extract_move_context_logs.py logs/rl-transitions-retrain-p3-specials-human-v1.ndjson --drop-overlap`
+  - good: `167` events, `3488` rows before overlap removal.
+  - bad: `54` events, `1143` rows before overlap removal.
+  - overlap: `115` rows.
+
+## 2026-05-02: Generalize Extracted Specials Log Tool
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / full-retrain Phase
+  3 specials tooling
+
+Files changed:
+- `tools/extract_move_context_logs.py`
+- `docs/agent-memory/remote-rl-retrain-data-collection-plan.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- turn the provisional fireball-only extractor into a reusable mixed-log
+  extraction tool for later M3a/M3b/M3c split probes.
+- preserve the existing fireball defaults while moving to a neutral tool name.
+
+Implementation:
+- introduced `tools/extract_move_context_logs.py` as the generalized
+  implementation.
+- added configurable move-family matching through:
+  - `--actions` for exact engine action names.
+  - `--action-prefixes` for family/prefix matches.
+- replaced the hard-coded selector logic with OR-combined rule sets:
+  - `--good-rule`
+  - `--bad-rule`
+- preserved preset behavior by mapping the old fireball selectors onto rules:
+  - good default:
+    `buckets=mid,far hit=1 punished=0` or `buckets=far punished=0`
+  - bad default:
+    `buckets=close` or `punished=1`
+
+Validation:
+- `python3 -m py_compile tools/extract_move_context_logs.py`
+- default fireball dry-run on
+  `logs/rl-transitions-retrain-p3-specials-human-v1.ndjson`:
+  - good: `167` events, `3488` rows before overlap removal.
+  - bad: `54` events, `1143` rows before overlap removal.
+  - overlap: `115` rows.
+- generalized shoryuken dry-run on the same mixed P3 log with custom rules:
+  - good: `88` events, `1909` rows.
+  - bad: `85` events, `1843` rows.
+  - overlap: `21` rows.
+
+Follow-up:
+- use the generalized extractor for provisional shoryuken/tatsu split analysis
+  only after formal fireball-good/fireball-bad collection is complete.
+- if later stages need richer selectors, extend the rule grammar instead of
+  adding another move-family-specific script.
+
 ## 2026-05-02: Probe M3a1 From Extracted Fireball Logs
 
 Milestone:
@@ -9,6 +88,7 @@ Milestone:
   3 M3a fireball
 
 Files changed:
+- `tools/extract_move_context_logs.py`
 - `tools/extract_m3a_fireball_logs.py`
 - `docs/agent-memory/remote-rl-retrain-data-collection-plan.md`
 - `docs/plan-remote-rl-agent.md`
@@ -21,7 +101,8 @@ Purpose:
   good/bad logs.
 
 Implementation:
-- added `tools/extract_m3a_fireball_logs.py`.
+- added the original fireball-focused extractor, later renamed to
+  `tools/extract_move_context_logs.py`.
 - default selector:
   - good: mid/far fireball hit without self HP damage, plus far fireball with
     no self HP damage as provisional zoning-good.
@@ -34,7 +115,7 @@ Implementation:
     (`1028` rows).
 
 Validation:
-- `python3 -m py_compile tools/extract_m3a_fireball_logs.py`
+- `python3 -m py_compile tools/extract_move_context_logs.py`
 - dry-run extraction:
   - good-combined: `167` events, `3488` context rows before overlap removal.
   - bad: `54` events, `1143` context rows before overlap removal.

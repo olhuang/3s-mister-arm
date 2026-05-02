@@ -2,6 +2,95 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-02: Probe M3a1 From Extracted Fireball Logs
+
+Milestone:
+- Milestone 6: Higher-control-rate policy and curriculum / full-retrain Phase
+  3 M3a fireball
+
+Files changed:
+- `tools/extract_m3a_fireball_logs.py`
+- `docs/agent-memory/remote-rl-retrain-data-collection-plan.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- test whether the existing mixed P3 specials log can bootstrap M3a before
+  formal fireball-good/fireball-bad collection is finished.
+- add a repeatable dry-run/extraction helper for provisional fireball
+  good/bad logs.
+
+Implementation:
+- added `tools/extract_m3a_fireball_logs.py`.
+- default selector:
+  - good: mid/far fireball hit without self HP damage, plus far fireball with
+    no self HP damage as provisional zoning-good.
+  - bad: close fireball or any fireball with self HP damage in the outcome
+    window.
+- extracted logs with overlap rows removed:
+  - `logs/rl-transitions-retrain-p3-fireball-good-extracted-v1.ndjson`
+    (`3373` rows).
+  - `logs/rl-transitions-retrain-p3-fireball-bad-extracted-v1.ndjson`
+    (`1028` rows).
+
+Validation:
+- `python3 -m py_compile tools/extract_m3a_fireball_logs.py`
+- dry-run extraction:
+  - good-combined: `167` events, `3488` context rows before overlap removal.
+  - bad: `54` events, `1143` context rows before overlap removal.
+  - overlap: `115` rows.
+- analyzer on extracted good:
+  - `3373` rows, `166` engine fireball rows.
+  - fireball events: `fireball-lp 101`, `fireball-mp 47`,
+    `fireball-hp 18`.
+  - no self HP damage in the extracted-good file.
+- analyzer on extracted bad:
+  - `1028` rows, `54` engine fireball rows.
+  - fireball events: `fireball-lp 29`, `fireball-mp 16`,
+    `fireball-hp 9`.
+  - `54` positive self-HP rows, matching the intended punished/bad signal.
+
+M3a1 training:
+- trained `model/dqn-retrain-m3a1-fireball-extracted`, version `311`.
+- action set: accepted M2 v4c actions plus `fireball-lp`, `fireball-mp`, and
+  `fireball-hp`.
+- replay logs:
+  - `/tmp/rl-retrain-m1-mix-70-20-10.ndjson`
+  - `logs/rl-transitions-retrain-p2-normals-human-v1.ndjson`
+  - `logs/rl-transitions-retrain-p2-far-whiff-negative-human-v1.ndjson`
+  - `logs/rl-transitions-retrain-p3-fireball-good-extracted-v1.ndjson`
+  - `logs/rl-transitions-retrain-p3-fireball-bad-extracted-v1.ndjson`
+- used normals-only movement regression for this probe so far fireball-good
+  contexts were not directly suppressed by movement regression.
+
+M3a1 comparison results:
+- M1 movement mix:
+  - attack rate `13.1%`.
+  - no fireball top-1.
+  - top actions: `forward 57.0%`, `back 29.7%`, `stand-hk 7.1%`.
+- P2 normals log:
+  - attack rate `14.8%`.
+  - no fireball top-1.
+- fireball-good extracted:
+  - attack rate `3.7%`.
+  - no fireball top-1.
+  - top actions: `forward 56.7%`, `back 39.5%`, `stand-hk 2.5%`.
+- fireball-bad extracted:
+  - attack rate `9.0%`.
+  - no fireball top-1.
+  - top actions: `forward 66.5%`, `back 21.1%`, `stand-hk 6.2%`.
+
+Conclusion:
+- M3a1 is rejected.
+- Extracted fireball logs are useful as a repeatable diagnostic and sanity
+  source, but they are too small/biased to bootstrap M3a into fireball top-1
+  behavior.
+- Next step remains formal collection of:
+  - `logs/rl-transitions-retrain-p3-fireball-good-human-v1.ndjson`
+  - `logs/rl-transitions-retrain-p3-fireball-bad-human-v1.ndjson`
+- The extracted-log tool should be reused after formal collection as a dry-run
+  selector check, not as the main training source.
+
 ## 2026-05-02: Plan M3 v7 Specials Diagnostic And Split P3 Collection
 
 Milestone:

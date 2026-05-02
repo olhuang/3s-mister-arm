@@ -692,6 +692,12 @@ Incremental M3 curriculum:
   - Gate: M1 attack rate below `8-10%`, M2/P2 attack behavior does not regress
     materially, fireball reaches top-1 in fireball-good contexts, and
     fireball-bad does not collapse into fireball.
+  - Extracted-log probe result: `model/dqn-retrain-m3a1-fireball-extracted`
+    is rejected. It used fireball-only action expansion and extracted
+    good/bad fireball rows from `p3-specials-human-v1`, but M1 attack rate was
+    `13.1%`, P2 attack rate was `14.8%`, fireball-good replay still had no
+    fireball top-1, and fireball-bad replay also stayed dominated by
+    forward/back/stand-hk.
 - `M3b`: add shoryuken.
   - Initialize from accepted M3a.
   - Action set: M3a actions plus `shoryuken-lp`, `shoryuken-mp`, and
@@ -714,6 +720,10 @@ Incremental training rules:
   catastrophic forgetting.
 - Each stage should use its split logs as the primary new signal; avoid using
   one mixed P3 file as the main training source.
+- `tools/extract_m3a_fireball_logs.py` can extract provisional fireball
+  good/bad context logs from a mixed P3 file for dry-run analysis or bootstrap
+  experiments, but extracted logs are not a substitute for formal split
+  collection.
 - If a stage fails, inspect that stage's split log detectors and context
   features before changing the next family.
 - Treat larger model capacity as a later A/B after split data and incremental

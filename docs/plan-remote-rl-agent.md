@@ -3627,7 +3627,9 @@ Future task tracking:
   specials from movement regression: M1 attack rate stayed too high and P3
   still had no special top-1. Stop recipe-only tuning and switch to the
   incremental M3 curriculum: M3a fireball-only, M3b add shoryuken, M3c add
-  tatsu, with split logs and prior-stage replay mixed into every stage.
+  tatsu, with split logs and prior-stage replay mixed into every stage. M3a1
+  extracted-log probe also failed, so formal fireball-good/bad collection is
+  still required before another M3a training attempt.
 - [ ] Phase 4 defense data collected and M4 defense baseline trained.
 - [ ] Phase 5 projectile timing data collected by visual cue, post-hoc bucketed
   by timing/recovery, and M5 projectile baseline trained.

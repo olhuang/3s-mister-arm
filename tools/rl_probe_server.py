@@ -500,6 +500,38 @@ class DQNGroundNormalContextPriorConfig:
         )
 
 
+@dataclass(frozen=True)
+class DQNFireballZoningPriorConfig:
+    enabled: bool = False
+    bonus: float = 0.03
+    min_abs_dx: int = 120
+    max_abs_dx: int = 260
+
+    def label(self) -> str:
+        if not self.enabled:
+            return "off"
+        return f"bonus:{self.bonus:.3f}/dx:{self.min_abs_dx}-{self.max_abs_dx}"
+
+
+@dataclass(frozen=True)
+class DQNThreatDefensePriorConfig:
+    enabled: bool = False
+    guard_bonus: float = 0.03
+    back_bonus: float = 0.02
+    unsafe_penalty: float = 0.0
+    max_abs_dx: int = 144
+
+    def label(self) -> str:
+        if not self.enabled:
+            return "off"
+        return (
+            f"guard:{self.guard_bonus:.3f}"
+            f"/back:{self.back_bonus:.3f}"
+            f"/unsafe:{self.unsafe_penalty:.3f}"
+            f"/dx<={self.max_abs_dx}"
+        )
+
+
 @dataclass
 class TimingBucketStats:
     rows: int = 0
@@ -1359,6 +1391,79 @@ def dqn_ground_normal_context_prior_penalty(
     return 0.0 if opponent_threat_or_contact else penalty
 
 
+def dqn_fireball_zoning_prior_bonus(
+    action: str,
+    row: dict[str, object],
+    config: DQNFireballZoningPriorConfig,
+) -> float:
+    if not config.enabled or action not in FIREBALL_ACTION_NAMES:
+        return 0.0
+    if row_int_field(row, "obs_self_airborne") != 0 or row_int_field(row, "obs_self_jump_phase") != 0:
+        return 0.0
+    if not dqn_ground_action_start_allowed(row):
+        return 0.0
+
+    abs_dx = row_int_field(row, "obs_abs_dx")
+    if abs_dx < config.min_abs_dx or abs_dx > config.max_abs_dx:
+        return 0.0
+    if row_int_field(row, "obs_opp_contact_reaction_state") != 0:
+        return 0.0
+    if row_int_field(row, "obs_opp_airborne") != 0 or row_int_field(row, "obs_opp_jump_phase") != 0:
+        return 0.0
+    return max(0.0, config.bonus)
+
+
+def dqn_threat_defense_prior_bonus(
+    action: str,
+    row: dict[str, object],
+    config: DQNThreatDefensePriorConfig,
+) -> float:
+    if not config.enabled or action not in ("guard-stand", "guard-crouch", "back"):
+        return 0.0
+    if row_int_field(row, "obs_self_airborne") != 0 or row_int_field(row, "obs_self_jump_phase") != 0:
+        return 0.0
+    if not dqn_ground_action_start_allowed(row):
+        return 0.0
+    if row_int_field(row, "obs_opp_routine_attack_state") == 0:
+        return 0.0
+    if row_int_field(row, "obs_opp_airborne") != 0 or row_int_field(row, "obs_opp_jump_phase") != 0:
+        return 0.0
+    if row_int_field(row, "obs_abs_dx") > config.max_abs_dx:
+        return 0.0
+    if action == "back":
+        return max(0.0, config.back_bonus)
+    return max(0.0, config.guard_bonus)
+
+
+def dqn_threat_defense_prior_penalty(
+    action: str,
+    row: dict[str, object],
+    config: DQNThreatDefensePriorConfig,
+) -> float:
+    if not config.enabled or config.unsafe_penalty <= 0.0:
+        return 0.0
+    unsafe_actions = (
+        STAND_NORMAL_ACTION_NAMES
+        + CROUCH_NORMAL_ACTION_NAMES
+        + SHORYUKEN_ACTION_NAMES
+        + TATSU_ACTION_NAMES
+        + FIREBALL_ACTION_NAMES
+    )
+    if action != "forward" and action not in unsafe_actions:
+        return 0.0
+    if row_int_field(row, "obs_self_airborne") != 0 or row_int_field(row, "obs_self_jump_phase") != 0:
+        return 0.0
+    if not dqn_ground_action_start_allowed(row):
+        return 0.0
+    if row_int_field(row, "obs_opp_routine_attack_state") == 0:
+        return 0.0
+    if row_int_field(row, "obs_opp_airborne") != 0 or row_int_field(row, "obs_opp_jump_phase") != 0:
+        return 0.0
+    if row_int_field(row, "obs_abs_dx") > config.max_abs_dx:
+        return 0.0
+    return max(0.0, config.unsafe_penalty)
+
+
 def normalize_dqn_valid_action_mask_mode(mode: object) -> str:
     normalized = str(mode).strip().lower().replace("_", "-")
     return normalized or "off"
@@ -1768,6 +1873,8 @@ def dqn_ranked_action_scores(
     projectile_timing_prior_config: DQNProjectileTimingPriorConfig = DQNProjectileTimingPriorConfig(),
     shoryuken_context_prior_config: DQNShoryukenContextPriorConfig = DQNShoryukenContextPriorConfig(),
     ground_normal_context_prior_config: DQNGroundNormalContextPriorConfig = DQNGroundNormalContextPriorConfig(),
+    fireball_zoning_prior_config: DQNFireballZoningPriorConfig = DQNFireballZoningPriorConfig(),
+    threat_defense_prior_config: DQNThreatDefensePriorConfig = DQNThreatDefensePriorConfig(),
 ) -> list[tuple[str, float]]:
     values = dqn_predict_values(dqn_model, row)
     if not values:
@@ -1785,6 +1892,9 @@ def dqn_ranked_action_scores(
         score -= dqn_projectile_timing_prior_penalty(action, row, projectile_timing_prior_config)
         score -= dqn_shoryuken_context_prior_penalty(action, row, shoryuken_context_prior_config)
         score -= dqn_ground_normal_context_prior_penalty(action, row, ground_normal_context_prior_config)
+        score -= dqn_threat_defense_prior_penalty(action, row, threat_defense_prior_config)
+        score += dqn_fireball_zoning_prior_bonus(action, row, fireball_zoning_prior_config)
+        score += dqn_threat_defense_prior_bonus(action, row, threat_defense_prior_config)
         scored_actions.append((action, score))
     return sorted(scored_actions, key=lambda item: (item[1], item[0]), reverse=True)
 
@@ -2695,6 +2805,8 @@ def dqn_actor_action_name(
     projectile_timing_prior_config: DQNProjectileTimingPriorConfig = DQNProjectileTimingPriorConfig(),
     shoryuken_context_prior_config: DQNShoryukenContextPriorConfig = DQNShoryukenContextPriorConfig(),
     ground_normal_context_prior_config: DQNGroundNormalContextPriorConfig = DQNGroundNormalContextPriorConfig(),
+    fireball_zoning_prior_config: DQNFireballZoningPriorConfig = DQNFireballZoningPriorConfig(),
+    threat_defense_prior_config: DQNThreatDefensePriorConfig = DQNThreatDefensePriorConfig(),
 ) -> str | None:
     if actor.policy != "dqn" or not obs_row or not actor.dqn_model:
         return None
@@ -2713,6 +2825,8 @@ def dqn_actor_action_name(
         projectile_timing_prior_config,
         shoryuken_context_prior_config,
         ground_normal_context_prior_config,
+        fireball_zoning_prior_config,
+        threat_defense_prior_config,
     )
     if not ranked_actions:
         return None
@@ -2796,6 +2910,8 @@ def policy_action_frame(
     dqn_projectile_timing_prior_config: DQNProjectileTimingPriorConfig = DQNProjectileTimingPriorConfig(),
     dqn_shoryuken_context_prior_config: DQNShoryukenContextPriorConfig = DQNShoryukenContextPriorConfig(),
     dqn_ground_normal_context_prior_config: DQNGroundNormalContextPriorConfig = DQNGroundNormalContextPriorConfig(),
+    dqn_fireball_zoning_prior_config: DQNFireballZoningPriorConfig = DQNFireballZoningPriorConfig(),
+    dqn_threat_defense_prior_config: DQNThreatDefensePriorConfig = DQNThreatDefensePriorConfig(),
 ) -> PolicyActionFrame:
     if actor.policy in MODEL_POLICY_CHOICES:
         macro_frame = active_macro_action_frame(macro_states, nonce, run_id, episode_id)
@@ -2814,6 +2930,8 @@ def policy_action_frame(
             dqn_projectile_timing_prior_config,
             dqn_shoryuken_context_prior_config,
             dqn_ground_normal_context_prior_config,
+            dqn_fireball_zoning_prior_config,
+            dqn_threat_defense_prior_config,
         )
     if action_name is not None:
         fixed = fixed_action_wire(action_name)
@@ -2842,6 +2960,8 @@ def policy_action_wire(
     dqn_projectile_timing_prior_config: DQNProjectileTimingPriorConfig = DQNProjectileTimingPriorConfig(),
     dqn_shoryuken_context_prior_config: DQNShoryukenContextPriorConfig = DQNShoryukenContextPriorConfig(),
     dqn_ground_normal_context_prior_config: DQNGroundNormalContextPriorConfig = DQNGroundNormalContextPriorConfig(),
+    dqn_fireball_zoning_prior_config: DQNFireballZoningPriorConfig = DQNFireballZoningPriorConfig(),
+    dqn_threat_defense_prior_config: DQNThreatDefensePriorConfig = DQNThreatDefensePriorConfig(),
 ) -> int:
     return policy_action_frame(
         actor,
@@ -2859,6 +2979,8 @@ def policy_action_wire(
         dqn_projectile_timing_prior_config,
         dqn_shoryuken_context_prior_config,
         dqn_ground_normal_context_prior_config,
+        dqn_fireball_zoning_prior_config,
+        dqn_threat_defense_prior_config,
     ).action_wire
 
 
@@ -2871,6 +2993,8 @@ def format_dqn_verbose_diagnostics(
     projectile_timing_prior_config: DQNProjectileTimingPriorConfig,
     shoryuken_context_prior_config: DQNShoryukenContextPriorConfig,
     ground_normal_context_prior_config: DQNGroundNormalContextPriorConfig,
+    fireball_zoning_prior_config: DQNFireballZoningPriorConfig,
+    threat_defense_prior_config: DQNThreatDefensePriorConfig,
 ) -> str:
     if actor.policy != "dqn":
         return ""
@@ -2883,6 +3007,8 @@ def format_dqn_verbose_diagnostics(
             f" dqn_proj_prior={projectile_timing_prior_config.label()}"
             f" dqn_dp_prior={shoryuken_context_prior_config.label()}"
             f" dqn_norm_prior={ground_normal_context_prior_config.label()}"
+            f" dqn_fb_prior={fireball_zoning_prior_config.label()}"
+            f" dqn_def_prior={threat_defense_prior_config.label()}"
             " dqn_valid=n/a"
             " self_r1=n/a self_r2=n/a self_atk=n/a self_contact=n/a"
             " self_air=n/a self_jump_phase=n/a ground_ok=n/a jump_ok=n/a air_ok=n/a"
@@ -2903,6 +3029,21 @@ def format_dqn_verbose_diagnostics(
         obs_row,
         ground_normal_context_prior_config,
     )
+    fireball_zoning_prior_bonus = dqn_fireball_zoning_prior_bonus(
+        "fireball-hp",
+        obs_row,
+        fireball_zoning_prior_config,
+    )
+    threat_defense_prior_bonus = dqn_threat_defense_prior_bonus(
+        "guard-stand",
+        obs_row,
+        threat_defense_prior_config,
+    )
+    threat_defense_prior_penalty = dqn_threat_defense_prior_penalty(
+        "forward",
+        obs_row,
+        threat_defense_prior_config,
+    )
     return (
         f" dqn_action={action_name}"
         f" dqn_mask={valid_action_mask_config.label()}"
@@ -2913,6 +3054,11 @@ def format_dqn_verbose_diagnostics(
         f" dqn_dp_prior_penalty={shoryuken_context_prior_penalty:.3f}"
         f" dqn_norm_prior={ground_normal_context_prior_config.label()}"
         f" dqn_norm_prior_penalty={ground_normal_context_prior_penalty:.3f}"
+        f" dqn_fb_prior={fireball_zoning_prior_config.label()}"
+        f" dqn_fb_prior_bonus={fireball_zoning_prior_bonus:.3f}"
+        f" dqn_def_prior={threat_defense_prior_config.label()}"
+        f" dqn_def_prior_bonus={threat_defense_prior_bonus:.3f}"
+        f" dqn_def_prior_penalty={threat_defense_prior_penalty:.3f}"
         f" dqn_valid={len(valid_actions)}/{len(actor.actions)}"
         f" dqn_phase={dqn_self_mask_phase(obs_row)}"
         f" self_r1={row_int_field(obs_row, 'obs_self_routine_1')}"
@@ -2987,6 +3133,8 @@ def serve(
     dqn_projectile_timing_prior_config: DQNProjectileTimingPriorConfig,
     dqn_shoryuken_context_prior_config: DQNShoryukenContextPriorConfig,
     dqn_ground_normal_context_prior_config: DQNGroundNormalContextPriorConfig,
+    dqn_fireball_zoning_prior_config: DQNFireballZoningPriorConfig,
+    dqn_threat_defense_prior_config: DQNThreatDefensePriorConfig,
 ) -> None:
     inference_stats = InferenceStats()
     initial_actions = tabular_actions if policy == "tabular" else TABULAR_DEFAULT_ACTIONS
@@ -3045,6 +3193,10 @@ def serve(
         print(f"DQN shoryuken context prior active {dqn_shoryuken_context_prior_config.label()}", flush=True)
     if dqn_ground_normal_context_prior_config.enabled:
         print(f"DQN ground-normal context prior active {dqn_ground_normal_context_prior_config.label()}", flush=True)
+    if dqn_fireball_zoning_prior_config.enabled:
+        print(f"DQN fireball zoning prior active {dqn_fireball_zoning_prior_config.label()}", flush=True)
+    if dqn_threat_defense_prior_config.enabled:
+        print(f"DQN threat-defense prior active {dqn_threat_defense_prior_config.label()}", flush=True)
     active_model = model_store.current()
     initial_mask_config, initial_mask_source = resolve_dqn_valid_action_mask_config(
         active_model,
@@ -3143,6 +3295,8 @@ def serve(
                     dqn_projectile_timing_prior_config,
                     dqn_shoryuken_context_prior_config,
                     dqn_ground_normal_context_prior_config,
+                    dqn_fireball_zoning_prior_config,
+                    dqn_threat_defense_prior_config,
                 )
                 payload = make_action_packet(
                     nonce,
@@ -3178,6 +3332,8 @@ def serve(
                         dqn_projectile_timing_prior_config,
                         dqn_shoryuken_context_prior_config,
                         dqn_ground_normal_context_prior_config,
+                        dqn_fireball_zoning_prior_config,
+                        dqn_threat_defense_prior_config,
                     )
                     print(
                         f"{target} OBS-ACTION policy={active_model.policy} reply={obs_reply_mode} "
@@ -3554,6 +3710,58 @@ def main() -> None:
         help="Maximum obs_abs_dx for threat/contact poke contexts before normals are penalized as too far",
     )
     parser.add_argument(
+        "--dqn-fireball-zoning-prior",
+        action="store_true",
+        help="Apply a soft fireball Q bonus in far grounded zoning contexts before DQN argmax",
+    )
+    parser.add_argument(
+        "--dqn-fireball-zoning-prior-bonus",
+        type=float,
+        default=0.03,
+        help="Fireball Q bonus in eligible far grounded zoning contexts",
+    )
+    parser.add_argument(
+        "--dqn-fireball-zoning-prior-min-abs-dx",
+        type=int,
+        default=120,
+        help="Minimum obs_abs_dx considered an eligible fireball zoning context",
+    )
+    parser.add_argument(
+        "--dqn-fireball-zoning-prior-max-abs-dx",
+        type=int,
+        default=260,
+        help="Maximum obs_abs_dx considered an eligible fireball zoning context",
+    )
+    parser.add_argument(
+        "--dqn-threat-defense-prior",
+        action="store_true",
+        help="Apply a soft guard/back Q bonus when the opponent is attacking at close/mid range",
+    )
+    parser.add_argument(
+        "--dqn-threat-defense-prior-guard-bonus",
+        type=float,
+        default=0.03,
+        help="Guard Q bonus in eligible opponent-attack close/mid contexts",
+    )
+    parser.add_argument(
+        "--dqn-threat-defense-prior-back-bonus",
+        type=float,
+        default=0.02,
+        help="Back Q bonus in eligible opponent-attack close/mid contexts",
+    )
+    parser.add_argument(
+        "--dqn-threat-defense-prior-unsafe-penalty",
+        type=float,
+        default=0.0,
+        help="Forward and grounded-normal Q penalty in eligible opponent-attack close/mid contexts",
+    )
+    parser.add_argument(
+        "--dqn-threat-defense-prior-max-abs-dx",
+        type=int,
+        default=144,
+        help="Maximum obs_abs_dx considered an eligible opponent-attack defense context",
+    )
+    parser.add_argument(
         "--verbose",
         action="store_true",
         help="Log valid packets; PING summaries are sampled by --verbose-ping-interval",
@@ -3649,6 +3857,24 @@ def main() -> None:
         close_max_abs_dx=ground_normal_prior_close_max_dx,
         poke_max_abs_dx=ground_normal_prior_poke_max_dx,
     )
+    fireball_zoning_prior_min_dx = max(0, int(args.dqn_fireball_zoning_prior_min_abs_dx))
+    fireball_zoning_prior_max_dx = max(
+        fireball_zoning_prior_min_dx,
+        int(args.dqn_fireball_zoning_prior_max_abs_dx),
+    )
+    dqn_fireball_zoning_prior_config = DQNFireballZoningPriorConfig(
+        enabled=bool(args.dqn_fireball_zoning_prior),
+        bonus=max(0.0, float(args.dqn_fireball_zoning_prior_bonus)),
+        min_abs_dx=fireball_zoning_prior_min_dx,
+        max_abs_dx=fireball_zoning_prior_max_dx,
+    )
+    dqn_threat_defense_prior_config = DQNThreatDefensePriorConfig(
+        enabled=bool(args.dqn_threat_defense_prior),
+        guard_bonus=max(0.0, float(args.dqn_threat_defense_prior_guard_bonus)),
+        back_bonus=max(0.0, float(args.dqn_threat_defense_prior_back_bonus)),
+        unsafe_penalty=max(0.0, float(args.dqn_threat_defense_prior_unsafe_penalty)),
+        max_abs_dx=max(0, int(args.dqn_threat_defense_prior_max_abs_dx)),
+    )
     serve(
         args.host,
         args.port,
@@ -3689,6 +3915,8 @@ def main() -> None:
         dqn_projectile_timing_prior_config,
         dqn_shoryuken_context_prior_config,
         dqn_ground_normal_context_prior_config,
+        dqn_fireball_zoning_prior_config,
+        dqn_threat_defense_prior_config,
     )
 
 

@@ -2,6 +2,341 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-03: v338 Fireball Zoning Prior Probe Support
+
+Milestone:
+- Milestone 6: recover mid/far proactive zoning after v337 became passive
+
+Files changed:
+- `tools/rl_probe_server.py`
+- `tools/compare_dqn_models.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- respond to the v337 live result where anti-air stayed acceptable, but
+  mid/far range became too passive and fireball was used too rarely.
+- add an opt-in positive prior for fireball only in far grounded zoning
+  contexts, instead of stacking more broad action penalties.
+
+Implementation:
+- added `DQNFireballZoningPriorConfig`.
+- added `--dqn-fireball-zoning-prior` to `tools/rl_probe_server.py`.
+- the prior adds a small Q bonus to `fireball-lp`, `fireball-mp`, and
+  `fireball-hp` only when:
+  - self is grounded and ground action-start is allowed.
+  - `obs_abs_dx` is inside the configured zoning window, default `120-260`.
+  - opponent is not in contact reaction and is not airborne / jumping.
+- added verbose probe diagnostics:
+  - `dqn_fb_prior=...`
+  - `dqn_fb_prior_bonus=...`
+- added `tools/compare_dqn_models.py` support and a printed `fireball_rate`.
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py tools/compare_dqn_models.py`
+- direct helper smoke:
+  - far grounded `fireball-hp` bonus: `0.03`.
+  - close fireball bonus: `0.0`.
+  - self-airborne fireball bonus: `0.0`.
+  - far `stand-lp` bonus: `0.0`.
+- same-observation compare on `logs/rl-transitions-v335-live-probe.ndjson`,
+  first `5000` rows:
+  - raw v335: attack `18.7%`, Shoryuken `11.1%`, fireball `1.8%`,
+    forward `74.0%`.
+  - v336b style Shoryuken prior `0.06`: attack `14.8%`, Shoryuken `3.3%`,
+    fireball `5.5%`, forward `76.0%`.
+  - v338a Shoryuken prior `0.06` + fireball zoning bonus `0.03`, no
+    ground-normal prior: attack `15.8%`, Shoryuken `3.2%`, fireball `6.6%`,
+    forward `75.2%`.
+- same-observation compare on P3 fireball-good/bad logs, first `5000` rows:
+  - v336b: attack `7.2%`, Shoryuken `1.1%`, fireball `2.2%`, forward `85.7%`.
+  - v338a: attack `8.0%`, Shoryuken `1.1%`, fireball `3.0%`, forward `85.0%`.
+
+Conclusion:
+- v338a is a safer live candidate than v337 because it avoids the broad
+  ground-normal prior that caused the passive live behavior.
+- The fireball zoning prior restores some far-range fireball selection, but the
+  same-observation compare still shows high forward/passive selection, so this
+  is an incremental probe candidate rather than a full fix.
+
+Next:
+- live-probe v338a with:
+  - Shoryuken context prior `0.06`.
+  - fireball zoning prior bonus `0.03`.
+  - no ground-normal context prior.
+- watch:
+  - whether mid/far passive behavior improves versus v337.
+  - whether far fireball usage becomes visible without becoming spammy.
+  - whether anti-air remains acceptable.
+- If still passive, prefer a trainer/data fix or a stronger context-specific
+  fireball objective over re-enabling broad ground-normal penalties.
+
+Live probe result:
+- Tested v338a live with:
+  - Shoryuken context prior `0.06`.
+  - fireball zoning prior bonus `0.03`.
+  - no ground-normal context prior.
+- User observation:
+  - anti-air did not get worse.
+  - behavior became more aggressive than v337.
+  - fireball usage increased.
+  - the policy still does not defend well against enemy attacks.
+
+Conclusion after live probe:
+- v338a fixes the v337 passivity/fireball regression directionally.
+- The remaining visible weakness shifted to threat response: when the opponent
+  attacks, the policy is not choosing guard/back often enough.
+- Keep v338a as the current live-side baseline candidate, but do not treat it
+  as complete until enemy-attack defense improves.
+
+Next:
+- v339 should preserve:
+  - Shoryuken prior `0.06`.
+  - fireball zoning prior `0.03`.
+  - no broad ground-normal prior.
+- Add a threat-response adjustment that only applies when opponent attack /
+  close threat evidence is present, such as:
+  - a small guard/back positive prior in opponent-attack mid/close contexts.
+  - or a trainer/data fix that boosts guard/back examples in attack-threat rows.
+- Avoid a global passive guard prior; v337 already showed broad suppression can
+  make the policy too passive.
+
+## 2026-05-03: v339 Threat-Defense Prior Probe Support
+
+Milestone:
+- Milestone 6: improve defense against grounded enemy attacks after v338a
+
+Files changed:
+- `tools/rl_probe_server.py`
+- `tools/compare_dqn_models.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- preserve v338a's improved aggression/fireball behavior while adding a
+  narrow live-side response for enemy attack threat rows.
+- avoid a global defensive prior that would recreate v337 passivity.
+
+Implementation:
+- added `DQNThreatDefensePriorConfig`.
+- added `--dqn-threat-defense-prior` to `tools/rl_probe_server.py`.
+- the prior only applies when:
+  - self is grounded and ground action-start is allowed.
+  - opponent attack-state evidence is present.
+  - opponent is not airborne / jumping, preserving anti-air contexts.
+  - `obs_abs_dx <= 144` by default.
+- in eligible rows:
+  - adds Q bonus to `guard-stand`, `guard-crouch`, and `back`.
+  - optionally subtracts Q from unsafe immediate actions:
+    `forward`, stand/crouch normals, fireballs, Shoryuken, and tatsu.
+- added verbose probe diagnostics:
+  - `dqn_def_prior=...`
+  - `dqn_def_prior_bonus=...`
+  - `dqn_def_prior_penalty=...`
+- added `tools/compare_dqn_models.py` support and a printed `defense_rate`.
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py tools/compare_dqn_models.py`
+- direct helper smoke:
+  - grounded attack-threat `guard-stand` bonus: `0.08`.
+  - grounded attack-threat `shoryuken-lp` unsafe penalty: `0.08`.
+  - airborne-opponent `shoryuken-lp` unsafe penalty: `0.0`.
+- same-observation compare on `logs/rl-transitions-v335-live-probe.ndjson`,
+  first `5000` rows, using v338a as baseline:
+  - v338a: attack `15.8%`, Shoryuken `3.2%`, fireball `6.6%`,
+    defense `9.0%`.
+  - v339a conservative guard/back bonus `0.03/0.02`: changed only `3/5000`
+    rows, too weak for live testing.
+  - v339b guard/back bonus `0.08/0.05`: changed only `7/5000` rows, still too
+    weak.
+  - v339c added unsafe penalty `0.08`: changed `37/5000` rows, but shifted some
+    rows into Shoryuken.
+  - v339e ground-threat-only unsafe penalty with guard/back/unsafe
+    `0.18/0.10/0.18`: changed `178/5000` rows, attack `12.4%`, Shoryuken
+    `3.1%`, fireball `6.6%`, defense `12.6%`.
+  - v339e threat buckets:
+    - `atk1_close`: back/guard-crouch top1 increased from `0/66` to `15/66`.
+    - `atk1_mid`: back/guard-crouch top1 increased from `5/793` to `168/793`.
+
+Conclusion:
+- v339e is the best next live-probe candidate from this slice.
+- It is intentionally narrow: no ground-normal prior, no airborne-opponent
+  Shoryuken penalty, and fireball prior remains unchanged.
+- The compare still shows high `forward` top1 overall, so if v339e remains weak
+  live, the next step should be trainer/data work for grounded attack defense
+  rather than increasing broad live-side penalties indefinitely.
+
+Next:
+- live-probe v339e with:
+  - Shoryuken context prior `0.06`.
+  - fireball zoning prior bonus `0.03`.
+  - threat-defense guard bonus `0.18`.
+  - threat-defense back bonus `0.10`.
+  - threat-defense unsafe penalty `0.18`.
+  - no ground-normal context prior.
+- watch:
+  - defense against grounded enemy attacks.
+  - whether anti-air remains acceptable.
+  - whether aggression/fireball from v338a stays healthy.
+
+Live probe result:
+- Tested v339e live with:
+  - Shoryuken context prior `0.06`.
+  - fireball zoning prior bonus `0.03`.
+  - threat-defense guard/back/unsafe `0.18/0.10/0.18`.
+  - no ground-normal context prior.
+- User observation:
+  - anti-air became slightly weaker.
+  - fireball increased slightly.
+  - defense against normals is still not good enough.
+
+Conclusion after live probe:
+- v339e is not a good promotion candidate.
+- The threat-defense prior did not solve the actual normals-defense weakness
+  and started to tax anti-air behavior, even though the gate excludes airborne
+  opponent rows. That likely means the live anti-air / grounded-threat contexts
+  overlap through coarse observation state, action timing, or recovery timing
+  more than the same-observation slice suggests.
+- Do not keep increasing threat-defense live-side penalties. The opt-in prior
+  stack has served its diagnostic purpose: it shows the model needs a real
+  grounded normals-defense training/data fix.
+
+Next:
+- Treat v338a as the better live-side baseline candidate than v339e for now:
+  - Shoryuken prior `0.06`.
+  - fireball zoning prior `0.03`.
+  - no ground-normal prior.
+  - no threat-defense prior.
+- Start a trainer/data pass for grounded normals defense:
+  - collect or extract close/mid opponent-normal attack rows.
+  - label or margin `guard-stand`, `guard-crouch`, and `back` as preferred
+    responses when the opponent is attacking and self is grounded/action-ready.
+  - add negative replay/margin pressure against `forward` and random normals
+    into active opponent normals.
+  - keep anti-air rows separate so Shoryuken availability is not reduced by
+    grounded-defense tuning.
+- Re-check without threat-defense prior before another live probe.
+
+## 2026-05-03: Grounded Normals Defense Trainer/Data Plan
+
+Milestone:
+- Milestone 6: replace live-side threat-defense patching with learned grounded
+  normals defense
+
+Purpose:
+- turn the v339e live result into a staged trainer/data plan.
+- stop escalating opt-in inference patches after they failed to fix normals
+  defense and began weakening anti-air.
+- keep v338a as the current live-side baseline while the model learns the
+  missing behavior.
+
+Baseline while this plan runs:
+- Use v338a for live probes unless a new trained candidate passes offline gates:
+  - Shoryuken context prior `0.06`.
+  - fireball zoning prior `0.03`.
+  - no ground-normal context prior.
+  - no threat-defense prior.
+
+Phase 1: Data inventory
+- Goal:
+  - quantify whether existing logs already contain enough grounded normals
+    defense examples.
+- Inputs to inspect first:
+  - current v335/v338/v339 live probe logs.
+  - P2 normals human logs.
+  - P8 natural human / CPU demo logs.
+  - any recent live replay rows with opponent attack-state evidence.
+- Count separately:
+  - close/mid opponent grounded-normal attack rows.
+  - rows where self is grounded and action-start is allowed.
+  - successful `guard-stand`, `guard-crouch`, and `back` responses.
+  - failed `forward`, stand/crouch normal, fireball, tatsu, or Shoryuken
+    responses into active opponent normals.
+  - jump-in / anti-air rows that should remain available to Shoryuken.
+- Done when:
+  - a short table exists with row counts by distance bucket, opponent threat
+    type, selected action family, and HP/contact outcome.
+
+Phase 2: Extractor / analyzer slice
+- Goal:
+  - make grounded normals defense rows reproducible instead of hand-inspecting
+    live logs.
+- Preferred implementation:
+  - extend an existing analyzer/extractor if one already has action-family and
+    distance-bucket support.
+  - otherwise add a small focused tool under `tools/`.
+- Required row tags:
+  - `grounded_normal_threat=1`.
+  - `anti_air_excluded=1` for opponent airborne/jump rows.
+  - `defense_success` for guard/back rows with no self HP loss in the short
+    follow-up window.
+  - `unsafe_into_normal` for forward/random attack rows that are punished or
+    fail into active opponent normals.
+- Done when:
+  - the tool can produce a deterministic dry-run summary and optional filtered
+    NDJSON for training.
+
+Phase 3: Trainer objective
+- Goal:
+  - make the model learn grounded normals defense without a live-side
+    threat-defense prior.
+- Candidate objectives:
+  - guard/back expert margin for grounded-normal threat rows.
+  - negative margin or reward penalty for `forward` and random grounded attacks
+    into active opponent normals.
+  - optional BC-style labels only for clean human/demo guard/back defense rows.
+- Guardrails:
+  - exclude opponent airborne / jump-in rows from this objective.
+  - do not penalize Shoryuken in anti-air contexts.
+  - keep fireball-good/far-zoning gates separate from close/mid defense rows.
+  - avoid changing transition schema unless the existing rows cannot express
+    the needed labels.
+- Done when:
+  - a small smoke training run completes and metadata records the defense
+    objective settings.
+
+Phase 4: Offline gates
+- Goal:
+  - prove the candidate improves defense without relying on threat-defense
+    inference patching.
+- Compare candidate against v338a with:
+  - no threat-defense prior.
+  - Shoryuken prior `0.06` only if comparing live-equivalent flags.
+  - fireball zoning prior `0.03` only if comparing live-equivalent flags.
+- Required gates:
+  - grounded-normal threat defense rows: guard/back rank and top1 rate improve.
+  - anti-air rows: Shoryuken top-k availability does not materially regress.
+  - fireball-good/bad rows: far fireball behavior does not regress.
+  - movement rows: no return to v337-style passivity or one-action collapse.
+- Done when:
+  - compare output is recorded in this log with pass/fail for each gate.
+
+Phase 5: Live probe
+- Goal:
+  - live-check only after the model, not the inference patch, moves in the
+    right direction offline.
+- Launch shape:
+  - use the new trained actor/model directory.
+  - keep v338a live flags at first:
+    - Shoryuken prior `0.06`.
+    - fireball zoning prior `0.03`.
+    - no ground-normal prior.
+    - no threat-defense prior.
+- Watch:
+  - defense against grounded normals.
+  - anti-air availability.
+  - fireball usage.
+  - overall aggression/passivity.
+- Done when:
+  - live notes decide whether to promote, retrain with adjusted objective, or
+    collect targeted defense demos.
+
+Open decision after Phase 1:
+- If existing logs have enough clean examples, start with extractor + trainer
+  objective.
+- If examples are sparse or ambiguous, collect targeted human-demo defense rows
+  before training.
+
 ## 2026-05-03: v337 Ground-Normal Context Prior
 
 Milestone:
@@ -61,14 +396,33 @@ Conclusion:
 - If live behavior still shifts into normals, the next step should be a
   trainer / policy-architecture change rather than stacking more penalties.
 
-Next:
-- run v337 live probe with:
+Live probe result:
+- Tested v337 live with:
   - Shoryuken context prior `0.06`.
   - ground-normal context prior `0.05`.
-- watch:
-  - random normals versus v336b.
-  - anti-air Shoryuken availability.
-  - far fireball behavior.
+- User observation:
+  - anti-air did not get worse.
+  - mid/far range became too passive.
+  - fireball was used too rarely.
+
+Conclusion after live probe:
+- The Shoryuken prior remains acceptable at `0.06` for now.
+- The ground-normal prior fixed the replacement symptom too bluntly: suppressing
+  mid/far normal actions appears to push the policy toward passivity instead of
+  restoring better zoning decisions.
+- Do not promote v337 as-is.
+
+Next:
+- Prefer a v338 policy-side/probe-side adjustment that restores useful
+  mid/far aggression instead of adding more penalties.
+- First candidates:
+  - lower ground-normal prior penalty below `0.05`, or make it distance-bucketed
+    so far/mid neutral is penalized less aggressively.
+  - add or tune a fireball-positive context prior / reranker for far grounded
+    zoning rows before applying a broad normal penalty.
+  - compare same-observation action distributions for passive-rate,
+    fireball-rate, Shoryuken-rate, and normal replacement before the next live
+    probe.
 
 ## 2026-05-03: v336 Live-Side Shoryuken Context Prior
 

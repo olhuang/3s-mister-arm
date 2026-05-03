@@ -2542,6 +2542,16 @@ Tasks:
 - [x] Train M3bc+dqn-v3 / v332-v335 with context features, context-gated special margin, fireball guard/cancel fix, schema v6 natural log, shoryuken whiff penalty, and stronger expert margin; v335: first fireball top1 (15.1% trainer, 4.7% FB-good), good/bad separation 3.6x
 - [x] Add v336 opt-in live-side Shoryuken context prior / compare support so `shoryuken-*` gets a small Q penalty outside coarse anti-air contexts while preserving the promoted v335 weights
 - [x] Add v337 opt-in live-side ground-normal context prior / compare support so stand/crouch normals get a small Q penalty outside close or threat/contact poke contexts
+- [x] Add v338 fireball-zoning prior / compare support after v337 live probe; offline result: Shoryuken prior `0.06` + fireball bonus `0.03` without ground-normal prior raises fireball modestly while avoiding the broad v337 normal penalty
+- [x] Live-probe v338a with Shoryuken prior `0.06`, fireball zoning prior `0.03`, and no ground-normal prior; result: anti-air OK, aggression and fireball improved, but enemy-attack defense is still weak
+- [x] Add v339 threat-response prior / compare support after v338a; offline result: v339e guard/back/unsafe `0.18/0.10/0.18` improves grounded attack-threat defense rows while preserving fireball and avoiding airborne-opponent Shoryuken penalties
+- [x] Live-probe v339e with Shoryuken prior `0.06`, fireball zoning prior `0.03`, threat-defense guard/back/unsafe `0.18/0.10/0.18`, and no ground-normal prior; result: anti-air slightly weaker, fireball slightly higher, normals defense still weak, so do not promote
+- [ ] Replace threat-defense live-side patching with a trainer/data fix for grounded normals defense; keep anti-air rows separate and re-check without threat-defense prior
+- [ ] Grounded normals defense Phase 1: inventory existing logs for close/mid opponent-normal attack rows, guard/back responses, forward/normal punish failures, and anti-air jump-in rows that must be protected
+- [ ] Grounded normals defense Phase 2: add or reuse an extractor/analyzer view that emits grounded opponent-normal threat rows with distance bucket, self action-start state, chosen action, HP/contact outcome, and anti-air exclusion labels
+- [ ] Grounded normals defense Phase 3: add trainer support for a grounded-normal-defense objective, preferring guard/back margin or BC-style labels only in grounded opponent-normal threat rows, plus negative pressure against forward/random normals into active normals
+- [ ] Grounded normals defense Phase 4: train a small candidate from v335/v338a-era weights and compare without threat-defense prior against v338a on normal-threat, anti-air, fireball-good/bad, and movement/passivity gates
+- [ ] Grounded normals defense Phase 5: short live probe only after offline gates pass; start from v338a live flags plus the new model, with no ground-normal prior and no threat-defense prior
 - [x] Train the next live-replay candidate only from declared clean source ratios and compare it against raw v9 plus reranked v9 before live use
 - [x] Add opt-in movable action-start filtering for selected DQN replay sources so recovery-state policy selections do not become valid action samples
 - [x] Train v20 from the clean support-prior live replay with remote-only movable action-start filtering and compare it against v9/v18/v19 before live use

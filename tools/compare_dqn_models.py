@@ -17,6 +17,8 @@ NON_ATTACK_ACTIONS = frozenset({"forward", "back", "guard-stand", "guard-crouch"
 )
 ATTACK_ACTIONS = frozenset(action for action in rl.TABULAR_ACTION_NAMES if action not in NON_ATTACK_ACTIONS)
 SHORYUKEN_ACTIONS = frozenset(action for action in rl.TABULAR_ACTION_NAMES if action.startswith("shoryuken-"))
+FIREBALL_ACTIONS = frozenset(action for action in rl.TABULAR_ACTION_NAMES if action.startswith("fireball-"))
+DEFENSE_ACTIONS = frozenset({"back", "guard-stand", "guard-crouch"})
 THREAT_DX_BUCKETS = ("atk0_close", "atk0_mid", "atk0_far", "atk1_close", "atk1_mid", "atk1_far")
 
 
@@ -94,6 +96,8 @@ def greedy_action(
     valid_action_mask_config: rl.DQNValidActionMaskConfig = rl.DQNValidActionMaskConfig(),
     shoryuken_context_prior_config: rl.DQNShoryukenContextPriorConfig = rl.DQNShoryukenContextPriorConfig(),
     ground_normal_context_prior_config: rl.DQNGroundNormalContextPriorConfig = rl.DQNGroundNormalContextPriorConfig(),
+    fireball_zoning_prior_config: rl.DQNFireballZoningPriorConfig = rl.DQNFireballZoningPriorConfig(),
+    threat_defense_prior_config: rl.DQNThreatDefensePriorConfig = rl.DQNThreatDefensePriorConfig(),
 ) -> tuple[str, float]:
     ranked = ranked_actions(
         model,
@@ -102,6 +106,8 @@ def greedy_action(
         valid_action_mask_config,
         shoryuken_context_prior_config,
         ground_normal_context_prior_config,
+        fireball_zoning_prior_config,
+        threat_defense_prior_config,
     )
     if not ranked:
         return "none", 0.0
@@ -115,6 +121,8 @@ def ranked_actions(
     valid_action_mask_config: rl.DQNValidActionMaskConfig = rl.DQNValidActionMaskConfig(),
     shoryuken_context_prior_config: rl.DQNShoryukenContextPriorConfig = rl.DQNShoryukenContextPriorConfig(),
     ground_normal_context_prior_config: rl.DQNGroundNormalContextPriorConfig = rl.DQNGroundNormalContextPriorConfig(),
+    fireball_zoning_prior_config: rl.DQNFireballZoningPriorConfig = rl.DQNFireballZoningPriorConfig(),
+    threat_defense_prior_config: rl.DQNThreatDefensePriorConfig = rl.DQNThreatDefensePriorConfig(),
 ) -> list[tuple[str, float]]:
     actions = [str(action) for action in model.get("actions", [])]
     dqn_model = model.get("dqn")
@@ -131,6 +139,8 @@ def ranked_actions(
         rl.DQNProjectileTimingPriorConfig(),
         shoryuken_context_prior_config,
         ground_normal_context_prior_config,
+        fireball_zoning_prior_config,
+        threat_defense_prior_config,
     )
 
 
@@ -229,6 +239,8 @@ def print_focus_diagnostics(
     valid_action_mask_config: rl.DQNValidActionMaskConfig,
     shoryuken_context_prior_config: rl.DQNShoryukenContextPriorConfig,
     ground_normal_context_prior_config: rl.DQNGroundNormalContextPriorConfig,
+    fireball_zoning_prior_config: rl.DQNFireballZoningPriorConfig,
+    threat_defense_prior_config: rl.DQNThreatDefensePriorConfig,
 ) -> None:
     model_actions = {str(action) for action in model.get("actions", [])}
     available_actions = tuple(action for action in focus_actions if action in model_actions)
@@ -255,6 +267,8 @@ def print_focus_diagnostics(
             valid_action_mask_config,
             shoryuken_context_prior_config,
             ground_normal_context_prior_config,
+            fireball_zoning_prior_config,
+            threat_defense_prior_config,
         )
         if not ranked:
             continue
@@ -444,6 +458,74 @@ def main() -> int:
         default=120,
         help="Maximum obs_abs_dx for threat/contact poke contexts before normals are penalized as too far",
     )
+    parser.add_argument(
+        "--dqn-fireball-zoning-prior",
+        action="store_true",
+        help="Apply a soft fireball Q bonus in far grounded zoning contexts before DQN argmax",
+    )
+    parser.add_argument(
+        "--dqn-fireball-zoning-prior-models",
+        default="",
+        help=(
+            "Comma-separated model labels to rerank with the fireball zoning prior; "
+            "empty applies the prior to every model when --dqn-fireball-zoning-prior is enabled"
+        ),
+    )
+    parser.add_argument(
+        "--dqn-fireball-zoning-prior-bonus",
+        type=float,
+        default=0.03,
+        help="Fireball Q bonus in eligible far grounded zoning contexts",
+    )
+    parser.add_argument(
+        "--dqn-fireball-zoning-prior-min-abs-dx",
+        type=int,
+        default=120,
+        help="Minimum obs_abs_dx considered an eligible fireball zoning context",
+    )
+    parser.add_argument(
+        "--dqn-fireball-zoning-prior-max-abs-dx",
+        type=int,
+        default=260,
+        help="Maximum obs_abs_dx considered an eligible fireball zoning context",
+    )
+    parser.add_argument(
+        "--dqn-threat-defense-prior",
+        action="store_true",
+        help="Apply a soft guard/back Q bonus when the opponent is attacking at close/mid range",
+    )
+    parser.add_argument(
+        "--dqn-threat-defense-prior-models",
+        default="",
+        help=(
+            "Comma-separated model labels to rerank with the threat-defense prior; "
+            "empty applies the prior to every model when --dqn-threat-defense-prior is enabled"
+        ),
+    )
+    parser.add_argument(
+        "--dqn-threat-defense-prior-guard-bonus",
+        type=float,
+        default=0.03,
+        help="Guard Q bonus in eligible opponent-attack close/mid contexts",
+    )
+    parser.add_argument(
+        "--dqn-threat-defense-prior-back-bonus",
+        type=float,
+        default=0.02,
+        help="Back Q bonus in eligible opponent-attack close/mid contexts",
+    )
+    parser.add_argument(
+        "--dqn-threat-defense-prior-unsafe-penalty",
+        type=float,
+        default=0.0,
+        help="Forward and grounded-normal Q penalty in eligible opponent-attack close/mid contexts",
+    )
+    parser.add_argument(
+        "--dqn-threat-defense-prior-max-abs-dx",
+        type=int,
+        default=144,
+        help="Maximum obs_abs_dx considered an eligible opponent-attack defense context",
+    )
     args = parser.parse_args()
 
     models = [load_model(value) for value in args.model]
@@ -480,6 +562,16 @@ def main() -> int:
         for item in str(args.dqn_ground_normal_prior_models).split(",")
         if item.strip()
     }
+    fireball_zoning_prior_model_labels = {
+        item.strip()
+        for item in str(args.dqn_fireball_zoning_prior_models).split(",")
+        if item.strip()
+    }
+    threat_defense_prior_model_labels = {
+        item.strip()
+        for item in str(args.dqn_threat_defense_prior_models).split(",")
+        if item.strip()
+    }
     ground_normal_prior_close_max_dx = max(0, int(args.dqn_ground_normal_prior_close_max_abs_dx))
     ground_normal_prior_poke_max_dx = max(
         ground_normal_prior_close_max_dx,
@@ -490,6 +582,24 @@ def main() -> int:
         penalty=max(0.0, float(args.dqn_ground_normal_prior_penalty)),
         close_max_abs_dx=ground_normal_prior_close_max_dx,
         poke_max_abs_dx=ground_normal_prior_poke_max_dx,
+    )
+    fireball_zoning_prior_min_dx = max(0, int(args.dqn_fireball_zoning_prior_min_abs_dx))
+    fireball_zoning_prior_max_dx = max(
+        fireball_zoning_prior_min_dx,
+        int(args.dqn_fireball_zoning_prior_max_abs_dx),
+    )
+    fireball_zoning_prior_config = rl.DQNFireballZoningPriorConfig(
+        enabled=bool(args.dqn_fireball_zoning_prior),
+        bonus=max(0.0, float(args.dqn_fireball_zoning_prior_bonus)),
+        min_abs_dx=fireball_zoning_prior_min_dx,
+        max_abs_dx=fireball_zoning_prior_max_dx,
+    )
+    threat_defense_prior_config = rl.DQNThreatDefensePriorConfig(
+        enabled=bool(args.dqn_threat_defense_prior),
+        guard_bonus=max(0.0, float(args.dqn_threat_defense_prior_guard_bonus)),
+        back_bonus=max(0.0, float(args.dqn_threat_defense_prior_back_bonus)),
+        unsafe_penalty=max(0.0, float(args.dqn_threat_defense_prior_unsafe_penalty)),
+        max_abs_dx=max(0, int(args.dqn_threat_defense_prior_max_abs_dx)),
     )
     rows = read_rows(args.transition_logs, max(0, args.limit), max(0, args.tail_rows))
     if not rows:
@@ -518,6 +628,18 @@ def main() -> int:
             and (not ground_normal_prior_model_labels or label in ground_normal_prior_model_labels)
             else rl.DQNGroundNormalContextPriorConfig()
         )
+        model_fireball_zoning_prior_config = (
+            fireball_zoning_prior_config
+            if fireball_zoning_prior_config.enabled
+            and (not fireball_zoning_prior_model_labels or label in fireball_zoning_prior_model_labels)
+            else rl.DQNFireballZoningPriorConfig()
+        )
+        model_threat_defense_prior_config = (
+            threat_defense_prior_config
+            if threat_defense_prior_config.enabled
+            and (not threat_defense_prior_model_labels or label in threat_defense_prior_model_labels)
+            else rl.DQNThreatDefensePriorConfig()
+        )
         counts: collections.Counter[str] = collections.Counter()
         by_threat_dx: dict[str, collections.Counter[str]] = collections.defaultdict(collections.Counter)
         q_sum: collections.Counter[str] = collections.Counter()
@@ -530,6 +652,8 @@ def main() -> int:
                 valid_action_mask_config,
                 model_shoryuken_context_prior_config,
                 model_ground_normal_context_prior_config,
+                model_fireball_zoning_prior_config,
+                model_threat_defense_prior_config,
             )
             choices.append(action)
             counts[action] += 1
@@ -542,6 +666,8 @@ def main() -> int:
             profile = str(metadata.get("reward_risk_profile", "unknown") or "unknown")
         attack_total = sum(count for action, count in counts.items() if action in ATTACK_ACTIONS)
         shoryuken_total = sum(counts.get(action, 0) for action in SHORYUKEN_ACTIONS)
+        fireball_total = sum(counts.get(action, 0) for action in FIREBALL_ACTIONS)
+        defense_total = sum(counts.get(action, 0) for action in DEFENSE_ACTIONS)
         top_action, top_count = counts.most_common(1)[0] if counts else ("none", 0)
         top_rate = top_count / max(1, len(rows))
         collapse = "WARN" if top_rate >= max(0.0, min(1.0, args.collapse_warning_threshold)) else "ok"
@@ -551,11 +677,15 @@ def main() -> int:
             f"\nMODEL {label} version={model.get('version')} profile={profile} actions={action_count} rows={len(rows)} "
             f"attack_rate={100.0 * attack_total / len(rows):.1f}% "
             f"shoryuken_rate={100.0 * shoryuken_total / len(rows):.1f}% "
+            f"fireball_rate={100.0 * fireball_total / len(rows):.1f}% "
+            f"defense_rate={100.0 * defense_total / len(rows):.1f}% "
             f"top={top_action}:{top_rate * 100.0:.1f}% collapse={collapse} "
             f"support_prior={model_support_prior_config.label()} "
             f"valid_mask={valid_action_mask_config.label()} "
             f"shoryuken_prior={model_shoryuken_context_prior_config.label()} "
-            f"ground_normal_prior={model_ground_normal_context_prior_config.label()}"
+            f"ground_normal_prior={model_ground_normal_context_prior_config.label()} "
+            f"fireball_prior={model_fireball_zoning_prior_config.label()} "
+            f"threat_defense_prior={model_threat_defense_prior_config.label()}"
         )
         print(f"  overall {format_counts(counts, len(rows), max(1, args.top_n))}")
         print(f"  selected_q_mean {format_selected_q(counts, q_sum, max(1, args.top_n))}")
@@ -573,6 +703,8 @@ def main() -> int:
             valid_action_mask_config,
             model_shoryuken_context_prior_config,
             model_ground_normal_context_prior_config,
+            model_fireball_zoning_prior_config,
+            model_threat_defense_prior_config,
         )
 
     baseline_choices = choices_by_label[first_label]

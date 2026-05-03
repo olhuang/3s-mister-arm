@@ -65,10 +65,22 @@ Next:
   - start with `--dqn-shoryuken-context-prior`
   - default `--dqn-shoryuken-prior-penalty 0.04`
   - keep existing valid-action mask and any v335-required probe flags.
+- first live probe user observation:
+  - `--dqn-shoryuken-prior-penalty 0.04` reduced live random / inappropriate
+    Shoryuken use by roughly half.
+  - this matches the offline direction from v335 live-probe and M1 movement
+    replay comparisons, but does not fully solve the live behavior yet.
 - promotion gate:
   - M1 / movement-like rows should show materially lower Shoryuken top1 rate.
   - anti-air/jump-in rows should still keep Shoryuken in top-k.
   - fireball-good behavior should not regress materially.
+- recommended next A/B:
+  - keep `0.04` as the v336 baseline.
+  - test `--dqn-shoryuken-prior-penalty 0.06` as v336b if anti-air still
+    appears available and fireball behavior did not regress in the first live
+    probe.
+  - if anti-air disappears, back off to `0.02` or widen the anti-air context
+    rather than increasing the penalty.
 
 ## 2026-05-03: M3bc+dqn-v3 / v332 Corrective Plan And Trainer Foundations
 

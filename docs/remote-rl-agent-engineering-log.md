@@ -81,6 +81,24 @@ Next:
     probe.
   - if anti-air disappears, back off to `0.02` or widen the anti-air context
     rather than increasing the penalty.
+- v336b live user observation:
+  - `--dqn-shoryuken-prior-penalty 0.06` did not make anti-air noticeably
+    worse.
+  - random / inappropriate Shoryuken was reduced further.
+  - policy mass began showing up as random / inappropriate normals instead,
+    so the next issue is attack-family replacement rather than Shoryuken alone.
+- support-prior smoke:
+  - Tested v335 + Shoryuken `0.06` prior + existing DQN support prior
+    (`min_count=500`, `count_penalty=0.02`, `negative_mean=0.01`).
+  - Existing support prior did not materially fix the live-probe `stand-lp`
+    replacement pattern (`stand-lp` stayed around `5.8%` on the v335 live-probe
+    compare).
+  - It is useful as a diagnostic but should not be treated as the v337 fix.
+- recommended v337 direction:
+  - keep Shoryuken context prior at `0.06` for now.
+  - add an opt-in ground-normal context prior / reranker that penalizes
+    stand/crouch normals outside plausible poke/contact/close-threat contexts,
+    rather than increasing the Shoryuken penalty again.
 
 ## 2026-05-03: M3bc+dqn-v3 / v332 Corrective Plan And Trainer Foundations
 

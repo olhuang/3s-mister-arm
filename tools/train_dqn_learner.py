@@ -3609,19 +3609,102 @@ def apply_grads(layers: list[dict[str, object]], grads: list[dict[str, object]],
                 weights[out_index][in_index] = float(weights[out_index][in_index]) - scale * grad
 
 
+def _derive_segment_kw_map(rows: list[dict[str, object]]) -> dict[tuple[int, int], int]:
+    """Build per-instance KW map from engine outcome rows.
+
+    Engine outcome rows appear just BEFORE their corresponding attack segment
+    in the transition log. Each outcome row has:
+    - engine_action_id: 1229=fireball, 1228=shoryuken, 1230=tatsu
+    - engine_kind_of_waza: 0x08=LP, 0x0A=MP, 0x0C=HP, 0x09=LK, 0x0B=MK, 0x0D=HK
+
+    Algorithm:
+    1. Find engine outcome rows with non-zero KW (anchors).
+    2. For each anchor, scan forward to find the next contiguous attack segment
+       (R1=4, matching family R2) in the same episode.
+    3. Map every (episode_id, decision_id) in that segment to the anchor's KW.
+
+    Only human-demo and cpu-demo rows have engine outcome data;
+    remote/policy rows never populate these fields.
+    """
+    ENGINE_ACTION_TO_R2 = {1229: 16, 1228: 17, 1230: 18}
+
+    # Step 1: find engine outcome anchors
+    anchors: list[tuple[int, int, int, int]] = []  # (row_index, episode_id, family_r2, kw)
+    for i, row in enumerate(rows):
+        eaid = int_row_field(row, "engine_action_id")
+        kw = int_row_field(row, "engine_kind_of_waza")
+        if kw != 0 and eaid in ENGINE_ACTION_TO_R2:
+            anchors.append((i, int_row_field(row, "episode_id"), ENGINE_ACTION_TO_R2[eaid], kw))
+
+    if not anchors:
+        return {}
+
+    # Step 2: for each anchor, find the next matching attack segment
+    result: dict[tuple[int, int], int] = {}
+    used_segments: set[tuple[int, int]] = set()  # (episode_id, segment_start_decision_id)
+
+    for a_idx, a_eid, a_r2, a_kw in anchors:
+        # Scan forward from this anchor to find the next attack segment
+        for j in range(a_idx, len(rows)):
+            row = rows[j]
+            eid = int_row_field(row, "episode_id")
+            r1 = int_row_field(row, "obs_self_routine_1")
+            r2 = int_row_field(row, "obs_self_routine_2")
+
+            if eid != a_eid:
+                continue  # different episode
+
+            # Found the start of a matching attack segment
+            if r1 == 4 and r2 == a_r2:
+                seg_start_did = int_row_field(row, "decision_id")
+                if (eid, seg_start_did) in used_segments:
+                    continue  # already claimed by an earlier anchor
+
+                used_segments.add((eid, seg_start_did))
+
+                # Label this entire contiguous segment
+                for k in range(j, len(rows)):
+                    row2 = rows[k]
+                    if int_row_field(row2, "episode_id") != eid:
+                        break
+                    r1k = int_row_field(row2, "obs_self_routine_1")
+                    r2k = int_row_field(row2, "obs_self_routine_2")
+                    if r1k == 4 and r2k == a_r2:
+                        did = int_row_field(row2, "decision_id")
+                        result[(eid, did)] = a_kw
+                    else:
+                        break  # segment ended
+                break  # anchor consumed
+
+    return result
+
+
+# Segment-level KW cache, populated once per BC training run
+_BC_SEGMENT_KW_MAP: dict[tuple[int, int], int] = {}
+
+
 def derive_bc_label(row: dict[str, object], actions: tuple[str, ...]) -> int | None:
     """Derive a BC action label (index into actions) from engine state + input fields.
+
+    Uses engine outcome rows as anchors to propagate correct strength KW to
+    subsequent attack segments. See _derive_segment_kw_map for the algorithm.
 
     Returns the action index if a label can be derived, or None if the row
     represents a non-decision state (contact reaction, idle with no input, etc.).
     """
+    global _BC_SEGMENT_KW_MAP
     r1 = int_row_field(row, "obs_self_routine_1")
     r2 = int_row_field(row, "obs_self_routine_2")
-    kw = int_row_field(row, "obs_self_kind_of_waza")
+    kw = int_row_field(row, "engine_kind_of_waza")
+    eid = int_row_field(row, "episode_id")
 
     # Attack state (R1=4): use engine routine to identify the special/normal
     if r1 == 4:
         action_name: str | None = None
+        # Get KW from segment map if not set on this row
+        did = int_row_field(row, "decision_id")
+        if kw == 0:
+            kw = _BC_SEGMENT_KW_MAP.get((eid, did), 0)
         if r2 == 16:  # hadouken
             if kw == 0x0A:
                 action_name = "fireball-mp"
@@ -3664,10 +3747,6 @@ def derive_bc_label(row: dict[str, object], actions: tuple[str, ...]) -> int | N
     # Standing or crouching with no attack input — no explicit action label
     return None
 
-    # Damage/contact reaction (R1=1) — not a decision state
-    if r1 == 1:
-        return None
-
     return None
 
 
@@ -3690,6 +3769,10 @@ def train_bc(
     label_counts: dict[str, int] = {action: 0 for action in actions}
     skipped: dict[str, int] = collections.defaultdict(int)
     dataset: list[tuple[list[float], int]] = []
+
+    # Populate per-instance segment KW map from engine outcome rows before labeling
+    global _BC_SEGMENT_KW_MAP
+    _BC_SEGMENT_KW_MAP = _derive_segment_kw_map(rows)
 
     for row in rows:
         label_index = derive_bc_label(row, actions)

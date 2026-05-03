@@ -36,6 +36,7 @@ class Experience:
     projectile_defensive_expert_margin_eligible: bool = False
     projectile_batch_eligible: bool = False
     projectile_batch_reason: str = ""
+    grounded_normal_defense_eligible: bool = False
 
 
 EXECUTION_SOURCE_NAMES = {
@@ -324,6 +325,12 @@ BATCH_GROUPS = ("projectile", "movement", "normal", "special")
 SPECIAL_ACTION_PREFIXES = ("fireball-", "shoryuken-", "tatsu-")
 SPECIAL_ACTIONS = frozenset(
     action for action in rl.TABULAR_ACTION_NAMES if action.startswith(SPECIAL_ACTION_PREFIXES)
+)
+GROUNDED_NORMAL_DEFENSE_SAFE_ACTIONS = frozenset({"back", "guard-stand", "guard-crouch"})
+GROUNDED_NORMAL_DEFENSE_UNSAFE_ACTIONS = frozenset(
+    {"forward", "forward-hp"}
+    | frozenset(getattr(rl, "STAND_NORMAL_ACTION_NAMES", ()))
+    | frozenset(getattr(rl, "CROUCH_NORMAL_ACTION_NAMES", ()))
 )
 DQN_TARGET_MODES = ("standard", "double")
 
@@ -1319,6 +1326,74 @@ class ProjectileTimingGroupMarginStats:
             "violation_by_target": dict(sorted(self.violation_by_target.items())),
             "sampled_by_time_bucket": dict(sorted(self.sampled_by_time_bucket.items())),
             "violation_by_time_bucket": dict(sorted(self.violation_by_time_bucket.items())),
+            "blocker_counts": dict(sorted(self.blocker_counts.items())),
+        }
+
+
+@dataclass(frozen=True)
+class GroundedNormalDefenseMarginConfig:
+    requested: bool = False
+    margin: float = 0.1
+    loss_weight: float = 0.5
+    batch_size: int = 0
+    eligible_sources: frozenset[str] = field(default_factory=lambda: frozenset({"human-demo"}))
+    valid_action_mask_mode: str = "action-start-v1"
+    max_abs_dx: int = 144
+
+    @property
+    def enabled(self) -> bool:
+        return self.requested and self.margin > 0.0 and self.loss_weight > 0.0
+
+    def as_shared_mask_config(self) -> rl.DQNValidActionMaskConfig:
+        return rl.parse_dqn_valid_action_mask_config(self.valid_action_mask_mode)
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "requested": self.requested,
+            "enabled": self.enabled,
+            "margin": self.margin,
+            "loss_weight": self.loss_weight,
+            "batch_size": self.batch_size,
+            "eligible_sources": sorted(self.eligible_sources),
+            "valid_action_mask_mode": self.valid_action_mask_mode,
+            "max_abs_dx": self.max_abs_dx,
+            "safe_actions": sorted(GROUNDED_NORMAL_DEFENSE_SAFE_ACTIONS),
+            "unsafe_actions": sorted(GROUNDED_NORMAL_DEFENSE_UNSAFE_ACTIONS),
+        }
+
+
+@dataclass
+class GroundedNormalDefenseMarginStats:
+    eligible_experiences: int = 0
+    sampled_events: int = 0
+    violation_events: int = 0
+    empty_valid_events: int = 0
+    empty_safe_events: int = 0
+    empty_unsafe_events: int = 0
+    empty_context_events: int = 0
+    loss_total: float = 0.0
+    last_loss: float = 0.0
+    avg_loss: float = 0.0
+    sampled_by_time_bucket: dict[str, int] = field(default_factory=dict)
+    violation_by_time_bucket: dict[str, int] = field(default_factory=dict)
+    safe_top_actions: dict[str, int] = field(default_factory=dict)
+    blocker_counts: dict[str, int] = field(default_factory=dict)
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "eligible_experiences": self.eligible_experiences,
+            "sampled_events": self.sampled_events,
+            "violation_events": self.violation_events,
+            "empty_valid_events": self.empty_valid_events,
+            "empty_safe_events": self.empty_safe_events,
+            "empty_unsafe_events": self.empty_unsafe_events,
+            "empty_context_events": self.empty_context_events,
+            "loss_total": self.loss_total,
+            "last_loss": self.last_loss,
+            "avg_loss": self.avg_loss,
+            "sampled_by_time_bucket": dict(sorted(self.sampled_by_time_bucket.items())),
+            "violation_by_time_bucket": dict(sorted(self.violation_by_time_bucket.items())),
+            "safe_top_actions": dict(sorted(self.safe_top_actions.items())),
             "blocker_counts": dict(sorted(self.blocker_counts.items())),
         }
 
@@ -2620,6 +2695,43 @@ def projectile_defensive_expert_margin_eligible(
     return True
 
 
+def is_grounded_normal_defense_context(row: dict[str, object], config: GroundedNormalDefenseMarginConfig) -> bool:
+    """Return True if row is a grounded opponent-normal attack threat frame."""
+    opp_r1 = int_field(row, "obs_opp_routine_1")
+    opp_r2 = int_field(row, "obs_opp_routine_2")
+    if opp_r1 != 4 or opp_r2 in (16, 17, 18):
+        return False
+    opp_contact = int_field(row, "obs_opp_contact_reaction_state")
+    if opp_contact != 0:
+        return False
+    self_air = int_field(row, "obs_self_airborne")
+    self_jump = int_field(row, "obs_self_jump_phase")
+    if self_air != 0 or self_jump != 0:
+        return False
+    self_contact = int_field(row, "obs_self_contact_reaction_state")
+    if self_contact != 0:
+        return False
+    abs_dx = int_field(row, "obs_abs_dx")
+    if abs_dx > config.max_abs_dx:
+        return False
+    return True
+
+
+def grounded_normal_defense_eligible(
+    row: dict[str, object],
+    source_name: str,
+    action_name: str,
+    config: GroundedNormalDefenseMarginConfig,
+) -> bool:
+    if not config.requested:
+        return False
+    if source_name not in config.eligible_sources:
+        return False
+    if action_name not in GROUNDED_NORMAL_DEFENSE_SAFE_ACTIONS and action_name not in GROUNDED_NORMAL_DEFENSE_UNSAFE_ACTIONS:
+        return False
+    return is_grounded_normal_defense_context(row, config)
+
+
 def add_delayed_reward(
     experiences: list[Experience],
     exp_index: int | None,
@@ -2828,6 +2940,7 @@ def build_experiences(
     special_expert_margin_config: SpecialExpertMarginConfig,
     projectile_late_defensive_margin_config: ProjectileLateDefensiveMarginConfig,
     projectile_defensive_expert_margin_config: ProjectileDefensiveExpertMarginConfig,
+    grounded_normal_defense_margin_config: GroundedNormalDefenseMarginConfig,
     engine_outcome_config: EngineOutcomeConfig,
     action_filter_config: DQNActionFilterConfig,
 ) -> tuple[
@@ -3103,6 +3216,12 @@ def build_experiences(
                 ),
                 projectile_batch_eligible=bool(projectile_batch_label),
                 projectile_batch_reason=projectile_batch_label,
+                grounded_normal_defense_eligible=grounded_normal_defense_eligible(
+                    row,
+                    source_name,
+                    action_name,
+                    grounded_normal_defense_margin_config,
+                ),
             )
             multiplier = projectile_response_oversample_config.multiplier_for(projectile_response_outcome_result)
             for _ in range(multiplier):
@@ -3427,6 +3546,29 @@ def projectile_timing_group_margin_config_from_args(
         valid_action_mask_mode=mode,
         threat_max_dx=max(0, int(args.projectile_timing_group_margin_threat_max_dx)),
         threat_max_abs_y=max(0, int(args.projectile_timing_group_margin_threat_max_abs_y)),
+    )
+
+
+def grounded_normal_defense_config_from_args(
+    args: argparse.Namespace,
+) -> GroundedNormalDefenseMarginConfig:
+    mode = str(args.grounded_normal_defense_valid_action_mask)
+    if mode not in rl.DQN_VALID_ACTION_MASK_MODES:
+        raise SystemExit(
+            f"unknown --grounded-normal-defense-valid-action-mask {mode!r}; "
+            f"expected one of {','.join(rl.DQN_VALID_ACTION_MASK_MODES)}"
+        )
+    return GroundedNormalDefenseMarginConfig(
+        requested=bool(args.grounded_normal_defense_margin_loss),
+        margin=max(0.0, float(args.grounded_normal_defense_margin)),
+        loss_weight=max(0.0, float(args.grounded_normal_defense_margin_weight)),
+        batch_size=max(0, int(args.grounded_normal_defense_margin_batch_size)),
+        eligible_sources=parse_source_name_set(
+            str(args.grounded_normal_defense_margin_sources),
+            "--grounded-normal-defense-margin-sources",
+        ),
+        valid_action_mask_mode=mode,
+        max_abs_dx=max(0, int(args.grounded_normal_defense_margin_max_abs_dx)),
     )
 
 
@@ -4264,6 +4406,81 @@ def apply_special_expert_margin_loss(
     return weighted_loss
 
 
+def _grounded_normal_defense_time_bucket(row: dict[str, object]) -> str:
+    abs_dx = int_field(row, "obs_abs_dx")
+    if abs_dx <= 64:
+        return "close"
+    if abs_dx <= 144:
+        return "mid"
+    return "far"
+
+
+def apply_grounded_normal_defense_margin_loss(
+    exp: Experience,
+    values: list[float],
+    actions: tuple[str, ...],
+    output_grad: list[float],
+    config: GroundedNormalDefenseMarginConfig,
+    shared_valid_action_mask_config: rl.DQNValidActionMaskConfig,
+    stats: GroundedNormalDefenseMarginStats,
+) -> float:
+    if not config.enabled or not exp.grounded_normal_defense_eligible:
+        return 0.0
+
+    value_count = min(len(actions), len(values))
+    valid_indices = rl.dqn_valid_action_indices_for_row(
+        exp.row,
+        actions,
+        shared_valid_action_mask_config,
+        value_count,
+    )
+    if not valid_indices:
+        stats.empty_valid_events += 1
+        return 0.0
+
+    safe_indices = [
+        i for i in valid_indices
+        if actions[i] in GROUNDED_NORMAL_DEFENSE_SAFE_ACTIONS
+    ]
+    unsafe_indices = [
+        i for i in valid_indices
+        if actions[i] in GROUNDED_NORMAL_DEFENSE_UNSAFE_ACTIONS
+    ]
+    if not safe_indices:
+        stats.empty_safe_events += 1
+        return 0.0
+    if not unsafe_indices:
+        stats.empty_unsafe_events += 1
+        return 0.0
+    if not is_grounded_normal_defense_context(exp.row, config):
+        stats.empty_context_events += 1
+        return 0.0
+
+    stats.sampled_events += 1
+    time_bucket = _grounded_normal_defense_time_bucket(exp.row)
+    stats.sampled_by_time_bucket[time_bucket] = stats.sampled_by_time_bucket.get(time_bucket, 0) + 1
+
+    best_safe_index = max(safe_indices, key=lambda i: (values[i], actions[i]))
+    best_unsafe_index = max(unsafe_indices, key=lambda i: (values[i], actions[i]))
+    gap = float(values[best_unsafe_index]) + config.margin - float(values[best_safe_index])
+    if gap <= 0.0:
+        return 0.0
+
+    clipped_gap = max(-10.0, min(10.0, gap))
+    weighted_loss = config.loss_weight * 0.5 * clipped_gap * clipped_gap
+    output_grad[best_unsafe_index] -= config.loss_weight * clipped_gap
+    output_grad[best_safe_index] += config.loss_weight * clipped_gap
+
+    blocker_action = actions[best_unsafe_index]
+    safe_action = actions[best_safe_index]
+    stats.violation_events += 1
+    stats.loss_total += weighted_loss
+    stats.blocker_counts[blocker_action] = stats.blocker_counts.get(blocker_action, 0) + 1
+    stats.safe_top_actions[safe_action] = stats.safe_top_actions.get(safe_action, 0) + 1
+    stats.violation_by_time_bucket[time_bucket] = stats.violation_by_time_bucket.get(time_bucket, 0) + 1
+    return weighted_loss
+
+
 def apply_projectile_late_defensive_margin_loss(
     exp: Experience,
     values: list[float],
@@ -4616,6 +4833,7 @@ def train_dqn(
     projectile_late_defensive_margin_config: ProjectileLateDefensiveMarginConfig,
     projectile_defensive_expert_margin_config: ProjectileDefensiveExpertMarginConfig,
     projectile_timing_group_margin_config: ProjectileTimingGroupMarginConfig,
+    grounded_normal_defense_margin_config: GroundedNormalDefenseMarginConfig,
     valid_action_mask_config: DQNValidActionMaskTrainingConfig,
     entropy_reg_weight: float = 0.0,
     initial_layers: list[dict[str, object]] | None = None,
@@ -4629,6 +4847,7 @@ def train_dqn(
     ProjectileLateDefensiveMarginStats,
     ProjectileDefensiveExpertMarginStats,
     ProjectileTimingGroupMarginStats,
+    GroundedNormalDefenseMarginStats,
     DQNValidActionMaskTrainingStats,
 ]:
     rng = random.Random(seed)
@@ -4663,6 +4882,8 @@ def train_dqn(
     avg_projectile_defensive_expert_margin_loss = 0.0
     last_projectile_timing_group_margin_loss = 0.0
     avg_projectile_timing_group_margin_loss = 0.0
+    last_grounded_normal_defense_margin_loss = 0.0
+    avg_grounded_normal_defense_margin_loss = 0.0
     unsupported_action_indices, unsupported_action_regularization_stats = dqn_unsupported_action_indices(
         actions,
         action_counts,
@@ -4709,12 +4930,19 @@ def train_dqn(
     projectile_timing_group_margin_pool = [
         exp for exp in experiences if projectile_timing_group_target(exp, projectile_timing_group_margin_config)
     ]
+    grounded_normal_defense_stats = GroundedNormalDefenseMarginStats(
+        eligible_experiences=sum(1 for exp in experiences if exp.grounded_normal_defense_eligible)
+    )
+    grounded_normal_defense_pool = [
+        exp for exp in experiences if exp.grounded_normal_defense_eligible
+    ]
     shared_valid_action_mask_config = valid_action_mask_config.as_shared_config()
     projectile_expert_margin_mask_config = projectile_expert_margin_config.as_shared_mask_config()
     special_expert_margin_mask_config = special_expert_margin_config.as_shared_mask_config()
     projectile_late_defensive_margin_mask_config = projectile_late_defensive_margin_config.as_shared_mask_config()
     projectile_defensive_expert_margin_mask_config = projectile_defensive_expert_margin_config.as_shared_mask_config()
     projectile_timing_group_margin_mask_config = projectile_timing_group_margin_config.as_shared_mask_config()
+    grounded_normal_defense_mask_config = grounded_normal_defense_margin_config.as_shared_mask_config()
     valid_action_mask_stats = DQNValidActionMaskTrainingStats()
 
     for step in range(1, steps + 1):
@@ -4735,6 +4963,7 @@ def train_dqn(
         projectile_late_defensive_margin_loss = 0.0
         projectile_defensive_expert_margin_loss = 0.0
         projectile_timing_group_margin_loss = 0.0
+        grounded_normal_defense_margin_loss = 0.0
         entropy_reg_loss = 0.0
         for exp in batch:
             values, activations, pre_activations = forward(layers, exp.state)
@@ -4884,6 +5113,17 @@ def train_dqn(
             )
             projectile_timing_group_margin_loss += exp_timing_group_margin_loss
             loss += exp_timing_group_margin_loss
+            exp_grounded_normal_defense_loss = apply_grounded_normal_defense_margin_loss(
+                exp,
+                values,
+                actions,
+                output_grad,
+                grounded_normal_defense_margin_config,
+                grounded_normal_defense_mask_config,
+                grounded_normal_defense_stats,
+            )
+            grounded_normal_defense_margin_loss += exp_grounded_normal_defense_loss
+            loss += exp_grounded_normal_defense_loss
             entropy_loss_delta, entropy_bonus, entropy_grad = entropy_regularization_grad(
                 values,
                 entropy_reg_weight,
@@ -4984,6 +5224,24 @@ def train_dqn(
                 loss += exp_timing_group_margin_loss
                 if exp_timing_group_margin_loss > 0.0:
                     add_backward_grads(layers, grads, activations, pre_activations, output_grad)
+        if grounded_normal_defense_margin_config.enabled and grounded_normal_defense_pool:
+            for _ in range(max(0, grounded_normal_defense_margin_config.batch_size)):
+                exp = rng.choice(grounded_normal_defense_pool)
+                values, activations, pre_activations = forward(layers, exp.state)
+                output_grad = [0.0 for _ in values]
+                exp_grounded_normal_defense_loss = apply_grounded_normal_defense_margin_loss(
+                    exp,
+                    values,
+                    actions,
+                    output_grad,
+                    grounded_normal_defense_margin_config,
+                    grounded_normal_defense_mask_config,
+                    grounded_normal_defense_stats,
+                )
+                grounded_normal_defense_margin_loss += exp_grounded_normal_defense_loss
+                loss += exp_grounded_normal_defense_loss
+                if exp_grounded_normal_defense_loss > 0.0:
+                    add_backward_grads(layers, grads, activations, pre_activations, output_grad)
         apply_grads(layers, grads, learning_rate, batch_size)
         last_loss = loss / max(1, batch_size)
         avg_loss = last_loss if step == 1 else (0.98 * avg_loss + 0.02 * last_loss)
@@ -5044,6 +5302,15 @@ def train_dqn(
                 + 0.02 * last_projectile_timing_group_margin_loss
             )
         )
+        last_grounded_normal_defense_margin_loss = grounded_normal_defense_margin_loss / max(1, batch_size)
+        avg_grounded_normal_defense_margin_loss = (
+            last_grounded_normal_defense_margin_loss
+            if step == 1
+            else (
+                0.98 * avg_grounded_normal_defense_margin_loss
+                + 0.02 * last_grounded_normal_defense_margin_loss
+            )
+        )
         if target_sync_steps > 0 and step % target_sync_steps == 0:
             target_layers = copy.deepcopy(layers)
         if log_interval > 0 and (step == 1 or step % log_interval == 0 or step == steps):
@@ -5056,7 +5323,8 @@ def train_dqn(
                 f"special_margin={last_special_margin_loss:.6f} "
                 f"projectile_late_def_margin={last_projectile_late_defensive_margin_loss:.6f} "
                 f"projectile_def_expert_margin={last_projectile_defensive_expert_margin_loss:.6f} "
-                f"projectile_timing_group_margin={last_projectile_timing_group_margin_loss:.6f}",
+                f"projectile_timing_group_margin={last_projectile_timing_group_margin_loss:.6f} "
+                f"grounded_def_margin={last_grounded_normal_defense_margin_loss:.6f}",
                 flush=True,
             )
 
@@ -5080,6 +5348,8 @@ def train_dqn(
     projectile_defensive_expert_margin_stats.avg_loss = avg_projectile_defensive_expert_margin_loss
     projectile_timing_group_margin_stats.last_loss = last_projectile_timing_group_margin_loss
     projectile_timing_group_margin_stats.avg_loss = avg_projectile_timing_group_margin_loss
+    grounded_normal_defense_stats.last_loss = last_grounded_normal_defense_margin_loss
+    grounded_normal_defense_stats.avg_loss = avg_grounded_normal_defense_margin_loss
     return (
         layers,
         {
@@ -5095,6 +5365,7 @@ def train_dqn(
         projectile_late_defensive_margin_stats,
         projectile_defensive_expert_margin_stats,
         projectile_timing_group_margin_stats,
+        grounded_normal_defense_stats,
         valid_action_mask_stats,
     )
 
@@ -6489,6 +6760,46 @@ def main() -> None:
         help="Maximum absolute obs_projectile_rel_y for projectile timing group margin rows",
     )
     parser.add_argument(
+        "--grounded-normal-defense-margin-loss",
+        action="store_true",
+        help="Apply a grounded normal defense margin loss that pushes guard/back above forward/normals in opponent normal attack threat rows",
+    )
+    parser.add_argument(
+        "--grounded-normal-defense-margin",
+        type=float,
+        default=0.1,
+        help="Margin that guard/back Q should exceed forward/stand-normals Q in opponent grounded normal threat rows",
+    )
+    parser.add_argument(
+        "--grounded-normal-defense-margin-weight",
+        type=float,
+        default=0.5,
+        help="Auxiliary loss weight for --grounded-normal-defense-margin-loss",
+    )
+    parser.add_argument(
+        "--grounded-normal-defense-margin-batch-size",
+        type=int,
+        default=0,
+        help="Additional margin samples per training step (0 = only sample from the main batch)",
+    )
+    parser.add_argument(
+        "--grounded-normal-defense-margin-sources",
+        default="human-demo",
+        help="Comma-separated execution sources eligible for grounded normal defense margin rows",
+    )
+    parser.add_argument(
+        "--grounded-normal-defense-valid-action-mask",
+        choices=rl.DQN_VALID_ACTION_MASK_MODES,
+        default="action-start-v1",
+        help="Valid-action mask used for grounded normal defense safe and unsafe action filtering",
+    )
+    parser.add_argument(
+        "--grounded-normal-defense-margin-max-abs-dx",
+        type=int,
+        default=144,
+        help="Maximum obs_abs_dx for opponent grounded normal threat rows to be eligible for defense margin",
+    )
+    parser.add_argument(
         "--engine-outcome-training-mode",
         default=None,
         help=(
@@ -6756,6 +7067,7 @@ def main() -> None:
     projectile_late_defensive_margin_config = projectile_late_defensive_margin_config_from_args(args)
     projectile_defensive_expert_margin_config = projectile_defensive_expert_margin_config_from_args(args)
     projectile_timing_group_margin_config = projectile_timing_group_margin_config_from_args(args)
+    grounded_normal_defense_margin_config = grounded_normal_defense_config_from_args(args)
     engine_outcome_config = engine_outcome_config_from_args(args)
     conservative_action_penalty_config = conservative_action_penalty_config_from_args(args)
     unsupported_action_regularization_config = dqn_unsupported_action_regularization_config_from_args(args)
@@ -6794,6 +7106,7 @@ def main() -> None:
         special_expert_margin_config,
         projectile_late_defensive_margin_config,
         projectile_defensive_expert_margin_config,
+        grounded_normal_defense_margin_config,
         engine_outcome_config,
         dqn_action_filter_config,
     )
@@ -6822,6 +7135,7 @@ def main() -> None:
         projectile_late_defensive_margin_stats,
         projectile_defensive_expert_margin_stats,
         projectile_timing_group_margin_stats,
+        grounded_normal_defense_stats,
         valid_action_mask_stats,
     ) = train_dqn(
         experiences,
@@ -6844,6 +7158,7 @@ def main() -> None:
         projectile_late_defensive_margin_config,
         projectile_defensive_expert_margin_config,
         projectile_timing_group_margin_config,
+        grounded_normal_defense_margin_config,
         valid_action_mask_config,
         max(0.0, float(args.dqn_entropy_reg_weight)),
         init_model.layers if init_model is not None else None,
@@ -7007,6 +7322,8 @@ def main() -> None:
         "projectile_defensive_expert_margin_stats": projectile_defensive_expert_margin_stats.as_metadata(),
         "projectile_timing_group_margin_config": projectile_timing_group_margin_config.as_metadata(),
         "projectile_timing_group_margin_stats": projectile_timing_group_margin_stats.as_metadata(),
+        "grounded_normal_defense_margin_config": grounded_normal_defense_margin_config.as_metadata(),
+        "grounded_normal_defense_margin_stats": grounded_normal_defense_stats.as_metadata(),
         "engine_outcome_training_mode": engine_outcome_config.training_mode,
         "engine_outcome_window_decisions": engine_outcome_config.window_decisions,
         "engine_outcome_action_windows": engine_outcome_config.action_windows,
@@ -7500,6 +7817,31 @@ def main() -> None:
         f"blockers:{format_counts(projectile_timing_group_margin_stats.blocker_counts, projectile_timing_group_margin_stats.violation_events, args.diagnostic_top_n)} "
         f"sampled_t:{format_counts(projectile_timing_group_margin_stats.sampled_by_time_bucket, projectile_timing_group_margin_stats.sampled_events, args.diagnostic_top_n)} "
         f"violation_t:{format_counts(projectile_timing_group_margin_stats.violation_by_time_bucket, projectile_timing_group_margin_stats.violation_events, args.diagnostic_top_n)}",
+        flush=True,
+    )
+    print(
+        "DQN diagnostics "
+        f"grounded_normal_defense=enabled:{int(grounded_normal_defense_margin_config.enabled)} "
+        f"requested:{int(grounded_normal_defense_margin_config.requested)} "
+        f"margin:{grounded_normal_defense_margin_config.margin:.6f} "
+        f"weight:{grounded_normal_defense_margin_config.loss_weight:.6f} "
+        f"batch_size:{grounded_normal_defense_margin_config.batch_size} "
+        f"max_abs_dx<={grounded_normal_defense_margin_config.max_abs_dx} "
+        f"sources:{','.join(sorted(grounded_normal_defense_margin_config.eligible_sources)) or 'none'} "
+        f"eligible:{grounded_normal_defense_stats.eligible_experiences} "
+        f"sampled:{grounded_normal_defense_stats.sampled_events} "
+        f"violations:{grounded_normal_defense_stats.violation_events} "
+        f"empty_valid:{grounded_normal_defense_stats.empty_valid_events} "
+        f"empty_safe:{grounded_normal_defense_stats.empty_safe_events} "
+        f"empty_unsafe:{grounded_normal_defense_stats.empty_unsafe_events} "
+        f"empty_context:{grounded_normal_defense_stats.empty_context_events} "
+        f"loss:{grounded_normal_defense_stats.loss_total:.6f} "
+        f"last:{grounded_normal_defense_stats.last_loss:.6f} "
+        f"avg:{grounded_normal_defense_stats.avg_loss:.6f} "
+        f"safe_top:{format_counts(grounded_normal_defense_stats.safe_top_actions, grounded_normal_defense_stats.violation_events, args.diagnostic_top_n)} "
+        f"blockers:{format_counts(grounded_normal_defense_stats.blocker_counts, grounded_normal_defense_stats.violation_events, args.diagnostic_top_n)} "
+        f"sampled_t:{format_counts(grounded_normal_defense_stats.sampled_by_time_bucket, grounded_normal_defense_stats.sampled_events, args.diagnostic_top_n)} "
+        f"violation_t:{format_counts(grounded_normal_defense_stats.violation_by_time_bucket, grounded_normal_defense_stats.violation_events, args.diagnostic_top_n)}",
         flush=True,
     )
     print(

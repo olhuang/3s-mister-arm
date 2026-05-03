@@ -42,10 +42,25 @@ Validation:
   - anti-air routine Shoryuken penalty: `0.0`.
   - far-air Shoryuken penalty: `0.04`.
   - non-Shoryuken actions unchanged: `0.0`.
+- same-observation compare after locating the promoted actor at
+  `model/dqn-retrain-m3-bc-plus-dqn-v3/actor-v335.json`:
+  - `logs/rl-transitions-v335-live-probe.ndjson`, first `5000` rows:
+    - raw v335 Shoryuken top1 `11.1%`.
+    - v336 prior Shoryuken top1 `6.3%`.
+    - `244/5000` choices changed, all `base_shoryuken_to_other`; `0`
+      choices changed from non-Shoryuken to Shoryuken.
+  - P3 fireball-good/bad logs, first `5000` rows:
+    - raw v335 Shoryuken top1 `4.8%`.
+    - v336 prior Shoryuken top1 `3.0%`.
+    - `91/5000` choices changed, all `base_shoryuken_to_other`; `0`
+      choices changed from non-Shoryuken to Shoryuken.
+  - `/tmp/rl-retrain-m1-mix-70-20-10.ndjson`, first `10000` rows:
+    - raw v335 Shoryuken top1 `25.8%`.
+    - v336 prior Shoryuken top1 `2.4%`.
+    - `2342/10000` choices changed, all `base_shoryuken_to_other`; `0`
+      choices changed from non-Shoryuken to Shoryuken.
 
 Next:
-- run same-observation compare when the promoted v335 actor file is available
-  locally.
 - first live probe recommendation:
   - start with `--dqn-shoryuken-context-prior`
   - default `--dqn-shoryuken-prior-penalty 0.04`

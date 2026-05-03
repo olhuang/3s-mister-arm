@@ -483,6 +483,23 @@ class DQNShoryukenContextPriorConfig:
         )
 
 
+@dataclass(frozen=True)
+class DQNGroundNormalContextPriorConfig:
+    enabled: bool = False
+    penalty: float = 0.04
+    close_max_abs_dx: int = 48
+    poke_max_abs_dx: int = 120
+
+    def label(self) -> str:
+        if not self.enabled:
+            return "off"
+        return (
+            f"penalty:{self.penalty:.3f}"
+            f"/close_dx<={self.close_max_abs_dx}"
+            f"/poke_dx<={self.poke_max_abs_dx}"
+        )
+
+
 @dataclass
 class TimingBucketStats:
     rows: int = 0
@@ -1316,6 +1333,32 @@ def dqn_shoryuken_context_prior_penalty(
     return 0.0 if anti_air_context else max(0.0, config.penalty)
 
 
+def dqn_ground_normal_context_prior_penalty(
+    action: str,
+    row: dict[str, object],
+    config: DQNGroundNormalContextPriorConfig,
+) -> float:
+    if not config.enabled or action not in STAND_NORMAL_ACTION_NAMES + CROUCH_NORMAL_ACTION_NAMES:
+        return 0.0
+    penalty = max(0.0, config.penalty)
+    if row_int_field(row, "obs_self_airborne") != 0 or row_int_field(row, "obs_self_jump_phase") != 0:
+        return penalty
+    if not dqn_ground_action_start_allowed(row):
+        return penalty
+
+    abs_dx = row_int_field(row, "obs_abs_dx")
+    if abs_dx <= config.close_max_abs_dx:
+        return 0.0
+    if abs_dx > config.poke_max_abs_dx:
+        return penalty
+
+    opponent_threat_or_contact = (
+        row_int_field(row, "obs_opp_routine_attack_state") != 0
+        or row_int_field(row, "obs_opp_contact_reaction_state") != 0
+    )
+    return 0.0 if opponent_threat_or_contact else penalty
+
+
 def normalize_dqn_valid_action_mask_mode(mode: object) -> str:
     normalized = str(mode).strip().lower().replace("_", "-")
     return normalized or "off"
@@ -1724,6 +1767,7 @@ def dqn_ranked_action_scores(
     valid_action_mask_config: DQNValidActionMaskConfig = DQNValidActionMaskConfig(),
     projectile_timing_prior_config: DQNProjectileTimingPriorConfig = DQNProjectileTimingPriorConfig(),
     shoryuken_context_prior_config: DQNShoryukenContextPriorConfig = DQNShoryukenContextPriorConfig(),
+    ground_normal_context_prior_config: DQNGroundNormalContextPriorConfig = DQNGroundNormalContextPriorConfig(),
 ) -> list[tuple[str, float]]:
     values = dqn_predict_values(dqn_model, row)
     if not values:
@@ -1740,6 +1784,7 @@ def dqn_ranked_action_scores(
         score -= dqn_support_prior_penalty(action, action_counts, action_rewards, support_prior_config)
         score -= dqn_projectile_timing_prior_penalty(action, row, projectile_timing_prior_config)
         score -= dqn_shoryuken_context_prior_penalty(action, row, shoryuken_context_prior_config)
+        score -= dqn_ground_normal_context_prior_penalty(action, row, ground_normal_context_prior_config)
         scored_actions.append((action, score))
     return sorted(scored_actions, key=lambda item: (item[1], item[0]), reverse=True)
 
@@ -2649,6 +2694,7 @@ def dqn_actor_action_name(
     valid_action_mask_config: DQNValidActionMaskConfig = DQNValidActionMaskConfig(),
     projectile_timing_prior_config: DQNProjectileTimingPriorConfig = DQNProjectileTimingPriorConfig(),
     shoryuken_context_prior_config: DQNShoryukenContextPriorConfig = DQNShoryukenContextPriorConfig(),
+    ground_normal_context_prior_config: DQNGroundNormalContextPriorConfig = DQNGroundNormalContextPriorConfig(),
 ) -> str | None:
     if actor.policy != "dqn" or not obs_row or not actor.dqn_model:
         return None
@@ -2666,6 +2712,7 @@ def dqn_actor_action_name(
         valid_action_mask_config,
         projectile_timing_prior_config,
         shoryuken_context_prior_config,
+        ground_normal_context_prior_config,
     )
     if not ranked_actions:
         return None
@@ -2748,6 +2795,7 @@ def policy_action_frame(
     dqn_valid_action_mask_config: DQNValidActionMaskConfig = DQNValidActionMaskConfig(),
     dqn_projectile_timing_prior_config: DQNProjectileTimingPriorConfig = DQNProjectileTimingPriorConfig(),
     dqn_shoryuken_context_prior_config: DQNShoryukenContextPriorConfig = DQNShoryukenContextPriorConfig(),
+    dqn_ground_normal_context_prior_config: DQNGroundNormalContextPriorConfig = DQNGroundNormalContextPriorConfig(),
 ) -> PolicyActionFrame:
     if actor.policy in MODEL_POLICY_CHOICES:
         macro_frame = active_macro_action_frame(macro_states, nonce, run_id, episode_id)
@@ -2765,6 +2813,7 @@ def policy_action_frame(
             dqn_valid_action_mask_config,
             dqn_projectile_timing_prior_config,
             dqn_shoryuken_context_prior_config,
+            dqn_ground_normal_context_prior_config,
         )
     if action_name is not None:
         fixed = fixed_action_wire(action_name)
@@ -2792,6 +2841,7 @@ def policy_action_wire(
     dqn_valid_action_mask_config: DQNValidActionMaskConfig = DQNValidActionMaskConfig(),
     dqn_projectile_timing_prior_config: DQNProjectileTimingPriorConfig = DQNProjectileTimingPriorConfig(),
     dqn_shoryuken_context_prior_config: DQNShoryukenContextPriorConfig = DQNShoryukenContextPriorConfig(),
+    dqn_ground_normal_context_prior_config: DQNGroundNormalContextPriorConfig = DQNGroundNormalContextPriorConfig(),
 ) -> int:
     return policy_action_frame(
         actor,
@@ -2808,6 +2858,7 @@ def policy_action_wire(
         dqn_valid_action_mask_config,
         dqn_projectile_timing_prior_config,
         dqn_shoryuken_context_prior_config,
+        dqn_ground_normal_context_prior_config,
     ).action_wire
 
 
@@ -2819,6 +2870,7 @@ def format_dqn_verbose_diagnostics(
     valid_action_mask_source: str,
     projectile_timing_prior_config: DQNProjectileTimingPriorConfig,
     shoryuken_context_prior_config: DQNShoryukenContextPriorConfig,
+    ground_normal_context_prior_config: DQNGroundNormalContextPriorConfig,
 ) -> str:
     if actor.policy != "dqn":
         return ""
@@ -2830,6 +2882,7 @@ def format_dqn_verbose_diagnostics(
             f" dqn_mask_source={valid_action_mask_source}"
             f" dqn_proj_prior={projectile_timing_prior_config.label()}"
             f" dqn_dp_prior={shoryuken_context_prior_config.label()}"
+            f" dqn_norm_prior={ground_normal_context_prior_config.label()}"
             " dqn_valid=n/a"
             " self_r1=n/a self_r2=n/a self_atk=n/a self_contact=n/a"
             " self_air=n/a self_jump_phase=n/a ground_ok=n/a jump_ok=n/a air_ok=n/a"
@@ -2845,6 +2898,11 @@ def format_dqn_verbose_diagnostics(
         obs_row,
         shoryuken_context_prior_config,
     )
+    ground_normal_context_prior_penalty = dqn_ground_normal_context_prior_penalty(
+        "stand-lp",
+        obs_row,
+        ground_normal_context_prior_config,
+    )
     return (
         f" dqn_action={action_name}"
         f" dqn_mask={valid_action_mask_config.label()}"
@@ -2853,6 +2911,8 @@ def format_dqn_verbose_diagnostics(
         f" dqn_proj_prior_jump_penalty={projectile_timing_prior_penalty:.3f}"
         f" dqn_dp_prior={shoryuken_context_prior_config.label()}"
         f" dqn_dp_prior_penalty={shoryuken_context_prior_penalty:.3f}"
+        f" dqn_norm_prior={ground_normal_context_prior_config.label()}"
+        f" dqn_norm_prior_penalty={ground_normal_context_prior_penalty:.3f}"
         f" dqn_valid={len(valid_actions)}/{len(actor.actions)}"
         f" dqn_phase={dqn_self_mask_phase(obs_row)}"
         f" self_r1={row_int_field(obs_row, 'obs_self_routine_1')}"
@@ -2926,6 +2986,7 @@ def serve(
     dqn_valid_action_mask_auto: bool,
     dqn_projectile_timing_prior_config: DQNProjectileTimingPriorConfig,
     dqn_shoryuken_context_prior_config: DQNShoryukenContextPriorConfig,
+    dqn_ground_normal_context_prior_config: DQNGroundNormalContextPriorConfig,
 ) -> None:
     inference_stats = InferenceStats()
     initial_actions = tabular_actions if policy == "tabular" else TABULAR_DEFAULT_ACTIONS
@@ -2982,6 +3043,8 @@ def serve(
         print(f"DQN projectile timing prior active {dqn_projectile_timing_prior_config.label()}", flush=True)
     if dqn_shoryuken_context_prior_config.enabled:
         print(f"DQN shoryuken context prior active {dqn_shoryuken_context_prior_config.label()}", flush=True)
+    if dqn_ground_normal_context_prior_config.enabled:
+        print(f"DQN ground-normal context prior active {dqn_ground_normal_context_prior_config.label()}", flush=True)
     active_model = model_store.current()
     initial_mask_config, initial_mask_source = resolve_dqn_valid_action_mask_config(
         active_model,
@@ -3079,6 +3142,7 @@ def serve(
                     effective_dqn_valid_action_mask_config,
                     dqn_projectile_timing_prior_config,
                     dqn_shoryuken_context_prior_config,
+                    dqn_ground_normal_context_prior_config,
                 )
                 payload = make_action_packet(
                     nonce,
@@ -3113,6 +3177,7 @@ def serve(
                         dqn_valid_action_mask_source,
                         dqn_projectile_timing_prior_config,
                         dqn_shoryuken_context_prior_config,
+                        dqn_ground_normal_context_prior_config,
                     )
                     print(
                         f"{target} OBS-ACTION policy={active_model.policy} reply={obs_reply_mode} "
@@ -3466,6 +3531,29 @@ def main() -> None:
         help="Maximum obs_opp_routine_2 treated as opponent jump/air routine for the Shoryuken prior",
     )
     parser.add_argument(
+        "--dqn-ground-normal-context-prior",
+        action="store_true",
+        help="Apply a soft grounded normal Q penalty outside close or threat/contact poke contexts before DQN argmax",
+    )
+    parser.add_argument(
+        "--dqn-ground-normal-prior-penalty",
+        type=float,
+        default=0.04,
+        help="Grounded normal Q penalty outside close or threat/contact poke contexts",
+    )
+    parser.add_argument(
+        "--dqn-ground-normal-prior-close-max-abs-dx",
+        type=int,
+        default=48,
+        help="Maximum obs_abs_dx where stand/crouch normals are not penalized by the ground-normal prior",
+    )
+    parser.add_argument(
+        "--dqn-ground-normal-prior-poke-max-abs-dx",
+        type=int,
+        default=120,
+        help="Maximum obs_abs_dx for threat/contact poke contexts before normals are penalized as too far",
+    )
+    parser.add_argument(
         "--verbose",
         action="store_true",
         help="Log valid packets; PING summaries are sampled by --verbose-ping-interval",
@@ -3550,6 +3638,17 @@ def main() -> None:
         opp_air_routine_min=shoryuken_prior_air_min,
         opp_air_routine_max=shoryuken_prior_air_max,
     )
+    ground_normal_prior_close_max_dx = max(0, int(args.dqn_ground_normal_prior_close_max_abs_dx))
+    ground_normal_prior_poke_max_dx = max(
+        ground_normal_prior_close_max_dx,
+        int(args.dqn_ground_normal_prior_poke_max_abs_dx),
+    )
+    dqn_ground_normal_context_prior_config = DQNGroundNormalContextPriorConfig(
+        enabled=bool(args.dqn_ground_normal_context_prior),
+        penalty=max(0.0, float(args.dqn_ground_normal_prior_penalty)),
+        close_max_abs_dx=ground_normal_prior_close_max_dx,
+        poke_max_abs_dx=ground_normal_prior_poke_max_dx,
+    )
     serve(
         args.host,
         args.port,
@@ -3589,6 +3688,7 @@ def main() -> None:
         dqn_valid_action_mask_auto,
         dqn_projectile_timing_prior_config,
         dqn_shoryuken_context_prior_config,
+        dqn_ground_normal_context_prior_config,
     )
 
 

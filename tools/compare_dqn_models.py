@@ -93,8 +93,16 @@ def greedy_action(
     support_prior_config: rl.DQNSupportPriorConfig = rl.DQNSupportPriorConfig(),
     valid_action_mask_config: rl.DQNValidActionMaskConfig = rl.DQNValidActionMaskConfig(),
     shoryuken_context_prior_config: rl.DQNShoryukenContextPriorConfig = rl.DQNShoryukenContextPriorConfig(),
+    ground_normal_context_prior_config: rl.DQNGroundNormalContextPriorConfig = rl.DQNGroundNormalContextPriorConfig(),
 ) -> tuple[str, float]:
-    ranked = ranked_actions(model, row, support_prior_config, valid_action_mask_config, shoryuken_context_prior_config)
+    ranked = ranked_actions(
+        model,
+        row,
+        support_prior_config,
+        valid_action_mask_config,
+        shoryuken_context_prior_config,
+        ground_normal_context_prior_config,
+    )
     if not ranked:
         return "none", 0.0
     return ranked[0]
@@ -106,6 +114,7 @@ def ranked_actions(
     support_prior_config: rl.DQNSupportPriorConfig = rl.DQNSupportPriorConfig(),
     valid_action_mask_config: rl.DQNValidActionMaskConfig = rl.DQNValidActionMaskConfig(),
     shoryuken_context_prior_config: rl.DQNShoryukenContextPriorConfig = rl.DQNShoryukenContextPriorConfig(),
+    ground_normal_context_prior_config: rl.DQNGroundNormalContextPriorConfig = rl.DQNGroundNormalContextPriorConfig(),
 ) -> list[tuple[str, float]]:
     actions = [str(action) for action in model.get("actions", [])]
     dqn_model = model.get("dqn")
@@ -121,6 +130,7 @@ def ranked_actions(
         valid_action_mask_config,
         rl.DQNProjectileTimingPriorConfig(),
         shoryuken_context_prior_config,
+        ground_normal_context_prior_config,
     )
 
 
@@ -218,6 +228,7 @@ def print_focus_diagnostics(
     support_prior_config: rl.DQNSupportPriorConfig,
     valid_action_mask_config: rl.DQNValidActionMaskConfig,
     shoryuken_context_prior_config: rl.DQNShoryukenContextPriorConfig,
+    ground_normal_context_prior_config: rl.DQNGroundNormalContextPriorConfig,
 ) -> None:
     model_actions = {str(action) for action in model.get("actions", [])}
     available_actions = tuple(action for action in focus_actions if action in model_actions)
@@ -237,7 +248,14 @@ def print_focus_diagnostics(
     q_gaps: list[float] = []
 
     for row in rows:
-        ranked = ranked_actions(model, row, support_prior_config, valid_action_mask_config, shoryuken_context_prior_config)
+        ranked = ranked_actions(
+            model,
+            row,
+            support_prior_config,
+            valid_action_mask_config,
+            shoryuken_context_prior_config,
+            ground_normal_context_prior_config,
+        )
         if not ranked:
             continue
         top_action, top_value = ranked[0]
@@ -395,6 +413,37 @@ def main() -> int:
         default=150,
         help="Maximum obs_abs_dx considered a plausible anti-air Shoryuken context",
     )
+    parser.add_argument(
+        "--dqn-ground-normal-context-prior",
+        action="store_true",
+        help="Apply a soft grounded normal Q penalty outside close or threat/contact poke contexts before DQN argmax",
+    )
+    parser.add_argument(
+        "--dqn-ground-normal-prior-models",
+        default="",
+        help=(
+            "Comma-separated model labels to rerank with the ground-normal context prior; "
+            "empty applies the prior to every model when --dqn-ground-normal-context-prior is enabled"
+        ),
+    )
+    parser.add_argument(
+        "--dqn-ground-normal-prior-penalty",
+        type=float,
+        default=0.04,
+        help="Grounded normal Q penalty outside close or threat/contact poke contexts",
+    )
+    parser.add_argument(
+        "--dqn-ground-normal-prior-close-max-abs-dx",
+        type=int,
+        default=48,
+        help="Maximum obs_abs_dx where stand/crouch normals are not penalized by the ground-normal prior",
+    )
+    parser.add_argument(
+        "--dqn-ground-normal-prior-poke-max-abs-dx",
+        type=int,
+        default=120,
+        help="Maximum obs_abs_dx for threat/contact poke contexts before normals are penalized as too far",
+    )
     args = parser.parse_args()
 
     models = [load_model(value) for value in args.model]
@@ -426,6 +475,22 @@ def main() -> int:
         min_abs_dx=shoryuken_prior_min_dx,
         max_abs_dx=shoryuken_prior_max_dx,
     )
+    ground_normal_prior_model_labels = {
+        item.strip()
+        for item in str(args.dqn_ground_normal_prior_models).split(",")
+        if item.strip()
+    }
+    ground_normal_prior_close_max_dx = max(0, int(args.dqn_ground_normal_prior_close_max_abs_dx))
+    ground_normal_prior_poke_max_dx = max(
+        ground_normal_prior_close_max_dx,
+        int(args.dqn_ground_normal_prior_poke_max_abs_dx),
+    )
+    ground_normal_context_prior_config = rl.DQNGroundNormalContextPriorConfig(
+        enabled=bool(args.dqn_ground_normal_context_prior),
+        penalty=max(0.0, float(args.dqn_ground_normal_prior_penalty)),
+        close_max_abs_dx=ground_normal_prior_close_max_dx,
+        poke_max_abs_dx=ground_normal_prior_poke_max_dx,
+    )
     rows = read_rows(args.transition_logs, max(0, args.limit), max(0, args.tail_rows))
     if not rows:
         raise SystemExit("No evaluation rows loaded")
@@ -447,6 +512,12 @@ def main() -> int:
             and (not shoryuken_prior_model_labels or label in shoryuken_prior_model_labels)
             else rl.DQNShoryukenContextPriorConfig()
         )
+        model_ground_normal_context_prior_config = (
+            ground_normal_context_prior_config
+            if ground_normal_context_prior_config.enabled
+            and (not ground_normal_prior_model_labels or label in ground_normal_prior_model_labels)
+            else rl.DQNGroundNormalContextPriorConfig()
+        )
         counts: collections.Counter[str] = collections.Counter()
         by_threat_dx: dict[str, collections.Counter[str]] = collections.defaultdict(collections.Counter)
         q_sum: collections.Counter[str] = collections.Counter()
@@ -458,6 +529,7 @@ def main() -> int:
                 model_support_prior_config,
                 valid_action_mask_config,
                 model_shoryuken_context_prior_config,
+                model_ground_normal_context_prior_config,
             )
             choices.append(action)
             counts[action] += 1
@@ -482,7 +554,8 @@ def main() -> int:
             f"top={top_action}:{top_rate * 100.0:.1f}% collapse={collapse} "
             f"support_prior={model_support_prior_config.label()} "
             f"valid_mask={valid_action_mask_config.label()} "
-            f"shoryuken_prior={model_shoryuken_context_prior_config.label()}"
+            f"shoryuken_prior={model_shoryuken_context_prior_config.label()} "
+            f"ground_normal_prior={model_ground_normal_context_prior_config.label()}"
         )
         print(f"  overall {format_counts(counts, len(rows), max(1, args.top_n))}")
         print(f"  selected_q_mean {format_selected_q(counts, q_sum, max(1, args.top_n))}")
@@ -499,6 +572,7 @@ def main() -> int:
             model_support_prior_config,
             valid_action_mask_config,
             model_shoryuken_context_prior_config,
+            model_ground_normal_context_prior_config,
         )
 
     baseline_choices = choices_by_label[first_label]

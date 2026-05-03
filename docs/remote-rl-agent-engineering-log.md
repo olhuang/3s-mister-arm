@@ -2,6 +2,74 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-03: v337 Ground-Normal Context Prior
+
+Milestone:
+- Milestone 6: reduce normal-action replacement after v336b Shoryuken prior
+
+Files changed:
+- `tools/rl_probe_server.py`
+- `tools/compare_dqn_models.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- keep v336b's Shoryuken reduction while adding an opt-in live-side prior for
+  random / inappropriate grounded normals.
+- avoid continuing to increase the Shoryuken penalty when the live failure mode
+  has shifted to action-family replacement.
+
+Implementation:
+- added `DQNGroundNormalContextPriorConfig`.
+- added `--dqn-ground-normal-context-prior` to `tools/rl_probe_server.py`.
+- the prior subtracts a small Q penalty from `stand-*` and `crouch-*` normals
+  unless the row is a coarse plausible normal context:
+  - self is grounded and ground action-start is allowed.
+  - `obs_abs_dx <= 48` close range, or
+  - `obs_abs_dx <= 120` and opponent attack/contact evidence is present.
+- added verbose probe diagnostics:
+  - `dqn_norm_prior=...`
+  - `dqn_norm_prior_penalty=...`
+- added matching `tools/compare_dqn_models.py` support for raw-vs-prior
+  same-observation comparisons.
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py tools/compare_dqn_models.py`
+- direct helper smoke:
+  - close stand LP penalty: `0.0`.
+  - mid neutral stand LP penalty: `0.04`.
+  - mid threat/contact normals penalty: `0.0`.
+  - far stand LP penalty: `0.04`.
+  - non-normal actions unchanged: `0.0`.
+- same-observation compare with v335 actor plus Shoryuken prior `0.06`:
+  - `logs/rl-transitions-v335-live-probe.ndjson`, first `5000` rows:
+    - ground-normal prior `0.03`: attack rate `14.6%`, Shoryuken `3.3%`,
+      stand-lp `5.9%`.
+    - ground-normal prior `0.05`: attack rate `14.0%`, Shoryuken `3.3%`,
+      stand-lp `5.3%`.
+  - `/tmp/rl-retrain-m1-mix-70-20-10.ndjson`, first `10000` rows:
+    - ground-normal prior `0.03`: attack rate `20.1%`, Shoryuken `0.0%`,
+      fireball-hp `17.8%`, fireball-mp `2.2%`.
+  - P3 fireball-good/bad logs, first `5000` rows:
+    - ground-normal prior `0.05`: attack rate `5.5%`, Shoryuken `1.1%`,
+      stand-lp `2.2%`, fireball-hp unchanged at `1.5%`.
+
+Conclusion:
+- `0.05` is the better first live probe value than `0.03`.
+- The prior is a useful live-side mitigation, but the v335 live-probe compare
+  only lowers stand-lp modestly, so this is not a full long-term fix.
+- If live behavior still shifts into normals, the next step should be a
+  trainer / policy-architecture change rather than stacking more penalties.
+
+Next:
+- run v337 live probe with:
+  - Shoryuken context prior `0.06`.
+  - ground-normal context prior `0.05`.
+- watch:
+  - random normals versus v336b.
+  - anti-air Shoryuken availability.
+  - far fireball behavior.
+
 ## 2026-05-03: v336 Live-Side Shoryuken Context Prior
 
 Milestone:

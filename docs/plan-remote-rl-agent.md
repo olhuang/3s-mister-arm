@@ -2540,6 +2540,7 @@ Tasks:
 - [x] Document v332 corrective plan after v331 review: add self routine context, preserve warm-start through feature expansion, exempt zoning fireball from movement regression, and add context-gated special expert margin
 - [x] Implement v332 trainer foundations: self routine DQN features, init-model feature expansion, fireball movement-regression exemption, and `--special-expert-margin-context-gate`
 - [x] Train M3bc+dqn-v3 / v332-v335 with context features, context-gated special margin, fireball guard/cancel fix, schema v6 natural log, shoryuken whiff penalty, and stronger expert margin; v335: first fireball top1 (15.1% trainer, 4.7% FB-good), good/bad separation 3.6x
+- [x] Add v336 opt-in live-side Shoryuken context prior / compare support so `shoryuken-*` gets a small Q penalty outside coarse anti-air contexts while preserving the promoted v335 weights
 - [x] Train the next live-replay candidate only from declared clean source ratios and compare it against raw v9 plus reranked v9 before live use
 - [x] Add opt-in movable action-start filtering for selected DQN replay sources so recovery-state policy selections do not become valid action samples
 - [x] Train v20 from the clean support-prior live replay with remote-only movable action-start filtering and compare it against v9/v18/v19 before live use

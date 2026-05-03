@@ -92,8 +92,9 @@ def greedy_action(
     row: dict[str, object],
     support_prior_config: rl.DQNSupportPriorConfig = rl.DQNSupportPriorConfig(),
     valid_action_mask_config: rl.DQNValidActionMaskConfig = rl.DQNValidActionMaskConfig(),
+    shoryuken_context_prior_config: rl.DQNShoryukenContextPriorConfig = rl.DQNShoryukenContextPriorConfig(),
 ) -> tuple[str, float]:
-    ranked = ranked_actions(model, row, support_prior_config, valid_action_mask_config)
+    ranked = ranked_actions(model, row, support_prior_config, valid_action_mask_config, shoryuken_context_prior_config)
     if not ranked:
         return "none", 0.0
     return ranked[0]
@@ -104,6 +105,7 @@ def ranked_actions(
     row: dict[str, object],
     support_prior_config: rl.DQNSupportPriorConfig = rl.DQNSupportPriorConfig(),
     valid_action_mask_config: rl.DQNValidActionMaskConfig = rl.DQNValidActionMaskConfig(),
+    shoryuken_context_prior_config: rl.DQNShoryukenContextPriorConfig = rl.DQNShoryukenContextPriorConfig(),
 ) -> list[tuple[str, float]]:
     actions = [str(action) for action in model.get("actions", [])]
     dqn_model = model.get("dqn")
@@ -117,6 +119,8 @@ def ranked_actions(
         row,
         support_prior_config,
         valid_action_mask_config,
+        rl.DQNProjectileTimingPriorConfig(),
+        shoryuken_context_prior_config,
     )
 
 
@@ -213,6 +217,7 @@ def print_focus_diagnostics(
     top_n: int,
     support_prior_config: rl.DQNSupportPriorConfig,
     valid_action_mask_config: rl.DQNValidActionMaskConfig,
+    shoryuken_context_prior_config: rl.DQNShoryukenContextPriorConfig,
 ) -> None:
     model_actions = {str(action) for action in model.get("actions", [])}
     available_actions = tuple(action for action in focus_actions if action in model_actions)
@@ -232,7 +237,7 @@ def print_focus_diagnostics(
     q_gaps: list[float] = []
 
     for row in rows:
-        ranked = ranked_actions(model, row, support_prior_config, valid_action_mask_config)
+        ranked = ranked_actions(model, row, support_prior_config, valid_action_mask_config, shoryuken_context_prior_config)
         if not ranked:
             continue
         top_action, top_value = ranked[0]
@@ -359,6 +364,37 @@ def main() -> int:
         default="off",
         help="Optional shared DQN valid-action mask applied before ranking every compared model",
     )
+    parser.add_argument(
+        "--dqn-shoryuken-context-prior",
+        action="store_true",
+        help="Apply a soft Shoryuken Q penalty outside coarse anti-air contexts before DQN argmax",
+    )
+    parser.add_argument(
+        "--dqn-shoryuken-prior-models",
+        default="",
+        help=(
+            "Comma-separated model labels to rerank with the Shoryuken context prior; "
+            "empty applies the prior to every model when --dqn-shoryuken-context-prior is enabled"
+        ),
+    )
+    parser.add_argument(
+        "--dqn-shoryuken-prior-penalty",
+        type=float,
+        default=0.04,
+        help="Shoryuken Q penalty outside the anti-air context when --dqn-shoryuken-context-prior is enabled",
+    )
+    parser.add_argument(
+        "--dqn-shoryuken-prior-min-abs-dx",
+        type=int,
+        default=24,
+        help="Minimum obs_abs_dx considered a plausible anti-air Shoryuken context",
+    )
+    parser.add_argument(
+        "--dqn-shoryuken-prior-max-abs-dx",
+        type=int,
+        default=150,
+        help="Maximum obs_abs_dx considered a plausible anti-air Shoryuken context",
+    )
     args = parser.parse_args()
 
     models = [load_model(value) for value in args.model]
@@ -377,6 +413,19 @@ def main() -> int:
         if item.strip()
     }
     valid_action_mask_config = rl.parse_dqn_valid_action_mask_config(str(args.dqn_valid_action_mask))
+    shoryuken_prior_model_labels = {
+        item.strip()
+        for item in str(args.dqn_shoryuken_prior_models).split(",")
+        if item.strip()
+    }
+    shoryuken_prior_min_dx = max(0, int(args.dqn_shoryuken_prior_min_abs_dx))
+    shoryuken_prior_max_dx = max(shoryuken_prior_min_dx, int(args.dqn_shoryuken_prior_max_abs_dx))
+    shoryuken_context_prior_config = rl.DQNShoryukenContextPriorConfig(
+        enabled=bool(args.dqn_shoryuken_context_prior),
+        penalty=max(0.0, float(args.dqn_shoryuken_prior_penalty)),
+        min_abs_dx=shoryuken_prior_min_dx,
+        max_abs_dx=shoryuken_prior_max_dx,
+    )
     rows = read_rows(args.transition_logs, max(0, args.limit), max(0, args.tail_rows))
     if not rows:
         raise SystemExit("No evaluation rows loaded")
@@ -392,12 +441,24 @@ def main() -> int:
             if support_prior_config.enabled and (not prior_model_labels or label in prior_model_labels)
             else rl.DQNSupportPriorConfig()
         )
+        model_shoryuken_context_prior_config = (
+            shoryuken_context_prior_config
+            if shoryuken_context_prior_config.enabled
+            and (not shoryuken_prior_model_labels or label in shoryuken_prior_model_labels)
+            else rl.DQNShoryukenContextPriorConfig()
+        )
         counts: collections.Counter[str] = collections.Counter()
         by_threat_dx: dict[str, collections.Counter[str]] = collections.defaultdict(collections.Counter)
         q_sum: collections.Counter[str] = collections.Counter()
         choices: list[str] = []
         for row in rows:
-            action, value = greedy_action(model, row, model_support_prior_config, valid_action_mask_config)
+            action, value = greedy_action(
+                model,
+                row,
+                model_support_prior_config,
+                valid_action_mask_config,
+                model_shoryuken_context_prior_config,
+            )
             choices.append(action)
             counts[action] += 1
             by_threat_dx[threat_dx_bucket(row)][action] += 1
@@ -420,7 +481,8 @@ def main() -> int:
             f"shoryuken_rate={100.0 * shoryuken_total / len(rows):.1f}% "
             f"top={top_action}:{top_rate * 100.0:.1f}% collapse={collapse} "
             f"support_prior={model_support_prior_config.label()} "
-            f"valid_mask={valid_action_mask_config.label()}"
+            f"valid_mask={valid_action_mask_config.label()} "
+            f"shoryuken_prior={model_shoryuken_context_prior_config.label()}"
         )
         print(f"  overall {format_counts(counts, len(rows), max(1, args.top_n))}")
         print(f"  selected_q_mean {format_selected_q(counts, q_sum, max(1, args.top_n))}")
@@ -436,6 +498,7 @@ def main() -> int:
             max(1, args.top_n),
             model_support_prior_config,
             valid_action_mask_config,
+            model_shoryuken_context_prior_config,
         )
 
     baseline_choices = choices_by_label[first_label]

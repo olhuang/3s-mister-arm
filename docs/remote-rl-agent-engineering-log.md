@@ -2,6 +2,59 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-03: v336 Live-Side Shoryuken Context Prior
+
+Milestone:
+- Milestone 6: reduce live Shoryuken overuse after v335 promotion
+
+Files changed:
+- `tools/rl_probe_server.py`
+- `tools/compare_dqn_models.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- keep v335 as the promoted best model while adding an opt-in inference-time
+  safety prior for live probes.
+- reduce grounded / neutral `shoryuken-*` over-selection without globally
+  removing anti-air Shoryuken from plausible jump-in contexts.
+
+Implementation:
+- added `DQNShoryukenContextPriorConfig`.
+- added `--dqn-shoryuken-context-prior` to `tools/rl_probe_server.py`.
+- the prior subtracts a small Q penalty from `shoryuken-lp`,
+  `shoryuken-mp`, and `shoryuken-hp` unless the row is a coarse anti-air
+  context:
+  - self is grounded and ground action-start is allowed.
+  - `obs_abs_dx` is inside the configured close/mid window, default `24-150`.
+  - opponent routine looks jump/air-like by current validated coarse gate:
+    `obs_opp_routine_1 == 0` and `obs_opp_routine_2` in `18-26`.
+- added verbose probe diagnostics:
+  - `dqn_dp_prior=...`
+  - `dqn_dp_prior_penalty=...`
+- added matching `tools/compare_dqn_models.py` support so the same model can be
+  compared raw vs prior on identical observation rows.
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py tools/compare_dqn_models.py`
+- direct helper smoke:
+  - grounded neutral Shoryuken penalty: `0.04`.
+  - anti-air routine Shoryuken penalty: `0.0`.
+  - far-air Shoryuken penalty: `0.04`.
+  - non-Shoryuken actions unchanged: `0.0`.
+
+Next:
+- run same-observation compare when the promoted v335 actor file is available
+  locally.
+- first live probe recommendation:
+  - start with `--dqn-shoryuken-context-prior`
+  - default `--dqn-shoryuken-prior-penalty 0.04`
+  - keep existing valid-action mask and any v335-required probe flags.
+- promotion gate:
+  - M1 / movement-like rows should show materially lower Shoryuken top1 rate.
+  - anti-air/jump-in rows should still keep Shoryuken in top-k.
+  - fireball-good behavior should not regress materially.
+
 ## 2026-05-03: M3bc+dqn-v3 / v332 Corrective Plan And Trainer Foundations
 
 Milestone:

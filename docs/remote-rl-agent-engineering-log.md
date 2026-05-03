@@ -10546,3 +10546,55 @@ Follow-up:
 - run M3bc+dqn-v2 with balanced fireball/shoryuken data.
 - consider adding derived context features (opp_airborne, fireball_safe_range)
   to DQN input for better scene differentiation.
+
+## 2026-05-03: Per-Instance Segment-Based KW Propagation For BC Labels
+
+Milestone:
+- Milestone 6: BC pre-training label precision improvement
+
+Files changed:
+- `tools/train_dqn_learner.py`
+
+Problem:
+- The previous per-episode KW map (`_derive_episode_kw_map`) could only
+  record one KW strength per (episode, family) pair, collapsing all
+  fireball/shoryuken/tatsu instances in the same episode to the most common
+  strength.
+- C-side KW cache and dm_kind_of_waza fallback attempts did not work because
+  the game engine clears `kind_of_waza` before end-of-frame observation.
+
+Discovery:
+- Engine outcome rows appear just BEFORE their corresponding attack segment
+  in the transition log, not after or during.
+- Observation timing: engine outcome fires at routine start, but observation
+  captures it during standing/recovery frames (R1=0, R2=4). The actual attack
+  segment (R1=4, R2=16/17/18) follows immediately after in the log.
+- Confirmed on v3 log row 168: engine outcome (KW=0x09 tatsu-LK) at frame 501,
+  attack segment starts at row 168 frame 504.
+
+Algorithm:
+- `_derive_segment_kw_map(rows)` replaces `_derive_episode_kw_map`:
+  1. Find engine outcome anchors (engine_action_id != 0, KW != 0).
+  2. For each anchor, scan forward to find the next contiguous attack segment
+     (R1=4, family R2 matching engine_action_id mapping) in the same episode.
+  3. Map every (episode_id, decision_id) in that segment to the anchor's KW.
+  4. Skip segments already claimed by an earlier anchor.
+- `derive_bc_label` uses `_BC_SEGMENT_KW_MAP[(episode_id, decision_id)]` for
+  KW lookup when `engine_kind_of_waza == 0`.
+
+Validation:
+- All 3 tatsu instances in v3 log verified:
+  - tatsu-LK (rows 168-182): 15/15 rows labeled KW=0x09 (LK) ✓
+  - tatsu-MK (rows 200-217): 18/18 rows labeled KW=0x0B (MK) ✓
+  - tatsu-MK #2 (rows 220-242): 23/23 rows labeled KW=0x0B (MK) ✓
+- Full v3 special distribution now shows all 9 strengths:
+  shoryuken-mp:170, shoryuken-hp:113, shoryuken-lp:64,
+  tatsu-hk:48, tatsu-mk:41, tatsu-lk:25,
+  fireball-hp:32, fireball-lp:30, fireball-mp:30
+
+Limitation:
+- Engine outcome only fires for human-demo and cpu-demo execution sources
+  (C-side guard: `RLSession_IsDemoExecutionSource`). Remote/policy rows
+  never get engine_action_id or engine_kind_of_waza populated.
+- BC pre-training should use `--replay-source-include human-demo,cpu-demo`
+  to exclude remote rows which provide no KW anchors.

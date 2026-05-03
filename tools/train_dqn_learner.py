@@ -2146,12 +2146,23 @@ def reward_risk_cost(
 
     self_damage = sum(int_field(row, "delta_self_hp") for row in lookahead)
     punished = self_damage > 0
+
+    fireball_made_contact = (
+        action_name.startswith("fireball-")
+        and (
+            any(int_field(window_row, "obs_opp_contact_reaction_state") != 0 for window_row in lookahead)
+            or any(int_field(window_row, "obs_projectile_owner") == PROJECTILE_OWNER_OPPONENT for window_row in lookahead)
+        )
+    )
+
     cost = 0.0
-    stats.no_damage_cost_events += 1
+    if not fireball_made_contact:
+        stats.no_damage_cost_events += 1
 
     if apply_attack_cost:
-        cost += config.attack_no_damage_cost
-        stats.attack_no_damage_cost_total += config.attack_no_damage_cost
+        if not fireball_made_contact:
+            cost += config.attack_no_damage_cost
+            stats.attack_no_damage_cost_total += config.attack_no_damage_cost
         if punished:
             cost += config.attack_punished_cost
             stats.attack_punished_cost_total += config.attack_punished_cost
@@ -2725,11 +2736,19 @@ def add_engine_outcome_experience(
     base_reward = float(opponent_damage - self_damage)
     adjustment = 0.0
 
+    engine_fireball_made_contact = (
+        action_name.startswith("fireball-")
+        and (
+            any(int_field(window_row, "obs_opp_contact_reaction_state") != 0 for window_row in window_rows)
+            or any(int_field(window_row, "obs_projectile_owner") == PROJECTILE_OWNER_OPPONENT for window_row in window_rows)
+        )
+    )
+
     if opponent_damage > 0:
         stats.hit_events += 1
         adjustment += config.hit_bonus
         stats.hit_bonus_total += config.hit_bonus
-    else:
+    elif not engine_fireball_made_contact:
         stats.no_damage_events += 1
         adjustment -= config.no_damage_cost
         stats.no_damage_cost_total += config.no_damage_cost

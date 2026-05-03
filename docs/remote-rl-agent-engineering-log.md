@@ -10857,3 +10857,88 @@ Limitation:
   never get engine_action_id or engine_kind_of_waza populated.
 - BC pre-training should use `--replay-source-include human-demo,cpu-demo`
   to exclude remote rows which provide no KW anchors.
+
+## 2026-05-03: Fix Fireball No-Damage Penalty For Blocked/Cancelled Fireballs
+
+Milestone:
+- Milestone 6: fix fireball false-whiff penalty and shoryuken over-concentration
+
+Problem:
+- SF3 normal specials deal 0 chip damage when blocked (only EX/supers do).
+- `reward_risk_cost()` and `engine_outcome_reward()` classified any
+  `opponent_damage == 0` attack as "no-damage", penalizing blocked fireballs
+  the same as true whiffs.
+- Blocked fireballs and projectile-cancel fireballs are positive zoning
+  outcomes, not mistakes.
+- Shoryuken had no extra no-damage penalty despite being highly unsafe on
+  block/whiff (long recovery, easy to punish).
+
+Discovery:
+- Schema v6 transition rows capture chip damage for blocked fireballs in
+  ~78-93% of cases (`delta_opp_hp=1` in the engine outcome window).
+- The remaining ~7-22% are timing edge cases where chip damage falls between
+  observation frames.
+- `obs_opp_contact_reaction_state != 0` reliably detects blocked fireballs
+  in the lookahead window (opponent enters guard routine `r1=1, r2=5/6/12`).
+- `obs_projectile_owner == 2` in the window indicates opponent projectile
+  was present — fireball likely cancelled it.
+
+Implementation:
+- `tools/train_dqn_learner.py`: `reward_risk_cost()` and
+  `engine_outcome_reward()`:
+  - For `fireball-*` actions: skip no-damage cost when
+    `obs_opp_contact_reaction_state != 0` (blocked) or
+    `obs_projectile_owner == 2` (projectile cancel) in the lookahead window.
+  - Punished cost (self damaged) still applies regardless.
+  - Non-fireball actions unchanged.
+
+Validation:
+- Fireball-good log smoke: `risk_shape no_damage` dropped from 822 → 0.
+- Fireball-good mean reward: fireball-hp -9.71 → +33.42 (v335).
+
+## 2026-05-03: M3bc+dqn v332-v335 Training Iterations
+
+Milestone:
+- Milestone 6: fireball gate and shoryuken concentration tuning
+
+v332 (context-gated special expert margin + self-routine features):
+- Init: BC-coverage v322 with feature expansion (44→72 features).
+- New: self routine one-hot features, context-gated special expert margin,
+  fireball zoning movement-regression exemption.
+- Result: shoryuken-lp 23.9% (down from v331's 38.9%), but fireball still 0% top1.
+- fireball-good top3 fireball-hp: 1.3%.
+
+v333 (add fireball guard/cancel no-damage fix):
+- Same data as v332, with guard/cancel fix in reward functions.
+- Result: shoryuken-lp 39.2% (rebound), fireball-hp top3: 5.1%.
+- Fireball reward improved but shoryuken BC prior amplified it more.
+
+v334 (add schema v6 natural-serious-human-v4 log):
+- Added 18k rows of natural human play with proper chip damage.
+- Result: shoryuken-lp 30.4%, fireball-hp mean reward 33.42, top3: 18.1%.
+- More data helped balance.
+
+v335 (shoryuken whiff penalty + stronger expert margin):
+- `--reward-shoryuken-no-damage-extra-cost 0.5` (was 0.0)
+- `--special-expert-margin-weight 1.0` (was 0.5)
+- **Breakthrough: fireball-hp at top1 for the first time (15.1% trainer, 4.7% FB-good).**
+- First meaningful fireball good/bad separation: 4.7% vs 1.3% (3.6x).
+- Fireball top3 on FB-good: 14.8% (2x vs v334).
+
+Quality gate summary:
+
+| Gate | v332 | v333 | v334 | v335 |
+|------|------|------|------|------|
+| Trainer shoryuken-lp top1 | 23.9% | 39.2% | 30.4% | 35.2% |
+| Trainer fireball-hp top1 | 0% | 0% | 0% | 15.1% |
+| FB-good fireball top1 | 0% | 0% | 0% | 4.7% |
+| FB-good fireball top3 | 1.3% | 5.1% | 7.1% | 14.8% |
+| FB-bad fireball top1 | 0% | 0% | 0% | 1.3% |
+| FB-bad fireball top3 | 0.4% | 5.6% | 6.9% | 9.1% |
+| M1 movement shoryuken-lp | 22.6% | 36.7% | 28.6% | 32.1% |
+
+Conclusion:
+- Fireball gate: first-ever top1 appearance and meaningful good/bad separation.
+- Shoryuken over-concentration improved from v330 (52.8%) but still elevated
+  (35.2%). Further tuning needed.
+- Model promoted to v335 as current best.

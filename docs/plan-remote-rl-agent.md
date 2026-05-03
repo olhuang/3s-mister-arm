@@ -2534,12 +2534,12 @@ Tasks:
 - [x] Harden BC segment KW propagation before next training: short anchor window, stop on competing special anchors/segments, and skip missing-KW special rows instead of defaulting to LP/MK
 - [x] Train BC-natural-v1 from only P8 natural human/cpu demo logs and record whether pure natural play has enough label/action coverage
 - [x] Train BC-coverage-v1 from M1/P2/P3/P8 coverage logs and compare against BC-natural-v1 before DQN fine-tune
-- [ ] Balance shoryuken over-concentration (52.8%) and fireball suppression (0%) via better fireball data and/or entropy tuning
-- [ ] Collect fireball-good scenario data (far range, opponent grounded) to improve fireball hit rate in training distribution
+- [x] Balance shoryuken over-concentration (52.8%→35.2%) and fireball suppression (0%→15.1%) via fireball guard/cancel no-damage fix + shoryuken whiff penalty + stronger expert margin; v335 promoted
+- [x] Collect fireball-good scenario data (far range, opponent grounded) to improve fireball hit rate in training distribution; used schema v6 natural-serious-human-v4 log
 - [x] Run M3bc+dqn-v2 with improved fireball/shoryuken data balance and report M3 quality gate results; result: v331 reduced shoryuken eval concentration versus v330 but failed fireball-good and M1 movement gates, so do not promote
 - [x] Document v332 corrective plan after v331 review: add self routine context, preserve warm-start through feature expansion, exempt zoning fireball from movement regression, and add context-gated special expert margin
 - [x] Implement v332 trainer foundations: self routine DQN features, init-model feature expansion, fireball movement-regression exemption, and `--special-expert-margin-context-gate`
-- [ ] Train M3bc+dqn-v3 / v332 with context features and context-gated special margin, then re-check fireball-good/bad and M1 movement gates
+- [x] Train M3bc+dqn-v3 / v332-v335 with context features, context-gated special margin, fireball guard/cancel fix, schema v6 natural log, shoryuken whiff penalty, and stronger expert margin; v335: first fireball top1 (15.1% trainer, 4.7% FB-good), good/bad separation 3.6x
 - [x] Train the next live-replay candidate only from declared clean source ratios and compare it against raw v9 plus reranked v9 before live use
 - [x] Add opt-in movable action-start filtering for selected DQN replay sources so recovery-state policy selections do not become valid action samples
 - [x] Train v20 from the clean support-prior live replay with remote-only movable action-start filtering and compare it against v9/v18/v19 before live use

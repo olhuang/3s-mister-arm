@@ -3649,6 +3649,8 @@ def _derive_segment_kw_map(rows: list[dict[str, object]]) -> dict[tuple[int, int
     remote/policy rows never populate these fields.
     """
     ENGINE_ACTION_TO_R2 = {1229: 16, 1228: 17, 1230: 18}
+    SPECIAL_R2_VALUES = frozenset(ENGINE_ACTION_TO_R2.values())
+    MAX_ANCHOR_TO_SEGMENT_ROWS = 8
 
     # Step 1: find engine outcome anchors
     anchors: list[tuple[int, int, int, int, int]] = []  # (row_index, run_id, episode_id, family_r2, kw)
@@ -3673,13 +3675,18 @@ def _derive_segment_kw_map(rows: list[dict[str, object]]) -> dict[tuple[int, int
     used_segments: set[tuple[int, int, int]] = set()  # (run_id, episode_id, segment_start_did)
 
     for a_idx, a_rid, a_eid, a_r2, a_kw in anchors:
-        for j in range(a_idx, len(rows)):
+        for j in range(a_idx, min(len(rows), a_idx + MAX_ANCHOR_TO_SEGMENT_ROWS + 1)):
             row = rows[j]
             rid = int_row_field(row, "run_id")
             eid = int_row_field(row, "episode_id")
 
             if rid != a_rid or eid != a_eid:
                 continue  # different run or episode
+
+            if j > a_idx and int_row_field(row, "engine_kind_of_waza") != 0:
+                next_eaid = int_row_field(row, "engine_action_id")
+                if next_eaid in ENGINE_ACTION_TO_R2:
+                    break
 
             r1 = int_row_field(row, "obs_self_routine_1")
             r2 = int_row_field(row, "obs_self_routine_2")
@@ -3702,6 +3709,8 @@ def _derive_segment_kw_map(rows: list[dict[str, object]]) -> dict[tuple[int, int
                         result[(rid, eid, did)] = a_kw
                     else:
                         break
+                break
+            if r1 == 4 and r2 in SPECIAL_R2_VALUES:
                 break
 
     return result
@@ -3735,26 +3744,26 @@ def derive_bc_label(row: dict[str, object], actions: tuple[str, ...]) -> int | N
         if kw == 0:
             kw = _BC_SEGMENT_KW_MAP.get((rid, eid, did), 0)
         if r2 == 16:  # hadouken
-            if kw == 0x0A:
+            if kw == 0x08:
+                action_name = "fireball-lp"
+            elif kw == 0x0A:
                 action_name = "fireball-mp"
             elif kw == 0x0C:
                 action_name = "fireball-hp"
-            else:
-                action_name = "fireball-lp"
         elif r2 == 17:  # shoryuken
-            if kw == 0x0A:
+            if kw == 0x08:
+                action_name = "shoryuken-lp"
+            elif kw == 0x0A:
                 action_name = "shoryuken-mp"
             elif kw == 0x0C:
                 action_name = "shoryuken-hp"
-            else:
-                action_name = "shoryuken-lp"
         elif r2 == 18:  # tatsumaki
             if kw == 0x09:
                 action_name = "tatsu-lk"
+            elif kw == 0x0B:
+                action_name = "tatsu-mk"
             elif kw == 0x0D:
                 action_name = "tatsu-hk"
-            else:
-                action_name = "tatsu-mk"
         if action_name is not None:
             for index, name in enumerate(actions):
                 if name == action_name:

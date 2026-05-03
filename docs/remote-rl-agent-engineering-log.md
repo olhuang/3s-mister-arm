@@ -2,6 +2,149 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-03: M3bc+dqn-v2 Training Execution Plan
+
+Milestone:
+- Milestone 6: next BC pre-training + DQN fine-tune candidate
+
+Purpose:
+- train the next M3bc+dqn candidate from a cleaner BC prior after fixing
+  entropy backprop and reviewing segment-based KW propagation.
+
+Plan:
+- harden BC special-strength labeling before training:
+  - only allow engine-outcome anchors to match a nearby following special
+    segment.
+  - stop matching if another special anchor or a competing special segment
+    appears first.
+  - skip special attack rows with missing KW instead of defaulting them to
+    `fireball-lp`, `shoryuken-lp`, or `tatsu-mk`.
+- train `BC-natural-v1` from only:
+  - `logs/rl-transitions-retrain-p8-natural-human-v1.ndjson`
+  - `logs/rl-transitions-retrain-p8-natural-cpudemo-v1.ndjson`
+- train `BC-coverage-v1` from:
+  - `/tmp/rl-retrain-m1-mix-70-20-10.ndjson`
+  - `logs/rl-transitions-retrain-p2-normals-human-v1.ndjson`
+  - `logs/rl-transitions-retrain-p2-far-whiff-negative-human-v1.ndjson`
+  - `logs/rl-transitions-retrain-p3-specials-human-v1.ndjson`
+  - `logs/rl-transitions-retrain-p8-natural-human-v1.ndjson`
+  - `logs/rl-transitions-retrain-p8-natural-cpudemo-v1.ndjson`
+- choose the better BC prior before DQN fine-tune; prefer natural if action
+  coverage is adequate, otherwise coverage.
+- DQN fine-tune should include the selected BC init plus mixed replay and
+  `p3-fireball-good/bad` logs so fireball value is corrected by reward rather
+  than only by imitation.
+
+Quality gates:
+- BC label coverage should stay above roughly `50%`.
+- BC greedy distribution should not collapse to one movement action.
+- specials should appear in top-k diagnostics without dominating natural play.
+- DQN fine-tune should reduce v330's `shoryuken-lp 52.8%` concentration while
+  making fireball-good rows prefer fireball more than fireball-bad rows.
+
+## 2026-05-03: Execute M3bc+dqn-v2 Training Plan
+
+Milestone:
+- Milestone 6: BC pre-training + DQN fine-tune candidate v2
+
+Files changed:
+- `tools/train_dqn_learner.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- execute the documented next-model plan after the entropy-backprop fix.
+- compare a pure natural-play BC prior against a larger coverage-oriented BC
+  prior, then fine-tune DQN from the better prior with fireball-good/bad logs.
+
+Implementation:
+- hardened `_derive_segment_kw_map`:
+  - limits anchor-to-segment matching to a short local row window.
+  - stops if another special engine anchor appears first.
+  - stops if a competing special attack segment appears first.
+- hardened `derive_bc_label`:
+  - explicit KW mappings are now required for fireball, shoryuken, and tatsu
+    strength labels.
+  - missing-KW special attack rows are skipped as `attack-unknown` instead of
+    silently becoming `fireball-lp`, `shoryuken-lp`, or `tatsu-mk`.
+
+Validation:
+- `python3 -m py_compile tools/train_dqn_learner.py`
+
+BC-natural-v1:
+- Command:
+  `python3 tools/train_dqn_learner.py logs/rl-transitions-retrain-p8-natural-human-v1.ndjson logs/rl-transitions-retrain-p8-natural-cpudemo-v1.ndjson --model-dir model/dqn-retrain-bc-natural-m3-v1 --model-version 321 --training-mode bc --replay-source-include human-demo,cpu-demo --steps 5000 --batch-size 64 --hidden-sizes 64,64 --learning-rate 0.001 --dqn-entropy-reg-weight 0.001 --log-interval 500 --eval-limit 5000 --diagnostic-top-n 12`
+- Result:
+  - rows: `24,754`
+  - labeled: `19,835` (`80.1%`)
+  - skipped: `attack-unknown 4,919`
+  - loss: `3.717 -> 1.765`, avg `1.811`
+  - top labels: `forward 7,128`, `back 4,287`, `stand-lp 2,338`,
+    `fireball-lp 1,623`, `fireball-hp 1,375`, `shoryuken-lp 862`,
+    `fireball-mp 530`, `tatsu-mk 424`
+- Assessment:
+  - pure P8 natural data is enough to train a BC baseline.
+  - coverage is smaller than the full coverage recipe and weaker for throws /
+    some normals, so it is useful as an A/B baseline but not the best DQN init.
+
+BC-coverage-v1:
+- Command:
+  `python3 tools/train_dqn_learner.py /tmp/rl-retrain-m1-mix-70-20-10.ndjson logs/rl-transitions-retrain-p2-normals-human-v1.ndjson logs/rl-transitions-retrain-p2-far-whiff-negative-human-v1.ndjson logs/rl-transitions-retrain-p3-specials-human-v1.ndjson logs/rl-transitions-retrain-p8-natural-human-v1.ndjson logs/rl-transitions-retrain-p8-natural-cpudemo-v1.ndjson --model-dir model/dqn-retrain-bc-coverage-m3-v1 --model-version 322 --training-mode bc --replay-source-include human-demo,cpu-demo --steps 5000 --batch-size 64 --hidden-sizes 64,64 --learning-rate 0.001 --dqn-entropy-reg-weight 0.001 --log-interval 500 --eval-limit 5000 --diagnostic-top-n 12`
+- Result:
+  - rows: `118,556`
+  - labeled: `86,881` (`73.3%`)
+  - skipped: `attack-unknown 31,675`
+  - loss: `3.701 -> 1.461`, avg `1.715`
+  - top labels: `forward 37,346`, `back 25,195`, `stand-lp 4,135`,
+    `fireball-lp 3,657`, `shoryuken-lp 2,508`, `fireball-hp 2,061`,
+    `guard-crouch 1,854`, `tatsu-mk 1,622`
+- Assessment:
+  - better DQN init than BC-natural-v1 due to more labels, lower loss, and
+    broader action coverage.
+
+M3bc+dqn-v2 / v331:
+- Init:
+  - `model/dqn-retrain-bc-coverage-m3-v1`, version `322`.
+- Added fireball split logs:
+  - `logs/rl-transitions-retrain-p3-fireball-good-human-v1.ndjson`
+  - `logs/rl-transitions-retrain-p3-fireball-bad-human-v1.ndjson`
+- Key settings:
+  - LR `0.0001`, gamma `0.95`, Double DQN, valid mask `action-start-v1`.
+  - entropy reg `0.001` with fixed backprop.
+  - balanced batch `movement=0.4,normal=0.2,special=0.4`.
+  - fireball oversample reduced to even `8/8/8`; shoryuken oversample reduced
+    to `4/5/6`.
+  - special expert margin enabled with batch size `8`.
+- Trainer result:
+  - rows: `126,942`
+  - experiences: `52,925`
+  - loss: `5.211 -> 0.363`, avg `0.361`
+  - special expert margin eligible: `5,067`
+  - trainer eval top1: `back 45.8%`, `shoryuken-lp 38.9%`, `forward 15.4%`
+  - top3 includes `fireball-hp 11.2%`
+- Same-observation checks:
+  - fireball-good log:
+    - top1: `forward 83.8%`, `back 9.5%`, `shoryuken-lp 6.1%`
+    - fireball did not appear top1.
+  - fireball-bad log:
+    - top1: `forward 83.8%`, `back 8.7%`, `shoryuken-lp 5.1%`,
+      `fireball-hp 0.1%`
+    - good/bad fireball split is not meaningfully separated.
+  - M1 movement mix:
+    - top1: `back 43.8%`, `shoryuken-lp 30.1%`, `forward 26.2%`
+    - close/mid movement rows still over-prefer shoryuken-lp.
+
+Conclusion:
+- `v331` is not promotable.
+- The plan did reduce v330's global shoryuken concentration
+  (`52.8% -> 38.9%` on the trainer eval slice), but it failed the two most
+  important gates:
+  - fireball-good rows still do not choose fireball.
+  - M1 movement rows still have too much shoryuken.
+- Next attempt should treat fireball-good as a separate stronger supervised or
+  margin target, and should reduce shoryuken margin/oversample pressure further
+  or make shoryuken expert margin context-gated.
+
 ## 2026-05-03: Fix BC/DQN Entropy Regularization Backprop
 
 Milestone:

@@ -2531,9 +2531,12 @@ Tasks:
 - [x] Train BC baseline model on full retrain data (M3bc v320): 66,756 labeled rows, CE loss 3.74→1.41
 - [x] DQN fine-tune from BC baseline (M3bc+dqn v330): first-ever special moves at top-1 greedy (shoryuken-lp 52.8%), confirming BC+DQN approach works
 - [x] Fix BC/DQN entropy regularization so `--dqn-entropy-reg-weight` backpropagates the entropy objective instead of only changing reported loss
+- [x] Harden BC segment KW propagation before next training: short anchor window, stop on competing special anchors/segments, and skip missing-KW special rows instead of defaulting to LP/MK
+- [x] Train BC-natural-v1 from only P8 natural human/cpu demo logs and record whether pure natural play has enough label/action coverage
+- [x] Train BC-coverage-v1 from M1/P2/P3/P8 coverage logs and compare against BC-natural-v1 before DQN fine-tune
 - [ ] Balance shoryuken over-concentration (52.8%) and fireball suppression (0%) via better fireball data and/or entropy tuning
 - [ ] Collect fireball-good scenario data (far range, opponent grounded) to improve fireball hit rate in training distribution
-- [ ] Run M3bc+dqn-v2 with improved fireball/shoryuken data balance and report M3 quality gate results
+- [x] Run M3bc+dqn-v2 with improved fireball/shoryuken data balance and report M3 quality gate results; result: v331 reduced shoryuken eval concentration versus v330 but failed fireball-good and M1 movement gates, so do not promote
 - [x] Train the next live-replay candidate only from declared clean source ratios and compare it against raw v9 plus reranked v9 before live use
 - [x] Add opt-in movable action-start filtering for selected DQN replay sources so recovery-state policy selections do not become valid action samples
 - [x] Train v20 from the clean support-prior live replay with remote-only movable action-start filtering and compare it against v9/v18/v19 before live use

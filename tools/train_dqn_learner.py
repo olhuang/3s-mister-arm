@@ -3556,6 +3556,25 @@ def zero_grads(layers: list[dict[str, object]]) -> list[dict[str, object]]:
     return grads
 
 
+def entropy_regularization_grad(values: list[float], weight: float) -> tuple[float, float, list[float]]:
+    """Return loss delta, positive entropy bonus, and d(-weight*H)/d(values)."""
+    if weight <= 0.0 or not values:
+        return 0.0, 0.0, [0.0 for _ in values]
+    max_value = max(values)
+    exp_values = [math.exp(value - max_value) for value in values]
+    sum_exp = sum(exp_values)
+    if sum_exp <= 0.0:
+        return 0.0, 0.0, [0.0 for _ in values]
+    probs = [value / sum_exp for value in exp_values]
+    entropy = -sum(prob * math.log(max(prob, 1e-15)) for prob in probs)
+    grad = [
+        weight * prob * (math.log(max(prob, 1e-15)) + entropy)
+        for prob in probs
+    ]
+    bonus = weight * entropy
+    return -bonus, bonus, grad
+
+
 def add_backward_grads(
     layers: list[dict[str, object]],
     grads: list[dict[str, object]],
@@ -3835,20 +3854,16 @@ def train_bc(
             # Gradient for cross-entropy: softmax probs, subtract 1 from target
             output_grad = [e / sum_exp for e in exp_q]
             output_grad[target_index] -= 1.0
+            entropy_loss_delta, entropy_bonus, entropy_grad = entropy_regularization_grad(
+                values,
+                entropy_reg_weight,
+            )
+            if entropy_bonus > 0.0:
+                loss += entropy_loss_delta
+                entropy_reg_loss += entropy_bonus
+                for index, grad_value in enumerate(entropy_grad):
+                    output_grad[index] += grad_value
             add_backward_grads(layers, grads, activations, pre_activations, output_grad)
-
-        # Entropy regularization
-        if entropy_reg_weight > 0.0:
-            for features, _ in batch:
-                values, _, _ = forward(layers, features)
-                max_q = max(values)
-                exp_q = [math.exp(q - max_q) for q in values]
-                sum_exp = sum(exp_q)
-                if sum_exp > 0.0:
-                    probs = [e / sum_exp for e in exp_q]
-                    row_entropy = -sum(p * math.log(max(p, 1e-15)) for p in probs)
-                    loss -= entropy_reg_weight * row_entropy
-                    entropy_reg_loss += entropy_reg_weight * row_entropy
 
         apply_grads(layers, grads, learning_rate, batch_size)
         grads = zero_grads(layers)
@@ -4648,10 +4663,8 @@ def train_dqn(
         projectile_defensive_expert_margin_loss = 0.0
         projectile_timing_group_margin_loss = 0.0
         entropy_reg_loss = 0.0
-        batch_q_values: list[list[float]] = []
         for exp in batch:
             values, activations, pre_activations = forward(layers, exp.state)
-            batch_q_values.append(list(values))
             next_values, _, _ = forward(target_layers, exp.next_state)
             if exp.done:
                 target = exp.reward
@@ -4798,17 +4811,16 @@ def train_dqn(
             )
             projectile_timing_group_margin_loss += exp_timing_group_margin_loss
             loss += exp_timing_group_margin_loss
+            entropy_loss_delta, entropy_bonus, entropy_grad = entropy_regularization_grad(
+                values,
+                entropy_reg_weight,
+            )
+            if entropy_bonus > 0.0:
+                loss += entropy_loss_delta
+                entropy_reg_loss += entropy_bonus
+                for index, grad_value in enumerate(entropy_grad):
+                    output_grad[index] += grad_value
             add_backward_grads(layers, grads, activations, pre_activations, output_grad)
-        if entropy_reg_weight > 0.0 and batch_q_values:
-            for q_vals in batch_q_values:
-                max_q = max(q_vals)
-                exp_q = [math.exp(q - max_q) for q in q_vals]
-                sum_exp = sum(exp_q)
-                if sum_exp > 0.0:
-                    probs = [e / sum_exp for e in exp_q]
-                    row_entropy = -sum(p * math.log(max(p, 1e-15)) for p in probs)
-                    loss -= entropy_reg_weight * row_entropy
-                    entropy_reg_loss += entropy_reg_weight * row_entropy
         if projectile_expert_margin_config.enabled and projectile_expert_margin_pool:
             for _ in range(max(0, projectile_expert_margin_config.batch_size)):
                 exp = rng.choice(projectile_expert_margin_pool)

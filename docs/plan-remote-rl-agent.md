@@ -2530,6 +2530,7 @@ Tasks:
 - [x] Implement BC (Behavioral Cloning) training mode in `train_dqn_learner.py` with `--training-mode bc`, engine state + input label derivation, and cross-entropy training
 - [x] Train BC baseline model on full retrain data (M3bc v320): 66,756 labeled rows, CE loss 3.74→1.41
 - [x] DQN fine-tune from BC baseline (M3bc+dqn v330): first-ever special moves at top-1 greedy (shoryuken-lp 52.8%), confirming BC+DQN approach works
+- [x] Fix BC/DQN entropy regularization so `--dqn-entropy-reg-weight` backpropagates the entropy objective instead of only changing reported loss
 - [ ] Balance shoryuken over-concentration (52.8%) and fireball suppression (0%) via better fireball data and/or entropy tuning
 - [ ] Collect fireball-good scenario data (far range, opponent grounded) to improve fireball hit rate in training distribution
 - [ ] Run M3bc+dqn-v2 with improved fireball/shoryuken data balance and report M3 quality gate results

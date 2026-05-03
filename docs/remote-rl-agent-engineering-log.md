@@ -2,6 +2,47 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-03: Fix BC/DQN Entropy Regularization Backprop
+
+Milestone:
+- Milestone 6: BC pre-training + DQN fine-tuning implementation review
+
+Files changed:
+- `tools/train_dqn_learner.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- review the M3bc+dqn v330 training implementation and fix a trainer issue
+  that made entropy tuning ineffective.
+
+Implementation:
+- added a shared entropy-regularization gradient helper for output logits/Qs.
+- BC training now adds the gradient of `-weight * entropy(softmax(outputs))`
+  to the same output gradient as cross-entropy.
+- DQN training now adds the same entropy gradient before backpropagating each
+  sampled transition.
+
+Review finding:
+- previous `--dqn-entropy-reg-weight` accounting changed printed loss and
+  metadata but did not call `add_backward_grads` for the entropy term.
+- as a result, v330's recorded `entropy_reg_weight=0.0003` did not actually
+  reduce shoryuken concentration; future M3bc+dqn-v2 entropy sweeps need this
+  fix to be meaningful.
+
+Validation:
+- `python3 -m py_compile tools/train_dqn_learner.py`
+- BC smoke:
+  `python3 tools/train_dqn_learner.py logs/rl-transitions-retrain-p3-specials-human-v1.ndjson --training-mode bc --steps 2 --batch-size 8 --limit 50 --model-dir /tmp/rl-bc-entropy-smoke-20260503 --model-version 1 --dqn-entropy-reg-weight 0.001 --log-interval 1`
+  - completed; printed non-zero entropy regularization and published v1.
+- DQN smoke:
+  `python3 tools/train_dqn_learner.py logs/rl-transitions-retrain-p3-specials-human-v1.ndjson --steps 2 --batch-size 8 --limit 200 --model-dir /tmp/rl-dqn-entropy-smoke-20260503 --model-version 1 --dqn-entropy-reg-weight 0.001 --log-interval 1 --eval-limit 50`
+  - completed; printed non-zero entropy regularization and published v1.
+
+Follow-up:
+- rerun M3bc+dqn-v2 after positive fireball data balancing; do not compare
+  entropy settings against v330 as if v330's entropy regularization was active.
+
 ## 2026-05-02: M3a Fireball Formal Split Training Attempts
 
 Milestone:

@@ -3609,7 +3609,7 @@ def apply_grads(layers: list[dict[str, object]], grads: list[dict[str, object]],
                 weights[out_index][in_index] = float(weights[out_index][in_index]) - scale * grad
 
 
-def _derive_segment_kw_map(rows: list[dict[str, object]]) -> dict[tuple[int, int], int]:
+def _derive_segment_kw_map(rows: list[dict[str, object]]) -> dict[tuple[int, int, int], int]:
     """Build per-instance KW map from engine outcome rows.
 
     Engine outcome rows appear just BEFORE their corresponding attack segment
@@ -3620,8 +3620,11 @@ def _derive_segment_kw_map(rows: list[dict[str, object]]) -> dict[tuple[int, int
     Algorithm:
     1. Find engine outcome rows with non-zero KW (anchors).
     2. For each anchor, scan forward to find the next contiguous attack segment
-       (R1=4, matching family R2) in the same episode.
-    3. Map every (episode_id, decision_id) in that segment to the anchor's KW.
+       (R1=4, matching family R2) in the same (run, episode).
+    3. Map every (run_id, episode_id, decision_id) in that segment to the anchor's KW.
+
+    Key uses (run_id, episode_id, decision_id) to avoid collisions across
+    different runs that share the same episode/decision numbering.
 
     Only human-demo and cpu-demo rows have engine outcome data;
     remote/policy rows never populate these fields.
@@ -3629,58 +3632,64 @@ def _derive_segment_kw_map(rows: list[dict[str, object]]) -> dict[tuple[int, int
     ENGINE_ACTION_TO_R2 = {1229: 16, 1228: 17, 1230: 18}
 
     # Step 1: find engine outcome anchors
-    anchors: list[tuple[int, int, int, int]] = []  # (row_index, episode_id, family_r2, kw)
+    anchors: list[tuple[int, int, int, int, int]] = []  # (row_index, run_id, episode_id, family_r2, kw)
     for i, row in enumerate(rows):
         eaid = int_row_field(row, "engine_action_id")
         kw = int_row_field(row, "engine_kind_of_waza")
         if kw != 0 and eaid in ENGINE_ACTION_TO_R2:
-            anchors.append((i, int_row_field(row, "episode_id"), ENGINE_ACTION_TO_R2[eaid], kw))
+            anchors.append((
+                i,
+                int_row_field(row, "run_id"),
+                int_row_field(row, "episode_id"),
+                ENGINE_ACTION_TO_R2[eaid],
+                kw,
+            ))
 
     if not anchors:
         return {}
 
     # Step 2: for each anchor, find the next matching attack segment
-    result: dict[tuple[int, int], int] = {}
-    used_segments: set[tuple[int, int]] = set()  # (episode_id, segment_start_decision_id)
+    RowKey = tuple[int, int, int]  # (run_id, episode_id, decision_id)
+    result: dict[RowKey, int] = {}
+    used_segments: set[tuple[int, int, int]] = set()  # (run_id, episode_id, segment_start_did)
 
-    for a_idx, a_eid, a_r2, a_kw in anchors:
-        # Scan forward from this anchor to find the next attack segment
+    for a_idx, a_rid, a_eid, a_r2, a_kw in anchors:
         for j in range(a_idx, len(rows)):
             row = rows[j]
+            rid = int_row_field(row, "run_id")
             eid = int_row_field(row, "episode_id")
+
+            if rid != a_rid or eid != a_eid:
+                continue  # different run or episode
+
             r1 = int_row_field(row, "obs_self_routine_1")
             r2 = int_row_field(row, "obs_self_routine_2")
 
-            if eid != a_eid:
-                continue  # different episode
-
-            # Found the start of a matching attack segment
             if r1 == 4 and r2 == a_r2:
                 seg_start_did = int_row_field(row, "decision_id")
-                if (eid, seg_start_did) in used_segments:
-                    continue  # already claimed by an earlier anchor
+                if (rid, eid, seg_start_did) in used_segments:
+                    continue
 
-                used_segments.add((eid, seg_start_did))
+                used_segments.add((rid, eid, seg_start_did))
 
-                # Label this entire contiguous segment
                 for k in range(j, len(rows)):
                     row2 = rows[k]
-                    if int_row_field(row2, "episode_id") != eid:
+                    if int_row_field(row2, "run_id") != rid or int_row_field(row2, "episode_id") != eid:
                         break
                     r1k = int_row_field(row2, "obs_self_routine_1")
                     r2k = int_row_field(row2, "obs_self_routine_2")
                     if r1k == 4 and r2k == a_r2:
                         did = int_row_field(row2, "decision_id")
-                        result[(eid, did)] = a_kw
+                        result[(rid, eid, did)] = a_kw
                     else:
-                        break  # segment ended
-                break  # anchor consumed
+                        break
+                break
 
     return result
 
 
 # Segment-level KW cache, populated once per BC training run
-_BC_SEGMENT_KW_MAP: dict[tuple[int, int], int] = {}
+_BC_SEGMENT_KW_MAP: dict[tuple[int, int, int], int] = {}
 
 
 def derive_bc_label(row: dict[str, object], actions: tuple[str, ...]) -> int | None:
@@ -3702,9 +3711,10 @@ def derive_bc_label(row: dict[str, object], actions: tuple[str, ...]) -> int | N
     if r1 == 4:
         action_name: str | None = None
         # Get KW from segment map if not set on this row
+        rid = int_row_field(row, "run_id")
         did = int_row_field(row, "decision_id")
         if kw == 0:
-            kw = _BC_SEGMENT_KW_MAP.get((eid, did), 0)
+            kw = _BC_SEGMENT_KW_MAP.get((rid, eid, did), 0)
         if r2 == 16:  # hadouken
             if kw == 0x0A:
                 action_name = "fireball-mp"

@@ -2,6 +2,81 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-03: M3bc+dqn-v3 / v332 Corrective Plan And Trainer Foundations
+
+Milestone:
+- Milestone 6: fix v331 fireball-good and shoryuken-overgeneralization gates
+
+Files changed:
+- `tools/rl_probe_server.py`
+- `tools/train_dqn_learner.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Diagnosis accepted from v331 review:
+- Fireball-good did not become fireball top-1 because DQN still lacks a strong
+  positive fireball launch signal and because the previous recipe let movement
+  regression penalize far-range fireball as a generic attack.
+- Shoryuken remained overgeneralized because positive special margin / reward
+  pressure was not context-gated enough and still leaked into movement rows.
+- The DQN feature schema had opponent routine context but no self routine
+  context, even though transition rows already carry:
+  - `obs_self_routine_1`
+  - `obs_self_routine_2`
+  - `obs_self_routine_attack_state`
+
+Plan:
+- Add self-routine context to DQN features:
+  - one-hot `obs_self_routine_1`
+  - one-hot `obs_self_routine_2`
+  - scalar `obs_self_routine_attack_state`
+- Preserve warm-start from existing BC/DQN models by expanding the first layer
+  when an init model's feature names are a subset of the current feature
+  schema; new feature weights start at zero.
+- Exempt far grounded zoning fireball from movement regression so a correct
+  long-range fireball candidate is not pushed below movement actions.
+- Add opt-in context-gated special expert margin:
+  - fireball margin only in far grounded zoning context.
+  - shoryuken margin only when opponent routine looks airborne/jump-like.
+  - tatsu margin only in close/mid range.
+- Keep fireball action labels anchored to launch decisions; do not move labels
+  to projectile-active frames. Delayed reward/credit and context gating should
+  connect later projectile outcomes back to launch decisions.
+
+Implementation:
+- `tools/rl_probe_server.py`
+  - `DQN_FEATURE_NAMES` now includes self routine one-hot features and
+    `obs_self_routine_attack_state`.
+  - `dqn_feature_value` can materialize the new one-hot self routine features.
+- `tools/train_dqn_learner.py`
+  - added init-model input feature expansion for subset-compatible feature
+    schemas.
+  - movement regression now removes fireball actions from attack competitors
+    in far grounded zoning contexts.
+  - added `--special-expert-margin-context-gate`.
+  - added `--special-expert-margin-fireball-min-abs-dx`.
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py tools/train_dqn_learner.py`
+- feature schema smoke:
+  - current DQN feature count is `72`.
+  - self routine one-hot features and `obs_self_routine_attack_state` are
+    present.
+- warm-start / trainer smoke:
+  `python3 tools/train_dqn_learner.py logs/rl-transitions-retrain-p3-specials-human-v1.ndjson --model-dir /tmp/rl-v332-feature-expand-smoke --model-version 1 --init-model model/dqn-retrain-bc-coverage-m3-v1 --init-model-action-mode exact --limit 800 --steps 2 --batch-size 8 --hidden-sizes 64,64 --training-action-source auto --reward-risk-profile none --special-expert-margin-loss --special-expert-margin-context-gate --special-expert-margin-batch-size 2 --movement-regression-loss-weight 0.01 --movement-regression-action-groups stand-normal,crouch-normal,air-normal,fireball,shoryuken,tatsu --batch-sampling balanced --balanced-batch-ratios movement=0.4,normal=0.2,special=0.4 --dqn-valid-action-mask action-start-v1 --log-interval 1 --eval-limit 100 --diagnostic-top-n 8`
+  - completed and published smoke model.
+  - init model `v322` loaded successfully despite feature schema expansion.
+
+Next:
+- Train a new BC/DQN pair under the v332 schema, or warm-start DQN from
+  `BC-coverage v322` with feature expansion as an ablation.
+- Use `--special-expert-margin-context-gate` and remove fireball from any
+  broad anti-attack pressure unless the fireball row is explicitly bad.
+- Re-check:
+  - fireball-good vs fireball-bad separation.
+  - M1 movement shoryuken contamination.
+  - P2/P3 action distribution drift.
+
 ## 2026-05-03: M3bc+dqn-v2 Training Execution Plan
 
 Milestone:

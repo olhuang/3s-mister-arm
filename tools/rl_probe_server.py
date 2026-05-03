@@ -314,7 +314,17 @@ DQN_OPP_ROUTINE_2_VALUES = (0, 1, 3, 4, 5, 6, 7, 8, 12, 13, 16, 17, 18, 19, 21, 
 DQN_OPP_ROUTINE_FEATURE_NAMES = tuple(
     f"obs_opp_routine_1_is_{value}" for value in DQN_OPP_ROUTINE_1_VALUES
 ) + tuple(f"obs_opp_routine_2_is_{value}" for value in DQN_OPP_ROUTINE_2_VALUES)
-DQN_FEATURE_NAMES = DQN_BASE_FEATURE_NAMES + DQN_OPP_ROUTINE_FEATURE_NAMES
+DQN_SELF_ROUTINE_1_VALUES = (0, 1, 2, 3, 4)
+DQN_SELF_ROUTINE_2_VALUES = (0, 1, 3, 4, 5, 6, 7, 8, 12, 13, 16, 17, 18, 19, 21, 22, 23, 24, 28, 32, 36, 37)
+DQN_SELF_ROUTINE_FEATURE_NAMES = tuple(
+    f"obs_self_routine_1_is_{value}" for value in DQN_SELF_ROUTINE_1_VALUES
+) + tuple(f"obs_self_routine_2_is_{value}" for value in DQN_SELF_ROUTINE_2_VALUES)
+DQN_FEATURE_NAMES = (
+    DQN_BASE_FEATURE_NAMES
+    + ("obs_self_routine_attack_state",)
+    + DQN_OPP_ROUTINE_FEATURE_NAMES
+    + DQN_SELF_ROUTINE_FEATURE_NAMES
+)
 DQN_FEATURE_SCALES = {
     "obs_abs_dx": 384.0,
     "obs_abs_dy": 192.0,
@@ -335,8 +345,10 @@ DQN_FEATURE_SCALES = {
     "obs_projectile_rel_y": 256.0,
     "obs_projectile_vel_x": 16.0,
     "obs_projectile_time_to_self": 120.0,
+    "obs_self_routine_attack_state": 1.0,
 }
 DQN_FEATURE_SCALES.update({name: 1.0 for name in DQN_OPP_ROUTINE_FEATURE_NAMES})
+DQN_FEATURE_SCALES.update({name: 1.0 for name in DQN_SELF_ROUTINE_FEATURE_NAMES})
 
 
 @dataclass(frozen=True)
@@ -1562,6 +1574,18 @@ def tabular_training_reward(row: dict[str, object], training_mode_hp_delta_mode:
 
 
 def dqn_feature_value(row: dict[str, object], name: str) -> float:
+    if name.startswith("obs_self_routine_1_is_"):
+        try:
+            value = int(name.rsplit("_", 1)[1])
+        except ValueError:
+            return 0.0
+        return 1.0 if row_int_field(row, "obs_self_routine_1") == value else 0.0
+    if name.startswith("obs_self_routine_2_is_"):
+        try:
+            value = int(name.rsplit("_", 1)[1])
+        except ValueError:
+            return 0.0
+        return 1.0 if row_int_field(row, "obs_self_routine_2") == value else 0.0
     if name.startswith("obs_opp_routine_1_is_"):
         try:
             value = int(name.rsplit("_", 1)[1])

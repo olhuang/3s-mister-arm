@@ -1078,6 +1078,8 @@ class SpecialExpertMarginConfig:
     min_reward: float = 0.0
     eligible_sources: frozenset[str] = field(default_factory=lambda: frozenset({"human-demo", "cpu-demo"}))
     valid_action_mask_mode: str = "action-start-v1"
+    context_gate: bool = False
+    fireball_min_abs_dx: int = 120
 
     @property
     def enabled(self) -> bool:
@@ -1096,6 +1098,8 @@ class SpecialExpertMarginConfig:
             "min_reward": self.min_reward,
             "eligible_sources": sorted(self.eligible_sources),
             "valid_action_mask_mode": self.valid_action_mask_mode,
+            "context_gate": self.context_gate,
+            "fireball_min_abs_dx": self.fireball_min_abs_dx,
             "special_actions": sorted(SPECIAL_ACTIONS),
         }
 
@@ -3311,6 +3315,8 @@ def special_expert_margin_config_from_args(args: argparse.Namespace) -> SpecialE
             "--special-expert-margin-sources",
         ),
         valid_action_mask_mode=mode,
+        context_gate=bool(args.special_expert_margin_context_gate),
+        fireball_min_abs_dx=max(0, int(args.special_expert_margin_fireball_min_abs_dx)),
     )
 
 
@@ -3940,6 +3946,20 @@ def is_movement_regression_context(exp: Experience, config: MovementRegressionLo
     return True
 
 
+def is_fireball_zoning_context(row: dict[str, object], min_abs_dx: int) -> bool:
+    if abs(int_row_field(row, "obs_abs_dx")) < min_abs_dx:
+        return False
+    if int_row_field(row, "obs_self_airborne") != 0:
+        return False
+    if int_row_field(row, "obs_projectile_active") != 0:
+        return False
+    if int_row_field(row, "obs_opp_routine_1") == 4:
+        return False
+    if int_row_field(row, "obs_opp_routine_attack_state") != 0:
+        return False
+    return True
+
+
 def apply_movement_regression_loss(
     exp: Experience,
     values: list[float],
@@ -3955,6 +3975,10 @@ def apply_movement_regression_loss(
     value_count = len(values)
     valid_movement_indices = tuple(index for index in movement_indices if index < value_count)
     valid_attack_indices = tuple(index for index in attack_indices if index < value_count)
+    if is_fireball_zoning_context(exp.row, config.far_dx_threshold):
+        valid_attack_indices = tuple(
+            index for index in valid_attack_indices if not actions[index].startswith("fireball-")
+        )
     if not valid_movement_indices or not valid_attack_indices:
         return 0.0
     stats.sampled_events += 1
@@ -4137,6 +4161,24 @@ def special_margin_bucket(action_name: str) -> str:
     return "special"
 
 
+def is_special_expert_margin_context(
+    row: dict[str, object],
+    action_name: str,
+    config: SpecialExpertMarginConfig,
+) -> bool:
+    if not config.context_gate:
+        return True
+    if action_name.startswith("fireball-"):
+        return is_fireball_zoning_context(row, config.fireball_min_abs_dx)
+    if action_name.startswith("shoryuken-"):
+        opp_routine_1 = int_row_field(row, "obs_opp_routine_1")
+        opp_routine_2 = int_row_field(row, "obs_opp_routine_2")
+        return opp_routine_1 == 0 and 18 <= opp_routine_2 <= 26
+    if action_name.startswith("tatsu-"):
+        return int_row_field(row, "obs_abs_dx") <= 120
+    return False
+
+
 def apply_special_expert_margin_loss(
     exp: Experience,
     values: list[float],
@@ -4167,6 +4209,9 @@ def apply_special_expert_margin_loss(
 
     expert_action = actions[expert_index]
     if expert_action not in SPECIAL_ACTIONS:
+        stats.expert_invalid_events += 1
+        return 0.0
+    if not is_special_expert_margin_context(exp.row, expert_action, config):
         stats.expert_invalid_events += 1
         return 0.0
 
@@ -5178,6 +5223,34 @@ def expand_init_dqn_layers(
     return expanded_layers
 
 
+def expand_init_dqn_input_features(
+    init_layers: list[dict[str, object]],
+    init_feature_names: tuple[str, ...],
+    feature_names: tuple[str, ...],
+) -> list[dict[str, object]]:
+    init_feature_to_index = {name: index for index, name in enumerate(init_feature_names)}
+    missing_features = [name for name in init_feature_names if name not in set(feature_names)]
+    if missing_features:
+        raise SystemExit(
+            "--init-model feature expansion requires init features to be a subset of the current schema; "
+            f"missing from current={','.join(missing_features)}"
+        )
+    expanded_layers = copy.deepcopy(init_layers)
+    first_layer = expanded_layers[0]
+    weights = first_layer["weights"]
+    assert isinstance(weights, list)
+    expanded_weights: list[list[float]] = []
+    for raw_row in weights:
+        assert isinstance(raw_row, list)
+        expanded_row: list[float] = []
+        for feature_name in feature_names:
+            init_index = init_feature_to_index.get(feature_name)
+            expanded_row.append(float(raw_row[init_index]) if init_index is not None else 0.0)
+        expanded_weights.append(expanded_row)
+    first_layer["weights"] = expanded_weights
+    return expanded_layers
+
+
 def load_init_dqn_model(
     value: str,
     actions: tuple[str, ...],
@@ -5228,7 +5301,8 @@ def load_init_dqn_model(
         raise SystemExit(f"--init-model {path}: missing dqn.feature_names")
     feature_names = tuple(str(name) for name in raw_feature_names)
     expected_feature_names = tuple(rl.DQN_FEATURE_NAMES)
-    if feature_names != expected_feature_names:
+    feature_expansion_required = feature_names != expected_feature_names
+    if feature_expansion_required and not set(feature_names).issubset(set(expected_feature_names)):
         raise SystemExit(
             f"--init-model {path}: feature schema mismatch "
             f"got={len(feature_names)} expected={len(expected_feature_names)}"
@@ -5236,11 +5310,20 @@ def load_init_dqn_model(
     init_output_dim = len(init_actions) if clean_action_mode == "expand" else len(actions)
     layers = validate_dqn_layers(
         raw_dqn.get("layers"),
-        len(expected_feature_names),
+        len(feature_names) if feature_expansion_required else len(expected_feature_names),
         hidden_sizes,
         init_output_dim,
         f"--init-model {path}",
     )
+    if feature_expansion_required:
+        layers = expand_init_dqn_input_features(layers, feature_names, expected_feature_names)
+        layers = validate_dqn_layers(
+            layers,
+            len(expected_feature_names),
+            hidden_sizes,
+            init_output_dim,
+            f"--init-model {path} feature-expanded",
+        )
     if clean_action_mode == "expand" and init_actions != actions:
         layers = expand_init_dqn_layers(layers, init_actions, actions, random.Random(seed))
         layers = validate_dqn_layers(
@@ -5261,7 +5344,7 @@ def load_init_dqn_model(
         source=str(payload.get("source", "") or ""),
         metadata=metadata if isinstance(metadata, dict) else {},
         actions=init_actions,
-        feature_names=feature_names,
+        feature_names=expected_feature_names,
         layers=layers,
         action_mode=clean_action_mode,
     )
@@ -6162,6 +6245,22 @@ def main() -> None:
         choices=rl.DQN_VALID_ACTION_MASK_MODES,
         default="action-start-v1",
         help="Valid-action mask used for special expert margin competitors",
+    )
+    parser.add_argument(
+        "--special-expert-margin-context-gate",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Only apply special expert margin in coarse move-family contexts: "
+            "far grounded zoning for fireball, opponent jump/air routine for shoryuken, "
+            "and close/mid range for tatsu"
+        ),
+    )
+    parser.add_argument(
+        "--special-expert-margin-fireball-min-abs-dx",
+        type=int,
+        default=120,
+        help="Minimum obs_abs_dx required for fireball rows when --special-expert-margin-context-gate is enabled",
     )
     parser.add_argument(
         "--projectile-late-defensive-margin-loss",

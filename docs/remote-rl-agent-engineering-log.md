@@ -2,6 +2,59 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-04: Engine Fields For Remote Execution And Fireball Macro Fix
+
+Milestone:
+- Milestone 6: data quality and macro correctness fixes
+
+Files changed:
+- `src/rl/rl_session.c`
+- `tools/rl_probe_server.py`
+
+Purpose:
+- Enable `engine_*` fields (engine_action_id, engine_kind_of_waza, engine_routine_1/2,
+  engine_current_attack, engine_lag_frames) for remote execution (src=1), not just
+  human-demo (src=4) and cpu-demo (src=5).
+- Fix fireball macro producing Shoryuken due to SF3 input buffer interpreting
+  forward(walk) → down → down-forward → forward+P as Shoryuken motion.
+
+Implementation:
+- Removed `!RLSession_IsDemoExecutionSource(entry->execution_source)` gate in
+  `RLSession_MaybeAttributeDemoEngineAction()` (rl_session.c:973).
+- Removed now-unused `RLSession_IsDemoExecutionSource()` function.
+- Fireball macro: added 2 neutral frames at start to clear SF3 input buffer
+  before fireball motion (NEUTRAL ×2 → DOWN_BACK → DOWN → DOWN_FORWARD → FORWARD+BUTTON).
+- Reverted Shoryuken repeat-lockout commits (1215c272, 86ec280f, 5b6156ce, 0e6562a4)
+  due to design concern: lockout triggered on all Shoryukens including anti-air,
+  preventing back-to-back anti-air responses.
+
+Validation:
+- New log confirms engine fields populated for remote rows (28 engine events in 1144 rows).
+- Fireball→Shoryuken misclassification reduced: 10/23 remaining mismatches traced to
+  single neutral frame insufficient to clear ~10-frame SF3 input buffer.
+  After adding second neutral frame: pending live test.
+
+Discoveries during analysis:
+- v350 log (737 rows, 12 sec): 126 fireball action rows (21 decisions), only 2 Shoryuken.
+  Model was spamming fireballs at ~1.7/sec — visible as "Shoryuken-like" startup
+  animation. Root cause: fireball macro's down-back→down→down-forward→forward+P
+  sequence interpreted as Shoryuken when model was walking forward before macro.
+- SF3 input priority: Shoryuken (6→2→3+P) takes priority over fireball (2→3→6+P)
+  when both motions are present in input buffer (~10 frame window).
+- Fix verified: 3 neutral frames clears buffer. Reduced to 2 neutral + DOWN_BACK
+  for user-preferred sequence.
+
+Action ID reference:
+- policy_executed_action_id mapping: walk=1, jump=4, fireball=1229, shoryuken=1228,
+  tatsu=1230, throw=8 (C side), stand-normal=6, crouch-normal=15
+- engine_action_id uses same numbering as policy IDs
+- Fireball macro wire sequence: 0→0→7→2→8→68→0→0 (8 steps, 4 frames each)
+
+Policy requested vs executed analysis:
+- 30.6% of rows have requested!=executed. All are requested=0 → executed=X.
+  Requested=0 is normal for macro continuation steps and fallback actions.
+  No cases of "model wanted A, executed B".
+
 ## 2026-05-04: Far Shoryuken Hard Block Macro Continuation Fix
 
 Milestone:

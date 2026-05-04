@@ -2423,6 +2423,8 @@ Tasks:
 - [x] Add `fireball` / `throw` to the first tabular action set and log ready action distributions by distance bucket
 - [x] Add tabular macro-action lock so multi-step actions such as `fireball` are not interrupted by the next q-table decision
 - [x] Add an anti-DP fireball macro variant to reduce accidental shoryuken credit pollution
+- [x] Enable engine_* fields for remote execution (remove RLSession_IsDemoExecutionSource gate) so model actions get engine outcome attribution
+- [x] Fix fireball macro walking-DP misclassification: add neutral frames to clear SF3 input buffer before fireball motion
 - [x] Add a guard/back-hold macro so tabular `back` can produce a defense window instead of a single short hold
 - [x] Add cross distance/threat ready-action stats for strike-defense policy diagnosis
 - [x] Add `jump-forward-mk` to the tabular action set as a first active approach attack

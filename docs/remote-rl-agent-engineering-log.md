@@ -96,26 +96,6 @@ Second follow-up:
   - with `repeat_lockout_allow_anti_air=True`, the same anti-air row is not
     hard-blocked by lockout.
 
-Third follow-up:
-- User identified the repeated DPs as HP Shoryuken specifically.
-- Root cause is likely command-buffer leakage rather than an explicit
-  `shoryuken-hp` server decision:
-  - v350 actor manifest has `fallback_policy=hp`.
-  - when a Shoryuken macro is canceled or blocked, a fallback `hp` / `stand-hp`
-    button press can still be interpreted by the game as HP Shoryuken if the
-    command buffer still contains the prior DP directional sequence.
-- Implementation:
-  - added `DQN_SHORYUKEN_LOCKOUT_PUNCH_ACTIONS` for direct punch actions that
-    can complete a buffered DP: `hp`, stand/crouch punches, and `forward-hp`.
-  - while Shoryuken repeat lockout is active, those punch actions are treated
-    like hard-blocked Shoryuken actions.
-  - if the actor fallback policy is a punch action during lockout, the fallback
-    is rewritten to `back`.
-- Smoke:
-  - lockout marks `hp` and `stand-hp` blocked.
-  - `stand-hk` remains allowed.
-  - actor with `fallback_policy=hp` returns `back` during lockout.
-
 ## 2026-05-04: v350 Guard Success Bonus And Grounded Normals Defense Phase 4 Complete
 
 Milestone:

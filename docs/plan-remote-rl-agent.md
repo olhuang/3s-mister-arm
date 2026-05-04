@@ -2562,7 +2562,6 @@ Tasks:
 - [x] Fix active macro continuation bypass for far Shoryuken hard block: DQN policy now cancels a currently playing `shoryuken-*` macro when the current observation row hard-blocks that action, so macro step 1+ cannot continue through the guardrail after distance/context changes
 - [x] Fix repeated far Shoryuken burst behavior: when far hard-block is enabled, a short repeat lockout now suppresses non-anti-air `shoryuken-*` choices for 12 decisions after a Shoryuken starts or is canceled, while preserving rows that still match the explicit anti-air exemption
 - [x] Tighten repeated Shoryuken burst lockout: repeat lockout now suppresses all `shoryuken-*` by default, including rows that look like anti-air context, with `--dqn-shoryuken-prior-repeat-lockout-allow-anti-air` available only as an opt-in escape hatch
-- [x] Fix HP fallback / command-buffer Shoryuken leak: v350 fallback policy is `hp`, so lockout now also suppresses direct punch actions such as `hp`, `stand-hp`, `crouch-hp`, and `forward-hp`, and rewrites punch fallback to `back` while the Shoryuken repeat lockout is active
 - [x] Train the next live-replay candidate only from declared clean source ratios and compare it against raw v9 plus reranked v9 before live use
 - [x] Add opt-in movable action-start filtering for selected DQN replay sources so recovery-state policy selections do not become valid action samples
 - [x] Train v20 from the clean support-prior live replay with remote-only movable action-start filtering and compare it against v9/v18/v19 before live use

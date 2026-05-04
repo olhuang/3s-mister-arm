@@ -475,7 +475,6 @@ class DQNShoryukenContextPriorConfig:
     far_min_abs_dx: int = 0
     far_extra_penalty: float = 0.0
     far_block: bool = False
-    repeat_lockout_decisions: int = 12
 
     def label(self) -> str:
         if not self.enabled:
@@ -489,8 +488,6 @@ class DQNShoryukenContextPriorConfig:
             label += f"/far_dx>={self.far_min_abs_dx}+{self.far_extra_penalty:.3f}"
         if self.far_block:
             label += f"/far_block_dx>={self.far_min_abs_dx}"
-            if self.repeat_lockout_decisions > 0:
-                label += f"/repeat_lockout:{self.repeat_lockout_decisions}"
         return label
 
 
@@ -1362,10 +1359,18 @@ def dqn_shoryuken_context_prior_penalty(
 ) -> float:
     if not config.enabled or action not in SHORYUKEN_ACTION_NAMES:
         return 0.0
-    if dqn_shoryuken_anti_air_context(row, config):
+    abs_dx = row_int_field(row, "obs_abs_dx")
+    opp_routine_1 = row_int_field(row, "obs_opp_routine_1")
+    opp_routine_2 = row_int_field(row, "obs_opp_routine_2")
+    anti_air_context = (
+        config.min_abs_dx <= abs_dx <= config.max_abs_dx
+        and opp_routine_1 == 0
+        and config.opp_air_routine_min <= opp_routine_2 <= config.opp_air_routine_max
+    )
+    if anti_air_context:
         return 0.0
     penalty = max(0.0, config.penalty)
-    far_context = row_int_field(row, "obs_abs_dx") >= max(0, config.far_min_abs_dx)
+    far_context = abs_dx >= max(0, config.far_min_abs_dx)
     if config.far_block and far_context:
         return 1_000_000.0
     if config.far_extra_penalty > 0.0 and far_context:
@@ -1375,20 +1380,6 @@ def dqn_shoryuken_context_prior_penalty(
     if not dqn_ground_action_start_allowed(row):
         return penalty
     return penalty
-
-
-def dqn_shoryuken_anti_air_context(
-    row: dict[str, object],
-    config: DQNShoryukenContextPriorConfig,
-) -> bool:
-    abs_dx = row_int_field(row, "obs_abs_dx")
-    opp_routine_1 = row_int_field(row, "obs_opp_routine_1")
-    opp_routine_2 = row_int_field(row, "obs_opp_routine_2")
-    return (
-        config.min_abs_dx <= abs_dx <= config.max_abs_dx
-        and opp_routine_1 == 0
-        and config.opp_air_routine_min <= opp_routine_2 <= config.opp_air_routine_max
-    )
 
 
 def dqn_ground_normal_context_prior_penalty(
@@ -1933,14 +1924,7 @@ def dqn_action_hard_blocked_by_priors(
     action: str,
     row: dict[str, object],
     shoryuken_context_prior_config: DQNShoryukenContextPriorConfig = DQNShoryukenContextPriorConfig(),
-    shoryuken_repeat_lockout_active: bool = False,
 ) -> bool:
-    if (
-        shoryuken_repeat_lockout_active
-        and action in SHORYUKEN_ACTION_NAMES
-        and not dqn_shoryuken_anti_air_context(row, shoryuken_context_prior_config)
-    ):
-        return True
     return dqn_shoryuken_context_prior_penalty(action, row, shoryuken_context_prior_config) >= 1_000_000.0
 
 
@@ -2852,7 +2836,6 @@ def dqn_actor_action_name(
     ground_normal_context_prior_config: DQNGroundNormalContextPriorConfig = DQNGroundNormalContextPriorConfig(),
     fireball_zoning_prior_config: DQNFireballZoningPriorConfig = DQNFireballZoningPriorConfig(),
     threat_defense_prior_config: DQNThreatDefensePriorConfig = DQNThreatDefensePriorConfig(),
-    shoryuken_repeat_lockout_active: bool = False,
 ) -> str | None:
     if actor.policy != "dqn" or not obs_row or not actor.dqn_model:
         return None
@@ -2864,7 +2847,6 @@ def dqn_actor_action_name(
                 action,
                 obs_row,
                 shoryuken_context_prior_config,
-                shoryuken_repeat_lockout_active,
             )
         ]
         if not eligible_actions:
@@ -2883,18 +2865,6 @@ def dqn_actor_action_name(
         fireball_zoning_prior_config,
         threat_defense_prior_config,
     )
-    if not ranked_actions:
-        return None
-    ranked_actions = [
-        (action, score)
-        for action, score in ranked_actions
-        if not dqn_action_hard_blocked_by_priors(
-            action,
-            obs_row,
-            shoryuken_context_prior_config,
-            shoryuken_repeat_lockout_active,
-        )
-    ]
     if not ranked_actions:
         return None
     return ranked_actions[0][0]
@@ -2979,11 +2949,9 @@ def policy_action_frame(
     model_store: ActorModelStore,
     policy_states: dict[tuple[int, int, int, str], dict[str, int]],
     macro_states: dict[tuple[int, int, int], dict[str, int | str]],
-    shoryuken_lockout_states: dict[tuple[int, int, int], int],
     nonce: int,
     run_id: int,
     episode_id: int,
-    decision_id: int,
     repeat_delay_ms: int,
     tabular_state_key_override: str | None = None,
     obs_row_override: dict[str, object] | None = None,
@@ -2995,14 +2963,6 @@ def policy_action_frame(
     dqn_fireball_zoning_prior_config: DQNFireballZoningPriorConfig = DQNFireballZoningPriorConfig(),
     dqn_threat_defense_prior_config: DQNThreatDefensePriorConfig = DQNThreatDefensePriorConfig(),
 ) -> PolicyActionFrame:
-    episode_key = (nonce, run_id, episode_id)
-    shoryuken_repeat_lockout_active = (
-        actor.policy == "dqn"
-        and obs_row_override is not None
-        and dqn_shoryuken_context_prior_config.far_block
-        and dqn_shoryuken_context_prior_config.repeat_lockout_decisions > 0
-        and decision_id < int(shoryuken_lockout_states.get(episode_key, -1))
-    )
     if actor.policy in MODEL_POLICY_CHOICES:
         macro_action = active_macro_action_name(macro_states, nonce, run_id, episode_id)
         if (
@@ -3013,13 +2973,9 @@ def policy_action_frame(
                 macro_action,
                 obs_row_override,
                 dqn_shoryuken_context_prior_config,
-                shoryuken_repeat_lockout_active,
             )
         ):
-            macro_states.pop(episode_key, None)
-            if macro_action in SHORYUKEN_ACTION_NAMES and dqn_shoryuken_context_prior_config.repeat_lockout_decisions > 0:
-                shoryuken_lockout_states[episode_key] = decision_id + dqn_shoryuken_context_prior_config.repeat_lockout_decisions
-                shoryuken_repeat_lockout_active = True
+            macro_states.pop((nonce, run_id, episode_id), None)
         macro_frame = active_macro_action_frame(macro_states, nonce, run_id, episode_id)
         if macro_frame is not None:
             return macro_frame
@@ -3038,18 +2994,13 @@ def policy_action_frame(
             dqn_ground_normal_context_prior_config,
             dqn_fireball_zoning_prior_config,
             dqn_threat_defense_prior_config,
-            shoryuken_repeat_lockout_active,
         )
     if action_name is not None:
         fixed = fixed_action_wire(action_name)
         if fixed is not None:
-            if action_name in SHORYUKEN_ACTION_NAMES and dqn_shoryuken_context_prior_config.repeat_lockout_decisions > 0:
-                shoryuken_lockout_states[episode_key] = decision_id + dqn_shoryuken_context_prior_config.repeat_lockout_decisions
             return make_policy_action_frame(action_name, fixed)
         macro_frame = start_macro_action_frame(macro_states, nonce, run_id, episode_id, action_name)
         if macro_frame is not None:
-            if action_name in SHORYUKEN_ACTION_NAMES and dqn_shoryuken_context_prior_config.repeat_lockout_decisions > 0:
-                shoryuken_lockout_states[episode_key] = decision_id + dqn_shoryuken_context_prior_config.repeat_lockout_decisions
             return macro_frame
     fallback_policy = actor.fallback_policy if actor.policy in MODEL_POLICY_CHOICES else actor.policy
     return scripted_action_frame(fallback_policy, policy_states, nonce, run_id, episode_id, repeat_delay_ms)
@@ -3060,11 +3011,9 @@ def policy_action_wire(
     model_store: ActorModelStore,
     policy_states: dict[tuple[int, int, int, str], dict[str, int]],
     macro_states: dict[tuple[int, int, int], dict[str, int | str]],
-    shoryuken_lockout_states: dict[tuple[int, int, int], int],
     nonce: int,
     run_id: int,
     episode_id: int,
-    decision_id: int,
     repeat_delay_ms: int,
     tabular_state_key_override: str | None = None,
     obs_row_override: dict[str, object] | None = None,
@@ -3081,11 +3030,9 @@ def policy_action_wire(
         model_store,
         policy_states,
         macro_states,
-        shoryuken_lockout_states,
         nonce,
         run_id,
         episode_id,
-        decision_id,
         repeat_delay_ms,
         tabular_state_key_override,
         obs_row_override,
@@ -3330,7 +3277,6 @@ def serve(
     ping_verbose_count = 0
     policy_states: dict[tuple[int, int, int, str], dict[str, int]] = {}
     macro_states: dict[tuple[int, int, int], dict[str, int | str]] = {}
-    shoryuken_lockout_states: dict[tuple[int, int, int], int] = {}
 
     while True:
         data, addr = sock.recvfrom(2048)
@@ -3400,11 +3346,9 @@ def serve(
                     model_store,
                     policy_states,
                     macro_states,
-                    shoryuken_lockout_states,
                     nonce,
                     run_id,
                     episode_id,
-                    decision_id,
                     policy_repeat_delay_ms,
                     obs_state_key,
                     obs_row,
@@ -3822,15 +3766,6 @@ def main() -> None:
         help="Hard-block Shoryuken in non-anti-air rows at or beyond --dqn-shoryuken-prior-far-min-abs-dx",
     )
     parser.add_argument(
-        "--dqn-shoryuken-prior-repeat-lockout-decisions",
-        type=int,
-        default=12,
-        help=(
-            "When far-block is enabled, suppress repeat Shoryuken decisions in non-anti-air rows for this many "
-            "decisions after a Shoryuken starts or is canceled by the hard block"
-        ),
-    )
-    parser.add_argument(
         "--dqn-ground-normal-context-prior",
         action="store_true",
         help="Apply a soft grounded normal Q penalty outside close or threat/contact poke contexts before DQN argmax",
@@ -4001,7 +3936,6 @@ def main() -> None:
         far_min_abs_dx=shoryuken_prior_far_min_dx,
         far_extra_penalty=max(0.0, float(args.dqn_shoryuken_prior_far_extra_penalty)),
         far_block=bool(args.dqn_shoryuken_prior_far_block),
-        repeat_lockout_decisions=max(0, int(args.dqn_shoryuken_prior_repeat_lockout_decisions)),
     )
     ground_normal_prior_close_max_dx = max(0, int(args.dqn_ground_normal_prior_close_max_abs_dx))
     ground_normal_prior_poke_max_dx = max(

@@ -51,32 +51,6 @@ Next:
 - If Shoryuken still appears with that penalty, the next suspect is visual
   attribution or stale server process rather than DQN selection.
 
-Follow-up:
-- User reports Shoryuken still appears, with the important pattern that once
-  it starts randomly, it tends to fire in a burst / sequence.
-- Interpretation: after a Shoryuken starts, later decisions around recovery /
-  landing can still open a fresh Shoryuken macro. Hard-blocking only the current
-  selection and canceling active macros is not enough to prevent repeated
-  re-entry if one row slips through as anti-air or otherwise eligible.
-- Added a far-block-only repeat lockout:
-  - `DQNShoryukenContextPriorConfig.repeat_lockout_decisions`.
-  - CLI flag `--dqn-shoryuken-prior-repeat-lockout-decisions`, default `12`.
-  - when `--dqn-shoryuken-prior-far-block` is active, any started or canceled
-    `shoryuken-*` macro suppresses subsequent non-anti-air `shoryuken-*`
-    choices for the next lockout window.
-  - rows that still match the explicit anti-air exemption are not suppressed by
-    the repeat lockout.
-- Smoke:
-  - far row at `obs_abs_dx=80`, `max_abs_dx=39`, `far_min_abs_dx=40`,
-    `far_block=True`: Shoryuken is hard-blocked.
-  - same far row during repeat lockout: Shoryuken remains blocked and epsilon
-    fallback returns `back` in the smoke.
-  - anti-air row at `obs_abs_dx=32`, opponent air routine `18`: repeat lockout
-    does not mark Shoryuken hard-blocked.
-- Next live probe can use the same command. To make the diagnostic stricter,
-  set `--dqn-shoryuken-prior-repeat-lockout-decisions 24`; set it to `0` to
-  disable the burst lockout.
-
 ## 2026-05-04: v350 Guard Success Bonus And Grounded Normals Defense Phase 4 Complete
 
 Milestone:

@@ -116,6 +116,24 @@ Third follow-up:
   - `stand-hk` remains allowed.
   - actor with `fallback_policy=hp` returns `back` during lockout.
 
+Fourth follow-up:
+- User reports behavior is still binary: if the policy does not trigger, no
+  Shoryuken appears; once it triggers, everything becomes Shoryuken.
+- Interpretation: the first HP button can itself be the ignition source if
+  the game command buffer already contains DP-like directions. Blocking punch
+  only after repeat lockout starts is too late.
+- Implementation:
+  - added `DQNShoryukenContextPriorConfig.command_buffer_punch_guard`, enabled
+    by default whenever the Shoryuken prior is active.
+  - added `--dqn-shoryuken-prior-no-command-buffer-punch-guard` to disable it.
+  - when `--dqn-shoryuken-prior-far-block` is active, non-anti-air rows now
+    hard-block direct punch actions even before repeat lockout is active.
+- Smoke:
+  - far non-anti-air row at `obs_abs_dx=80`: `hp` and `stand-hp` are blocked.
+  - anti-air row at `obs_abs_dx=32`, opponent air routine 18: `hp` is not
+    blocked by the punch guard.
+  - `stand-hk` remains unblocked.
+
 ## 2026-05-04: v350 Guard Success Bonus And Grounded Normals Defense Phase 4 Complete
 
 Milestone:

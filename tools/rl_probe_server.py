@@ -2692,6 +2692,8 @@ def policy_action_frame_name(frame: PolicyActionFrame) -> str:
 def scripted_sequence(policy: str) -> tuple[int, ...] | None:
     fireball_scripts = {
         action: (
+            RL_MOVE_NEUTRAL,
+            RL_MOVE_NEUTRAL,
             RL_MOVE_DOWN_BACK,
             RL_MOVE_DOWN,
             RL_MOVE_DOWN_FORWARD,

@@ -799,11 +799,6 @@ static void RLSession_DeriveDemoPolicyMeta(u8 move_intent,
         break;
     }
 }
-
-static bool RLSession_IsDemoExecutionSource(u8 source) {
-    return source == RL_EXECUTION_SOURCE_HUMAN_DEMO || source == RL_EXECUTION_SOURCE_CPU_DEMO;
-}
-
 static bool RLSession_IsNormalPolicyAction(u16 action_id) {
     return action_id == RL_POLICY_ACTION_STAND_NORMAL || action_id == RL_POLICY_ACTION_CROUCH_NORMAL ||
            action_id == RL_POLICY_ACTION_COMMAND_NORMAL || action_id == RL_POLICY_ACTION_AIR_NORMAL;
@@ -970,7 +965,7 @@ static void RLSession_MaybeAttributeDemoEngineAction(RLDecisionLedgerEntry* entr
     u32 lag_frames = 0;
     bool normal_attack_start = false;
 
-    if (entry == NULL || obs == NULL || !RLSession_IsDemoExecutionSource(entry->execution_source) ||
+    if (entry == NULL || obs == NULL ||
         entry->engine_label_source != RL_DEMO_ATTRIBUTION_NONE || entry->agent_character_id != RL_CHARACTER_RYU) {
         return;
     }

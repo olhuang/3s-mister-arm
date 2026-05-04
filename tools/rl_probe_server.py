@@ -186,6 +186,18 @@ TABULAR_ACTION_WIRES = {
 DQN_MOVEMENT_GUARD_ACTIONS = frozenset({"forward", "back", "guard-stand", "guard-crouch"})
 DQN_JUMP_START_ACTIONS = frozenset(JUMP_START_ACTION_NAMES)
 DQN_AIR_ATTACK_ACTIONS = frozenset(AIR_NORMAL_ACTION_NAMES)
+DQN_SHORYUKEN_LOCKOUT_PUNCH_ACTIONS = frozenset(
+    {
+        "hp",
+        "stand-lp",
+        "stand-mp",
+        "stand-hp",
+        "crouch-lp",
+        "crouch-mp",
+        "crouch-hp",
+        "forward-hp",
+    }
+)
 DQN_VALID_ACTION_MASK_MODES = ("off", "self-routine-v1", "action-start-v1")
 DQN_VALID_ACTION_MASK_CLI_MODES = ("auto", *DQN_VALID_ACTION_MASK_MODES)
 TABULAR_ACTION_WIRES.update({f"stand-{name}": wire for name, wire, _ in RL_POLICY_BUTTONS})
@@ -1939,7 +1951,7 @@ def dqn_action_hard_blocked_by_priors(
 ) -> bool:
     if (
         shoryuken_repeat_lockout_active
-        and action in SHORYUKEN_ACTION_NAMES
+        and (action in SHORYUKEN_ACTION_NAMES or action in DQN_SHORYUKEN_LOCKOUT_PUNCH_ACTIONS)
         and (
             not shoryuken_context_prior_config.repeat_lockout_allow_anti_air
             or not dqn_shoryuken_anti_air_context(row, shoryuken_context_prior_config)
@@ -3057,6 +3069,8 @@ def policy_action_frame(
                 shoryuken_lockout_states[episode_key] = decision_id + dqn_shoryuken_context_prior_config.repeat_lockout_decisions
             return macro_frame
     fallback_policy = actor.fallback_policy if actor.policy in MODEL_POLICY_CHOICES else actor.policy
+    if shoryuken_repeat_lockout_active and fallback_policy in DQN_SHORYUKEN_LOCKOUT_PUNCH_ACTIONS:
+        fallback_policy = "back"
     return scripted_action_frame(fallback_policy, policy_states, nonce, run_id, episode_id, repeat_delay_ms)
 
 

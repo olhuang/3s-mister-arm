@@ -2,6 +2,65 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-04: v350 Guard Success Bonus And Grounded Normals Defense Phase 4 Complete
+
+Milestone:
+- Milestone 6: grounded normals defense trainer improvements and live-side prior tuning
+
+Key changes to `tools/train_dqn_learner.py`:
+- Added `--reward-throw-far-cost 0.5` / `--reward-throw-far-max-abs-dx 64`: penalizes throw at abs_dx > 64
+- Added `--grounded-normal-defense-bc-loss` / `--grounded-normal-defense-bc-weight 0.08`: CE loss toward human-demo guard/back in opponent normal threat rows
+- Added `GroundedNormalDefenseBCConfig/Stats`, eligibility, and loss function
+- Fixed `--conservative-exempt-actions` to include forward, back, guard-stand, guard-crouch, jump-* (root cause of v341-v345 action collapse)
+- Added `--movement-regression-exclude-special-expert-eligible` flag
+- Added shoryuken engine outcome action windows (lp=30, mp=35, hp=45)
+
+Training iterations:
+- v341 (margin loss): tatsu-mk collapse at 60.1% — margin approach abandoned
+- v342 (BC loss, weight 0.1): tatsu-mk collapse — BC weight too low
+- v343 (no defense loss, tatsu in conservative penalty): tatsu-mk collapse — root cause was conservative penalty killing movement/defense
+- v344-v345 (from v335, BC 0.05-0.08): throw dominance 38.9-45.3% — conservative penalty fixed but throw escaped
+- v346-v347 (from v335, fixed exempt list + movement-regression-exclude): healthy! No collapse. Shoryuken 42.6%→17.0%, but throw 39.6% still high
+- v348 (from v335, +throw far penalty 0.5): throw_far:132/66.0 in training, live-probe throw still 39.6%
+- v349 (BC weight 0.25): nearly identical to v348, only 33/5000 rows changed
+- v350 (from v335, +guard success bonus 0.5, window 30, max_dx 240): guard_bonus 742.0, guard_net +741.4, guard-crouch reward from -4.93 to +0.16
+
+Live-side prior tuning (v348 probe iterations):
+- Shoryuken prior: 0.06→0.10→0.15 (0.15 effective for reducing ground Shoryuken spam)
+- Added threat-defense prior: guard/back/unsafe 0.12/0.08/0.10→0.20/0.15/0.20
+- Added ground-normal prior: penalty 0.05→0.08
+- Threat-defense max_abs_dx: 144→192→240 (data-driven: p95 of normal hit distance = 189)
+- Fireball zoning prior: 0.03 (unchanged)
+
+Live test observations (v348 with priors):
+1. Shoryuken at 0.15: ground Shoryuken spam reduced, anti-air preserved
+2. Defense slightly improved but still weak against normals at close range
+3. Tatsu multi-hit defense: only blocks first hit — block stun causes defense prior to disengage
+4. Medium/heavy kick defense improved with max_abs_dx=240
+5. Far-range throw almost eliminated
+
+Opponent normal attack hit distance analysis (grounded normals only, excluding specials):
+- n=2831, p50=85, p80=124, p90=156, p95=189, max=326
+- R2=0 (mixed): p50=95, p90=157
+- R2=3 (close): p50=65, p90=116
+- R2=4 (long heavy): p50=297, p90=324 (n=33)
+- R2=30 (long heavy): p50=175, p90=324 (n=47)
+
+Tatsu defense analysis (230 segments in human-demo logs):
+- Self hit: 107 (46.5%), blocked: 15 (6.5%), avoided: 123 (53.5%)
+- Only 15 successful blocks — insufficient for BC-style imitation
+- Guard success bonus approach: model-agnostic, rewards guarding through any attack
+
+Open issues:
+- Tatsu multi-hit defense: block-stun gap in threat-defense prior needs fix (opp R1=4 check when self in block stun)
+- Throw still 39.6% in live-probe despite training penalty — needs live-side throw range prior
+- Model cannot distinguish block stun vs hit stun from observation fields
+
+Next:
+- Add live-side throw range prior (penalty when abs_dx > 64)
+- Fix tatsu multi-hit defense: continue defense push when opp R1=4 AND self in contact reaction
+- Consider collecting more human demo with deliberate tatsu defense
+
 ## 2026-05-03: v338 Fireball Zoning Prior Probe Support
 
 Milestone:

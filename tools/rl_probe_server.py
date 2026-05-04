@@ -489,7 +489,6 @@ class DQNShoryukenContextPriorConfig:
     far_block: bool = False
     repeat_lockout_decisions: int = 12
     repeat_lockout_allow_anti_air: bool = False
-    command_buffer_punch_guard: bool = True
 
     def label(self) -> str:
         if not self.enabled:
@@ -503,7 +502,6 @@ class DQNShoryukenContextPriorConfig:
             label += f"/far_dx>={self.far_min_abs_dx}+{self.far_extra_penalty:.3f}"
         if self.far_block:
             label += f"/far_block_dx>={self.far_min_abs_dx}"
-            label += f"/punch_guard:{int(self.command_buffer_punch_guard)}"
             if self.repeat_lockout_decisions > 0:
                 label += f"/repeat_lockout:{self.repeat_lockout_decisions}"
                 label += f"/repeat_aa:{int(self.repeat_lockout_allow_anti_air)}"
@@ -1951,14 +1949,6 @@ def dqn_action_hard_blocked_by_priors(
     shoryuken_context_prior_config: DQNShoryukenContextPriorConfig = DQNShoryukenContextPriorConfig(),
     shoryuken_repeat_lockout_active: bool = False,
 ) -> bool:
-    if (
-        shoryuken_context_prior_config.enabled
-        and shoryuken_context_prior_config.far_block
-        and shoryuken_context_prior_config.command_buffer_punch_guard
-        and action in DQN_SHORYUKEN_LOCKOUT_PUNCH_ACTIONS
-        and not dqn_shoryuken_anti_air_context(row, shoryuken_context_prior_config)
-    ):
-        return True
     if (
         shoryuken_repeat_lockout_active
         and (action in SHORYUKEN_ACTION_NAMES or action in DQN_SHORYUKEN_LOCKOUT_PUNCH_ACTIONS)
@@ -3879,11 +3869,6 @@ def main() -> None:
         help="Allow anti-air-context Shoryuken during the repeat lockout; off by default for stricter burst suppression",
     )
     parser.add_argument(
-        "--dqn-shoryuken-prior-no-command-buffer-punch-guard",
-        action="store_true",
-        help="Disable the far-block punch guard that suppresses punch actions likely to complete a buffered HP Shoryuken",
-    )
-    parser.add_argument(
         "--dqn-ground-normal-context-prior",
         action="store_true",
         help="Apply a soft grounded normal Q penalty outside close or threat/contact poke contexts before DQN argmax",
@@ -4056,7 +4041,6 @@ def main() -> None:
         far_block=bool(args.dqn_shoryuken_prior_far_block),
         repeat_lockout_decisions=max(0, int(args.dqn_shoryuken_prior_repeat_lockout_decisions)),
         repeat_lockout_allow_anti_air=bool(args.dqn_shoryuken_prior_repeat_lockout_allow_anti_air),
-        command_buffer_punch_guard=not bool(args.dqn_shoryuken_prior_no_command_buffer_punch_guard),
     )
     ground_normal_prior_close_max_dx = max(0, int(args.dqn_ground_normal_prior_close_max_abs_dx))
     ground_normal_prior_poke_max_dx = max(

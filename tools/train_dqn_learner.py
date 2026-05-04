@@ -37,6 +37,7 @@ class Experience:
     projectile_batch_eligible: bool = False
     projectile_batch_reason: str = ""
     grounded_normal_defense_eligible: bool = False
+    grounded_normal_defense_bc_eligible: bool = False
 
 
 EXECUTION_SOURCE_NAMES = {
@@ -576,6 +577,8 @@ class RewardRiskConfig:
     shoryuken_punished_extra_cost: float
     jump_attack_no_damage_extra_cost: float
     jump_attack_punished_extra_cost: float
+    throw_far_cost: float = 0.0
+    throw_far_max_abs_dx: int = 64
 
 
 @dataclass
@@ -588,6 +591,8 @@ class RewardRiskStats:
     shoryuken_punished_extra_cost_total: float = 0.0
     jump_attack_no_damage_extra_cost_total: float = 0.0
     jump_attack_punished_extra_cost_total: float = 0.0
+    throw_far_cost_events: int = 0
+    throw_far_cost_total: float = 0.0
 
     @property
     def total_cost(self) -> float:
@@ -598,6 +603,7 @@ class RewardRiskStats:
             + self.shoryuken_punished_extra_cost_total
             + self.jump_attack_no_damage_extra_cost_total
             + self.jump_attack_punished_extra_cost_total
+            + self.throw_far_cost_total
         )
 
     def as_metadata(self) -> dict[str, object]:
@@ -610,6 +616,8 @@ class RewardRiskStats:
             "shoryuken_punished_extra_cost_total": self.shoryuken_punished_extra_cost_total,
             "jump_attack_no_damage_extra_cost_total": self.jump_attack_no_damage_extra_cost_total,
             "jump_attack_punished_extra_cost_total": self.jump_attack_punished_extra_cost_total,
+            "throw_far_cost_events": self.throw_far_cost_events,
+            "throw_far_cost_total": self.throw_far_cost_total,
             "total_cost": self.total_cost,
         }
 
@@ -1395,6 +1403,50 @@ class GroundedNormalDefenseMarginStats:
             "violation_by_time_bucket": dict(sorted(self.violation_by_time_bucket.items())),
             "safe_top_actions": dict(sorted(self.safe_top_actions.items())),
             "blocker_counts": dict(sorted(self.blocker_counts.items())),
+        }
+
+
+@dataclass(frozen=True)
+class GroundedNormalDefenseBCConfig:
+    requested: bool = False
+    loss_weight: float = 0.1
+    eligible_sources: frozenset[str] = field(default_factory=lambda: frozenset({"human-demo"}))
+    max_abs_dx: int = 144
+
+    @property
+    def enabled(self) -> bool:
+        return self.requested and self.loss_weight > 0.0
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "requested": self.requested,
+            "enabled": self.enabled,
+            "loss_weight": self.loss_weight,
+            "eligible_sources": sorted(self.eligible_sources),
+            "max_abs_dx": self.max_abs_dx,
+            "target_actions": sorted(GROUNDED_NORMAL_DEFENSE_SAFE_ACTIONS),
+        }
+
+
+@dataclass
+class GroundedNormalDefenseBCStats:
+    eligible_experiences: int = 0
+    sampled_events: int = 0
+    loss_total: float = 0.0
+    last_loss: float = 0.0
+    avg_loss: float = 0.0
+    target_action_counts: dict[str, int] = field(default_factory=dict)
+    sampled_by_time_bucket: dict[str, int] = field(default_factory=dict)
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "eligible_experiences": self.eligible_experiences,
+            "sampled_events": self.sampled_events,
+            "loss_total": self.loss_total,
+            "last_loss": self.last_loss,
+            "avg_loss": self.avg_loss,
+            "target_action_counts": dict(sorted(self.target_action_counts.items())),
+            "sampled_by_time_bucket": dict(sorted(self.sampled_by_time_bucket.items())),
         }
 
 
@@ -2258,6 +2310,15 @@ def reward_risk_cost(
 
     if punished:
         stats.punished_cost_events += 1
+
+    if action_name == "throw" and config.throw_far_cost > 0.0:
+        row = episode_rows[row_index]
+        abs_dx = int_field(row, "obs_abs_dx")
+        if abs_dx > config.throw_far_max_abs_dx:
+            cost += config.throw_far_cost
+            stats.throw_far_cost_events += 1
+            stats.throw_far_cost_total += config.throw_far_cost
+
     return cost
 
 
@@ -2732,6 +2793,60 @@ def grounded_normal_defense_eligible(
     return is_grounded_normal_defense_context(row, config)
 
 
+def grounded_normal_defense_bc_eligible(
+    row: dict[str, object],
+    source_name: str,
+    action_name: str,
+    config: GroundedNormalDefenseBCConfig,
+) -> bool:
+    if not config.requested:
+        return False
+    if source_name not in config.eligible_sources:
+        return False
+    if action_name not in GROUNDED_NORMAL_DEFENSE_SAFE_ACTIONS:
+        return False
+    return is_grounded_normal_defense_context(row, GroundedNormalDefenseMarginConfig(max_abs_dx=config.max_abs_dx))
+
+
+def apply_grounded_normal_defense_bc_loss(
+    exp: Experience,
+    values: list[float],
+    actions: tuple[str, ...],
+    output_grad: list[float],
+    config: GroundedNormalDefenseBCConfig,
+    stats: GroundedNormalDefenseBCStats,
+) -> float:
+    if not config.enabled or not exp.grounded_normal_defense_bc_eligible:
+        return 0.0
+
+    target_index = exp.action_index
+    value_count = min(len(actions), len(values))
+    if target_index >= value_count:
+        return 0.0
+
+    stats.sampled_events += 1
+    time_bucket = _grounded_normal_defense_time_bucket(exp.row)
+    stats.sampled_by_time_bucket[time_bucket] = stats.sampled_by_time_bucket.get(time_bucket, 0) + 1
+    target_action = actions[target_index]
+    stats.target_action_counts[target_action] = stats.target_action_counts.get(target_action, 0) + 1
+
+    # Cross-entropy loss scaled by loss_weight
+    max_q = max(values[:value_count])
+    exp_q = [math.exp(v - max_q) for v in values[:value_count]]
+    sum_exp = sum(exp_q)
+    probs = [e / sum_exp for e in exp_q]
+    ce_loss = -math.log(max(probs[target_index], 1e-15))
+    weighted_loss = config.loss_weight * ce_loss
+
+    # Gradient: softmax probs, subtract 1 from target
+    for i in range(value_count):
+        output_grad[i] += config.loss_weight * probs[i]
+    output_grad[target_index] -= config.loss_weight
+
+    stats.loss_total += weighted_loss
+    return weighted_loss
+
+
 def add_delayed_reward(
     experiences: list[Experience],
     exp_index: int | None,
@@ -2941,6 +3056,7 @@ def build_experiences(
     projectile_late_defensive_margin_config: ProjectileLateDefensiveMarginConfig,
     projectile_defensive_expert_margin_config: ProjectileDefensiveExpertMarginConfig,
     grounded_normal_defense_margin_config: GroundedNormalDefenseMarginConfig,
+    grounded_normal_defense_bc_config: GroundedNormalDefenseBCConfig,
     engine_outcome_config: EngineOutcomeConfig,
     action_filter_config: DQNActionFilterConfig,
 ) -> tuple[
@@ -3222,6 +3338,12 @@ def build_experiences(
                     action_name,
                     grounded_normal_defense_margin_config,
                 ),
+                grounded_normal_defense_bc_eligible=grounded_normal_defense_bc_eligible(
+                    row,
+                    source_name,
+                    action_name,
+                    grounded_normal_defense_bc_config,
+                ),
             )
             multiplier = projectile_response_oversample_config.multiplier_for(projectile_response_outcome_result)
             for _ in range(multiplier):
@@ -3333,6 +3455,8 @@ def reward_risk_config_from_args(args: argparse.Namespace) -> RewardRiskConfig:
         shoryuken_punished_extra_cost=max(0.0, float(args.reward_shoryuken_punished_extra_cost)),
         jump_attack_no_damage_extra_cost=max(0.0, float(args.reward_jump_attack_no_damage_extra_cost)),
         jump_attack_punished_extra_cost=max(0.0, float(args.reward_jump_attack_punished_extra_cost)),
+        throw_far_cost=max(0.0, float(args.reward_throw_far_cost)),
+        throw_far_max_abs_dx=max(0, int(args.reward_throw_far_max_abs_dx)),
     )
 
 
@@ -3569,6 +3693,20 @@ def grounded_normal_defense_config_from_args(
         ),
         valid_action_mask_mode=mode,
         max_abs_dx=max(0, int(args.grounded_normal_defense_margin_max_abs_dx)),
+    )
+
+
+def grounded_normal_defense_bc_config_from_args(
+    args: argparse.Namespace,
+) -> GroundedNormalDefenseBCConfig:
+    return GroundedNormalDefenseBCConfig(
+        requested=bool(args.grounded_normal_defense_bc_loss),
+        loss_weight=max(0.0, float(args.grounded_normal_defense_bc_weight)),
+        eligible_sources=parse_source_name_set(
+            str(args.grounded_normal_defense_bc_sources),
+            "--grounded-normal-defense-bc-sources",
+        ),
+        max_abs_dx=max(0, int(args.grounded_normal_defense_bc_max_abs_dx)),
     )
 
 
@@ -4834,6 +4972,7 @@ def train_dqn(
     projectile_defensive_expert_margin_config: ProjectileDefensiveExpertMarginConfig,
     projectile_timing_group_margin_config: ProjectileTimingGroupMarginConfig,
     grounded_normal_defense_margin_config: GroundedNormalDefenseMarginConfig,
+    grounded_normal_defense_bc_config: GroundedNormalDefenseBCConfig,
     valid_action_mask_config: DQNValidActionMaskTrainingConfig,
     entropy_reg_weight: float = 0.0,
     initial_layers: list[dict[str, object]] | None = None,
@@ -4848,6 +4987,7 @@ def train_dqn(
     ProjectileDefensiveExpertMarginStats,
     ProjectileTimingGroupMarginStats,
     GroundedNormalDefenseMarginStats,
+    GroundedNormalDefenseBCStats,
     DQNValidActionMaskTrainingStats,
 ]:
     rng = random.Random(seed)
@@ -4884,6 +5024,8 @@ def train_dqn(
     avg_projectile_timing_group_margin_loss = 0.0
     last_grounded_normal_defense_margin_loss = 0.0
     avg_grounded_normal_defense_margin_loss = 0.0
+    last_grounded_normal_defense_bc_loss = 0.0
+    avg_grounded_normal_defense_bc_loss = 0.0
     unsupported_action_indices, unsupported_action_regularization_stats = dqn_unsupported_action_indices(
         actions,
         action_counts,
@@ -4936,6 +5078,12 @@ def train_dqn(
     grounded_normal_defense_pool = [
         exp for exp in experiences if exp.grounded_normal_defense_eligible
     ]
+    grounded_normal_defense_bc_stats = GroundedNormalDefenseBCStats(
+        eligible_experiences=sum(1 for exp in experiences if exp.grounded_normal_defense_bc_eligible)
+    )
+    grounded_normal_defense_bc_pool = [
+        exp for exp in experiences if exp.grounded_normal_defense_bc_eligible
+    ]
     shared_valid_action_mask_config = valid_action_mask_config.as_shared_config()
     projectile_expert_margin_mask_config = projectile_expert_margin_config.as_shared_mask_config()
     special_expert_margin_mask_config = special_expert_margin_config.as_shared_mask_config()
@@ -4964,6 +5112,7 @@ def train_dqn(
         projectile_defensive_expert_margin_loss = 0.0
         projectile_timing_group_margin_loss = 0.0
         grounded_normal_defense_margin_loss = 0.0
+        grounded_normal_defense_bc_loss = 0.0
         entropy_reg_loss = 0.0
         for exp in batch:
             values, activations, pre_activations = forward(layers, exp.state)
@@ -5124,6 +5273,16 @@ def train_dqn(
             )
             grounded_normal_defense_margin_loss += exp_grounded_normal_defense_loss
             loss += exp_grounded_normal_defense_loss
+            exp_grounded_defense_bc_loss = apply_grounded_normal_defense_bc_loss(
+                exp,
+                values,
+                actions,
+                output_grad,
+                grounded_normal_defense_bc_config,
+                grounded_normal_defense_bc_stats,
+            )
+            grounded_normal_defense_bc_loss += exp_grounded_defense_bc_loss
+            loss += exp_grounded_defense_bc_loss
             entropy_loss_delta, entropy_bonus, entropy_grad = entropy_regularization_grad(
                 values,
                 entropy_reg_weight,
@@ -5242,6 +5401,23 @@ def train_dqn(
                 loss += exp_grounded_normal_defense_loss
                 if exp_grounded_normal_defense_loss > 0.0:
                     add_backward_grads(layers, grads, activations, pre_activations, output_grad)
+        if grounded_normal_defense_bc_config.enabled and grounded_normal_defense_bc_pool:
+            for _ in range(max(0, 4)):
+                exp = rng.choice(grounded_normal_defense_bc_pool)
+                values, activations, pre_activations = forward(layers, exp.state)
+                output_grad = [0.0 for _ in values]
+                exp_defense_bc_loss = apply_grounded_normal_defense_bc_loss(
+                    exp,
+                    values,
+                    actions,
+                    output_grad,
+                    grounded_normal_defense_bc_config,
+                    grounded_normal_defense_bc_stats,
+                )
+                grounded_normal_defense_bc_loss += exp_defense_bc_loss
+                loss += exp_defense_bc_loss
+                if exp_defense_bc_loss > 0.0:
+                    add_backward_grads(layers, grads, activations, pre_activations, output_grad)
         apply_grads(layers, grads, learning_rate, batch_size)
         last_loss = loss / max(1, batch_size)
         avg_loss = last_loss if step == 1 else (0.98 * avg_loss + 0.02 * last_loss)
@@ -5311,6 +5487,15 @@ def train_dqn(
                 + 0.02 * last_grounded_normal_defense_margin_loss
             )
         )
+        last_grounded_normal_defense_bc_loss = grounded_normal_defense_bc_loss / max(1, batch_size)
+        avg_grounded_normal_defense_bc_loss = (
+            last_grounded_normal_defense_bc_loss
+            if step == 1
+            else (
+                0.98 * avg_grounded_normal_defense_bc_loss
+                + 0.02 * last_grounded_normal_defense_bc_loss
+            )
+        )
         if target_sync_steps > 0 and step % target_sync_steps == 0:
             target_layers = copy.deepcopy(layers)
         if log_interval > 0 and (step == 1 or step % log_interval == 0 or step == steps):
@@ -5324,7 +5509,8 @@ def train_dqn(
                 f"projectile_late_def_margin={last_projectile_late_defensive_margin_loss:.6f} "
                 f"projectile_def_expert_margin={last_projectile_defensive_expert_margin_loss:.6f} "
                 f"projectile_timing_group_margin={last_projectile_timing_group_margin_loss:.6f} "
-                f"grounded_def_margin={last_grounded_normal_defense_margin_loss:.6f}",
+                f"grounded_def_margin={last_grounded_normal_defense_margin_loss:.6f} "
+                f"grounded_def_bc={last_grounded_normal_defense_bc_loss:.6f}",
                 flush=True,
             )
 
@@ -5350,6 +5536,8 @@ def train_dqn(
     projectile_timing_group_margin_stats.avg_loss = avg_projectile_timing_group_margin_loss
     grounded_normal_defense_stats.last_loss = last_grounded_normal_defense_margin_loss
     grounded_normal_defense_stats.avg_loss = avg_grounded_normal_defense_margin_loss
+    grounded_normal_defense_bc_stats.last_loss = last_grounded_normal_defense_bc_loss
+    grounded_normal_defense_bc_stats.avg_loss = avg_grounded_normal_defense_bc_loss
     return (
         layers,
         {
@@ -5366,6 +5554,7 @@ def train_dqn(
         projectile_defensive_expert_margin_stats,
         projectile_timing_group_margin_stats,
         grounded_normal_defense_stats,
+        grounded_normal_defense_bc_stats,
         valid_action_mask_stats,
     )
 
@@ -6189,6 +6378,18 @@ def main() -> None:
         help="Additional positive raw reward cost when a no-damage air attack is followed by self HP damage",
     )
     parser.add_argument(
+        "--reward-throw-far-cost",
+        type=float,
+        default=0.0,
+        help="Raw reward cost applied when throw is selected at abs_dx > --reward-throw-far-max-abs-dx",
+    )
+    parser.add_argument(
+        "--reward-throw-far-max-abs-dx",
+        type=int,
+        default=64,
+        help="Maximum obs_abs_dx where throw is considered close-range and not penalized",
+    )
+    parser.add_argument(
         "--reward-guard-success-bonus",
         type=float,
         default=0.0,
@@ -6800,6 +7001,28 @@ def main() -> None:
         help="Maximum obs_abs_dx for opponent grounded normal threat rows to be eligible for defense margin",
     )
     parser.add_argument(
+        "--grounded-normal-defense-bc-loss",
+        action="store_true",
+        help="Apply a BC cross-entropy loss toward human-demo guard/back actions in opponent grounded normal threat rows",
+    )
+    parser.add_argument(
+        "--grounded-normal-defense-bc-weight",
+        type=float,
+        default=0.1,
+        help="Loss weight for --grounded-normal-defense-bc-loss",
+    )
+    parser.add_argument(
+        "--grounded-normal-defense-bc-sources",
+        default="human-demo",
+        help="Comma-separated execution sources eligible for grounded normal defense BC rows",
+    )
+    parser.add_argument(
+        "--grounded-normal-defense-bc-max-abs-dx",
+        type=int,
+        default=144,
+        help="Maximum obs_abs_dx for grounded normal defense BC loss rows",
+    )
+    parser.add_argument(
         "--engine-outcome-training-mode",
         default=None,
         help=(
@@ -7068,6 +7291,7 @@ def main() -> None:
     projectile_defensive_expert_margin_config = projectile_defensive_expert_margin_config_from_args(args)
     projectile_timing_group_margin_config = projectile_timing_group_margin_config_from_args(args)
     grounded_normal_defense_margin_config = grounded_normal_defense_config_from_args(args)
+    grounded_normal_defense_bc_config = grounded_normal_defense_bc_config_from_args(args)
     engine_outcome_config = engine_outcome_config_from_args(args)
     conservative_action_penalty_config = conservative_action_penalty_config_from_args(args)
     unsupported_action_regularization_config = dqn_unsupported_action_regularization_config_from_args(args)
@@ -7107,6 +7331,7 @@ def main() -> None:
         projectile_late_defensive_margin_config,
         projectile_defensive_expert_margin_config,
         grounded_normal_defense_margin_config,
+        grounded_normal_defense_bc_config,
         engine_outcome_config,
         dqn_action_filter_config,
     )
@@ -7136,6 +7361,7 @@ def main() -> None:
         projectile_defensive_expert_margin_stats,
         projectile_timing_group_margin_stats,
         grounded_normal_defense_stats,
+        grounded_normal_defense_bc_stats,
         valid_action_mask_stats,
     ) = train_dqn(
         experiences,
@@ -7159,6 +7385,7 @@ def main() -> None:
         projectile_defensive_expert_margin_config,
         projectile_timing_group_margin_config,
         grounded_normal_defense_margin_config,
+        grounded_normal_defense_bc_config,
         valid_action_mask_config,
         max(0.0, float(args.dqn_entropy_reg_weight)),
         init_model.layers if init_model is not None else None,
@@ -7262,6 +7489,8 @@ def main() -> None:
         "reward_shoryuken_punished_extra_cost": reward_risk_config.shoryuken_punished_extra_cost,
         "reward_jump_attack_no_damage_extra_cost": reward_risk_config.jump_attack_no_damage_extra_cost,
         "reward_jump_attack_punished_extra_cost": reward_risk_config.jump_attack_punished_extra_cost,
+        "reward_throw_far_cost": reward_risk_config.throw_far_cost,
+        "reward_throw_far_max_abs_dx": reward_risk_config.throw_far_max_abs_dx,
         "reward_risk_stats": reward_risk_stats.as_metadata(),
         "reward_guard_success_bonus": reward_guard_config.success_bonus,
         "reward_guard_success_window_decisions": reward_guard_config.success_window_decisions,
@@ -7324,6 +7553,8 @@ def main() -> None:
         "projectile_timing_group_margin_stats": projectile_timing_group_margin_stats.as_metadata(),
         "grounded_normal_defense_margin_config": grounded_normal_defense_margin_config.as_metadata(),
         "grounded_normal_defense_margin_stats": grounded_normal_defense_stats.as_metadata(),
+        "grounded_normal_defense_bc_config": grounded_normal_defense_bc_config.as_metadata(),
+        "grounded_normal_defense_bc_stats": grounded_normal_defense_bc_stats.as_metadata(),
         "engine_outcome_training_mode": engine_outcome_config.training_mode,
         "engine_outcome_window_decisions": engine_outcome_config.window_decisions,
         "engine_outcome_action_windows": engine_outcome_config.action_windows,
@@ -7586,7 +7817,8 @@ def main() -> None:
         f"shoryuken:{reward_risk_stats.shoryuken_no_damage_extra_cost_total:.1f}/"
         f"{reward_risk_stats.shoryuken_punished_extra_cost_total:.1f} "
         f"jump:{reward_risk_stats.jump_attack_no_damage_extra_cost_total:.1f}/"
-        f"{reward_risk_stats.jump_attack_punished_extra_cost_total:.1f}",
+        f"{reward_risk_stats.jump_attack_punished_extra_cost_total:.1f} "
+        f"throw_far:{reward_risk_stats.throw_far_cost_events}/{reward_risk_stats.throw_far_cost_total:.1f}",
         flush=True,
     )
     print(
@@ -7842,6 +8074,22 @@ def main() -> None:
         f"blockers:{format_counts(grounded_normal_defense_stats.blocker_counts, grounded_normal_defense_stats.violation_events, args.diagnostic_top_n)} "
         f"sampled_t:{format_counts(grounded_normal_defense_stats.sampled_by_time_bucket, grounded_normal_defense_stats.sampled_events, args.diagnostic_top_n)} "
         f"violation_t:{format_counts(grounded_normal_defense_stats.violation_by_time_bucket, grounded_normal_defense_stats.violation_events, args.diagnostic_top_n)}",
+        flush=True,
+    )
+    print(
+        "DQN diagnostics "
+        f"grounded_normal_defense_bc=enabled:{int(grounded_normal_defense_bc_config.enabled)} "
+        f"requested:{int(grounded_normal_defense_bc_config.requested)} "
+        f"weight:{grounded_normal_defense_bc_config.loss_weight:.6f} "
+        f"max_abs_dx<={grounded_normal_defense_bc_config.max_abs_dx} "
+        f"sources:{','.join(sorted(grounded_normal_defense_bc_config.eligible_sources)) or 'none'} "
+        f"eligible:{grounded_normal_defense_bc_stats.eligible_experiences} "
+        f"sampled:{grounded_normal_defense_bc_stats.sampled_events} "
+        f"loss:{grounded_normal_defense_bc_stats.loss_total:.6f} "
+        f"last:{grounded_normal_defense_bc_stats.last_loss:.6f} "
+        f"avg:{grounded_normal_defense_bc_stats.avg_loss:.6f} "
+        f"targets:{format_counts(grounded_normal_defense_bc_stats.target_action_counts, grounded_normal_defense_bc_stats.sampled_events, args.diagnostic_top_n)} "
+        f"sampled_t:{format_counts(grounded_normal_defense_bc_stats.sampled_by_time_bucket, grounded_normal_defense_bc_stats.sampled_events, args.diagnostic_top_n)}",
         flush=True,
     )
     print(

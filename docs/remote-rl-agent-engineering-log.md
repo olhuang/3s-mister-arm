@@ -2,6 +2,55 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-04: Far Shoryuken Hard Block Macro Continuation Fix
+
+Milestone:
+- Milestone 6: live-side DQN Shoryuken guardrail for v350
+
+Files changed:
+- `tools/rl_probe_server.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+User observation:
+- Live probe still used far Shoryuken too often even with:
+  - `--dqn-shoryuken-prior-max-abs-dx 39`
+  - `--dqn-shoryuken-prior-far-min-abs-dx 40`
+  - `--dqn-shoryuken-prior-far-block`
+
+Diagnosis:
+- Q-score rerank hard block and epsilon eligible-action filtering both blocked
+  new `shoryuken-*` selections on far rows.
+- `policy_action_frame()` returned an already-active macro before running DQN
+  action selection.
+- Therefore a Shoryuken macro that started on an earlier decision could keep
+  playing step 1+ after the current row had moved into hard-blocked range.
+
+Implementation:
+- Added `active_macro_action_name()`.
+- Before consuming an active DQN macro frame, `policy_action_frame()` now checks
+  whether the active macro action is hard-blocked by the current observation
+  and Shoryuken prior config.
+- If blocked, the macro state for `(nonce, run_id, episode_id)` is cleared and
+  the current frame falls through to normal DQN selection / fallback.
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py tools/compare_dqn_models.py`
+- direct helper smoke:
+  - `shoryuken-lp` at `obs_abs_dx=80`, `max_abs_dx=39`, `far_min_abs_dx=40`,
+    and `far_block=True` returns penalty `1000000.0`.
+  - same row reports `dqn_action_hard_blocked_by_priors=True`.
+  - an active `shoryuken-lp` macro at step 1 is cleared and the returned action
+    is `back`, not another Shoryuken step.
+  - epsilon eligible actions no longer include `shoryuken-lp`.
+
+Next:
+- Re-run the same v350 live command from the failed probe.
+- Use `--verbose` briefly if Shoryuken still appears; expected diagnostic line
+  for blocked rows should show `dqn_dp_prior_penalty=1000000.000`.
+- If Shoryuken still appears with that penalty, the next suspect is visual
+  attribution or stale server process rather than DQN selection.
+
 ## 2026-05-04: v350 Guard Success Bonus And Grounded Normals Defense Phase 4 Complete
 
 Milestone:
@@ -60,6 +109,239 @@ Next:
 - Add live-side throw range prior (penalty when abs_dx > 64)
 - Fix tatsu multi-hit defense: continue defense push when opp R1=4 AND self in contact reaction
 - Consider collecting more human demo with deliberate tatsu defense
+
+## 2026-05-04: Threat-Defense Contact Sustain For Multi-Hit Defense
+
+Milestone:
+- Milestone 6: fix v350/v348 multi-hit defense gap after first blocked hit
+
+Files changed:
+- `tools/rl_probe_server.py`
+- `tools/compare_dqn_models.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- address the live observation that tatsu / long multi-hit attacks are often
+  guarded for the first hit only, then subsequent hits are not defended.
+- keep the fix as an opt-in live-side prior change because observation v1 does
+  not distinguish block stun from hit stun.
+
+Diagnosis:
+- threat-defense prior previously required `dqn_ground_action_start_allowed()`.
+- when the first hit is blocked or contact occurs,
+  `obs_self_contact_reaction_state=1` and
+  `obs_self_ground_action_start_allowed=0`.
+- that makes the prior disengage during block/contact reaction, even if the
+  opponent is still in `obs_opp_routine_attack_state=1`.
+- result: the model may stop choosing guard/back during the later hits of a
+  multi-hit sequence.
+
+Implementation:
+- added `DQNThreatDefensePriorConfig.contact_sustain`.
+- added CLI flag:
+  - `--dqn-threat-defense-prior-contact-sustain`
+- when enabled, threat-defense guard/back bonus and unsafe-action penalty can
+  apply if:
+  - self is in `obs_self_contact_reaction_state`.
+  - opponent is still in attack state.
+  - opponent is not airborne / jumping.
+  - spacing is within `--dqn-threat-defense-prior-max-abs-dx`.
+- the global DQN valid-action mask is unchanged. This only affects the
+  threat-defense rerank prior.
+- the flag is off by default because self contact reaction includes both hit
+  and block reaction.
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py tools/compare_dqn_models.py`
+- direct helper smoke:
+  - ordinary grounded threat guard bonus: `0.2`.
+  - contact reaction with sustain off: `0.0`.
+  - contact reaction with sustain on: `0.2`.
+  - contact reaction unsafe `tatsu-mk` penalty with sustain on: `0.2`.
+  - airborne-opponent contact row remains excluded: `0.0`.
+- existing row inventory confirms enough relevant rows for offline sanity:
+  - `logs/rl-transitions-v335-live-probe.ndjson`: `10467`
+    `self_contact + opp_attack` rows.
+  - `logs/rl-transitions-retrain-p2-normals-human-v1.ndjson`: `6089`.
+  - `logs/rl-transitions-retrain-p8-natural-human-v1.ndjson`: `1337`.
+  - `logs/rl-transitions-retrain-p8-natural-cpudemo-v1.ndjson`: `2197`.
+- same-observation compare on the first `5000` rows of
+  `logs/rl-transitions-v335-live-probe.ndjson` using v350 and tuned live-side
+  priors showed contact sustain strongly changes the intended buckets:
+  - no sustain / no threat prior baseline in compare: defense `9.5%`,
+    attack `16.3%`, Shoryuken `1.3%`, fireball `9.5%`.
+  - contact sustain with threat-defense guard/back/unsafe `0.20/0.15/0.20`,
+    max_dx `240`: defense `24.0%`, attack `11.1%`, Shoryuken `1.3%`,
+    fireball `9.5%`.
+  - `atk1_close`: `forward/stand-lp` dominated before; with sustain,
+    `guard-crouch 40/66`, `back 14/66`, `forward 12/66`.
+  - `atk1_mid`: with sustain, `guard-crouch 379/793`,
+    `back 155/793`, `forward 259/793`.
+  - changed `721/5000` rows with no Shoryuken increase.
+
+Conclusion:
+- the current multi-hit failure is consistent with a block/contact-reaction
+  disengage, not only weak model preference.
+- `--dqn-threat-defense-prior-contact-sustain` is a good next live probe flag
+  for tatsu-style multi-hit defense.
+- Main risk remains hit-stun ambiguity: if the first hit connects, the same
+  contact flag can still push guard/back afterward. This is acceptable for a
+  short probe but not a final learned solution.
+
+Next:
+- live-probe v350 with contact sustain enabled together with the latest tuned
+  priors.
+- Watch specifically:
+  - whether tatsu second/third hits stay guarded.
+  - whether post-hit behavior becomes too defensive after actually getting hit.
+  - whether anti-air remains preserved.
+- If contact sustain helps, the longer-term observation/schema fix is to split
+  block stun from hit stun or expose a cleaner guard/contact outcome feature.
+
+## 2026-05-04: Far Shoryuken Extra Penalty
+
+Milestone:
+- Milestone 6: reduce live medium/far-range random Shoryuken without reducing
+  close anti-air availability
+
+Files changed:
+- `tools/rl_probe_server.py`
+- `tools/compare_dqn_models.py`
+- `docs/remote-rl-agent-engineering-log.md`
+
+User observation:
+- Shoryuken still fires randomly around mid distance, roughly `abs_dx ~= 200`.
+
+Diagnosis:
+- The current Shoryuken context prior only exempts coarse anti-air rows inside
+  `--dqn-shoryuken-prior-min-abs-dx` and
+  `--dqn-shoryuken-prior-max-abs-dx`, default `24-150`.
+- A Shoryuken at `abs_dx ~= 200` is already outside the anti-air exemption, so
+  it receives the base penalty, e.g. `0.15` in the current v350 live command.
+- If it still wins top-1, the issue is not the anti-air exemption being too
+  wide; the base penalty is not large enough for medium/far non-anti-air rows.
+
+Implementation:
+- Added optional far-distance extra penalty fields to
+  `DQNShoryukenContextPriorConfig`:
+  - `far_min_abs_dx`
+  - `far_extra_penalty`
+- Added probe CLI flags:
+  - `--dqn-shoryuken-prior-far-min-abs-dx`
+  - `--dqn-shoryuken-prior-far-extra-penalty`
+- Added matching `tools/compare_dqn_models.py` flags.
+- The extra penalty only applies outside the anti-air context. If a row matches
+  the existing anti-air exemption, penalty remains `0.0`.
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py tools/compare_dqn_models.py`
+- direct helper smoke with base Shoryuken penalty `0.15`, far threshold `180`,
+  extra `0.10`:
+  - anti-air row at `dx=100`, opponent air routine: `0.0`.
+  - non-anti-air row at `dx=160`: `0.15`.
+  - non-anti-air row at `dx=200`: `0.25`.
+  - non-Shoryuken action unchanged: `0.0`.
+- same-observation v350 slice had already-low Shoryuken top1, so it did not
+  show a distribution shift; this is mainly a live-side guardrail for the
+  reported `dx ~= 200` failure mode.
+
+Next:
+- Try the current v350 live command with:
+  - `--dqn-shoryuken-prior-far-min-abs-dx 180`
+  - `--dqn-shoryuken-prior-far-extra-penalty 0.10`
+- If `dx ~= 200` Shoryuken still appears, increase only the extra far penalty
+  before changing the close anti-air window.
+- Watch that close anti-air remains available; this change should not affect
+  anti-air rows inside `24-150`.
+
+Live follow-up:
+- User reports Shoryuken is still too frequent outside `abs_dx ~= 180` with
+  far extra penalty `0.10`.
+- Next probe should keep `--dqn-shoryuken-prior-far-min-abs-dx 180` and raise
+  `--dqn-shoryuken-prior-far-extra-penalty` to `0.20`.
+- Rationale: the failure is still beyond the far threshold, so increase the
+  far-only penalty first instead of moving the threshold down toward the
+  anti-air exemption boundary.
+
+Second live follow-up:
+- User reports far extra penalty `0.20` still does not suppress Shoryuken
+  enough outside `abs_dx ~= 180`.
+- Interpretation: a soft Q penalty is not enough for this model in those rows;
+  either the Shoryuken Q gap is very large, or the live row is not matching the
+  intended penalty path often enough.
+- Added opt-in hard far block:
+  - `--dqn-shoryuken-prior-far-block`
+- Behavior:
+  - still requires `--dqn-shoryuken-context-prior`.
+  - only affects Shoryuken actions.
+  - only applies outside the existing anti-air exemption.
+  - at or beyond `--dqn-shoryuken-prior-far-min-abs-dx`, returns a very large
+    Shoryuken penalty so another valid action should win.
+- Smoke:
+  - far non-anti-air Shoryuken at `dx=200`: `1000000.0` penalty.
+  - anti-air Shoryuken at `dx=100`, opponent air routine: `0.0`.
+  - non-Shoryuken action: `0.0`.
+
+Next:
+- Live-probe v350 with `--dqn-shoryuken-prior-far-block` and threshold `180`.
+- If this finally stops far DP but makes the agent too passive at 180+, recover
+  activity with fireball/back/guard priors rather than re-enabling far DP.
+
+Third live follow-up / fix:
+- User reports `--dqn-shoryuken-prior-far-block` still did not suppress far
+  Shoryuken.
+- Root cause found in the prior helper: far block was evaluated after early
+  returns for self airborne / jump / `dqn_ground_action_start_allowed(row)`.
+- In recovery or other non-action-start rows, the helper returned only the base
+  Shoryuken penalty before reaching the far block branch.
+- Fixed `dqn_shoryuken_context_prior_penalty()` so it computes anti-air context
+  and far context first:
+  - anti-air exemption remains first and returns `0.0`.
+  - far hard block applies before self action-start checks.
+  - far extra penalty also applies before self action-start checks.
+- Smoke after fix:
+  - far non-anti-air Shoryuken at `dx=200` with
+    `obs_self_ground_action_start_allowed=0`: `1000000.0`.
+  - anti-air Shoryuken at `dx=100`, opponent air routine: `0.0`.
+  - soft far penalty at `dx=200` with action-start not allowed: `0.35`.
+  - non-Shoryuken action: `0.0`.
+
+Fourth live follow-up:
+- User reports Shoryuken still appears in mid/far range even with
+  `--dqn-shoryuken-prior-far-min-abs-dx 40 --dqn-shoryuken-prior-far-block`.
+- Important interaction: the Shoryuken anti-air exemption is evaluated before
+  far block. With defaults, anti-air exemption covers `abs_dx=24-150` when
+  opponent routine fields look like a jump/air routine.
+- Therefore `far_min_abs_dx=40` does not mean "block all Shoryuken at dx>=40"
+  unless the anti-air exemption max is also moved below 40.
+- Next live probe for a diagnostic hard block should add:
+  - `--dqn-shoryuken-prior-max-abs-dx 39`
+  - `--dqn-shoryuken-prior-far-min-abs-dx 40`
+  - `--dqn-shoryuken-prior-far-block`
+- Risk: this intentionally sacrifices most anti-air Shoryuken availability for
+  the probe. Use it only to confirm whether the remaining visible DP was coming
+  through the exemption path.
+
+Fifth live follow-up / fix:
+- User reports Shoryuken still appears occasionally after narrowing the
+  anti-air exemption.
+- Found a second bypass path: v350 manifest has `epsilon=0.05`.
+- In `dqn_actor_action_name()`, epsilon exploration previously sampled directly
+  from valid actions before Q rerank priors, so hard-blocked Shoryuken actions
+  could still be selected by the 5% random branch.
+- Added `dqn_action_hard_blocked_by_priors()` and filtered hard-blocked actions
+  out of epsilon eligible actions.
+- Smoke:
+  - With `max_abs_dx=39`, `far_min_abs_dx=40`, and `far_block=True`, valid
+    epsilon actions at `dx=80` originally included `shoryuken-lp/mp/hp`.
+  - After filtering, epsilon eligible actions are
+    `forward`, `back`, `guard-stand`, `fireball-hp`; all Shoryuken variants
+    are blocked.
+- Remaining possible source if a rare Shoryuken is still observed after this:
+  - an already-started macro continuing for its remaining input frames.
+  - old probe server process not restarted from the edited file.
+  - visual confusion with opponent / CPU action rather than agent action.
 
 ## 2026-05-03: v338 Fireball Zoning Prior Probe Support
 

@@ -472,15 +472,23 @@ class DQNShoryukenContextPriorConfig:
     max_abs_dx: int = 150
     opp_air_routine_min: int = 18
     opp_air_routine_max: int = 26
+    far_min_abs_dx: int = 0
+    far_extra_penalty: float = 0.0
+    far_block: bool = False
 
     def label(self) -> str:
         if not self.enabled:
             return "off"
-        return (
+        label = (
             f"penalty:{self.penalty:.3f}"
             f"/dx:{self.min_abs_dx}-{self.max_abs_dx}"
             f"/opp_r2:{self.opp_air_routine_min}-{self.opp_air_routine_max}"
         )
+        if self.far_extra_penalty > 0.0:
+            label += f"/far_dx>={self.far_min_abs_dx}+{self.far_extra_penalty:.3f}"
+        if self.far_block:
+            label += f"/far_block_dx>={self.far_min_abs_dx}"
+        return label
 
 
 @dataclass(frozen=True)
@@ -520,6 +528,7 @@ class DQNThreatDefensePriorConfig:
     back_bonus: float = 0.02
     unsafe_penalty: float = 0.0
     max_abs_dx: int = 144
+    contact_sustain: bool = False
 
     def label(self) -> str:
         if not self.enabled:
@@ -529,6 +538,7 @@ class DQNThreatDefensePriorConfig:
             f"/back:{self.back_bonus:.3f}"
             f"/unsafe:{self.unsafe_penalty:.3f}"
             f"/dx<={self.max_abs_dx}"
+            f"/contact:{int(self.contact_sustain)}"
         )
 
 
@@ -1349,11 +1359,6 @@ def dqn_shoryuken_context_prior_penalty(
 ) -> float:
     if not config.enabled or action not in SHORYUKEN_ACTION_NAMES:
         return 0.0
-    if row_int_field(row, "obs_self_airborne") != 0 or row_int_field(row, "obs_self_jump_phase") != 0:
-        return max(0.0, config.penalty)
-    if not dqn_ground_action_start_allowed(row):
-        return max(0.0, config.penalty)
-
     abs_dx = row_int_field(row, "obs_abs_dx")
     opp_routine_1 = row_int_field(row, "obs_opp_routine_1")
     opp_routine_2 = row_int_field(row, "obs_opp_routine_2")
@@ -1362,7 +1367,19 @@ def dqn_shoryuken_context_prior_penalty(
         and opp_routine_1 == 0
         and config.opp_air_routine_min <= opp_routine_2 <= config.opp_air_routine_max
     )
-    return 0.0 if anti_air_context else max(0.0, config.penalty)
+    if anti_air_context:
+        return 0.0
+    penalty = max(0.0, config.penalty)
+    far_context = abs_dx >= max(0, config.far_min_abs_dx)
+    if config.far_block and far_context:
+        return 1_000_000.0
+    if config.far_extra_penalty > 0.0 and far_context:
+        penalty += max(0.0, config.far_extra_penalty)
+    if row_int_field(row, "obs_self_airborne") != 0 or row_int_field(row, "obs_self_jump_phase") != 0:
+        return penalty
+    if not dqn_ground_action_start_allowed(row):
+        return penalty
+    return penalty
 
 
 def dqn_ground_normal_context_prior_penalty(
@@ -1422,11 +1439,13 @@ def dqn_threat_defense_prior_bonus(
         return 0.0
     if row_int_field(row, "obs_self_airborne") != 0 or row_int_field(row, "obs_self_jump_phase") != 0:
         return 0.0
-    if not dqn_ground_action_start_allowed(row):
-        return 0.0
     if row_int_field(row, "obs_opp_routine_attack_state") == 0:
         return 0.0
     if row_int_field(row, "obs_opp_airborne") != 0 or row_int_field(row, "obs_opp_jump_phase") != 0:
+        return 0.0
+    can_start_ground_action = dqn_ground_action_start_allowed(row)
+    contact_sustain = config.contact_sustain and row_int_field(row, "obs_self_contact_reaction_state") != 0
+    if not can_start_ground_action and not contact_sustain:
         return 0.0
     if row_int_field(row, "obs_abs_dx") > config.max_abs_dx:
         return 0.0
@@ -1453,11 +1472,13 @@ def dqn_threat_defense_prior_penalty(
         return 0.0
     if row_int_field(row, "obs_self_airborne") != 0 or row_int_field(row, "obs_self_jump_phase") != 0:
         return 0.0
-    if not dqn_ground_action_start_allowed(row):
-        return 0.0
     if row_int_field(row, "obs_opp_routine_attack_state") == 0:
         return 0.0
     if row_int_field(row, "obs_opp_airborne") != 0 or row_int_field(row, "obs_opp_jump_phase") != 0:
+        return 0.0
+    can_start_ground_action = dqn_ground_action_start_allowed(row)
+    contact_sustain = config.contact_sustain and row_int_field(row, "obs_self_contact_reaction_state") != 0
+    if not can_start_ground_action and not contact_sustain:
         return 0.0
     if row_int_field(row, "obs_abs_dx") > config.max_abs_dx:
         return 0.0
@@ -1897,6 +1918,14 @@ def dqn_ranked_action_scores(
         score += dqn_threat_defense_prior_bonus(action, row, threat_defense_prior_config)
         scored_actions.append((action, score))
     return sorted(scored_actions, key=lambda item: (item[1], item[0]), reverse=True)
+
+
+def dqn_action_hard_blocked_by_priors(
+    action: str,
+    row: dict[str, object],
+    shoryuken_context_prior_config: DQNShoryukenContextPriorConfig = DQNShoryukenContextPriorConfig(),
+) -> bool:
+    return dqn_shoryuken_context_prior_penalty(action, row, shoryuken_context_prior_config) >= 1_000_000.0
 
 
 class TabularPolicyLearner:
@@ -2811,7 +2840,15 @@ def dqn_actor_action_name(
     if actor.policy != "dqn" or not obs_row or not actor.dqn_model:
         return None
     if random.random() < actor.epsilon:
-        eligible_actions = dqn_valid_actions_for_row(obs_row, actor.actions, valid_action_mask_config)
+        eligible_actions = [
+            action
+            for action in dqn_valid_actions_for_row(obs_row, actor.actions, valid_action_mask_config)
+            if not dqn_action_hard_blocked_by_priors(
+                action,
+                obs_row,
+                shoryuken_context_prior_config,
+            )
+        ]
         if not eligible_actions:
             return None
         return random.choice(eligible_actions)
@@ -2857,6 +2894,19 @@ def active_macro_action_frame(
     else:
         state["index"] = index
     return make_policy_action_frame(action, action_wire, step=step)
+
+
+def active_macro_action_name(
+    macro_states: dict[tuple[int, int, int], dict[str, int | str]],
+    nonce: int,
+    run_id: int,
+    episode_id: int,
+) -> str | None:
+    state = macro_states.get((nonce, run_id, episode_id))
+    if not state:
+        return None
+    action = str(state.get("action", ""))
+    return action if action else None
 
 
 def active_macro_action_wire(
@@ -2914,6 +2964,18 @@ def policy_action_frame(
     dqn_threat_defense_prior_config: DQNThreatDefensePriorConfig = DQNThreatDefensePriorConfig(),
 ) -> PolicyActionFrame:
     if actor.policy in MODEL_POLICY_CHOICES:
+        macro_action = active_macro_action_name(macro_states, nonce, run_id, episode_id)
+        if (
+            actor.policy == "dqn"
+            and macro_action is not None
+            and obs_row_override is not None
+            and dqn_action_hard_blocked_by_priors(
+                macro_action,
+                obs_row_override,
+                dqn_shoryuken_context_prior_config,
+            )
+        ):
+            macro_states.pop((nonce, run_id, episode_id), None)
         macro_frame = active_macro_action_frame(macro_states, nonce, run_id, episode_id)
         if macro_frame is not None:
             return macro_frame
@@ -3687,6 +3749,23 @@ def main() -> None:
         help="Maximum obs_opp_routine_2 treated as opponent jump/air routine for the Shoryuken prior",
     )
     parser.add_argument(
+        "--dqn-shoryuken-prior-far-min-abs-dx",
+        type=int,
+        default=0,
+        help="Minimum obs_abs_dx for optional extra Shoryuken penalty outside anti-air context; 0 keeps it available from any non-anti-air distance when extra penalty is set",
+    )
+    parser.add_argument(
+        "--dqn-shoryuken-prior-far-extra-penalty",
+        type=float,
+        default=0.0,
+        help="Additional Shoryuken Q penalty for non-anti-air rows at or beyond --dqn-shoryuken-prior-far-min-abs-dx",
+    )
+    parser.add_argument(
+        "--dqn-shoryuken-prior-far-block",
+        action="store_true",
+        help="Hard-block Shoryuken in non-anti-air rows at or beyond --dqn-shoryuken-prior-far-min-abs-dx",
+    )
+    parser.add_argument(
         "--dqn-ground-normal-context-prior",
         action="store_true",
         help="Apply a soft grounded normal Q penalty outside close or threat/contact poke contexts before DQN argmax",
@@ -3760,6 +3839,14 @@ def main() -> None:
         type=int,
         default=144,
         help="Maximum obs_abs_dx considered an eligible opponent-attack defense context",
+    )
+    parser.add_argument(
+        "--dqn-threat-defense-prior-contact-sustain",
+        action="store_true",
+        help=(
+            "Keep threat-defense guard/back pressure active while self is in contact reaction and "
+            "the opponent is still attacking; useful for multi-hit block-stun gaps"
+        ),
     )
     parser.add_argument(
         "--verbose",
@@ -3838,6 +3925,7 @@ def main() -> None:
     shoryuken_prior_max_dx = max(shoryuken_prior_min_dx, int(args.dqn_shoryuken_prior_max_abs_dx))
     shoryuken_prior_air_min = max(0, int(args.dqn_shoryuken_prior_opp_air_routine_min))
     shoryuken_prior_air_max = max(shoryuken_prior_air_min, int(args.dqn_shoryuken_prior_opp_air_routine_max))
+    shoryuken_prior_far_min_dx = max(0, int(args.dqn_shoryuken_prior_far_min_abs_dx))
     dqn_shoryuken_context_prior_config = DQNShoryukenContextPriorConfig(
         enabled=bool(args.dqn_shoryuken_context_prior),
         penalty=max(0.0, float(args.dqn_shoryuken_prior_penalty)),
@@ -3845,6 +3933,9 @@ def main() -> None:
         max_abs_dx=shoryuken_prior_max_dx,
         opp_air_routine_min=shoryuken_prior_air_min,
         opp_air_routine_max=shoryuken_prior_air_max,
+        far_min_abs_dx=shoryuken_prior_far_min_dx,
+        far_extra_penalty=max(0.0, float(args.dqn_shoryuken_prior_far_extra_penalty)),
+        far_block=bool(args.dqn_shoryuken_prior_far_block),
     )
     ground_normal_prior_close_max_dx = max(0, int(args.dqn_ground_normal_prior_close_max_abs_dx))
     ground_normal_prior_poke_max_dx = max(
@@ -3874,6 +3965,7 @@ def main() -> None:
         back_bonus=max(0.0, float(args.dqn_threat_defense_prior_back_bonus)),
         unsafe_penalty=max(0.0, float(args.dqn_threat_defense_prior_unsafe_penalty)),
         max_abs_dx=max(0, int(args.dqn_threat_defense_prior_max_abs_dx)),
+        contact_sustain=bool(args.dqn_threat_defense_prior_contact_sustain),
     )
     serve(
         args.host,

@@ -428,6 +428,23 @@ def main() -> int:
         help="Maximum obs_abs_dx considered a plausible anti-air Shoryuken context",
     )
     parser.add_argument(
+        "--dqn-shoryuken-prior-far-min-abs-dx",
+        type=int,
+        default=0,
+        help="Minimum obs_abs_dx for optional extra Shoryuken penalty outside anti-air context",
+    )
+    parser.add_argument(
+        "--dqn-shoryuken-prior-far-extra-penalty",
+        type=float,
+        default=0.0,
+        help="Additional Shoryuken Q penalty for non-anti-air rows at or beyond --dqn-shoryuken-prior-far-min-abs-dx",
+    )
+    parser.add_argument(
+        "--dqn-shoryuken-prior-far-block",
+        action="store_true",
+        help="Hard-block Shoryuken in non-anti-air rows at or beyond --dqn-shoryuken-prior-far-min-abs-dx",
+    )
+    parser.add_argument(
         "--dqn-ground-normal-context-prior",
         action="store_true",
         help="Apply a soft grounded normal Q penalty outside close or threat/contact poke contexts before DQN argmax",
@@ -526,6 +543,14 @@ def main() -> int:
         default=144,
         help="Maximum obs_abs_dx considered an eligible opponent-attack defense context",
     )
+    parser.add_argument(
+        "--dqn-threat-defense-prior-contact-sustain",
+        action="store_true",
+        help=(
+            "Keep threat-defense guard/back pressure active while self is in contact reaction and "
+            "the opponent is still attacking; useful for multi-hit block-stun gaps"
+        ),
+    )
     args = parser.parse_args()
 
     models = [load_model(value) for value in args.model]
@@ -551,11 +576,15 @@ def main() -> int:
     }
     shoryuken_prior_min_dx = max(0, int(args.dqn_shoryuken_prior_min_abs_dx))
     shoryuken_prior_max_dx = max(shoryuken_prior_min_dx, int(args.dqn_shoryuken_prior_max_abs_dx))
+    shoryuken_prior_far_min_dx = max(0, int(args.dqn_shoryuken_prior_far_min_abs_dx))
     shoryuken_context_prior_config = rl.DQNShoryukenContextPriorConfig(
         enabled=bool(args.dqn_shoryuken_context_prior),
         penalty=max(0.0, float(args.dqn_shoryuken_prior_penalty)),
         min_abs_dx=shoryuken_prior_min_dx,
         max_abs_dx=shoryuken_prior_max_dx,
+        far_min_abs_dx=shoryuken_prior_far_min_dx,
+        far_extra_penalty=max(0.0, float(args.dqn_shoryuken_prior_far_extra_penalty)),
+        far_block=bool(args.dqn_shoryuken_prior_far_block),
     )
     ground_normal_prior_model_labels = {
         item.strip()
@@ -600,6 +629,7 @@ def main() -> int:
         back_bonus=max(0.0, float(args.dqn_threat_defense_prior_back_bonus)),
         unsafe_penalty=max(0.0, float(args.dqn_threat_defense_prior_unsafe_penalty)),
         max_abs_dx=max(0, int(args.dqn_threat_defense_prior_max_abs_dx)),
+        contact_sustain=bool(args.dqn_threat_defense_prior_contact_sustain),
     )
     rows = read_rows(args.transition_logs, max(0, args.limit), max(0, args.tail_rows))
     if not rows:

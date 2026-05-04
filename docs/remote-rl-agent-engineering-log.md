@@ -77,6 +77,25 @@ Follow-up:
   set `--dqn-shoryuken-prior-repeat-lockout-decisions 24`; set it to `0` to
   disable the burst lockout.
 
+Second follow-up:
+- User reports Shoryuken still chains repeatedly.
+- The previous repeat lockout preserved anti-air rows, which is too permissive
+  for the current diagnostic because a live row can still look like anti-air
+  while the visible behavior is random / repeated DP.
+- Changed repeat lockout semantics:
+  - default lockout now suppresses all `shoryuken-*`, including anti-air-looking
+    rows.
+  - added `--dqn-shoryuken-prior-repeat-lockout-allow-anti-air` as an explicit
+    opt-in if we later want to restore anti-air availability during the
+    cooldown.
+  - verbose DQN diagnostics now print `dqn_dp_repeat_lockout` and
+    `dqn_dp_anti_air` to distinguish strict lockout from row classification.
+- Smoke:
+  - strict lockout blocks `shoryuken-lp` even on `obs_abs_dx=32`,
+    opponent routine 18 anti-air rows.
+  - with `repeat_lockout_allow_anti_air=True`, the same anti-air row is not
+    hard-blocked by lockout.
+
 ## 2026-05-04: v350 Guard Success Bonus And Grounded Normals Defense Phase 4 Complete
 
 Milestone:

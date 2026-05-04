@@ -476,6 +476,7 @@ class DQNShoryukenContextPriorConfig:
     far_extra_penalty: float = 0.0
     far_block: bool = False
     repeat_lockout_decisions: int = 12
+    repeat_lockout_allow_anti_air: bool = False
 
     def label(self) -> str:
         if not self.enabled:
@@ -491,6 +492,7 @@ class DQNShoryukenContextPriorConfig:
             label += f"/far_block_dx>={self.far_min_abs_dx}"
             if self.repeat_lockout_decisions > 0:
                 label += f"/repeat_lockout:{self.repeat_lockout_decisions}"
+                label += f"/repeat_aa:{int(self.repeat_lockout_allow_anti_air)}"
         return label
 
 
@@ -1938,7 +1940,10 @@ def dqn_action_hard_blocked_by_priors(
     if (
         shoryuken_repeat_lockout_active
         and action in SHORYUKEN_ACTION_NAMES
-        and not dqn_shoryuken_anti_air_context(row, shoryuken_context_prior_config)
+        and (
+            not shoryuken_context_prior_config.repeat_lockout_allow_anti_air
+            or not dqn_shoryuken_anti_air_context(row, shoryuken_context_prior_config)
+        )
     ):
         return True
     return dqn_shoryuken_context_prior_penalty(action, row, shoryuken_context_prior_config) >= 1_000_000.0
@@ -3103,6 +3108,7 @@ def format_dqn_verbose_diagnostics(
     actor: ActorModel,
     obs_row: dict[str, object] | None,
     target_action: PolicyActionFrame,
+    shoryuken_repeat_lockout_active: bool,
     valid_action_mask_config: DQNValidActionMaskConfig,
     valid_action_mask_source: str,
     projectile_timing_prior_config: DQNProjectileTimingPriorConfig,
@@ -3121,6 +3127,7 @@ def format_dqn_verbose_diagnostics(
             f" dqn_mask_source={valid_action_mask_source}"
             f" dqn_proj_prior={projectile_timing_prior_config.label()}"
             f" dqn_dp_prior={shoryuken_context_prior_config.label()}"
+            f" dqn_dp_repeat_lockout={int(shoryuken_repeat_lockout_active)}"
             f" dqn_norm_prior={ground_normal_context_prior_config.label()}"
             f" dqn_fb_prior={fireball_zoning_prior_config.label()}"
             f" dqn_def_prior={threat_defense_prior_config.label()}"
@@ -3139,6 +3146,7 @@ def format_dqn_verbose_diagnostics(
         obs_row,
         shoryuken_context_prior_config,
     )
+    shoryuken_anti_air = dqn_shoryuken_anti_air_context(obs_row, shoryuken_context_prior_config)
     ground_normal_context_prior_penalty = dqn_ground_normal_context_prior_penalty(
         "stand-lp",
         obs_row,
@@ -3167,6 +3175,8 @@ def format_dqn_verbose_diagnostics(
         f" dqn_proj_prior_jump_penalty={projectile_timing_prior_penalty:.3f}"
         f" dqn_dp_prior={shoryuken_context_prior_config.label()}"
         f" dqn_dp_prior_penalty={shoryuken_context_prior_penalty:.3f}"
+        f" dqn_dp_repeat_lockout={int(shoryuken_repeat_lockout_active)}"
+        f" dqn_dp_anti_air={int(shoryuken_anti_air)}"
         f" dqn_norm_prior={ground_normal_context_prior_config.label()}"
         f" dqn_norm_prior_penalty={ground_normal_context_prior_penalty:.3f}"
         f" dqn_fb_prior={fireball_zoning_prior_config.label()}"
@@ -3395,6 +3405,14 @@ def serve(
                 elif model_store.latest_tabular_state() is not None:
                     tabular_state_source = "latest"
             if action_port is not None:
+                episode_key = (nonce, run_id, episode_id)
+                shoryuken_repeat_lockout_active = (
+                    active_model.policy == "dqn"
+                    and obs_row is not None
+                    and dqn_shoryuken_context_prior_config.far_block
+                    and dqn_shoryuken_context_prior_config.repeat_lockout_decisions > 0
+                    and decision_id < int(shoryuken_lockout_states.get(episode_key, -1))
+                )
                 target_action = policy_action_frame(
                     active_model,
                     model_store,
@@ -3445,6 +3463,7 @@ def serve(
                         active_model,
                         obs_row,
                         target_action,
+                        shoryuken_repeat_lockout_active,
                         effective_dqn_valid_action_mask_config,
                         dqn_valid_action_mask_source,
                         dqn_projectile_timing_prior_config,
@@ -3826,9 +3845,14 @@ def main() -> None:
         type=int,
         default=12,
         help=(
-            "When far-block is enabled, suppress repeat Shoryuken decisions in non-anti-air rows for this many "
+            "When far-block is enabled, suppress repeat Shoryuken decisions for this many "
             "decisions after a Shoryuken starts or is canceled by the hard block"
         ),
+    )
+    parser.add_argument(
+        "--dqn-shoryuken-prior-repeat-lockout-allow-anti-air",
+        action="store_true",
+        help="Allow anti-air-context Shoryuken during the repeat lockout; off by default for stricter burst suppression",
     )
     parser.add_argument(
         "--dqn-ground-normal-context-prior",
@@ -4002,6 +4026,7 @@ def main() -> None:
         far_extra_penalty=max(0.0, float(args.dqn_shoryuken_prior_far_extra_penalty)),
         far_block=bool(args.dqn_shoryuken_prior_far_block),
         repeat_lockout_decisions=max(0, int(args.dqn_shoryuken_prior_repeat_lockout_decisions)),
+        repeat_lockout_allow_anti_air=bool(args.dqn_shoryuken_prior_repeat_lockout_allow_anti_air),
     )
     ground_normal_prior_close_max_dx = max(0, int(args.dqn_ground_normal_prior_close_max_abs_dx))
     ground_normal_prior_poke_max_dx = max(

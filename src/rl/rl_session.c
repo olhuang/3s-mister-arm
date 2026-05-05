@@ -382,6 +382,9 @@ static void RLSession_StartNewEpisode() {
     hp_damage_baseline_valid = false;
     last_self_damage_total = 0;
     last_opp_damage_total = 0;
+    if (remote_debug.run_id != 0) {
+        RLCombatEvent_BeginEpisode(remote_debug.run_id, remote_debug.episode_id);
+    }
 }
 
 static bool RLSession_RoundEpisodeChanged() {
@@ -494,6 +497,12 @@ static void RLSession_FinalizeOverlayAttackEvent() {
 }
 
 static void RLSession_ResetRemoteRuntime(bool reset_counters) {
+    if (remote_debug.run_id != 0 && remote_debug.episode_id != 0) {
+        RLCombatEvent_FlushEpisode(remote_debug.run_id,
+                                   remote_debug.episode_id,
+                                   remote_debug.frame_id,
+                                   remote_debug.next_decision_id);
+    }
     RLSession_ClearRemoteQueue();
     RLSession_ClearActionContext();
     RLSession_ResetTransitionBatch();
@@ -501,6 +510,7 @@ static void RLSession_ResetRemoteRuntime(bool reset_counters) {
     remote_runtime_initialized = false;
     if (reset_counters) {
         memset(&remote_debug, 0, sizeof(remote_debug));
+        RLCombatEvent_ResetRun(0);
     }
     RLSession_ResetOverlayAttackCounters();
 }
@@ -1705,6 +1715,7 @@ static void RLSession_SetActiveLedgerEntry(RLDecisionLedgerEntry* entry) {
 
 static void RLSession_FinalizeEpisodeLedger(u32 episode_id) {
     RLSession_FinalizeOverlayAttackEvent();
+    RLCombatEvent_FlushEpisode(remote_debug.run_id, episode_id, remote_debug.frame_id, remote_debug.next_decision_id);
     if (active_ledger_entry != NULL && active_ledger_entry->valid &&
         active_ledger_entry->run_id == remote_debug.run_id && active_ledger_entry->episode_id == episode_id) {
         const s16 self = RLSession_AgentPlayerIndex();
@@ -1978,6 +1989,7 @@ static void RLSession_MaybeInitRemoteRuntime() {
         if (remote_debug.run_id == 0) {
             remote_debug.run_id = RLSession_LoadNextRunId();
             next_episode_id = 1;
+            RLCombatEvent_ResetRun(remote_debug.run_id);
         }
         RLSession_StartNewEpisode();
         RLSession_ResetOverlayAttackCounters();

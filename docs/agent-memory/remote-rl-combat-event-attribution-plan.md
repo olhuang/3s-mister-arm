@@ -1465,6 +1465,18 @@ Files:
 - `src/rl/rl_combat_event.*`
 - `src/rl/rl_session.c`
 
+Implementation status:
+
+- 2026-05-05 Phase 2A implemented the fixed-size self/opponent attack-event
+  ring foundation in `src/rl/rl_combat_event.*`.
+- Event ids are run-wide, monotonic, and nonzero; ring slots can reuse empty or
+  finalized events, but active attack-event slots are never overwritten.
+- `rl_session.c` now calls combat-event begin/flush/reset hooks from the
+  remote runtime's run/episode lifecycle. Episode-boundary flush finalizes any
+  still-active attack events as explicit unknowns.
+- Phase 2A does not yet create attack events from observation edges and does not
+  export event rows, transition summaries, rewards, or trainer-visible labels.
+
 Work:
 
 - add fixed-size attack event rings for self and opponent

@@ -1,6 +1,10 @@
 #ifndef RL_COMBAT_EVENT_H
 #define RL_COMBAT_EVENT_H
 
+#include "types.h"
+
+#include <stdbool.h>
+
 #define RL_COMBAT_EVIDENCE_BITMASK_VERSION 1u
 
 #define RL_COMBAT_EVIDENCE_BIT_REQUESTED_ATTACK_INPUT_STARTED 0u
@@ -31,5 +35,97 @@
 
 #define RL_COMBAT_EVIDENCE_V1_USED_LO_MASK 0x01ffffffu
 #define RL_COMBAT_EVIDENCE_V1_USED_HI_MASK 0x00000000u
+
+#define RL_COMBAT_EVENT_ID_NONE 0ull
+#define RL_COMBAT_ATTACK_EVENT_RING_CAP 32u
+
+typedef enum RLCombatEventSide {
+    RL_COMBAT_EVENT_SIDE_NONE = 0,
+    RL_COMBAT_EVENT_SIDE_SELF = 1,
+    RL_COMBAT_EVENT_SIDE_OPPONENT = 2,
+} RLCombatEventSide;
+
+typedef enum RLCombatAttackEventStatus {
+    RL_COMBAT_ATTACK_EVENT_EMPTY = 0,
+    RL_COMBAT_ATTACK_EVENT_ACTIVE = 1,
+    RL_COMBAT_ATTACK_EVENT_FINALIZED = 2,
+} RLCombatAttackEventStatus;
+
+typedef enum RLCombatAttackEventResult {
+    RL_COMBAT_ATTACK_RESULT_PENDING = 0,
+    RL_COMBAT_ATTACK_RESULT_WHIFF = 1,
+    RL_COMBAT_ATTACK_RESULT_INTERRUPTED = 2,
+    RL_COMBAT_ATTACK_RESULT_UNKNOWN = 3,
+} RLCombatAttackEventResult;
+
+typedef enum RLCombatAttackFinalizeReason {
+    RL_COMBAT_ATTACK_FINALIZE_NONE = 0,
+    RL_COMBAT_ATTACK_FINALIZE_EXPLICIT = 1,
+    RL_COMBAT_ATTACK_FINALIZE_EPISODE_FLUSH = 2,
+} RLCombatAttackFinalizeReason;
+
+typedef struct RLCombatAttackEventStart {
+    u64 run_id;
+    u32 episode_id;
+    u32 decision_id;
+    u32 frame_id;
+    RLCombatEventSide side;
+    u8 character_id;
+    u16 routine_1;
+    u16 routine_2;
+    u16 current_attack;
+    u8 kind_of_waza;
+    u16 policy_action_id;
+    u16 policy_sub_action_id;
+    u16 policy_action_step;
+} RLCombatAttackEventStart;
+
+typedef struct RLCombatAttackEvent {
+    RLCombatAttackEventStatus status;
+    RLCombatAttackEventResult result;
+    RLCombatAttackFinalizeReason finalize_reason;
+    u64 event_id;
+    u64 run_id;
+    u32 episode_id;
+    u32 start_decision_id;
+    u32 start_frame;
+    u32 end_decision_id;
+    u32 end_frame;
+    RLCombatEventSide side;
+    u8 character_id;
+    u16 routine_1;
+    u16 routine_2;
+    u16 current_attack;
+    u8 kind_of_waza;
+    u16 policy_action_id;
+    u16 policy_sub_action_id;
+    u16 policy_action_step;
+} RLCombatAttackEvent;
+
+typedef struct RLCombatEventStats {
+    u64 run_id;
+    u32 episode_id;
+    u64 next_event_id;
+    u32 attack_started_count;
+    u32 attack_finalized_count;
+    u32 attack_unknown_flush_count;
+    u32 attack_dropped_start_count;
+    u32 attack_active_self_count;
+    u32 attack_active_opponent_count;
+    u32 episode_flush_count;
+    u32 episode_switch_flush_count;
+} RLCombatEventStats;
+
+void RLCombatEvent_ResetRun(u64 run_id);
+void RLCombatEvent_BeginEpisode(u64 run_id, u32 episode_id);
+void RLCombatEvent_FlushEpisode(u64 run_id, u32 episode_id, u32 frame_id, u32 decision_id);
+const RLCombatAttackEvent* RLCombatEvent_StartAttack(const RLCombatAttackEventStart* start);
+bool RLCombatEvent_FinalizeAttack(u64 event_id,
+                                  RLCombatAttackEventResult result,
+                                  RLCombatAttackFinalizeReason reason,
+                                  u32 frame_id,
+                                  u32 decision_id);
+const RLCombatAttackEvent* RLCombatEvent_FindAttack(u64 event_id);
+const RLCombatEventStats* RLCombatEvent_GetStats(void);
 
 #endif

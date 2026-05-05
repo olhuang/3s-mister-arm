@@ -2609,6 +2609,11 @@ Tasks:
   - [x] Recorded live row-size budget: gate-off max 1752 bytes, gate-on max 1937 bytes inside the 4096-byte formatter buffer
   - [x] Deferred explicit formatter micro-timing until the full combat-event log is implemented or live/intermediate tests show a visible performance problem; current Phase 0+1 live smoke had no observed gameplay/performance issue
 - [ ] Combat event attribution Phase 2: implement fixed-size self/opponent attack event rings with monotonic run-wide event ids, episode-boundary flush, and no active-slot overwrite
+  - [x] Phase 2A: added `src/rl/rl_combat_event.c` plus attack-event ring API/state for self and opponent, run-wide monotonic nonzero event ids, no active-slot overwrite, explicit finalize, and episode-boundary unknown flush
+  - [x] Phase 2A: wired combat-event run/episode lifecycle into `rl_session.c` start/reset/finalize paths without changing transition JSON, reward, inference, or trainer feature inputs
+  - [ ] Phase 2B: create attack events from self/opponent attack-start edges and attach raw routine/current-attack/policy context
+  - [ ] Phase 2C: add basic non-projectile attack finalization windows for whiff/interrupted/unknown
+  - [ ] Phase 2D: expose debug/analyzer visibility for event counts without promoting event labels into rewards
 - [ ] Combat event attribution Phase 3: replace ambiguous generic `engine_*` ownership with side-explicit `self_engine_*` and `opp_engine_*` attribution at attack-event creation time, keeping unknown/confidence fields for unsupported mappings
 - [ ] Combat event attribution Phase 4: implement projectile event tracking so fireball spawn/hit/block/expire results are attributed to projectile ids instead of owner routine snapshots
 - [ ] Combat event attribution Phase 5: implement throw event tracking so close guard failures can distinguish thrown/tech/whiff/unknown from strike or chip damage

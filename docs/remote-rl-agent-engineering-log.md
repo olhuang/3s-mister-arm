@@ -2,6 +2,59 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-05: Combat Event Attribution Phase 2A Attack Ring Foundation
+
+Milestone:
+- Milestone 6: Combat event attribution Phase 2A
+
+Files changed:
+- `src/rl/rl_combat_event.h`
+- `src/rl/rl_combat_event.c`
+- `src/rl/rl_session.c`
+- `docs/agent-memory/remote-rl-combat-event-attribution-plan.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Start Phase 2 by adding the C-side attack-event ring foundation before attack
+  start detection, result resolution, event export, or trainer adoption.
+
+Implementation notes:
+- Extended `rl_combat_event.h` beyond the Phase 0+1 bit constants with Phase 2
+  attack-event types only: side, status, result, finalize reason, start record,
+  attack event record, and stats.
+- Added `src/rl/rl_combat_event.c` with fixed-size self/opponent attack rings.
+- Event ids are run-wide monotonic `u64` values with `0` reserved for no event.
+- Ring allocation reuses only empty/finalized slots; if every slot is active,
+  the start request is dropped and counted instead of overwriting a pending
+  event.
+- Episode flush finalizes matching active events as `UNKNOWN` with
+  `EPISODE_FLUSH` reason so active events cannot leak across rounds.
+- Wired `rl_session.c` lifecycle hooks:
+  `RLCombatEvent_ResetRun()` when a run id is created or counters reset,
+  `RLCombatEvent_BeginEpisode()` when a new episode starts, and
+  `RLCombatEvent_FlushEpisode()` from episode finalize/reset paths.
+
+Non-goals:
+- No attack-start detection yet.
+- No projectile, throw, punish, contact matching, event journal export,
+  transition schema change, reward change, or learner feature change.
+
+Validation:
+- `git diff --check` passed.
+- `cc -std=c11 -Wall -Wextra -Isrc -Iinclude -c src/rl/rl_combat_event.c -o /tmp/rl_combat_event_wall.o` passed.
+- Standalone smoke compiled and ran against `src/rl/rl_combat_event.c`; it
+  verified event id allocation, active self count, explicit finalize, episode
+  flush-to-unknown, and ring clearing on episode begin.
+- `tools/mister/build-game.sh --flavor telemetry` passed and rebuilt
+  `src/rl/rl_combat_event.c` plus `src/rl/rl_session.c`; only the pre-existing
+  minizip `mktemp` linker warning appeared.
+
+Follow-up:
+- Phase 2B should create self/opponent attack events from observation
+  attack-start edges and attach raw routine/current-attack/policy context while
+  keeping event labels out of rewards and learner features.
+
 ## 2026-05-05: Combat Event Attribution Phase 0+1 Live Gate Smoke
 
 Milestone:

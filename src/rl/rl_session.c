@@ -457,6 +457,11 @@ static bool RLSession_CanOverrideGameplayInput() {
            RLSession_IsRoundBattleActive();
 }
 
+static bool RLSession_IsTransientGameplayPause() {
+    return RLSession_IsActive() && Mode_Type == MODE_VERSUS && mpp_w.inGame && Play_Mode == 1 && Game_pause != 0 &&
+           RLSession_IsRoundBattleActive();
+}
+
 static bool RLSession_CanRecordDemoInput() {
     if (!RLSession_IsActive() || !mpp_w.inGame || Game_pause != 0 || !RLSession_IsRoundBattleActive()) {
         return false;
@@ -555,6 +560,11 @@ static void RLSession_ResetRemoteRuntime(bool reset_counters) {
         RLCombatEvent_ResetRun(0);
     }
     RLSession_ResetOverlayAttackCounters();
+}
+
+static void RLSession_SuspendRemoteRuntimeForPause() {
+    RLSession_ClearActionContext();
+    active_remote_action.valid = false;
 }
 
 bool RLSession_IsActive() {
@@ -2328,6 +2338,10 @@ static RLCombatEventSide RLSession_ProjectileOwnerToCombatSide(u8 projectile_own
     return RL_COMBAT_EVENT_SIDE_NONE;
 }
 
+static u8 RLSession_IsGuardReactionRoutine2(u16 routine_2) {
+    return (u8)(routine_2 == 5u || routine_2 == 6u);
+}
+
 static void RLSession_FillCombatProjectileUpdate(RLCombatProjectileEventUpdate* update,
                                                  const RLDecisionLedgerEntry* entry,
                                                  const RLObservationV1* obs,
@@ -2356,6 +2370,8 @@ static void RLSession_FillCombatProjectileUpdate(RLCombatProjectileEventUpdate* 
 
     if (owner_side == RL_COMBAT_EVENT_SIDE_SELF) {
         update->target_guard = obs->opp_guard_flag;
+        update->target_block_reaction =
+            (u8)(obs->opp_contact_reaction_state && RLSession_IsGuardReactionRoutine2(obs->opp_routine[2]));
         update->target_entered_hit_stop = obs->opp_entered_hit_stop;
         update->target_entered_contact_state = obs->opp_entered_contact_state;
         update->target_entered_damage_state = obs->opp_entered_damage_state;
@@ -2363,6 +2379,8 @@ static void RLSession_FillCombatProjectileUpdate(RLCombatProjectileEventUpdate* 
         update->target_stun_delta = (u8)(obs->delta_opp_stun > 0);
     } else if (owner_side == RL_COMBAT_EVENT_SIDE_OPPONENT) {
         update->target_guard = obs->self_guard_flag;
+        update->target_block_reaction =
+            (u8)(obs->self_contact_reaction_state && RLSession_IsGuardReactionRoutine2(obs->self_routine[2]));
         update->target_entered_hit_stop = obs->self_entered_hit_stop;
         update->target_entered_contact_state = obs->self_entered_contact_state;
         update->target_entered_damage_state = obs->self_entered_damage_state;
@@ -2454,6 +2472,9 @@ void RLSession_OnObservationFrameEnd(const RLObservationV1* obs) {
     RLDecisionLedgerEntry* active_entry = NULL;
 
     if (obs == NULL || !obs->valid) {
+        return;
+    }
+    if (RLSession_IsTransientGameplayPause()) {
         return;
     }
 
@@ -2831,6 +2852,10 @@ static void RLSession_ApplyExpectedFallbackIfDue() {
 
 static void RLSession_ApplyRemoteActionToBuffers() {
     if (!RLSession_CanOverrideGameplayInput()) {
+        if (RLSession_IsTransientGameplayPause()) {
+            RLSession_SuspendRemoteRuntimeForPause();
+            return;
+        }
         RLSession_FinalizeRuntimeBeforeReset();
         RLSession_ResetRemoteRuntime(false);
         return;
@@ -2882,6 +2907,10 @@ static void RLSession_RecordDemoInput(s16 agent, u16 sw, RLExecutionSource sourc
     u16 policy_sub_action_id = RL_POLICY_SUB_ACTION_NONE;
 
     if (!RLSession_CanRecordDemoInput()) {
+        if (RLSession_IsTransientGameplayPause()) {
+            RLSession_SuspendRemoteRuntimeForPause();
+            return;
+        }
         RLSession_FinalizeRuntimeBeforeReset();
         RLSession_ResetRemoteRuntime(false);
         return;
@@ -3132,6 +3161,10 @@ void RLSession_ApplyInputOverrideToBuffers() {
     }
     if (RLSession_CpuDemoEnabled()) {
         if (!RLSession_CanRecordDemoInput()) {
+            if (RLSession_IsTransientGameplayPause()) {
+                RLSession_SuspendRemoteRuntimeForPause();
+                return;
+            }
             RLSession_FinalizeRuntimeBeforeReset();
             RLSession_ResetRemoteRuntime(false);
         }

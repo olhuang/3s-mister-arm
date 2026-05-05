@@ -2,6 +2,62 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-05: Combat Event Phase 4A Pause And Projectile Result Fix
+
+Milestone:
+- Milestone 6: Combat event attribution Phase 4A live validation
+
+Files changed:
+- `src/rl/rl_session.c`
+- `src/rl/rl_combat_event.h`
+- `src/rl/rl_combat_event.c`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Fix the first live projectile/overlay validation issues reported from the
+  `Outcome` page:
+  - entering and leaving the pause menu reset `CE` / `CER` / `CP` / `CPR` /
+    `CEU` counters;
+  - broad projectile target evidence could invert hit/block results or turn a
+    clean fireball disappearance into `CPR B`.
+
+Implementation notes:
+- Added a transient VS pause path that suspends RL action/output context without
+  calling `RLSession_ResetRemoteRuntime(false)`, flushing the active combat
+  episode, or resetting round-local combat counters.
+- `RLSession_OnObservationFrameEnd()` now ignores pause frames for combat-event
+  accumulation, so pause menu frames do not finalize or mutate attack/projectile
+  event state.
+- Projectile updates now latch an explicit target block-reaction signal from
+  contact-reaction substates known to represent guard/block reactions
+  (`routine[2]` 5 or 6). `routine[2]` 12 is deliberately not treated as block
+  yet because existing fireball logs show it can also appear during post-hit
+  reaction.
+- Projectile result priority now prefers explicit block reaction for `CPR B`,
+  clear damage/HP/stun evidence for `CPR H`, and clean disappearance for
+  `CPR X`.
+- Broad `guard_flag` / `entered_contact_state` evidence remains available for
+  diagnostics, but by itself no longer forces blocked or unknown expiry.
+
+Validation:
+- `cc -std=c11 -Wall -Wextra -Isrc -Iinclude -c src/rl/rl_combat_event.c -o /tmp/rl_combat_event_phase4_fix.o`
+  passed.
+- `python3 -m py_compile tools/rl_probe_server.py tools/analyze_rl_transitions.py`
+  passed.
+- `git diff --check` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed, rebuilding
+  `rl_combat_event.c` and `rl_session.c` for ARM. The build still emits the
+  existing third-party minizip `mktemp` linker warning.
+
+Follow-up:
+- Rerun the live fireball matrix. Expected direction: pause no longer resets
+  counters; fireball spawn still increments `CP S`; damaging fireballs prefer
+  `CPR H`; blocked fireballs prefer `CPR B`; fly-out prefers `CPR X`.
+- Parry and projectile-clash may still remain conservative `CPR U`/`CPR X`
+  until Phase 6 contact matching adds consumed-delta and projectile-clash
+  attribution.
+
 ## 2026-05-05: Combat Event Overlay Outcome Cleanup
 
 Milestone:

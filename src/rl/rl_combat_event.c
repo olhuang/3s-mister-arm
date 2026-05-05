@@ -372,15 +372,17 @@ static RLCombatProjectileResult RLCombatEvent_ProjectileResultFromEvidence(const
     if (event == NULL) {
         return RL_COMBAT_PROJECTILE_RESULT_UNKNOWN;
     }
-    if (event->saw_target_guard &&
-        (event->saw_target_contact_or_damage || event->saw_target_hit_stop || event->saw_target_contact_state ||
-         event->saw_target_hp_delta)) {
+
+    if (event->saw_target_block_reaction) {
         return RL_COMBAT_PROJECTILE_RESULT_BLOCKED;
     }
     if (event->saw_target_damage_state || event->saw_target_hp_delta || event->saw_target_stun_delta) {
         return RL_COMBAT_PROJECTILE_RESULT_HIT;
     }
-    if (event->saw_target_contact_or_damage || event->saw_target_hit_stop || event->saw_target_contact_state) {
+    if (event->saw_target_guard && (event->saw_target_contact_or_damage || event->saw_target_hit_stop)) {
+        return RL_COMBAT_PROJECTILE_RESULT_BLOCKED;
+    }
+    if (event->saw_target_contact_or_damage || event->saw_target_hit_stop) {
         return RL_COMBAT_PROJECTILE_RESULT_UNKNOWN;
     }
     return disappeared ? RL_COMBAT_PROJECTILE_RESULT_EXPIRED : RL_COMBAT_PROJECTILE_RESULT_UNKNOWN;
@@ -811,11 +813,17 @@ u32 RLCombatEvent_UpdateActiveAttacks(const RLCombatAttackEventUpdate* update) {
 
 static void RLCombatEvent_AccumulateProjectileEvidence(RLCombatProjectileEvent* event,
                                                        const RLCombatProjectileEventUpdate* update) {
+    const u8 strong_contact =
+        (u8)(update != NULL && (update->target_contact_or_damage || update->target_entered_hit_stop ||
+                                update->target_entered_damage_state || update->target_hp_delta ||
+                                update->target_stun_delta));
+
     if (event == NULL || update == NULL) {
         return;
     }
 
-    event->saw_target_guard |= (u8)(update->target_guard != 0);
+    event->saw_target_guard |= (u8)(update->target_guard != 0 && strong_contact);
+    event->saw_target_block_reaction |= (u8)(update->target_block_reaction != 0);
     event->saw_target_contact_or_damage |= (u8)(update->target_contact_or_damage != 0);
     event->saw_target_hit_stop |= (u8)(update->target_entered_hit_stop != 0);
     event->saw_target_contact_state |= (u8)(update->target_entered_contact_state != 0);

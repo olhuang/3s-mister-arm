@@ -195,6 +195,7 @@ typedef struct RLCombatProjectileEventUpdate {
     s16 projectile_vel_x;
     s16 projectile_time_to_self;
     u8 target_guard;
+    u8 target_block_reaction;
     u8 target_contact_or_damage;
     u8 target_entered_hit_stop;
     u8 target_entered_contact_state;
@@ -229,6 +230,7 @@ typedef struct RLCombatProjectileEvent {
     u8 engine_label_source;
     u8 missing_frames;
     u8 saw_target_guard;
+    u8 saw_target_block_reaction;
     u8 saw_target_contact_or_damage;
     u8 saw_target_hit_stop;
     u8 saw_target_contact_state;

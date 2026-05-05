@@ -1490,6 +1490,11 @@ Implementation status:
   evidence. Actor damage/stun can become `INTERRUPTED + BASIC_INTERRUPTED`
   when no target contact/damage was already observed. Protected or long-lived
   events become `UNKNOWN + BASIC_UNKNOWN_TIMEOUT`.
+- 2026-05-05 live-smoke refinement: `current_attack` is retained as attack
+  identity/context evidence, but it is not used as the attack active-window
+  lifecycle gate because it can remain sticky after visible recovery. Basic
+  whiff finalization uses routine attack state, and an event must have observed
+  routine attack state active before it can become `WHIFF`.
 - Phase 2C still does not export event rows, transition summaries, rewards, or
   trainer-visible labels. These results are lifecycle/debug labels until the
   Phase 6 contact resolver and move-family validation prove them safe.

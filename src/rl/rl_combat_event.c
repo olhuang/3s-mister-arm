@@ -288,6 +288,7 @@ static u32 RLCombatEvent_MaxPendingFrames(const RLCombatAttackEvent* event) {
 static bool RLCombatEvent_TryBasicFinalize(RLCombatAttackEvent* event, const RLCombatAttackEventUpdate* update) {
     const u32 age = RLCombatEvent_FrameAge(update->frame_id, event->start_frame);
 
+    event->saw_actor_attack_state_active |= (u8)(update->actor_attack_state_active != 0);
     event->saw_target_contact_or_damage |= (u8)(update->target_contact_or_damage != 0);
     event->saw_projectile |= (u8)(update->projectile_active_for_side != 0);
     event->saw_throw |= (u8)(update->throw_active_for_side != 0);
@@ -300,9 +301,9 @@ static bool RLCombatEvent_TryBasicFinalize(RLCombatAttackEvent* event, const RLC
                                           update->decision_id);
     }
 
-    if (!update->actor_attack_state_active && age >= RL_COMBAT_ATTACK_MIN_WHIFF_FRAMES &&
-        !event->saw_target_contact_or_damage && !event->saw_projectile && !event->saw_throw &&
-        !event->projectile_like) {
+    if (!update->actor_attack_state_active && event->saw_actor_attack_state_active &&
+        age >= RL_COMBAT_ATTACK_MIN_WHIFF_FRAMES && !event->saw_target_contact_or_damage &&
+        !event->saw_projectile && !event->saw_throw && !event->projectile_like) {
         return RLCombatEvent_FinalizeSlot(event,
                                           RL_COMBAT_ATTACK_RESULT_WHIFF,
                                           RL_COMBAT_ATTACK_FINALIZE_BASIC_WHIFF_WINDOW,

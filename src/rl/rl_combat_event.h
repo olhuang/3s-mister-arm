@@ -106,6 +106,7 @@ typedef struct RLCombatAttackEvent {
     u16 current_attack;
     u8 kind_of_waza;
     u8 projectile_like;
+    u8 saw_actor_attack_state_active;
     u8 saw_target_contact_or_damage;
     u8 saw_projectile;
     u8 saw_throw;

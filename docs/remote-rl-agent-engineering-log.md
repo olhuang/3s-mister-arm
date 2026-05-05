@@ -2,6 +2,51 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-05: Combat Event Attribution Phase 2 Whiff Lifecycle Live Fix
+
+Milestone:
+- Milestone 6: Combat event attribution Phase 2 live overlay smoke refinement
+
+Files changed:
+- `src/rl/rl_combat_event.h`
+- `src/rl/rl_combat_event.c`
+- `src/rl/rl_session.c`
+- `docs/agent-memory/remote-rl-combat-event-attribution-plan.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Fix live overlay behavior where `CE ... W` rarely increased during visible
+  whiffs.
+
+Implementation notes:
+- Live testing showed the basic whiff lifecycle was too strict because
+  `actor_attack_state_active` treated nonzero `current_attack` as active. That
+  value is useful attack identity/context evidence, but it can remain sticky
+  after visible recovery.
+- `RLSession_FillCombatAttackUpdate()` now uses routine attack state as the
+  active-window signal for self and opponent attack events.
+- `RLCombatAttackEvent` now latches `saw_actor_attack_state_active`; basic
+  whiff finalization requires this latch before counting `WHIFF`, so edge-only
+  starts that never enter attack routine do not become false whiffs.
+- No transition JSON, reward, inference, trainer, or event-journal export
+  behavior changed.
+
+Validation:
+- `git diff --check` passed.
+- `cc -std=c11 -Wall -Wextra -Isrc -Iinclude -c src/rl/rl_combat_event.c -o /tmp/rl_combat_event_wall.o` passed.
+- `/tmp/rl_combat_event_sticky_whiff_smoke` passed: a routine-active event
+  whiffed after routine exit, while a start that never observed routine active
+  did not increment whiff.
+- `tools/mister/build-game.sh --flavor telemetry` passed and rebuilt
+  `src/rl/rl_combat_event.c` plus `src/rl/rl_session.c`; only the pre-existing
+  minizip `mktemp` linker warning appeared.
+
+Follow-up:
+- Deploy this telemetry build and rerun the Outcome overlay smoke. `W` should
+  now move for clean visible non-projectile whiffs; projectile/throw/contact
+  protected events should still avoid `W` until later attribution phases.
+
 ## 2026-05-05: Combat Event Attribution Phase 2D Debug Visibility
 
 Milestone:

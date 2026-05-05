@@ -1927,7 +1927,7 @@ static void RLSession_FillCombatAttackUpdate(RLCombatAttackEventUpdate* update,
     update->side = side;
 
     if (side == RL_COMBAT_EVENT_SIDE_SELF) {
-        update->actor_attack_state_active = (u8)(obs->self_current_attack != 0 || obs->self_routine_attack_state);
+        update->actor_attack_state_active = obs->self_routine_attack_state;
         update->actor_interrupted = (u8)(obs->self_entered_damage_state || self_hp_delta > 0 || obs->delta_self_stun > 0);
         update->target_contact_or_damage =
             (u8)(obs->opp_entered_hit_stop || obs->opp_entered_contact_state || obs->opp_entered_damage_state ||
@@ -1936,7 +1936,7 @@ static void RLSession_FillCombatAttackUpdate(RLCombatAttackEventUpdate* update,
             (u8)(obs->projectile_active && obs->projectile_owner == RL_OBS_PROJECTILE_OWNER_SELF);
         update->throw_active_for_side = (u8)(obs->self_throw_active || obs->opp_throw_caught);
     } else if (side == RL_COMBAT_EVENT_SIDE_OPPONENT) {
-        update->actor_attack_state_active = (u8)(obs->opp_current_attack != 0 || obs->opp_routine_attack_state);
+        update->actor_attack_state_active = obs->opp_routine_attack_state;
         update->actor_interrupted = (u8)(obs->opp_entered_damage_state || opp_hp_delta > 0 || obs->delta_opp_stun > 0);
         update->target_contact_or_damage =
             (u8)(obs->self_entered_hit_stop || obs->self_entered_contact_state || obs->self_entered_damage_state ||

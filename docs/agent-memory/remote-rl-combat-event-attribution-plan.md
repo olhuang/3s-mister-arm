@@ -1715,6 +1715,7 @@ Phase 5A throw evidence audit:
 | `obs.opp_throw_caught_started` | rising edge of `opp_throw_caught` | opponent newly entered caught state | strong success edge for self throw | self result edge |
 | `obs.opp_throw_active` | `plw[opp].tsukami_f != 0` | opponent-side throw/catch attempt | added in Phase 5B; symmetric owner-active evidence | opponent throw start/active candidate |
 | `obs.self_throw_caught` | `plw[self].tsukamare_f != 0` | selected RL-side actor is caught by opponent throw | added in Phase 5B; symmetric caught evidence | opponent `throw_success` candidate |
+| `obs.*_throw_escape_active` | routine `R1=0`, `R2=47/48/49/50` | throw escape / nagenuke-style recovery routine | internal Phase 5D evidence; not exported in transition schema v9 | contested throw guard; prevents false `CTR T` |
 | routine `R1=2` | `obs_*_routine[1]` | catch/grab state bucket | useful support evidence, not enough by itself | confidence/support |
 | routine `R1=3` | `obs_*_routine[1]` | caught state bucket | useful support evidence, not enough by itself | success/support |
 | Ryu `R2=14` | engine routine substate | previously observed grab/catch startup path | Ryu-specific; must not be universalized without per-character validation | Ryu throw start support |
@@ -1777,18 +1778,34 @@ Phase 5C implementation contract:
 - `rl_combat_event` owns independent fixed-size throw rings for self and
   opponent (`RL_COMBAT_THROW_EVENT_RING_CAP = 16` each). Throw event ids share
   the same run-wide monotonic allocator as attack/projectile events.
-- Throw starts come only from symmetric throw-active rising edges:
+- Throw starts originally came from symmetric throw-active rising edges:
   `self_throw_started` for self owner and `opp_throw_started` for opponent
   owner.
+- Phase 5C/5D live refinement widens throw starts to include conservative
+  throw-attempt intent:
+  - self-side policy/input `throw` at action step `0`;
+  - Ryu engine throw routine entry/support (`R1=4`, `R2=14` startup or `R2=2`
+    completed throw) when a fresh routine/attack edge is observed;
+  - already-attributed side engine action `throw`.
+  This is required so out-of-range throw attempts create a `CT S` event and can
+  later finalize as `CTR W` instead of producing no counter at all.
 - `CTR T` success is emitted only when the target-side caught state/edge is
   observed (`opp_throw_caught*` for self owner, `self_throw_caught*` for
-  opponent owner).
+  opponent owner) and there is no simultaneous/escape evidence that makes the
+  interaction contested.
 - `CTR W` whiff is emitted only when owner throw-active ends after the minimum
   whiff window with no target caught evidence, no target contact/damage
-  evidence, no HP/stun delta, and no actor interruption.
+  evidence, no HP/stun delta, no actor interruption, and no opposing
+  throw/escape evidence.
 - `CTR U` unknown covers episode flush, timeout with conflicting evidence,
   possible tech, interruption, or ambiguous contact/damage without caught
   evidence.
+- "Throw tech" for current Phase 5D validation means both sides attempt throw
+  and neither gets a real throw success. Because the engine-level tech/escape
+  signal is still conservative, simultaneous/opposing throw evidence plus
+  `R2=47/48/49/50` throw-escape routines must finalize as `CTR U`, not `CTR T`.
+  Normal forward throw and back throw success remain `CTR T` when caught-state
+  evidence appears without contested evidence.
 - Outcome overlay now shows:
   - `CT S/F/A` for throw started/finalized/active side splits
   - `CTR T/W/U` for throw success/whiff/unknown side splits

@@ -32,6 +32,7 @@ static u8 prev_frame_hit_stop[2];
 static u8 prev_frame_contact_state[2];
 static u8 prev_frame_throw_active[2];
 static u8 prev_frame_throw_caught[2];
+static u8 prev_frame_throw_escape[2];
 static bool prev_frame_valid;
 static Uint64 obs_build_total_ns;
 static Uint64 obs_build_max_ns;
@@ -106,6 +107,10 @@ static bool is_ordinary_jump_ready_routine(u16 routine1, u16 routine2) {
 
 static bool is_ordinary_jump_air_routine(u16 routine1, u16 routine2) {
     return routine1 == 0 && routine2 >= 18 && routine2 <= 26;
+}
+
+static bool is_throw_escape_routine(u16 routine1, u16 routine2) {
+    return routine1 == 0 && (routine2 == 47 || routine2 == 48 || routine2 == 49 || routine2 == 50);
 }
 
 static u8 derive_jump_phase(const RLObservationV1* obs) {
@@ -496,6 +501,8 @@ void RLObservation_OnFrameEnd() {
     obs.opp_routine_attack_state = (u8)(obs.opp_routine[1] == 4);
     obs.self_contact_reaction_state = (u8)(obs.self_routine[1] == 1);
     obs.opp_contact_reaction_state = (u8)(obs.opp_routine[1] == 1);
+    obs.self_throw_escape_active = (u8)is_throw_escape_routine(obs.self_routine[1], obs.self_routine[2]);
+    obs.opp_throw_escape_active = (u8)is_throw_escape_routine(obs.opp_routine[1], obs.opp_routine[2]);
     derive_action_start_flags(&obs);
     derive_projectile_fields(&obs, self, opp);
     if (prev_frame_valid) {
@@ -526,6 +533,8 @@ void RLObservation_OnFrameEnd() {
         obs.opp_throw_started = (u8)(!prev_frame_throw_active[opp] && obs.opp_throw_active);
         obs.self_throw_caught_started = (u8)(!prev_frame_throw_caught[self] && obs.self_throw_caught);
         obs.opp_throw_caught_started = (u8)(!prev_frame_throw_caught[opp] && obs.opp_throw_caught);
+        obs.self_throw_escape_started = (u8)(!prev_frame_throw_escape[self] && obs.self_throw_escape_active);
+        obs.opp_throw_escape_started = (u8)(!prev_frame_throw_escape[opp] && obs.opp_throw_escape_active);
         obs.self_attack_started = (u8)(prev_frame_current_attack[self] == 0 && obs.self_current_attack != 0);
         obs.opp_attack_started = (u8)(prev_frame_current_attack[opp] == 0 && obs.opp_current_attack != 0);
         obs.self_attack_code_changed =
@@ -586,6 +595,8 @@ void RLObservation_OnFrameEnd() {
     prev_frame_throw_active[opp] = obs.opp_throw_active;
     prev_frame_throw_caught[self] = obs.self_throw_caught;
     prev_frame_throw_caught[opp] = obs.opp_throw_caught;
+    prev_frame_throw_escape[self] = obs.self_throw_escape_active;
+    prev_frame_throw_escape[opp] = obs.opp_throw_escape_active;
     prev_frame_valid = true;
     RLSession_OnObservationFrameEnd(&latest_obs);
 

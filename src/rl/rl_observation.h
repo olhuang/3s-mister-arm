@@ -93,6 +93,10 @@ typedef struct RLObservationV1 {
     u8 opp_throw_started;
     u8 self_throw_caught_started;
     u8 opp_throw_caught_started;
+    u8 self_throw_escape_active;
+    u8 opp_throw_escape_active;
+    u8 self_throw_escape_started;
+    u8 opp_throw_escape_started;
     u16 self_routine[3];
     u16 opp_routine[3];
     u8 round_num;

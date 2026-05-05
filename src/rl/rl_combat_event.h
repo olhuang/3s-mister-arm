@@ -121,6 +121,7 @@ typedef enum RLCombatThrowFinalizeReason {
     RL_COMBAT_THROW_FINALIZE_TARGET_CAUGHT = 3,
     RL_COMBAT_THROW_FINALIZE_WHIFF_WINDOW = 4,
     RL_COMBAT_THROW_FINALIZE_UNKNOWN_TIMEOUT = 5,
+    RL_COMBAT_THROW_FINALIZE_TECH_ESCAPE = 6,
 } RLCombatThrowFinalizeReason;
 
 typedef struct RLCombatAttackEventStart {
@@ -285,6 +286,10 @@ typedef struct RLCombatThrowEventUpdate {
     u32 frame_id;
     RLCombatEventSide owner_side;
     u8 owner_throw_active;
+    u8 opposing_throw_active;
+    u8 opposing_throw_started;
+    u8 throw_escape;
+    u8 throw_escape_started;
     u8 target_caught;
     u8 target_caught_started;
     u8 actor_interrupted;
@@ -314,6 +319,8 @@ typedef struct RLCombatThrowEvent {
     u16 current_attack;
     u8 kind_of_waza;
     u8 saw_owner_throw_active;
+    u8 saw_opposing_throw;
+    u8 saw_throw_escape;
     u8 saw_target_caught;
     u8 saw_target_caught_started;
     u8 saw_actor_interrupted;

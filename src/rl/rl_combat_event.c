@@ -526,7 +526,24 @@ static RLCombatThrowEvent* RLCombatEvent_FindReusableThrowSlot(RLCombatThrowEven
 
 static bool RLCombatEvent_IsCleanThrowWhiff(const RLCombatThrowEvent* event) {
     return event != NULL && !event->saw_target_caught && !event->saw_target_contact_or_damage &&
-           !event->saw_target_hp_delta && !event->saw_target_stun_delta && !event->saw_actor_interrupted;
+           !event->saw_target_hp_delta && !event->saw_target_stun_delta && !event->saw_actor_interrupted &&
+           !event->saw_opposing_throw && !event->saw_throw_escape;
+}
+
+static bool RLCombatEvent_ThrowHasSuccessDamageEvidence(const RLCombatThrowEvent* event) {
+    return event != NULL &&
+           (event->saw_target_damage_state || event->saw_target_hp_delta || event->saw_target_stun_delta);
+}
+
+static bool RLCombatEvent_ThrowShouldStayUnknownForContest(const RLCombatThrowEvent* event) {
+    if (event == NULL) {
+        return false;
+    }
+    if (event->saw_throw_escape) {
+        return true;
+    }
+    return event->saw_opposing_throw && (event->saw_target_caught || event->saw_target_caught_started) &&
+           !RLCombatEvent_ThrowHasSuccessDamageEvidence(event);
 }
 
 static bool RLCombatEvent_FinalizeThrowSlot(RLCombatThrowEvent* event,
@@ -1149,6 +1166,8 @@ static bool RLCombatEvent_TryFinalizeThrow(RLCombatThrowEvent* event, const RLCo
     const u32 age = RLCombatEvent_FrameAge(update->frame_id, event->start_frame);
 
     event->saw_owner_throw_active |= (u8)(update->owner_throw_active != 0);
+    event->saw_opposing_throw |= (u8)(update->opposing_throw_active || update->opposing_throw_started);
+    event->saw_throw_escape |= (u8)(update->throw_escape || update->throw_escape_started);
     event->saw_target_caught |= (u8)(update->target_caught != 0);
     event->saw_target_caught_started |= (u8)(update->target_caught_started != 0);
     event->saw_actor_interrupted |= (u8)(update->actor_interrupted != 0);
@@ -1158,6 +1177,14 @@ static bool RLCombatEvent_TryFinalizeThrow(RLCombatThrowEvent* event, const RLCo
     event->saw_target_damage_state |= (u8)(update->target_entered_damage_state != 0);
     event->saw_target_hp_delta |= (u8)(update->target_hp_delta != 0);
     event->saw_target_stun_delta |= (u8)(update->target_stun_delta != 0);
+
+    if (RLCombatEvent_ThrowShouldStayUnknownForContest(event)) {
+        return RLCombatEvent_FinalizeThrowSlot(event,
+                                               RL_COMBAT_THROW_RESULT_UNKNOWN,
+                                               RL_COMBAT_THROW_FINALIZE_TECH_ESCAPE,
+                                               update->frame_id,
+                                               update->decision_id);
+    }
 
     if (event->saw_target_caught || event->saw_target_caught_started) {
         return RLCombatEvent_FinalizeThrowSlot(event,
@@ -1172,6 +1199,15 @@ static bool RLCombatEvent_TryFinalizeThrow(RLCombatThrowEvent* event, const RLCo
         return RLCombatEvent_FinalizeThrowSlot(event,
                                                RL_COMBAT_THROW_RESULT_WHIFF,
                                                RL_COMBAT_THROW_FINALIZE_WHIFF_WINDOW,
+                                               update->frame_id,
+                                               update->decision_id);
+    }
+
+    if (!update->owner_throw_active && age >= RL_COMBAT_THROW_MIN_WHIFF_FRAMES &&
+        event->saw_opposing_throw && !RLCombatEvent_ThrowHasSuccessDamageEvidence(event)) {
+        return RLCombatEvent_FinalizeThrowSlot(event,
+                                               RL_COMBAT_THROW_RESULT_UNKNOWN,
+                                               RL_COMBAT_THROW_FINALIZE_TECH_ESCAPE,
                                                update->frame_id,
                                                update->decision_id);
     }

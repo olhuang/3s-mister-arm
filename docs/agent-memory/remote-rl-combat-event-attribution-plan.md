@@ -988,8 +988,8 @@ table against the exact source revision before changing C export.
 | `opp_entered_contact_state` | filled, not exported | per-decision contact/block/hit edge | broad contact/reaction evidence, not a block-vs-hit split | evidence-only |
 | `self_entered_damage_state` | filled, not exported | per-decision damage/hit edge | damage-state edge, not consumed/attributed damage | evidence-only |
 | `opp_entered_damage_state` | filled, not exported | per-decision damage/hit edge | damage-state edge, not consumed/attributed damage | evidence-only |
-| `self_throw_started` | filled, not exported | per-decision throw edge | throw-like edge evidence; no throw success/tech/whiff result yet | evidence-only |
-| `opp_throw_caught_started` | filled, not exported | per-decision throw-caught edge | throw-caught edge evidence; source/result unresolved | evidence-only |
+| `self_throw_started` | exported in schema v9 root; evidence bit 23 when evidence gate is on | per-decision throw edge | throw-like edge evidence; no throw success/tech/whiff result yet | evidence-only |
+| `opp_throw_caught_started` | exported in schema v9 root; evidence bit 24 when evidence gate is on | per-decision throw-caught edge | throw-caught edge evidence; source/result unresolved | evidence-only |
 
 Phase 0+1 must also audit proposed but not-yet-proven evidence:
 
@@ -1709,12 +1709,12 @@ Phase 5A throw evidence audit:
 
 | Signal | Current source | Current meaning | Reliability / limitation | Phase 5 use |
 |--------|----------------|-----------------|--------------------------|-------------|
-| `obs.self_throw_active` | `plw[self].tsukami_f != 0` | selected RL-side actor is in a throw/catch attempt | useful owner-active evidence, but currently self-side only | self throw start/active candidate |
+| `obs.self_throw_active` | `plw[self].tsukami_f != 0` | selected RL-side actor is in a throw/catch attempt | useful owner-active evidence | self throw start/active candidate |
 | `obs.self_throw_started` | rising edge of `self_throw_active` | selected RL-side throw/catch attempt began | good edge for self starts when previous frame state is valid | self `throw_start` candidate |
 | `obs.opp_throw_caught` | `plw[opp].tsukamare_f != 0` | opponent is caught by selected RL-side throw/catch | strong success evidence for self throw | self `throw_success` candidate |
 | `obs.opp_throw_caught_started` | rising edge of `opp_throw_caught` | opponent newly entered caught state | strong success edge for self throw | self result edge |
-| `plw[opp].tsukami_f` | currently only stored in `prev_frame_throw_active[opp]` | opponent-side throw/catch attempt | not exported in `RLObservationV1`; no current `opp_throw_started` field | must add before opponent throw ring |
-| `plw[self].tsukamare_f` | currently only stored in `prev_frame_throw_caught[self]` | selected RL-side actor is caught by opponent throw | not exported in `RLObservationV1`; no current `self_throw_caught_started` field | must add before opponent throw result |
+| `obs.opp_throw_active` | `plw[opp].tsukami_f != 0` | opponent-side throw/catch attempt | added in Phase 5B; symmetric owner-active evidence | opponent throw start/active candidate |
+| `obs.self_throw_caught` | `plw[self].tsukamare_f != 0` | selected RL-side actor is caught by opponent throw | added in Phase 5B; symmetric caught evidence | opponent `throw_success` candidate |
 | routine `R1=2` | `obs_*_routine[1]` | catch/grab state bucket | useful support evidence, not enough by itself | confidence/support |
 | routine `R1=3` | `obs_*_routine[1]` | caught state bucket | useful support evidence, not enough by itself | success/support |
 | Ryu `R2=14` | engine routine substate | previously observed grab/catch startup path | Ryu-specific; must not be universalized without per-character validation | Ryu throw start support |
@@ -1739,6 +1739,27 @@ Phase 5A conclusion:
 - `tech` remains unresolved in Phase 5 unless a distinct engine signal is found.
   Until then, tech-like or interrupted/cancelled interactions should finalize
   as `unknown`, not as success or whiff.
+
+Phase 5B implementation contract:
+
+- `RLObservationV1` now exposes both sides of the raw throw/caught states:
+  - `self_throw_active`, `opp_throw_active`
+  - `self_throw_caught`, `opp_throw_caught`
+  - rising edges for all four states
+- Transition schema v9 exports the per-decision OR-accumulated edge/seen fields:
+  - `self_throw_started`
+  - `opp_throw_started`
+  - `self_throw_caught_started`
+  - `opp_throw_caught_started`
+  - `self_throw_seen`
+  - `opp_throw_seen`
+  - `self_throw_caught_seen`
+  - `opp_throw_caught_seen`
+- These fields are root-level numeric transition fields, not DQN features and
+  not throw result labels. They exist so Phase 5C can build a side-symmetric
+  throw event ring without guessing opponent throws from HP/stun deltas alone.
+- Phase 5B does not change reward, trainer feature selection, combat event
+  result counters, or the future combat event journal shape.
 
 Phase 5B/C planned result semantics:
 

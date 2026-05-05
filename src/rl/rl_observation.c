@@ -453,6 +453,8 @@ void RLObservation_OnFrameEnd() {
     obs.self_airborne = (u8)(plw[self].wu.position_y != 0);
     obs.opp_airborne = (u8)(plw[opp].wu.position_y != 0);
     obs.self_throw_active = (u8)(plw[self].tsukami_f != 0);
+    obs.opp_throw_active = (u8)(plw[opp].tsukami_f != 0);
+    obs.self_throw_caught = (u8)(plw[self].tsukamare_f != 0);
     obs.opp_throw_caught = (u8)(plw[opp].tsukamare_f != 0);
     obs.self_super_stock = (u8)debug.self_super_stock;
     obs.self_super_stock_max = (u8)debug.self_super_stock_max;
@@ -521,6 +523,8 @@ void RLObservation_OnFrameEnd() {
         obs.self_airborne_started = (u8)(!prev_frame_airborne[self] && obs.self_airborne);
         obs.opp_airborne_started = (u8)(!prev_frame_airborne[opp] && obs.opp_airborne);
         obs.self_throw_started = (u8)(!prev_frame_throw_active[self] && obs.self_throw_active);
+        obs.opp_throw_started = (u8)(!prev_frame_throw_active[opp] && obs.opp_throw_active);
+        obs.self_throw_caught_started = (u8)(!prev_frame_throw_caught[self] && obs.self_throw_caught);
         obs.opp_throw_caught_started = (u8)(!prev_frame_throw_caught[opp] && obs.opp_throw_caught);
         obs.self_attack_started = (u8)(prev_frame_current_attack[self] == 0 && obs.self_current_attack != 0);
         obs.opp_attack_started = (u8)(prev_frame_current_attack[opp] == 0 && obs.opp_current_attack != 0);
@@ -579,8 +583,8 @@ void RLObservation_OnFrameEnd() {
     prev_frame_hit_stop[self] = obs.self_hit_stop;
     prev_frame_hit_stop[opp] = obs.opp_hit_stop;
     prev_frame_throw_active[self] = obs.self_throw_active;
-    prev_frame_throw_active[opp] = (u8)(plw[opp].tsukami_f != 0);
-    prev_frame_throw_caught[self] = (u8)(plw[self].tsukamare_f != 0);
+    prev_frame_throw_active[opp] = obs.opp_throw_active;
+    prev_frame_throw_caught[self] = obs.self_throw_caught;
     prev_frame_throw_caught[opp] = obs.opp_throw_caught;
     prev_frame_valid = true;
     RLSession_OnObservationFrameEnd(&latest_obs);

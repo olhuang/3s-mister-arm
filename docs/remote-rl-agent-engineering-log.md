@@ -2,6 +2,55 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-05: Combat Event Phase 5B Throw Observation Symmetry
+
+Milestone:
+- Milestone 6: Combat event attribution Phase 5B
+
+Files changed:
+- `src/rl/rl_observation.h`
+- `src/rl/rl_observation.c`
+- `src/rl/rl_session.c`
+- `tools/rl_probe_server.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/agent-memory/remote-rl-combat-event-attribution-plan.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Make raw throw/caught evidence self/opponent symmetric before adding a throw
+  event ring. This avoids guessing opponent throws from HP/stun deltas or broad
+  contact state alone.
+
+Implementation notes:
+- `RLObservationV1` now exposes both sides of `tsukami_f` and `tsukamare_f`:
+  `self_throw_active`, `opp_throw_active`, `self_throw_caught`,
+  `opp_throw_caught`, plus rising-edge fields for all four states.
+- Transition schema bumped to v9 and exports the OR-accumulated throw evidence
+  as root numeric fields:
+  `self_throw_started`, `opp_throw_started`, `self_throw_caught_started`,
+  `opp_throw_caught_started`, `self_throw_seen`, `opp_throw_seen`,
+  `self_throw_caught_seen`, and `opp_throw_caught_seen`.
+- The evidence bitmask v1 remains unchanged; the new symmetric fields are
+  transition-root evidence for Phase 5C, not DQN features or throw result
+  labels.
+- Opponent-side combat attack updates now receive throw-active/caught evidence,
+  matching the self-side protected-update path.
+- The round-end HP sync guard now checks `self_throw_caught_started` for
+  selected-side throw damage instead of the unrelated self throw-start edge.
+- `tools/rl_probe_server.py` accepts schema v9 and preserves the new fields in
+  `learner_replay_row()` so replay/import paths do not strip them.
+
+Validation:
+- `git diff --check` passed.
+- `python3 -m py_compile tools/rl_probe_server.py tools/analyze_rl_transitions.py tools/train_dqn_learner.py tools/compare_dqn_models.py` passed.
+- `PYTHONPATH=tools python3 -c '...'` schema-v9 throw replay smoke passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed.
+
+Follow-up:
+- Phase 5C can now add throw event start/result slots and `CT` / `CTR`
+  counters using symmetric throw evidence, still with no reward/trainer
+  adoption.
+
 ## 2026-05-05: Combat Event Phase 5A Throw Evidence Audit
 
 Milestone:

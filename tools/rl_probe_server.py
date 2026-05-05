@@ -160,8 +160,8 @@ MODEL_POLICY_CHOICES = (
 POLICY_CHOICES = SCRIPTED_POLICY_CHOICES + MODEL_POLICY_CHOICES
 GUARD_MACRO_DECISION_STEPS = 6
 DEMO_EXECUTION_SOURCES = frozenset({4, 5})
-TRANSITION_SCHEMA_VERSION = 8
-SUPPORTED_TRANSITION_SCHEMA_VERSIONS = frozenset({5, 6, 7, 8})
+TRANSITION_SCHEMA_VERSION = 9
+SUPPORTED_TRANSITION_SCHEMA_VERSIONS = frozenset({5, 6, 7, 8, 9})
 TRAINING_MODE_TYPES = frozenset({3, 4})
 TRAINING_ACTION_SOURCES = ("auto", "policy", "input", "engine", "prefer-engine")
 
@@ -2160,6 +2160,14 @@ def learner_replay_row(row: dict[str, object]) -> dict[str, object] | None:
         "obs_projectile_rel_y": int(row.get("obs_projectile_rel_y", 0) or 0),
         "obs_projectile_vel_x": int(row.get("obs_projectile_vel_x", 0) or 0),
         "obs_projectile_time_to_self": int(row.get("obs_projectile_time_to_self", 0) or 0),
+        "self_throw_started": int(row.get("self_throw_started", 0) or 0),
+        "opp_throw_started": int(row.get("opp_throw_started", 0) or 0),
+        "self_throw_caught_started": int(row.get("self_throw_caught_started", 0) or 0),
+        "opp_throw_caught_started": int(row.get("opp_throw_caught_started", 0) or 0),
+        "self_throw_seen": int(row.get("self_throw_seen", 0) or 0),
+        "opp_throw_seen": int(row.get("opp_throw_seen", 0) or 0),
+        "self_throw_caught_seen": int(row.get("self_throw_caught_seen", 0) or 0),
+        "opp_throw_caught_seen": int(row.get("opp_throw_caught_seen", 0) or 0),
         "final_self_hp": int(row.get("final_self_hp", 0) or 0),
         "final_opp_hp": int(row.get("final_opp_hp", 0) or 0),
         "model_version_executed": int(row.get("model_version_executed", 0) or 0),

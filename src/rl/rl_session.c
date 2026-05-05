@@ -203,8 +203,12 @@ typedef struct RLDecisionLedgerEntry {
     u8 self_entered_damage_state;
     u8 opp_entered_damage_state;
     u8 self_throw_started;
+    u8 opp_throw_started;
+    u8 self_throw_caught_started;
     u8 opp_throw_caught_started;
     u8 self_throw_seen;
+    u8 opp_throw_seen;
+    u8 self_throw_caught_seen;
     u8 opp_throw_caught_seen;
     u8 requested_movement_succeeded;
     u8 requested_attack_entered_state;
@@ -279,7 +283,7 @@ static const RLLocalFakeAction kLocalFakeAgentSequence[] = {
 #define RL_POLICY_SUB_ACTION_CROUCH 21u
 #define RL_DEMO_GUARD_THREAT_DX 144
 #define RL_CHARACTER_RYU 2u
-#define RL_TRANSITION_SCHEMA_VERSION 8u
+#define RL_TRANSITION_SCHEMA_VERSION 9u
 #define RL_INPUT_LABEL_SOURCE_NONE 0u
 #define RL_INPUT_LABEL_SOURCE_DEMO_INPUT 1u
 #define RL_DEMO_ATTRIBUTION_NONE 0u
@@ -1195,7 +1199,7 @@ static bool RLSession_BuildEngineAttributionForSide(const RLDecisionLedgerEntry*
         current_attack = obs->opp_current_attack;
         kind_of_waza = obs->opp_kind_of_waza;
         attack_edge = obs->opp_attack_started || obs->opp_attack_counter_started;
-        routine_edge = obs->opp_attack_routine_started;
+        routine_edge = obs->opp_attack_routine_started || obs->opp_throw_started;
     }
 
     if (character_id != RL_CHARACTER_RYU) {
@@ -1428,7 +1432,7 @@ static bool RLSession_IsRoundEndHpSync(const RLObservationV1* obs, s16 self_hp_d
         return false;
     }
     return (opp_hp_delta > 64 && obs->opp_hp <= 3 && obs->delta_opp_stun > 0 && !obs->opp_throw_caught_started) ||
-           (self_hp_delta > 64 && obs->self_hp <= 3 && obs->delta_self_stun > 0 && !obs->self_throw_started);
+           (self_hp_delta > 64 && obs->self_hp <= 3 && obs->delta_self_stun > 0 && !obs->self_throw_caught_started);
 }
 
 static s16 RLSession_ClampDistanceS16(s32 value) {
@@ -1787,6 +1791,14 @@ static RLTransitionFormatStatus RLSession_FormatTransitionLogLine(const RLDecisi
                         "\"combat_projectile_unknown_opp_count\":%u,"
                         "\"combat_projectile_active_self_count\":%u,"
                         "\"combat_projectile_active_opp_count\":%u,"
+                        "\"self_throw_started\":%u,"
+                        "\"opp_throw_started\":%u,"
+                        "\"self_throw_caught_started\":%u,"
+                        "\"opp_throw_caught_started\":%u,"
+                        "\"self_throw_seen\":%u,"
+                        "\"opp_throw_seen\":%u,"
+                        "\"self_throw_caught_seen\":%u,"
+                        "\"opp_throw_caught_seen\":%u,"
                         "\"final_self_hp\":%d,\"final_opp_hp\":%d,"
                         "\"model_version_executed\":%u,"
                         "\"execution_source\":%u,"
@@ -1886,6 +1898,14 @@ static RLTransitionFormatStatus RLSession_FormatTransitionLogLine(const RLDecisi
                         entry->combat_projectile_unknown_opp_count,
                         entry->combat_projectile_active_self_count,
                         entry->combat_projectile_active_opp_count,
+                        entry->self_throw_started,
+                        entry->opp_throw_started,
+                        entry->self_throw_caught_started,
+                        entry->opp_throw_caught_started,
+                        entry->self_throw_seen,
+                        entry->opp_throw_seen,
+                        entry->self_throw_caught_seen,
+                        entry->opp_throw_caught_seen,
                         entry->final_self_hp,
                         entry->final_opp_hp,
                         entry->model_version_executed,
@@ -2299,6 +2319,7 @@ static void RLSession_FillCombatAttackUpdate(RLCombatAttackEventUpdate* update,
                  update->target_hp_delta || update->target_stun_delta);
         update->projectile_active_for_side =
             (u8)(obs->projectile_active && obs->projectile_owner == RL_OBS_PROJECTILE_OWNER_OPPONENT);
+        update->throw_active_for_side = (u8)(obs->opp_throw_active || obs->self_throw_caught);
     }
 }
 
@@ -2454,8 +2475,12 @@ static void RLSession_AccumulateCombatSpan(RLDecisionLedgerEntry* entry,
     entry->self_entered_damage_state |= (u8)(obs->self_entered_damage_state || self_hp_delta > 0);
     entry->opp_entered_damage_state |= (u8)(obs->opp_entered_damage_state || opp_hp_delta > 0);
     entry->self_throw_started |= obs->self_throw_started;
+    entry->opp_throw_started |= obs->opp_throw_started;
+    entry->self_throw_caught_started |= obs->self_throw_caught_started;
     entry->opp_throw_caught_started |= obs->opp_throw_caught_started;
     entry->self_throw_seen |= obs->self_throw_active;
+    entry->opp_throw_seen |= obs->opp_throw_active;
+    entry->self_throw_caught_seen |= obs->self_throw_caught;
     entry->opp_throw_caught_seen |= obs->opp_throw_caught;
     RLSession_UpdateCombatProjectileEvents(entry, obs, self_hp_delta, opp_hp_delta);
     RLSession_UpdateCombatAttackEvents(entry, obs, self_hp_delta, opp_hp_delta);

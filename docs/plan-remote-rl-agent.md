@@ -2638,7 +2638,7 @@ Tasks:
   - [x] Phase 4B projectile edge-case documentation: recorded `CP` / `CPR` contract, accepted parry/clash behavior, pause/reset semantics, parent-attack ownership, and Phase 6 limitations in the combat-event attribution plan
 - [ ] Combat event attribution Phase 5: implement throw event tracking so close guard failures can distinguish thrown/tech/whiff/unknown from strike or chip damage
   - [x] Phase 5A throw evidence audit: documented current `tsukami_f` / `tsukamare_f`, routine-state, R2/KW, HP/stun, and close-range signals; confirmed current transition evidence is self-success oriented and must be made self/opponent symmetric before a throw ring is learner-safe
-  - [ ] Phase 5B throw observation symmetry: add/export symmetric throw-active and throw-caught evidence for both sides before creating result counters
+  - [x] Phase 5B throw observation symmetry: transition schema v9 adds self/opponent symmetric throw-active and throw-caught edge/seen fields (`self_throw_started`, `opp_throw_started`, `self_throw_caught_started`, `opp_throw_caught_started`, `self_throw_seen`, `opp_throw_seen`, `self_throw_caught_seen`, `opp_throw_caught_seen`) before creating result counters
   - [ ] Phase 5C throw event ring foundation: add fixed-size self/opponent throw events with conservative success/whiff/unknown results, no reward or trainer adoption
   - [ ] Phase 5D throw Outcome overlay/live validation: add `CT` / `CTR` side-split counters and validate self throw, opponent throw, whiff, ambiguous/tech-like, and pause-preserve cases
 - [ ] Combat event attribution Phase 6a: implement edge-triggered contact-to-attack/projectile/throw matching with consumed HP/stun deltas, trade handling, confidence, and attribution failure events

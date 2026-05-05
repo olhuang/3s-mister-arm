@@ -2618,6 +2618,7 @@ Tasks:
   - [x] Phase 2 timeout/LP refinement: clean non-projectile pending timeouts finalize as `W` instead of `U`, and normal LP events get a 20-frame fast whiff fallback for sticky active-window / unrelated projectile-noise cases
   - [x] Phase 2 rollover refinement: same-side new starts finalize previous clean active events as `W`, leaving `R` only for contact/projectile-like/throw-protected ambiguous rollovers
   - [x] Phase 2 overlay stats refinement: `CE` / `CEU` counters are round-local and reset at episode begin; `CEL` / `CELU` lifetime counters remain available in `All` view, while event ids stay run-wide monotonic
+  - [x] Phase 2 side-split overlay refinement: round-local `CE` / `CER` / `CEU` lines now show self/opponent splits for S/F/A/W/I/U/F/R/D so simultaneous-whiff misses reveal which side diverged
   - [ ] Phase 2 live overlay smoke: deploy telemetry build and compare `CE` / `CEU` debug overlay counts against visible attacks before treating Phase 2 as fully closed
 - [ ] Combat event attribution Phase 3: replace ambiguous generic `engine_*` ownership with side-explicit `self_engine_*` and `opp_engine_*` attribution at attack-event creation time, keeping unknown/confidence fields for unsupported mappings
 - [ ] Combat event attribution Phase 4: implement projectile event tracking so fireball spawn/hit/block/expire results are attributed to projectile ids instead of owner routine snapshots

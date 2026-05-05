@@ -1506,6 +1506,11 @@ Implementation status:
   still-active clean event, the old event is finalized as `WHIFF` instead of
   `UNKNOWN + SUPERSEDED_BY_NEW_START`. `R` / rollover unknown remains reserved
   for contact/projectile-like/throw-protected ambiguous events.
+- 2026-05-05 side-split overlay refinement: round-local OSD stats now display
+  self/opponent splits as `CE Sself/opp Fself/opp Aself/opp`, `CER Wself/opp
+  Iself/opp Uself/opp`, and in All view `CEU Fself/opp Rself/opp Dself/opp`.
+  This is debug visibility only; event totals and trainer behavior are
+  unchanged.
 - Phase 2C still does not export event rows, transition summaries, rewards, or
   trainer-visible labels. These results are lifecycle/debug labels until the
   Phase 6 contact resolver and move-family validation prove them safe.

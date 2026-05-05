@@ -59,6 +59,14 @@ static void RLCombatEvent_RefreshActiveStats(void) {
     combat_event_stats.attack_active_opponent_count = RLCombatEvent_CountActive(&opponent_attack_ring);
 }
 
+static void RLCombatEvent_IncrementSideCounter(RLCombatEventSide side, u32* self_count, u32* opponent_count) {
+    if (side == RL_COMBAT_EVENT_SIDE_SELF && self_count != NULL) {
+        (*self_count)++;
+    } else if (side == RL_COMBAT_EVENT_SIDE_OPPONENT && opponent_count != NULL) {
+        (*opponent_count)++;
+    }
+}
+
 static void RLCombatEvent_ResetEpisodeStats(void) {
     combat_event_stats.attack_started_count = 0;
     combat_event_stats.attack_finalized_count = 0;
@@ -68,6 +76,22 @@ static void RLCombatEvent_ResetEpisodeStats(void) {
     combat_event_stats.attack_interrupted_count = 0;
     combat_event_stats.attack_unknown_timeout_count = 0;
     combat_event_stats.attack_dropped_start_count = 0;
+    combat_event_stats.attack_started_self_count = 0;
+    combat_event_stats.attack_started_opponent_count = 0;
+    combat_event_stats.attack_finalized_self_count = 0;
+    combat_event_stats.attack_finalized_opponent_count = 0;
+    combat_event_stats.attack_whiff_self_count = 0;
+    combat_event_stats.attack_whiff_opponent_count = 0;
+    combat_event_stats.attack_interrupted_self_count = 0;
+    combat_event_stats.attack_interrupted_opponent_count = 0;
+    combat_event_stats.attack_unknown_timeout_self_count = 0;
+    combat_event_stats.attack_unknown_timeout_opponent_count = 0;
+    combat_event_stats.attack_unknown_flush_self_count = 0;
+    combat_event_stats.attack_unknown_flush_opponent_count = 0;
+    combat_event_stats.attack_unknown_rollover_self_count = 0;
+    combat_event_stats.attack_unknown_rollover_opponent_count = 0;
+    combat_event_stats.attack_dropped_start_self_count = 0;
+    combat_event_stats.attack_dropped_start_opponent_count = 0;
     combat_event_stats.attack_active_self_count = 0;
     combat_event_stats.attack_active_opponent_count = 0;
     combat_event_stats.episode_flush_count = 0;
@@ -122,27 +146,45 @@ static bool RLCombatEvent_FinalizeSlot(RLCombatAttackEvent* event,
     event->end_decision_id = decision_id;
     combat_event_stats.attack_finalized_count++;
     combat_event_stats.lifetime_attack_finalized_count++;
+    RLCombatEvent_IncrementSideCounter(event->side,
+                                       &combat_event_stats.attack_finalized_self_count,
+                                       &combat_event_stats.attack_finalized_opponent_count);
     if (reason == RL_COMBAT_ATTACK_FINALIZE_EPISODE_FLUSH && result == RL_COMBAT_ATTACK_RESULT_UNKNOWN) {
         combat_event_stats.attack_unknown_flush_count++;
         combat_event_stats.lifetime_attack_unknown_flush_count++;
+        RLCombatEvent_IncrementSideCounter(event->side,
+                                           &combat_event_stats.attack_unknown_flush_self_count,
+                                           &combat_event_stats.attack_unknown_flush_opponent_count);
     }
     if (reason == RL_COMBAT_ATTACK_FINALIZE_SUPERSEDED_BY_NEW_START &&
         result == RL_COMBAT_ATTACK_RESULT_UNKNOWN) {
         combat_event_stats.attack_unknown_rollover_count++;
         combat_event_stats.lifetime_attack_unknown_rollover_count++;
+        RLCombatEvent_IncrementSideCounter(event->side,
+                                           &combat_event_stats.attack_unknown_rollover_self_count,
+                                           &combat_event_stats.attack_unknown_rollover_opponent_count);
     }
     if (reason == RL_COMBAT_ATTACK_FINALIZE_BASIC_WHIFF_WINDOW && result == RL_COMBAT_ATTACK_RESULT_WHIFF) {
         combat_event_stats.attack_whiff_count++;
         combat_event_stats.lifetime_attack_whiff_count++;
+        RLCombatEvent_IncrementSideCounter(event->side,
+                                           &combat_event_stats.attack_whiff_self_count,
+                                           &combat_event_stats.attack_whiff_opponent_count);
     }
     if (reason == RL_COMBAT_ATTACK_FINALIZE_BASIC_INTERRUPTED &&
         result == RL_COMBAT_ATTACK_RESULT_INTERRUPTED) {
         combat_event_stats.attack_interrupted_count++;
         combat_event_stats.lifetime_attack_interrupted_count++;
+        RLCombatEvent_IncrementSideCounter(event->side,
+                                           &combat_event_stats.attack_interrupted_self_count,
+                                           &combat_event_stats.attack_interrupted_opponent_count);
     }
     if (reason == RL_COMBAT_ATTACK_FINALIZE_BASIC_UNKNOWN_TIMEOUT && result == RL_COMBAT_ATTACK_RESULT_UNKNOWN) {
         combat_event_stats.attack_unknown_timeout_count++;
         combat_event_stats.lifetime_attack_unknown_timeout_count++;
+        RLCombatEvent_IncrementSideCounter(event->side,
+                                           &combat_event_stats.attack_unknown_timeout_self_count,
+                                           &combat_event_stats.attack_unknown_timeout_opponent_count);
     }
     RLCombatEvent_RefreshActiveStats();
     return true;
@@ -210,6 +252,11 @@ const RLCombatAttackEvent* RLCombatEvent_StartAttack(const RLCombatAttackEventSt
         start->side == RL_COMBAT_EVENT_SIDE_NONE) {
         combat_event_stats.attack_dropped_start_count++;
         combat_event_stats.lifetime_attack_dropped_start_count++;
+        if (start != NULL) {
+            RLCombatEvent_IncrementSideCounter(start->side,
+                                               &combat_event_stats.attack_dropped_start_self_count,
+                                               &combat_event_stats.attack_dropped_start_opponent_count);
+        }
         return NULL;
     }
 
@@ -222,6 +269,9 @@ const RLCombatAttackEvent* RLCombatEvent_StartAttack(const RLCombatAttackEventSt
     if (event == NULL) {
         combat_event_stats.attack_dropped_start_count++;
         combat_event_stats.lifetime_attack_dropped_start_count++;
+        RLCombatEvent_IncrementSideCounter(start->side,
+                                           &combat_event_stats.attack_dropped_start_self_count,
+                                           &combat_event_stats.attack_dropped_start_opponent_count);
         RLCombatEvent_RefreshActiveStats();
         return NULL;
     }
@@ -249,6 +299,9 @@ const RLCombatAttackEvent* RLCombatEvent_StartAttack(const RLCombatAttackEventSt
 
     combat_event_stats.attack_started_count++;
     combat_event_stats.lifetime_attack_started_count++;
+    RLCombatEvent_IncrementSideCounter(event->side,
+                                       &combat_event_stats.attack_started_self_count,
+                                       &combat_event_stats.attack_started_opponent_count);
     RLCombatEvent_RefreshActiveStats();
     return event;
 }

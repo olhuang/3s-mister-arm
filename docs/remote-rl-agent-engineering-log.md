@@ -2,6 +2,51 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-05: Combat Event Attribution Side-Split Overlay Stats
+
+Milestone:
+- Milestone 6: Combat event attribution Phase 2 live overlay smoke refinement
+
+Files changed:
+- `src/rl/rl_combat_event.h`
+- `src/rl/rl_combat_event.c`
+- `src/rl/rl_session.h`
+- `src/rl/rl_session.c`
+- `src/rl/rl_observation.c`
+- `docs/agent-memory/remote-rl-combat-event-attribution-plan.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Diagnose live cases where simultaneous self/opponent whiffs show `S+2` but
+  only `W+1`.
+
+Implementation notes:
+- Added round-local self/opponent counters for attack starts, finalizations,
+  whiffs, interrupts, timeout unknowns, flush unknowns, rollover unknowns, and
+  dropped starts.
+- Outcome overlay now shows `CE Sself/opp Fself/opp Aself/opp` and
+  `CER Wself/opp Iself/opp Uself/opp`.
+- All view now shows `CEU Fself/opp Rself/opp Dself/opp`.
+- Lifetime `CEL` / `CELU` totals remain total-only.
+- No event lifecycle, transition JSON, reward, inference, trainer, or
+  event-journal export behavior changed.
+
+Validation:
+- `git diff --check` passed.
+- `cc -std=c11 -Wall -Wextra -Isrc -Iinclude -c src/rl/rl_combat_event.c -o /tmp/rl_combat_event_wall.o` passed.
+- `/tmp/rl_combat_event_side_split_smoke` passed: simultaneous self/opponent
+  clean whiffs produced split starts and split whiffs of `1/1`, and a
+  self-side protected timeout incremented only self-side `U`.
+- `tools/mister/build-game.sh --flavor telemetry` passed and rebuilt the RL and
+  touched game/menu objects; only the pre-existing minizip `mktemp` linker
+  warning appeared.
+
+Follow-up:
+- In the next live smoke, read `CE Sx/y` and `CER Wx/y Ux/y Ix/y`: if starts
+  are `1/1` but whiffs are `1/0`, the missing side should now be visible as
+  active, interrupted, timeout unknown, or rollover unknown.
+
 ## 2026-05-05: Combat Event Attribution Clean Rollover Whiff Fix
 
 Milestone:

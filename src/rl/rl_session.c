@@ -610,6 +610,26 @@ static void RLSession_UpdateCombatEventDebugStats(void) {
     remote_debug.combat_attack_dropped_start_opp_count = stats->attack_dropped_start_opponent_count;
     remote_debug.combat_attack_unknown_timeout_contact_self_count = stats->attack_unknown_timeout_contact_self_count;
     remote_debug.combat_attack_unknown_timeout_contact_opp_count = stats->attack_unknown_timeout_contact_opponent_count;
+    remote_debug.combat_attack_unknown_timeout_contact_hit_stop_self_count =
+        stats->attack_unknown_timeout_contact_hit_stop_self_count;
+    remote_debug.combat_attack_unknown_timeout_contact_hit_stop_opp_count =
+        stats->attack_unknown_timeout_contact_hit_stop_opponent_count;
+    remote_debug.combat_attack_unknown_timeout_contact_state_self_count =
+        stats->attack_unknown_timeout_contact_state_self_count;
+    remote_debug.combat_attack_unknown_timeout_contact_state_opp_count =
+        stats->attack_unknown_timeout_contact_state_opponent_count;
+    remote_debug.combat_attack_unknown_timeout_damage_state_self_count =
+        stats->attack_unknown_timeout_damage_state_self_count;
+    remote_debug.combat_attack_unknown_timeout_damage_state_opp_count =
+        stats->attack_unknown_timeout_damage_state_opponent_count;
+    remote_debug.combat_attack_unknown_timeout_hp_delta_self_count =
+        stats->attack_unknown_timeout_hp_delta_self_count;
+    remote_debug.combat_attack_unknown_timeout_hp_delta_opp_count =
+        stats->attack_unknown_timeout_hp_delta_opponent_count;
+    remote_debug.combat_attack_unknown_timeout_stun_delta_self_count =
+        stats->attack_unknown_timeout_stun_delta_self_count;
+    remote_debug.combat_attack_unknown_timeout_stun_delta_opp_count =
+        stats->attack_unknown_timeout_stun_delta_opponent_count;
     remote_debug.combat_attack_unknown_timeout_projectile_self_count = stats->attack_unknown_timeout_projectile_self_count;
     remote_debug.combat_attack_unknown_timeout_projectile_opp_count =
         stats->attack_unknown_timeout_projectile_opponent_count;
@@ -1993,18 +2013,28 @@ static void RLSession_FillCombatAttackUpdate(RLCombatAttackEventUpdate* update,
     if (side == RL_COMBAT_EVENT_SIDE_SELF) {
         update->actor_attack_state_active = obs->self_routine_attack_state;
         update->actor_interrupted = (u8)(obs->self_entered_damage_state || self_hp_delta > 0 || obs->delta_self_stun > 0);
+        update->target_entered_hit_stop = obs->opp_entered_hit_stop;
+        update->target_entered_contact_state = obs->opp_entered_contact_state;
+        update->target_entered_damage_state = obs->opp_entered_damage_state;
+        update->target_hp_delta = (u8)(opp_hp_delta > 0);
+        update->target_stun_delta = (u8)(obs->delta_opp_stun > 0);
         update->target_contact_or_damage =
-            (u8)(obs->opp_entered_hit_stop || obs->opp_entered_contact_state || obs->opp_entered_damage_state ||
-                 opp_hp_delta > 0 || obs->delta_opp_stun > 0);
+            (u8)(update->target_entered_hit_stop || update->target_entered_contact_state ||
+                 update->target_entered_damage_state || update->target_hp_delta || update->target_stun_delta);
         update->projectile_active_for_side =
             (u8)(obs->projectile_active && obs->projectile_owner == RL_OBS_PROJECTILE_OWNER_SELF);
         update->throw_active_for_side = (u8)(obs->self_throw_active || obs->opp_throw_caught);
     } else if (side == RL_COMBAT_EVENT_SIDE_OPPONENT) {
         update->actor_attack_state_active = obs->opp_routine_attack_state;
         update->actor_interrupted = (u8)(obs->opp_entered_damage_state || opp_hp_delta > 0 || obs->delta_opp_stun > 0);
+        update->target_entered_hit_stop = obs->self_entered_hit_stop;
+        update->target_entered_contact_state = obs->self_entered_contact_state;
+        update->target_entered_damage_state = obs->self_entered_damage_state;
+        update->target_hp_delta = (u8)(self_hp_delta > 0);
+        update->target_stun_delta = (u8)(obs->delta_self_stun > 0);
         update->target_contact_or_damage =
-            (u8)(obs->self_entered_hit_stop || obs->self_entered_contact_state || obs->self_entered_damage_state ||
-                 self_hp_delta > 0 || obs->delta_self_stun > 0);
+            (u8)(update->target_entered_hit_stop || update->target_entered_contact_state ||
+                 update->target_entered_damage_state || update->target_hp_delta || update->target_stun_delta);
         update->projectile_active_for_side =
             (u8)(obs->projectile_active && obs->projectile_owner == RL_OBS_PROJECTILE_OWNER_OPPONENT);
     }

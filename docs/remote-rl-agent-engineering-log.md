@@ -2,6 +2,42 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-05: Combat Event Contact Cause Overlay
+
+Milestone:
+- Milestone 6: Combat event attribution Phase 2 live overlay smoke refinement
+
+Files changed:
+- `src/rl/rl_combat_event.h`
+- `src/rl/rl_combat_event.c`
+- `src/rl/rl_session.h`
+- `src/rl/rl_session.c`
+- `src/rl/rl_observation.c`
+- `docs/agent-memory/remote-rl-combat-event-attribution-plan.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Split timeout-unknown contact/damage causes after live testing showed
+  simultaneous whiffs as `CER W +1/+0, U +0/+1`, with `CEUC C +0/+1` and no
+  projectile/throw/projectile-like/not-whiff cause movement.
+
+Implementation notes:
+- Attack events now latch the individual target contact contributors that feed
+  `target_contact_or_damage`: entered hit-stop, entered contact-state, entered
+  damage-state, HP delta, and stun delta.
+- All view now adds `CEUD EHself/opp ECself/opp EDself/opp` and
+  `CEUH HPself/opp STself/opp`.
+- This is diagnostic-only. Event lifecycle behavior, transition JSON, reward,
+  inference, trainer features, and event-journal export are unchanged.
+
+Validation:
+- `git diff --check` passed.
+- `cc -std=c11 -Wall -Wextra -Isrc -Iinclude -c src/rl/rl_combat_event.c -o /tmp/rl_combat_event_wall.o` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed and rebuilt the RL
+  combat/session/observation objects plus touched game/menu objects; only the
+  pre-existing minizip `mktemp` linker warning appeared.
+
 ## 2026-05-05: Combat Event Overlay Input Legend Cleanup
 
 Milestone:

@@ -76,6 +76,31 @@ static void RLCombatEvent_RecordTimeoutUnknownCauses(const RLCombatAttackEvent* 
                                            &combat_event_stats.attack_unknown_timeout_contact_self_count,
                                            &combat_event_stats.attack_unknown_timeout_contact_opponent_count);
     }
+    if (event->saw_target_hit_stop) {
+        RLCombatEvent_IncrementSideCounter(event->side,
+                                           &combat_event_stats.attack_unknown_timeout_contact_hit_stop_self_count,
+                                           &combat_event_stats.attack_unknown_timeout_contact_hit_stop_opponent_count);
+    }
+    if (event->saw_target_contact_state) {
+        RLCombatEvent_IncrementSideCounter(event->side,
+                                           &combat_event_stats.attack_unknown_timeout_contact_state_self_count,
+                                           &combat_event_stats.attack_unknown_timeout_contact_state_opponent_count);
+    }
+    if (event->saw_target_damage_state) {
+        RLCombatEvent_IncrementSideCounter(event->side,
+                                           &combat_event_stats.attack_unknown_timeout_damage_state_self_count,
+                                           &combat_event_stats.attack_unknown_timeout_damage_state_opponent_count);
+    }
+    if (event->saw_target_hp_delta) {
+        RLCombatEvent_IncrementSideCounter(event->side,
+                                           &combat_event_stats.attack_unknown_timeout_hp_delta_self_count,
+                                           &combat_event_stats.attack_unknown_timeout_hp_delta_opponent_count);
+    }
+    if (event->saw_target_stun_delta) {
+        RLCombatEvent_IncrementSideCounter(event->side,
+                                           &combat_event_stats.attack_unknown_timeout_stun_delta_self_count,
+                                           &combat_event_stats.attack_unknown_timeout_stun_delta_opponent_count);
+    }
     if (event->saw_projectile) {
         RLCombatEvent_IncrementSideCounter(event->side,
                                            &combat_event_stats.attack_unknown_timeout_projectile_self_count,
@@ -125,6 +150,16 @@ static void RLCombatEvent_ResetEpisodeStats(void) {
     combat_event_stats.attack_dropped_start_opponent_count = 0;
     combat_event_stats.attack_unknown_timeout_contact_self_count = 0;
     combat_event_stats.attack_unknown_timeout_contact_opponent_count = 0;
+    combat_event_stats.attack_unknown_timeout_contact_hit_stop_self_count = 0;
+    combat_event_stats.attack_unknown_timeout_contact_hit_stop_opponent_count = 0;
+    combat_event_stats.attack_unknown_timeout_contact_state_self_count = 0;
+    combat_event_stats.attack_unknown_timeout_contact_state_opponent_count = 0;
+    combat_event_stats.attack_unknown_timeout_damage_state_self_count = 0;
+    combat_event_stats.attack_unknown_timeout_damage_state_opponent_count = 0;
+    combat_event_stats.attack_unknown_timeout_hp_delta_self_count = 0;
+    combat_event_stats.attack_unknown_timeout_hp_delta_opponent_count = 0;
+    combat_event_stats.attack_unknown_timeout_stun_delta_self_count = 0;
+    combat_event_stats.attack_unknown_timeout_stun_delta_opponent_count = 0;
     combat_event_stats.attack_unknown_timeout_projectile_self_count = 0;
     combat_event_stats.attack_unknown_timeout_projectile_opponent_count = 0;
     combat_event_stats.attack_unknown_timeout_throw_self_count = 0;
@@ -435,6 +470,11 @@ static bool RLCombatEvent_TryBasicFinalize(RLCombatAttackEvent* event, const RLC
 
     event->whiff_eligible |= (u8)(update->actor_attack_state_active != 0);
     event->saw_target_contact_or_damage |= (u8)(update->target_contact_or_damage != 0);
+    event->saw_target_hit_stop |= (u8)(update->target_entered_hit_stop != 0);
+    event->saw_target_contact_state |= (u8)(update->target_entered_contact_state != 0);
+    event->saw_target_damage_state |= (u8)(update->target_entered_damage_state != 0);
+    event->saw_target_hp_delta |= (u8)(update->target_hp_delta != 0);
+    event->saw_target_stun_delta |= (u8)(update->target_stun_delta != 0);
     event->saw_projectile |= (u8)(update->projectile_active_for_side != 0);
     event->saw_throw |= (u8)(update->throw_active_for_side != 0);
 

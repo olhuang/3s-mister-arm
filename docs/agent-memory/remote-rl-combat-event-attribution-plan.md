@@ -1516,6 +1516,11 @@ Implementation status:
   contact/damage, projectile, or throw evidence, plus `CEUL Lself/opp
   Nself/opp` for projectile-like and not-whiff-eligible timeout unknowns.
   These are diagnostic counters only.
+- 2026-05-05 contact-cause overlay refinement: when timeout unknowns are caused
+  by the contact/damage bucket, All view also shows `CEUD EHself/opp
+  ECself/opp EDself/opp` and `CEUH HPself/opp STself/opp` so live smoke can
+  identify whether hit-stop, contact-state, damage-state, HP delta, or stun
+  delta blocked clean whiff classification.
 - Phase 2C still does not export event rows, transition summaries, rewards, or
   trainer-visible labels. These results are lifecycle/debug labels until the
   Phase 6 contact resolver and move-family validation prove them safe.

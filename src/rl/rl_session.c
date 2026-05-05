@@ -2453,20 +2453,6 @@ static void RLSession_UpdateCombatProjectileEvents(RLDecisionLedgerEntry* entry,
     RLCombatEvent_UpdateProjectiles(&update);
 }
 
-static bool RLSession_PolicyActionIsInitialThrow(u16 action_id, u16 action_step) {
-    return action_id == RL_POLICY_ACTION_THROW && action_step == 0;
-}
-
-static bool RLSession_EntrySelfPolicyStartedThrow(const RLDecisionLedgerEntry* entry) {
-    if (entry == NULL) {
-        return false;
-    }
-
-    return RLSession_PolicyActionIsInitialThrow(entry->policy_executed_action_id, entry->policy_executed_action_step) ||
-           RLSession_PolicyActionIsInitialThrow(entry->input_action_id, entry->input_action_step) ||
-           RLSession_PolicyActionIsInitialThrow(entry->policy_requested_action_id, entry->policy_requested_action_step);
-}
-
 static bool RLSession_IsRyuThrowRoutine(u16 routine_1, u16 routine_2) {
     return routine_1 == 4 && (routine_2 == 2 || routine_2 == 14);
 }
@@ -2547,8 +2533,7 @@ static bool RLSession_ObservationThrowStartedForSide(const RLDecisionLedgerEntry
 
     switch (side) {
     case RL_COMBAT_EVENT_SIDE_SELF:
-        return obs->self_throw_started != 0 || RLSession_EntrySelfPolicyStartedThrow(entry) ||
-               RLSession_EntryEngineAttributedThrowForSide(entry, side) ||
+        return obs->self_throw_started != 0 || RLSession_EntryEngineAttributedThrowForSide(entry, side) ||
                RLSession_ObservationLooksLikeEngineThrowStartForSide(entry, obs, side);
     case RL_COMBAT_EVENT_SIDE_OPPONENT:
         return obs->opp_throw_started != 0 || RLSession_EntryEngineAttributedThrowForSide(entry, side) ||

@@ -1783,12 +1783,15 @@ Phase 5C implementation contract:
   owner.
 - Phase 5C/5D live refinement widens throw starts to include conservative
   throw-attempt intent:
-  - self-side policy/input `throw` at action step `0`;
   - Ryu engine throw routine entry/support (`R1=4`, `R2=14` startup or `R2=2`
     completed throw) when a fresh routine/attack edge is observed;
   - already-attributed side engine action `throw`.
   This is required so out-of-range throw attempts create a `CT S` event and can
   later finalize as `CTR W` instead of producing no counter at all.
+- Policy/input `throw` rows are metadata only and must not be standalone start
+  triggers. Live testing showed held LP+LK plus direction changes can produce
+  repeated policy/input rows without a new engine throw attempt, inflating
+  `CT S/F`, `CTR W`, and `CTR U`.
 - `CTR T` success is emitted only when the target-side caught state/edge is
   observed (`opp_throw_caught*` for self owner, `self_throw_caught*` for
   opponent owner) and there is no simultaneous/escape evidence that makes the

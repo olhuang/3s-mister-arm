@@ -4,6 +4,15 @@ This log tracks implementation progress, engineering decisions, test results, an
 
 ## 2026-05-05: Combat Event Phase 5C/5D Throw Live Refinement Prep
 
+Update after live retest:
+- User live report showed held LP+LK plus left/right direction changes
+  repeatedly incremented `CT S/F`, `CTR W`, and `CTR U`. Root cause: the
+  self-side policy/input `throw` action-step-0 metadata was used as a standalone
+  throw-start source on every ledger row.
+- Fix: policy/input `throw` now remains metadata only. Throw event starts come
+  from raw throw-active edges or engine throw-routine edges/attribution, so held
+  input rows do not create repeated events without a fresh engine attempt.
+
 Milestone:
 - Milestone 6: Combat event attribution Phase 5C/5D
 
@@ -26,9 +35,10 @@ Implementation notes:
 - Added internal observation evidence for throw escape / nagenuke-style
   routines (`R1=0`, `R2=47/48/49/50`) with rising edges. These fields are not
   exported in transition schema v9 and do not feed reward or learner features.
-- Throw starts now accept self policy/input `throw` at action step `0`, Ryu
-  engine throw routine entry/support (`R1=4`, `R2=14` or `R2=2`) on fresh
-  routine/attack edges, or an already-attributed side engine action `throw`.
+- Throw starts now accept Ryu engine throw routine entry/support (`R1=4`,
+  `R2=14` or `R2=2`) on fresh routine/attack edges, raw throw-active edges, or
+  an already-attributed side engine action `throw`. Policy/input `throw` rows
+  are metadata only and are not standalone start triggers.
 - Each ledger row starts at most one throw event per side, preventing repeated
   starts from the same decision span.
 - Throw finalization treats opposing throw evidence and throw-escape routines
@@ -40,13 +50,16 @@ Validation:
 - `git diff --check` passed.
 - `python3 -m py_compile tools/rl_probe_server.py tools/analyze_rl_transitions.py` passed.
 - `cc -std=c11 -Wall -Wextra -Isrc -Iinclude -c src/rl/rl_combat_event.c -o /tmp/rl_combat_event_throw_refine.o` passed.
+- After the held-input fix, `rg -n 'PolicyActionIsInitialThrow|EntrySelfPolicyStartedThrow' src/rl/rl_session.c`
+  returned no matches.
 - Direct host compilation of `rl_observation.c` and `rl_session.c` is blocked
   without generated `port/build_config.h`; use the canonical telemetry build
   for those modules.
 - `tools/mister/build-game.sh --flavor telemetry` passed, rebuilding
-  `rl_combat_event.c`, `rl_observation.c`, `rl_session.c`, and the telemetry
-  ARM package. The build still emits the existing third-party minizip `mktemp`
-  linker warning.
+  `rl_combat_event.c`, `rl_observation.c`, `rl_session.c`, and later
+  `rl_session.c` after the held-input fix. The telemetry ARM package was
+  created successfully. The build still emits the existing third-party minizip
+  `mktemp` linker warning.
 
 Follow-up:
 - Phase 5D live validation should re-check close forward throw, back throw,

@@ -62,6 +62,7 @@ typedef enum RLCombatAttackFinalizeReason {
     RL_COMBAT_ATTACK_FINALIZE_NONE = 0,
     RL_COMBAT_ATTACK_FINALIZE_EXPLICIT = 1,
     RL_COMBAT_ATTACK_FINALIZE_EPISODE_FLUSH = 2,
+    RL_COMBAT_ATTACK_FINALIZE_SUPERSEDED_BY_NEW_START = 3,
 } RLCombatAttackFinalizeReason;
 
 typedef struct RLCombatAttackEventStart {
@@ -109,6 +110,7 @@ typedef struct RLCombatEventStats {
     u32 attack_started_count;
     u32 attack_finalized_count;
     u32 attack_unknown_flush_count;
+    u32 attack_unknown_rollover_count;
     u32 attack_dropped_start_count;
     u32 attack_active_self_count;
     u32 attack_active_opponent_count;
@@ -125,6 +127,13 @@ bool RLCombatEvent_FinalizeAttack(u64 event_id,
                                   RLCombatAttackFinalizeReason reason,
                                   u32 frame_id,
                                   u32 decision_id);
+u32 RLCombatEvent_FinalizeActiveSide(u64 run_id,
+                                     u32 episode_id,
+                                     RLCombatEventSide side,
+                                     RLCombatAttackEventResult result,
+                                     RLCombatAttackFinalizeReason reason,
+                                     u32 frame_id,
+                                     u32 decision_id);
 const RLCombatAttackEvent* RLCombatEvent_FindAttack(u64 event_id);
 const RLCombatEventStats* RLCombatEvent_GetStats(void);
 

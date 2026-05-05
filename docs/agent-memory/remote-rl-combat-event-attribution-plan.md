@@ -1474,8 +1474,17 @@ Implementation status:
 - `rl_session.c` now calls combat-event begin/flush/reset hooks from the
   remote runtime's run/episode lifecycle. Episode-boundary flush finalizes any
   still-active attack events as explicit unknowns.
-- Phase 2A does not yet create attack events from observation edges and does not
-  export event rows, transition summaries, rewards, or trainer-visible labels.
+- 2026-05-05 Phase 2B creates self/opponent attack events from observation
+  attack-start edges: current-attack 0->nonzero, attack-counter delta, or
+  attack-routine entry. Each event attaches run/episode/decision/frame,
+  side, character, routine 1/2, current attack, kind-of-waza, and self-side
+  policy/input context when available.
+- If a new attack-start edge appears for a side while that side still has an
+  active attack event, the previous active event is finalized as
+  `UNKNOWN + SUPERSEDED_BY_NEW_START`. This is a ring-hygiene rollover only,
+  not hit/block/whiff attribution.
+- Phase 2B still does not export event rows, transition summaries, rewards, or
+  trainer-visible labels.
 
 Work:
 

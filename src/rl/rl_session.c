@@ -1792,6 +1792,89 @@ static void RLSession_AccumulateMovementSpan(RLDecisionLedgerEntry* entry, const
     entry->opp_airborne_started |= obs->opp_airborne_started;
 }
 
+static bool RLSession_ObservationAttackStartedForSide(const RLObservationV1* obs, RLCombatEventSide side) {
+    if (obs == NULL) {
+        return false;
+    }
+
+    switch (side) {
+    case RL_COMBAT_EVENT_SIDE_SELF:
+        return obs->self_attack_started || obs->self_attack_counter_started || obs->self_attack_routine_started;
+    case RL_COMBAT_EVENT_SIDE_OPPONENT:
+        return obs->opp_attack_started || obs->opp_attack_counter_started || obs->opp_attack_routine_started;
+    case RL_COMBAT_EVENT_SIDE_NONE:
+    default:
+        return false;
+    }
+}
+
+static void RLSession_FillCombatAttackStart(RLCombatAttackEventStart* start,
+                                            const RLDecisionLedgerEntry* entry,
+                                            const RLObservationV1* obs,
+                                            RLCombatEventSide side) {
+    if (start == NULL || entry == NULL || obs == NULL) {
+        return;
+    }
+
+    memset(start, 0, sizeof(*start));
+    start->run_id = entry->run_id;
+    start->episode_id = entry->episode_id;
+    start->decision_id = entry->decision_id;
+    start->frame_id = remote_debug.frame_id;
+    start->side = side;
+
+    if (side == RL_COMBAT_EVENT_SIDE_SELF) {
+        start->character_id = entry->agent_character_id;
+        start->routine_1 = obs->self_routine[1];
+        start->routine_2 = obs->self_routine[2];
+        start->current_attack = obs->self_current_attack;
+        start->kind_of_waza = obs->self_kind_of_waza;
+        if (entry->policy_executed_action_id != 0) {
+            start->policy_action_id = entry->policy_executed_action_id;
+            start->policy_sub_action_id = entry->policy_executed_sub_action_id;
+            start->policy_action_step = entry->policy_executed_action_step;
+        } else if (entry->input_action_id != 0) {
+            start->policy_action_id = entry->input_action_id;
+            start->policy_sub_action_id = entry->input_sub_action_id;
+            start->policy_action_step = entry->input_action_step;
+        } else {
+            start->policy_action_id = entry->policy_requested_action_id;
+            start->policy_sub_action_id = entry->policy_requested_sub_action_id;
+            start->policy_action_step = entry->policy_requested_action_step;
+        }
+    } else if (side == RL_COMBAT_EVENT_SIDE_OPPONENT) {
+        start->character_id = entry->opponent_character_id;
+        start->routine_1 = obs->opp_routine[1];
+        start->routine_2 = obs->opp_routine[2];
+        start->current_attack = obs->opp_current_attack;
+        start->kind_of_waza = obs->opp_kind_of_waza;
+    }
+}
+
+static void RLSession_MaybeStartCombatAttackEvent(RLDecisionLedgerEntry* entry,
+                                                  const RLObservationV1* obs,
+                                                  RLCombatEventSide side) {
+    RLCombatAttackEventStart start;
+
+    if (entry == NULL || obs == NULL || !RLSession_ObservationAttackStartedForSide(obs, side)) {
+        return;
+    }
+
+    RLSession_FillCombatAttackStart(&start, entry, obs, side);
+    if (start.run_id == 0 || start.episode_id == 0 || start.side == RL_COMBAT_EVENT_SIDE_NONE) {
+        return;
+    }
+
+    RLCombatEvent_FinalizeActiveSide(start.run_id,
+                                     start.episode_id,
+                                     side,
+                                     RL_COMBAT_ATTACK_RESULT_UNKNOWN,
+                                     RL_COMBAT_ATTACK_FINALIZE_SUPERSEDED_BY_NEW_START,
+                                     start.frame_id,
+                                     start.decision_id);
+    RLCombatEvent_StartAttack(&start);
+}
+
 static void RLSession_AccumulateAttackSignals(RLDecisionLedgerEntry* entry, const RLObservationV1* obs) {
     if (entry == NULL || obs == NULL) {
         return;
@@ -1805,6 +1888,8 @@ static void RLSession_AccumulateAttackSignals(RLDecisionLedgerEntry* entry, cons
     entry->opp_attack_code_changed |= obs->opp_attack_code_changed;
     entry->opp_attack_counter_started |= obs->opp_attack_counter_started;
     entry->opp_attack_routine_started |= obs->opp_attack_routine_started;
+    RLSession_MaybeStartCombatAttackEvent(entry, obs, RL_COMBAT_EVENT_SIDE_SELF);
+    RLSession_MaybeStartCombatAttackEvent(entry, obs, RL_COMBAT_EVENT_SIDE_OPPONENT);
     RLSession_MaybeAttributeDemoEngineAction(entry, obs);
 }
 

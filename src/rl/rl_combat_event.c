@@ -106,6 +106,10 @@ static bool RLCombatEvent_FinalizeSlot(RLCombatAttackEvent* event,
     if (reason == RL_COMBAT_ATTACK_FINALIZE_EPISODE_FLUSH && result == RL_COMBAT_ATTACK_RESULT_UNKNOWN) {
         combat_event_stats.attack_unknown_flush_count++;
     }
+    if (reason == RL_COMBAT_ATTACK_FINALIZE_SUPERSEDED_BY_NEW_START &&
+        result == RL_COMBAT_ATTACK_RESULT_UNKNOWN) {
+        combat_event_stats.attack_unknown_rollover_count++;
+    }
     RLCombatEvent_RefreshActiveStats();
     return true;
 }
@@ -228,6 +232,35 @@ bool RLCombatEvent_FinalizeAttack(u64 event_id,
     }
 
     return false;
+}
+
+u32 RLCombatEvent_FinalizeActiveSide(u64 run_id,
+                                     u32 episode_id,
+                                     RLCombatEventSide side,
+                                     RLCombatAttackEventResult result,
+                                     RLCombatAttackFinalizeReason reason,
+                                     u32 frame_id,
+                                     u32 decision_id) {
+    RLCombatAttackEventRing* ring = RLCombatEvent_RingForSide(side);
+    u32 finalized = 0;
+
+    if (ring == NULL || run_id == 0 || episode_id == 0 || result == RL_COMBAT_ATTACK_RESULT_PENDING) {
+        return 0;
+    }
+
+    for (u32 i = 0; i < RL_COMBAT_ATTACK_EVENT_RING_CAP; i++) {
+        RLCombatAttackEvent* event = &ring->events[i];
+        if (event->status != RL_COMBAT_ATTACK_EVENT_ACTIVE || event->run_id != run_id ||
+            event->episode_id != episode_id || event->side != side) {
+            continue;
+        }
+        if (RLCombatEvent_FinalizeSlot(event, result, reason, frame_id, decision_id)) {
+            finalized++;
+        }
+    }
+
+    RLCombatEvent_RefreshActiveStats();
+    return finalized;
 }
 
 const RLCombatAttackEvent* RLCombatEvent_FindAttack(u64 event_id) {

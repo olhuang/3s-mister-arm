@@ -2,6 +2,61 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-05: Combat Event Attribution Phase 2B Attack Start Events
+
+Milestone:
+- Milestone 6: Combat event attribution Phase 2B
+
+Files changed:
+- `src/rl/rl_combat_event.h`
+- `src/rl/rl_combat_event.c`
+- `src/rl/rl_session.c`
+- `docs/agent-memory/remote-rl-combat-event-attribution-plan.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Start creating attack events from existing self/opponent observation edges
+  while keeping event labels out of transition JSON, reward, inference, and
+  trainer features.
+
+Implementation notes:
+- Added `RLCombatEvent_FinalizeActiveSide()` for conservative ring hygiene.
+  When a side starts a new attack while a previous same-side event is still
+  active, the previous event is finalized as
+  `UNKNOWN + SUPERSEDED_BY_NEW_START`.
+- `RLSession_AccumulateAttackSignals()` now starts self/opponent attack events
+  from the existing observation edge signals:
+  `*_attack_started`, `*_attack_counter_started`, or
+  `*_attack_routine_started`.
+- Attack starts attach run id, episode id, decision id, frame id, side,
+  character id, routine 1/2, current attack, and kind-of-waza.
+- Self-side events additionally attach the best available policy/input context:
+  executed policy action first, then demo/input label, then requested policy.
+- Opponent events intentionally do not guess a policy action id yet; side-explicit
+  engine attribution remains Phase 3.
+
+Non-goals:
+- No hit/block/contact attribution.
+- No projectile, throw, punish, defense result, event journal export,
+  transition summary, reward, or learner-feature change.
+
+Validation:
+- `git diff --check` passed.
+- `cc -std=c11 -Wall -Wextra -Isrc -Iinclude -c src/rl/rl_combat_event.c -o /tmp/rl_combat_event_wall.o` passed.
+- Standalone rollover smoke compiled and ran against `src/rl/rl_combat_event.c`;
+  it verified same-side active rollover, side isolation, policy context storage,
+  and episode flush.
+- `tools/mister/build-game.sh --flavor telemetry` passed and rebuilt
+  `src/rl/rl_combat_event.c` plus `src/rl/rl_session.c`; only the pre-existing
+  minizip `mktemp` linker warning appeared.
+
+Follow-up:
+- Phase 2C should add basic non-projectile finalization windows for
+  whiff/interrupted/unknown. Phase 2D should expose debug/analyzer visibility so
+  live logs can compare event counts against visible attempts before event
+  journal export.
+
 ## 2026-05-05: Combat Event Attribution Phase 2A Attack Ring Foundation
 
 Milestone:

@@ -205,9 +205,9 @@ Notes:
   - `OS`: observed attack state start / observed attack code changed / attack-counter start
   - `AC`: last finalized overlay attack event made contact
   - `AW`: last finalized overlay attack event likely whiffed
-  - `AH`: current round's accumulated real attack starts
-  - `ACC`: current round's accumulated attack contacts
-  - `AWC`: current round's accumulated likely whiffs
+  - `AH`: current round's accumulated overlay-pipeline attack starts
+  - `ACC`: current round's accumulated overlay-pipeline attack contacts
+  - `AWC`: current round's accumulated overlay-pipeline likely whiffs
   - `J`: requested jump started
 
 ### `rl-agent-player`
@@ -294,6 +294,33 @@ Notes:
 - `on` means the wrapper relaunches the game with RL network probing enabled.
 - Changes take effect on the next wrapper `Restart`; they do not hot-switch the currently running match.
 - The remote IP, observation port, action port, and timing knobs are intentionally read from this same config file so they can be edited directly.
+
+### `rl-agent-export-evidence`
+
+Controls Phase 0+1 compact combat evidence export in transition rows.
+
+Possible values:
+- `off`
+- `on`
+
+Default:
+- `off`
+
+Notes:
+- This key is primarily written by the MiSTer OSD menu entry `RL Evidence Log (Restart)`.
+- `off` keeps transition rows in the base learner-safe shape without evidence fields.
+- `on` adds exactly six root-level numeric fields when evidence formatting succeeds:
+  `evidence_bitmask_version`, `evidence_flags_lo`, `evidence_flags_hi`,
+  `ep_overlay_attack_active_count`, `ep_overlay_attack_contact_count`, and
+  `ep_overlay_attack_whiff_count`.
+- The `ep_overlay_attack_*_count` fields come from the existing overlay attack
+  event pipeline, not from a full engine-wide combat resolver.
+- Evidence export does not change reward, inference, action scheduling, or
+  episode lifecycle. If the evidence extension cannot be formatted safely, the
+  runtime falls back to a complete base transition row rather than sending
+  partial JSON.
+- Changes take effect on the next wrapper `Restart`; they do not hot-switch the
+  currently running match.
 
 ### `rl-agent-remote-ip`
 

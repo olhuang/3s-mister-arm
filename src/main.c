@@ -99,6 +99,7 @@ Configuration configuration = {
             .delay_frames = 4,
             .decision_interval_frames = 4,
             .action_hold_frames = 4,
+            .export_evidence = false,
         },
 };
 
@@ -237,6 +238,12 @@ static void apply_remote_rl_config_file_values() {
     }
     if (Config_HasExplicitKey(CFG_KEY_RL_AGENT_ACTION_HOLD)) {
         rl->action_hold_frames = Config_GetInt(CFG_KEY_RL_AGENT_ACTION_HOLD);
+    }
+    if (Config_HasExplicitKey(CFG_KEY_RL_AGENT_EXPORT_EVIDENCE)) {
+        const char* value = Config_GetString(CFG_KEY_RL_AGENT_EXPORT_EVIDENCE);
+        rl->export_evidence = value != NULL &&
+                              (SDL_strcmp(value, "on") == 0 || SDL_strcmp(value, "true") == 0 ||
+                               SDL_strcmp(value, "1") == 0);
     }
 }
 

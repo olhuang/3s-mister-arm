@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
+import rl_evidence
 import rl_probe_server as rl
 from rl_probe_server import (
     TABULAR_ACTION_NAMES,
@@ -426,6 +427,19 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=20,
         help="Rows after a jump-start row used to classify projectile-near jumps as damaged or safe",
+    )
+    parser.add_argument(
+        "--expand-evidence",
+        action="store_true",
+        help="Decode Phase 0+1 compact evidence bitmasks and print evidence coverage/reserved-bit diagnostics.",
+    )
+    parser.add_argument(
+        "--output-expanded",
+        default="",
+        help=(
+            "Optional NDJSON path for rows with a human-readable evidence_expanded object. "
+            "The source transition log is not modified."
+        ),
     )
     args = parser.parse_args()
     if (
@@ -1173,6 +1187,11 @@ def main() -> int:
     action_source_action_counts: dict[str, collections.Counter[str]] = collections.defaultdict(collections.Counter)
     mode_type_counts: collections.Counter[int] = collections.Counter()
     raw_hp_sign_counts: collections.Counter[str] = collections.Counter()
+    evidence_version_counts: collections.Counter[str] = collections.Counter()
+    evidence_reserved_count = 0
+    evidence_reserved_max_lo = 0
+    evidence_reserved_max_hi = 0
+    expanded_output_rows: list[dict[str, object]] = []
     rows: list[dict[str, object]] = []
 
     for row_index, line in enumerate(iter_lines(path, max(0, args.tail_rows)), start=1):
@@ -1187,6 +1206,25 @@ def main() -> int:
         if not isinstance(row, dict):
             skipped_json += 1
             continue
+        raw_row = row
+        evidence_result: rl_evidence.EvidenceDecodeResult | None = None
+        if args.expand_evidence or args.output_expanded:
+            raw_version = raw_row.get("evidence_bitmask_version")
+            evidence_version_counts[str(raw_version) if raw_version is not None else "missing"] += 1
+            try:
+                evidence_result = rl_evidence.decode_evidence(raw_row)
+            except rl_evidence.EvidenceDecodeError as exc:
+                raise SystemExit(f"{path}:{row_index}: {exc}") from exc
+            if evidence_result is not None and evidence_result.reserved_bits_set:
+                evidence_reserved_count += 1
+                evidence_reserved_max_lo = max(evidence_reserved_max_lo, evidence_result.reserved_lo)
+                evidence_reserved_max_hi = max(evidence_reserved_max_hi, evidence_result.reserved_hi)
+            if args.output_expanded:
+                expanded_row = dict(raw_row)
+                expanded_row["evidence_expanded"] = (
+                    evidence_result.to_jsonable() if evidence_result is not None else None
+                )
+                expanded_output_rows.append(expanded_row)
         try:
             replay_row = rl.learner_replay_row(row)
         except ValueError as exc:
@@ -1337,6 +1375,29 @@ def main() -> int:
         f"training_mode_hp_delta_mode={args.training_mode_hp_delta_mode} "
         f"raw_hp_signs={format_counter(raw_hp_sign_counts, len(raw_hp_sign_counts) or 1)}"
     )
+    if args.expand_evidence or args.output_expanded:
+        print(
+            "evidence "
+            f"versions={format_counter(evidence_version_counts, len(evidence_version_counts) or 1)} "
+            f"reserved_bits_set={evidence_reserved_count} "
+            f"reserved_max_lo=0x{evidence_reserved_max_lo:08x} "
+            f"reserved_max_hi=0x{evidence_reserved_max_hi:08x}"
+        )
+        if evidence_reserved_count > 0:
+            print(
+                "WARNING: reserved evidence bits set "
+                f"{evidence_reserved_count} times, "
+                f"max_lo=0x{evidence_reserved_max_lo:08x}, "
+                f"max_hi=0x{evidence_reserved_max_hi:08x}",
+                file=sys.stderr,
+            )
+    if args.output_expanded:
+        expanded_path = Path(args.output_expanded)
+        expanded_path.parent.mkdir(parents=True, exist_ok=True)
+        with expanded_path.open("w", encoding="utf-8") as stream:
+            for expanded_row in expanded_output_rows:
+                stream.write(json.dumps(expanded_row, sort_keys=True, separators=(",", ":")) + "\n")
+        print(f"evidence_expanded_output={expanded_path} rows={len(expanded_output_rows)}")
     if action_source_action_counts:
         for source in sorted(action_source_action_counts):
             print(f"  {source:<13} {format_counter(action_source_action_counts[source], args.limit)}")

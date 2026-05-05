@@ -2,6 +2,559 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-05: Combat Event Attribution Phase 0+1 Local Implementation
+
+Milestone:
+- Milestone 6: Combat event attribution Phase 0+1 local implementation
+
+Files changed:
+- `src/rl/rl_session.c`
+- `src/rl/rl_session.h`
+- `src/rl/rl_net.c`
+- `src/rl/rl_combat_event.h`
+- `src/configuration.h`
+- `src/args.c`
+- `src/main.c`
+- `src/port/config/config.h`
+- `src/port/config/config.c`
+- `vendor/Menu_MiSTer/menu.sv`
+- `vendor/Main_MiSTer/thirdsarm_wrapper.cpp`
+- `tools/rl_evidence.py`
+- `tools/analyze_rl_transitions.py`
+- `tools/rl_probe_server.py`
+- `tools/train_dqn_learner.py`
+- `docs/config.md`
+- `docs/agent-memory/remote-rl-combat-event-attribution-plan.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Land the Phase 0+1 compact evidence-export foundation while keeping reward,
+  inference, action scheduling, and default learner features unchanged.
+
+Implementation notes:
+- Added `src/rl/rl_combat_event.h` with only Phase 0+1 bitmask version and
+  bit-position constants. No `.c` file, event ring, event id, resolver helper,
+  source/confidence/failure enum, or result enum was added.
+- Replaced the transition formatter's stack `line[2048]` path with a reusable
+  4096-byte heap buffer owned by `rl_session.c` and allocated/freed via
+  `RLSession_AllocFormatBuffer()` / `RLSession_FreeFormatBuffer()` from the RL
+  net lifecycle.
+- Refactored transition formatting into append-style guarded writes. Base-row
+  formatting failure drops the row; evidence-extension failure clears the
+  partial buffer, retries a complete base row, and increments evidence fallback
+  telemetry.
+- Added transition-format telemetry counters for formatter errors,
+  truncations, and evidence fallback.
+- Added `rl-agent-export-evidence` as a config/CLI/OSD-backed runtime gate.
+  MiSTer OSD exposes it as `RL Evidence Log (Restart)`. Default is off.
+- When the gate is on and evidence formatting succeeds, transition rows add
+  exactly six numeric root fields: `evidence_bitmask_version`,
+  `evidence_flags_lo`, `evidence_flags_hi`, and the three
+  `ep_overlay_attack_*_count` fields.
+- Updated overlay evidence consumption so per-decision overlay contact/whiff
+  evidence is consumed from unlogged finalized overlay sequence state rather
+  than read directly from transient `last_overlay_*` at transition formatting
+  time.
+- Added `tools/rl_evidence.py` and analyzer `--expand-evidence
+  --output-expanded` support. The decoder rejects negative/out-of-range
+  unsigned flag values before masking, expands v1 known bits, and reports
+  reserved hi/lo bits.
+- Added DQN model/feature metadata guards that warn and strip
+  `evidence_*`/`ep_overlay_*` feature names if a future model accidentally
+  includes them.
+
+Validation:
+- `git diff --check` passed.
+- `python3 -m py_compile tools/rl_evidence.py tools/analyze_rl_transitions.py tools/rl_probe_server.py tools/train_dqn_learner.py tools/compare_dqn_models.py` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed and produced
+  `build/mister-telemetry-package`.
+- `tools/mister-wrapper/build-hps.sh` passed and produced
+  `build/mister-wrapper-hps/MiSTer_3S-ARM`; it reported only pre-existing
+  wrapper warnings for unused scale-mode helpers and `input.cpp`'s unused
+  `poll_cnt`.
+- Synthetic analyzer smoke passed:
+  `python3 tools/analyze_rl_transitions.py /tmp/rl-evidence-smoke.ndjson --expand-evidence --output-expanded /tmp/rl-evidence-expanded.ndjson --limit 3`.
+  It expanded v1 bits, left unknown version `99` as `evidence_expanded=null`,
+  and emitted the expected reserved hi-bit warning for
+  `evidence_flags_hi=0x80000000`.
+- Negative flag smoke failed as intended with
+  `evidence_flags_lo must be non-negative before masking`.
+- Feature-name guard smoke stripped synthetic
+  `evidence_flags_lo` / `ep_overlay_attack_active_count` feature names and
+  kept only normal DQN feature names.
+
+Open follow-ups:
+- Run a live MiSTer/probe transition smoke with `rl-agent-export-evidence=off`
+  and `on` to verify field absence/presence, complete JSON upload, and no
+  receiver `JSONDecodeError`.
+- Capture a natural or scripted episode to verify `ep_overlay_attack_*_count`
+  reset at episode boundaries and remain monotonic snapshots within an episode.
+- Measure formatter row size and p95 cost on the closest available target before
+  declaring Phase 0+1 fully closed.
+
+## 2026-05-05: Overlay Evidence Contamination Guard
+
+Milestone:
+- Milestone 6: harden Phase 0+1 overlay evidence semantics
+
+Files changed:
+- `docs/agent-memory/remote-rl-combat-event-attribution-plan.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Prevent per-decision overlay contact/whiff evidence from being overwritten by
+  later frames before transition export.
+
+Key updates:
+- Clarified that `ep_overlay_attack_*_count` values are cumulative snapshots;
+  later frames increasing those counters is expected and not contamination as
+  long as analyzers treat them as episode-cumulative counters.
+- Per-decision `overlay_attack_event_finalized`, `overlay_attack_contact`, and
+  `overlay_attack_whiff` must be latched from finalized overlay event sequence
+  evidence, not read from transient `last_overlay_*` state at transition
+  formatting time.
+- A ledger row must consume only unlogged finalized overlay event evidence, and
+  consumed sequence ids must be marked so later rows cannot duplicate them.
+- If multiple overlay events finalize in one decision window and Phase 0+1 can
+  only represent a boolean summary, the limitation must remain evidence-only
+  and be recorded in the audit/engineering log; Phase 2+ event journals carry
+  the one-row-per-event truth model.
+- Added overlay contamination smoke to verify later overlay events cannot
+  overwrite an earlier row's contact/whiff result before export.
+
+Validation:
+- Documentation-only change; no runtime behavior changed.
+- `git diff --check` passed after this overlay evidence update.
+
+## 2026-05-05: Combat Event Export Config And OSD Contract
+
+Milestone:
+- Milestone 6: finalize full-rollout combat event export controls
+
+Files changed:
+- `docs/agent-memory/remote-rl-combat-event-attribution-plan.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Define how users can enable/disable evidence, combat event journal output,
+  and transition event summaries after the complete combat attribution system
+  ships.
+
+Key updates:
+- Export controls remain config-backed; OSD may expose toggles, but those
+  toggles must update the same cached runtime/config flags rather than separate
+  OSD-only state.
+- Suggested final keys:
+  - `rl-agent-export-evidence`
+  - `rl-agent-export-combat-events`
+  - `rl-agent-export-event-summaries`
+- `rl-agent-export-combat-events` controls persistence of the sibling
+  combat-event NDJSON file.
+- `rl-agent-export-event-summaries` controls schema-v4 compact summaries in
+  transition rows.
+- Event-id summary fields require combat-event export to be on. If event
+  journal output is off, summaries must either be disabled or limited to
+  aggregate fields with no event references.
+- Mid-run OSD/config toggles are allowed, but analyzers must report mixed-output
+  coverage counts rather than assuming all envelopes have event journals or
+  summaries.
+
+Validation:
+- Documentation-only change; no runtime behavior changed.
+- `git diff --check` passed.
+
+## 2026-05-05: Phase 0+1 Expanded Evidence Output Contract
+
+Milestone:
+- Milestone 6: finalize Phase 0+1 analyzer/debug ergonomics
+
+Files changed:
+- `docs/agent-memory/remote-rl-combat-event-attribution-plan.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Make the human-readable bitmask expansion deliverable explicit while keeping
+  the compact transition log unchanged for learner/replay safety.
+
+Key updates:
+- `tools/analyze_rl_transitions.py` must support an optional expanded output,
+  for example `--expand-evidence --output-expanded PATH`.
+- The expanded file should preserve row identity and add decoded evidence
+  names/dictionaries for audit/debug.
+- The compact source transition log remains unchanged and remains the default
+  learner/debug contract.
+- Added an expanded-log smoke to prove the optional output can be written
+  without mutating the compact log.
+
+Validation:
+- Documentation-only change; no runtime behavior changed.
+- `git diff --check` passed.
+
+## 2026-05-05: Combat Event Attribution Disk Log Contract
+
+Milestone:
+- Milestone 6: finalize combat event attribution logging contract
+
+Files changed:
+- `docs/agent-memory/remote-rl-combat-event-attribution-plan.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Make the final disk persistence shape explicit before implementation: one
+  synchronized MiSTer/C-side envelope, persisted on the remote PC as two NDJSON
+  files by default.
+
+Key updates:
+- MiSTer remains responsible for emitting one atomic transition batch/envelope;
+  it must not create a second independent combat-event stream.
+- Remote PC persistence defaults to two files derived from that same envelope:
+  the configured transition log for summary rows and a sibling combat-event log
+  for journal rows.
+- The two files are analyzer ergonomics only, not independent sources of truth.
+  They must remain reconcilable through `run_id`, `episode_id`, event/summary
+  ids, and any future batch/envelope id.
+- If event-file persistence fails for an envelope, the receiver must mark the
+  transition batch incomplete/failed instead of silently writing summaries that
+  reference missing event rows.
+
+Validation:
+- Documentation-only change; no runtime behavior changed.
+- `git diff --check` passed.
+
+## 2026-05-05: Combat Event Attribution Final Round Review Closeout
+
+Milestone:
+- Milestone 6: close final full-scope Phase 0+1 review
+
+Files changed:
+- `docs/agent-memory/remote-rl-combat-event-attribution-plan.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Integrate the final full-scope review feedback before implementation,
+  including rollback gating, formatter fallback semantics, exact buffer
+  lifecycle hooks, C-to-JSON counter naming, enum scope reduction, mixed-version
+  parser handling, and implementation order.
+
+Key updates:
+- Added a runtime/config evidence-export gate requirement, e.g.
+  `rl-agent-export-evidence`, so Phase 0+1 evidence export can be disabled
+  without changing reward, inference, action scheduling, or episode lifecycle.
+- Refined formatter failure semantics:
+  - base-row formatter failure drops the row and increments telemetry.
+  - evidence-extension failure clears the partial buffer, retries the base row
+    without evidence, and increments visible evidence fallback telemetry.
+  - partial JSON must never be appended locally, batched, or sent over the
+    network.
+- Specified exact buffer lifecycle direction:
+  `RLSession_AllocFormatBuffer()` / `RLSession_FreeFormatBuffer()` owned by
+  `rl_session.*`, wired through `RLNet_Init()` / `RLNet_Shutdown()` or equivalent
+  re-init paths.
+- Added the C-to-JSON counter mapping:
+  `remote_debug.episode_attack_*_count` /
+  `RLDecisionLedgerEntry.overlay_attack_*_count` exports as
+  `ep_overlay_attack_*_count`.
+- Clarified `ep_overlay_attack_*_count` semantics: overlay attack pipeline only,
+  not all engine attacks; snapshot captured at transition finalization, reset at
+  episode boundary, monotonic within an episode, and same-episode rows may differ.
+- Reduced Phase 0+1 `rl_combat_event.h` scope to evidence bitmask version/bit
+  constants only. Event/result/source/confidence/failure enums are deferred to
+  phases that export or consume them.
+- Added mixed-version, config-gate, pre-existing truncation guard, evidence
+  fallback, and C/Python counter mapping validation requirements.
+- Added a recommended six-commit implementation order to keep Python hardening,
+  formatter safety, bitmask constants, gated C export, and validation separable.
+
+Review decisions:
+- Accepted the rollback/config gate recommendation.
+- Accepted exact alloc/free hook naming as implementation guidance.
+- Accepted ep counter C-to-JSON mapping and overlay-only semantics.
+- Accepted mixed-version and hi-bit parser smokes.
+- Did not adopt static/BSS formatter fallback as an approved silent fallback;
+  if heap lifecycle is blocked, implementation should stop and document the
+  blocker before choosing a temporary exception.
+- Refined the "drop row" rule: drop only if the base row cannot be formatted;
+  evidence-only formatting failures should fall back to a complete base row to
+  preserve transition continuity.
+
+Validation:
+- Documentation-only change; no runtime behavior changed.
+- `git diff --check` passed.
+
+## 2026-05-05: Combat Event Attribution Peer Review 1/2 Closeout
+
+Milestone:
+- Milestone 6: close Phase 0+1 pre-implementation review feedback
+
+Files changed:
+- `docs/agent-memory/remote-rl-combat-event-attribution-plan.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Integrate the two final peer-review reports before Phase 0+1 implementation,
+  focusing on C formatter failure semantics, formatter buffer ownership hooks,
+  Python signed/hi-bit bitmask safety, feature-leak guards, and scope-creep
+  prevention.
+
+Key updates:
+- Formatter truncation/overflow now has explicit row-drop semantics:
+  clear/poison the buffer, do not append partial JSON to local NDJSON,
+  transition batches, or network payloads, and increment visible telemetry.
+- The pre-existing `written > 0` guard risk in
+  `RLSession_FinalizeLedgerEntry()` is now called out as a Phase 0+1 bug fix
+  prerequisite before adding evidence fields.
+- Formatter buffer ownership is no longer left open-ended: use a heap-owned
+  reusable `char*` pointer, allocate from an explicit RL session/net lifecycle
+  hook, and free from the matching shutdown/re-init path. Large stack buffers
+  and static/BSS arrays remain forbidden.
+- Python flag parsing must reject negative or out-of-range
+  `evidence_flags_lo/hi` values before applying `0xffffffff` masks, so a signed
+  C formatting bug cannot silently decode as all bits set.
+- Reserved-bit reporting now requires visible `stderr` warnings with per-episode
+  counts and max reserved masks; validation includes a synthetic hi-bit
+  `evidence_flags_hi = 0x80000000` smoke.
+- Python feature builders must use explicit allowlists and must not derive
+  features from `row.keys()` or model metadata that contains `evidence_` /
+  `ep_overlay_` fields before the later learner-adoption gate.
+- Evidence audit rows now include accuracy/limitation notes so heuristic fields
+  such as `requested_attack_made_contact` cannot be mistaken for final
+  attack-result truth.
+- `ep_overlay_attack_*_count` validation now requires episode-boundary reset and
+  monotonic in-episode snapshot behavior. This keeps the contract compatible
+  with the current format-on-finalize transition path; any future final-episode
+  snapshot semantics must be documented/versioned separately.
+- Phase 0+1 scope guard now explicitly forbids `rl_combat_event.c`, event id
+  counters, pending-export rings, event structs, and result/confidence/failure
+  resolver assignment logic.
+
+Validation:
+- Documentation-only change; no runtime behavior changed.
+- `git diff --check` passed.
+
+## 2026-05-05: Combat Event Attribution Final Pre-Implementation Review Integration
+
+Milestone:
+- Milestone 6: finalize Phase 0+1 implementation contract
+
+Files changed:
+- `docs/agent-memory/remote-rl-combat-event-attribution-plan.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Integrate the final pre-implementation feedback on row-local bitmask
+  versioning, always-present flag fields, unsigned C formatting, session-owned
+  formatter buffer lifetime, `SDL_snprintf()` underflow/truncation guards, and
+  learner feature exclusion.
+
+Key updates:
+- `evidence_bitmask_version`, `evidence_flags_lo`, and `evidence_flags_hi` are
+  now required on every transition row.
+- `evidence_flags_lo` and `evidence_flags_hi` are specified as unsigned 32-bit
+  JSON decimals; signed `%d` export is forbidden.
+- Unknown bitmask versions now have explicit Python behavior: default parsers
+  warn and keep the transition row usable with `evidence = None`; strict
+  audit/debug modes fail clearly.
+- Reserved bits are warnings with a per-log count, not hard parse failures.
+- Replaced the previous static/BSS buffer option with a session-owned reusable
+  formatter buffer allocated at RL session start and freed at shutdown.
+- Added pre-call `capacity == 0` / `offset >= capacity` guard requirements for
+  `SDL_snprintf()` append paths.
+- Added learner feature guard requirements so Phase 0+1 evidence fields cannot
+  silently enter `DQN_FEATURE_NAMES` or default replay features.
+
+Validation:
+- Documentation-only change; no runtime behavior changed.
+- `git diff --check` passed.
+
+## 2026-05-05: Combat Event Attribution Phase 0+1 Final Spec Lock
+
+Milestone:
+- Milestone 6: lock Phase 0+1 implementation contract before code
+
+Files changed:
+- `docs/agent-memory/remote-rl-combat-event-attribution-plan.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Integrate the final pre-implementation review focused on bitmask versioning,
+  `SDL_snprintf()` truncation semantics, debug readability, cross-language
+  bit mapping, and Phase 0+1 scope creep prevention.
+
+Key updates:
+- Phase 0+1 export shape is now fixed:
+  `evidence_bitmask_version = 1`, `evidence_flags_lo`,
+  `evidence_flags_hi`, and `ep_overlay_attack_*_count`.
+- Added the bitmask v1 field-to-bit mapping and reserved-bit rule.
+- Python decoders must not guess unknown bitmask versions and must provide
+  developer-only evidence expansion such as `--expand-evidence` or
+  `--debug-bitmask`.
+- Added explicit `SDL_snprintf()` truncation pseudo-code so append formatters do
+  not advance offsets after a truncated write.
+- Split the evidence audit into Pass 1 known-filled exports and Pass 2
+  informational audit for proposed/unproven fields.
+- Phase 0+1 now explicitly creates zero event structs, zero event rings, and
+  zero event JSON arrays.
+
+Validation:
+- Documentation-only change; no runtime behavior changed.
+- `git diff --check` passed.
+
+## 2026-05-05: Combat Event Attribution C-Side Export Review Integration
+
+Milestone:
+- Milestone 6: harden Phase 0+1 C-side evidence export plan
+
+Files changed:
+- `docs/agent-memory/remote-rl-combat-event-attribution-plan.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Integrate the latest review focused on embedded C stack safety,
+  `SDL_snprintf()` growth, boolean evidence serialization cost, and the exact
+  Python parser layer that must be tolerant of new fields.
+
+Key updates:
+- Phase 0+1 now forbids solving `line[2048]` by adding a large hot-path stack
+  buffer; it requires reusable session/static/heap-owned storage or a bounded
+  append builder plus truncation checks.
+- Boolean/edge evidence is now expected to prefer schema-versioned bitmasks
+  (`evidence_flags_*`) with Python analyzer expansion unless MiSTer timing
+  proves flat/nested JSON fields are cheap enough.
+- Python hardening now names the NDJSON-to-replay-buffer mapping path, not just
+  `json.loads()`, as the place that must ignore unknown evidence keys.
+- Phase 0+1 validation now includes memory/stack guard, leak checks, worst-case
+  formatter timing, and overlay-counter tolerance for multi-hit/clash cases.
+
+Review reconciliation:
+- Already covered before this pass: phase order is 0+1 -> attack rings ->
+  side-explicit engine attribution; contact/defense/punish are split into
+  6a/6b/6c; episode-boundary contract, lifecycle ordering, stun/round/position
+  event types, schema v3/v4 engine alias migration, and synchronized event
+  journal export are already in the plan.
+- Still deferred to implementation audit: whether Phase 0+1 uses bitmasks,
+  flat root keys, or a nested `evidence` object for the final exported shape.
+
+Validation:
+- Documentation-only change; no runtime behavior changed.
+- `git diff --check` passed.
+
+## 2026-05-05: Combat Event Attribution Phase 0+1 Peer Review Hardening
+
+Milestone:
+- Milestone 6: harden Phase 0+1 before implementation
+
+Files changed:
+- `docs/agent-memory/remote-rl-combat-event-attribution-plan.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Integrate two peer-review passes focused on Phase 0+1 ordering, schema
+  compatibility, parser safety, export buffering, concrete evidence audit
+  deliverables, and validation invariants.
+
+Key updates:
+- Changed combat `event_id` guidance from `uint32` to `uint64`, with `0`
+  reserved for "no event".
+- Added pending-export ring requirements and dropped-event metadata so events
+  that finalize between decision rows cannot disappear silently before batch
+  export.
+- Made Phase 0+1 parser-first: Python tools must tolerate unknown keys and
+  expose known evidence fields for audit before C emits restored evidence.
+- Added a concrete seed audit table for currently filled but unexported
+  evidence fields in `RLDecisionLedgerEntry`.
+- Required `rl_combat_event.h` as the Phase 0+1 enum foundation, while deferring
+  executable `rl_combat_event.c` logic until rings/export queues exist.
+- Added transition-line buffer sizing/truncation guard requirements for the
+  current `RLSession_FormatTransitionLogLine()` / `line[2048]` risk.
+- Added Phase 0+1-specific validation matrix and evidence invariants, separate
+  from the later full event resolver validation matrix.
+
+Validation:
+- Documentation-only change; no runtime behavior changed.
+- `git diff --check` passed.
+
+## 2026-05-05: Combat Event Attribution Review Feedback Integration
+
+Milestone:
+- Milestone 6: complete combat event attribution planning hardening
+
+Files changed:
+- `docs/agent-memory/remote-rl-combat-event-attribution-plan.md`
+- `docs/plan-remote-rl-agent.md`
+
+Purpose:
+- Integrate external review feedback on event id lifetime, ring-buffer
+  overwrite risk, interrupted attacks, episode boundaries, transition/event
+  synchronization, hot-path cost, confidence definitions, and validation gaps.
+
+Key updates:
+- Event ids are now defined as monotonic run-wide `uint64` values, never ring
+  indices.
+- Event journal export is now defined as part of the same transition
+  batch/envelope instead of a second independent C-side stream.
+- Added explicit event lifecycle state machine and episode-boundary flush/finalize
+  contract.
+- Added `interrupted` attack result, stun/position/round event types, expanded
+  defense target-state/wakeup/actual-guard fields, projectile multi-hit fields,
+  and throw valid-state fields.
+- Reordered implementation phases so attack rings precede side-explicit opponent
+  engine attribution, and split resolver work into 6a/6b/6c.
+- Added confidence matrix, runtime evidence audit requirement, hot-path
+  edge-trigger rule, 500us first budget target, schema compatibility contract,
+  and expanded validation matrix.
+
+Validation:
+- Documentation-only change; no runtime behavior changed.
+- `git diff --check` passed.
+
+## 2026-05-05: Complete Combat Event Attribution Plan
+
+Milestone:
+- Milestone 6: complete self/opponent combat event attribution planning
+
+Files changed:
+- `docs/agent-memory/remote-rl-combat-event-attribution-plan.md`
+- `docs/plan-remote-rl-agent.md`
+
+Purpose:
+- Document the full plan for moving from decision-centric transition rows to
+  side-symmetric combat event attribution for both agent and opponent.
+- Cover attack, defense, projectile, throw, contact, punish, source,
+  confidence, and explicit unknown/failure-reason handling.
+
+Key decisions:
+- Keep transition rows as compact learner/analyzer summaries, but add a
+  separate combat event journal for full battle replay.
+- Treat snapshots as evidence and events as the replay/attribution truth model.
+- Require side-explicit ownership (`self_engine_*`, `opp_engine_*`) before using
+  engine-derived labels to explain opponent offense or self defense failure.
+- Track projectiles independently after spawn so later hits are not attributed
+  to whatever owner routine is visible at contact time.
+- Keep all new event labels analysis/debug-only until move-family validation
+  passes for normals, specials, projectiles, throws, and multistage moves.
+
+Follow-up tasks:
+- Restore currently internal evidence fields to NDJSON as evidence-only fields.
+- Add fixed-size event rings under `src/rl/*`.
+- Add transition schema v4 compact summaries and
+  `combat_event_schema_version=1` journal export.
+- Upgrade analyzers before enabling trainer reward use of event labels.
+
+Validation:
+- Documentation-only change; no runtime behavior changed.
+- `git diff --check` passed.
+
 ## 2026-05-04: Engine Fields For Remote Execution And Fireball Macro Fix
 
 Milestone:

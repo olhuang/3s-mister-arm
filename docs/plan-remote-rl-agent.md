@@ -2594,6 +2594,29 @@ Tasks:
 - [x] Add a conservative RL auto-rematch path through the existing VS result rematch flow
 - [x] Fix long-run transition sender thread resource leak that could OOM-kill `3s-arm`
 - [x] Fix transition sender running-state race / missed-wakeup after ruling out perf-capture config as the latest restart cause
+- [x] Document the complete self/opponent combat event attribution plan in [docs/agent-memory/remote-rl-combat-event-attribution-plan.md](agent-memory/remote-rl-combat-event-attribution-plan.md)
+- [ ] Combat event attribution Phase 0+1: harden Python parsers/replay mappers first, audit evidence fields, define evidence bitmask constants, add a runtime evidence-export gate, export versioned `evidence_flags_*` bitmasks plus `ep_` counters, size/guard transition JSON export without large stack buffers, and restore/export filled evidence without changing reward or inference
+  - [x] Added `src/rl/rl_combat_event.h` with Phase 0+1 bitmask version/bit constants only; no event structs, rings, ids, resolver helpers, or result/confidence/failure enums
+  - [x] Replaced the transition formatter's stack `line[2048]` path with a reusable RL-session heap buffer allocated/freed through the RL net lifecycle
+  - [x] Fixed the positive truncation hazard by requiring complete formatter success before appending transition rows; evidence-extension failure falls back to a complete base row
+  - [x] Added config/CLI/OSD-backed `rl-agent-export-evidence` / `RL Evidence Log (Restart)` gate; default is off
+  - [x] Added six-field compact evidence export when the gate is on:
+    `evidence_bitmask_version`, `evidence_flags_lo`, `evidence_flags_hi`, and
+    the three `ep_overlay_attack_*_count` fields
+  - [x] Added Python evidence decoder, analyzer `--expand-evidence --output-expanded`, reserved-bit warning, negative flag rejection, and DQN feature-name evidence denylist guards
+  - [x] Preserved reward, inference, action scheduling, and transition replay feature builders as evidence-agnostic by default
+  - [ ] Run on-device/live transition smoke with gate off/on to verify field absence/presence, complete JSON under real network upload, and episode counter reset/monotonic behavior
+  - [ ] Measure formatter cost on the closest available target and record max row size / timing before considering Phase 0+1 fully closed
+- [ ] Combat event attribution Phase 2: implement fixed-size self/opponent attack event rings with monotonic run-wide event ids, episode-boundary flush, and no active-slot overwrite
+- [ ] Combat event attribution Phase 3: replace ambiguous generic `engine_*` ownership with side-explicit `self_engine_*` and `opp_engine_*` attribution at attack-event creation time, keeping unknown/confidence fields for unsupported mappings
+- [ ] Combat event attribution Phase 4: implement projectile event tracking so fireball spawn/hit/block/expire results are attributed to projectile ids instead of owner routine snapshots
+- [ ] Combat event attribution Phase 5: implement throw event tracking so close guard failures can distinguish thrown/tech/whiff/unknown from strike or chip damage
+- [ ] Combat event attribution Phase 6a: implement edge-triggered contact-to-attack/projectile/throw matching with consumed HP/stun deltas, trade handling, confidence, and attribution failure events
+- [ ] Combat event attribution Phase 6b: implement defense result emission with intended action, actual guard state at contact, target_state, wakeup context, block_possible, confidence, and failure reasons
+- [ ] Combat event attribution Phase 6c: implement punish detection after finalized unsafe/whiff/interrupted attack events with high-confidence gating
+- [ ] Combat event attribution Phase 7: roll out transition schema v4 compact summaries plus `combat_event_schema_version=1` event journal export inside the same transition batch/envelope
+- [ ] Combat event attribution Phase 8: upgrade analyzers to report attack success/failure, defense failures by incoming action/range/result, projectile lifecycle, throws, punishes, and unknown attribution reasons from event fields
+- [ ] Combat event attribution Phase 9: add opt-in trainer use of high-confidence event labels only after move-family validation passes
 - [ ] Evaluate higher control rate after latency p95/p99 is stable
 - [ ] Review derived movement/action-phase candidates from the Human-Fighter Observer Gap Review before changing the observation schema
 
@@ -2602,9 +2625,90 @@ Done when:
 - [ ] Control timing improvements are backed by telemetry
 - [ ] Any promoted derived observation features have schema-versioned docs and validation notes
 - [ ] Any promoted attack-outcome labels have move-family validation notes showing how normals, specials, projectiles, throws, and multistage moves were checked
+- [ ] Combat event attribution has side-symmetric self/opponent attack, defense, projectile, throw, punish, source, confidence, and failure-reason coverage before labels are promoted into learner rewards
 - [ ] Any human-demo ingest path has documented replay-buffer metadata, source-mix diagnostics, and a clear statement of whether it is used for bootstrapping, behavior cloning, evaluation, or mixed training
 - [ ] Curriculum changes are reflected in logs and reproducible configs
 - [ ] Policy strength improves without destabilizing the transport/control path
+
+Complete combat event attribution plan:
+
+- The current v3 transition row remains decision-centric and is not enough to
+  prove attack/defense success/failure attribution for both sides.
+- The full direction is documented in [docs/agent-memory/remote-rl-combat-event-attribution-plan.md](agent-memory/remote-rl-combat-event-attribution-plan.md).
+- The target model has two layers:
+  - transition schema v4 compact summaries for learner/analyzer use
+  - `combat_event_schema_version=1` event journal rows for full battle replay,
+    carried in the same transition batch/envelope instead of a second C-side
+    stream
+- Final remote PC disk persistence should split that one received envelope into
+  two NDJSON files by default: the configured transition log for summary rows
+  and a sibling combat-event log for event journal rows. The two files are
+  analyzer conveniences, not independent streams, and must remain
+  reconcilable by run/episode/event or future batch identity.
+- Full rollout keeps config-backed export gates, optionally exposed by OSD as
+  controls for the same runtime flags:
+  `rl-agent-export-evidence`, `rl-agent-export-combat-events`, and
+  `rl-agent-export-event-summaries`. Event-id summaries require combat-event
+  export to be on; if combat-event output is off, summaries must be disabled or
+  limited to aggregate fields with no event references.
+- Event ids are monotonic run-wide ids, not ring-buffer indices; active ring
+  slots must never be overwritten before finalization.
+- Event ids use `uint64` with `0` reserved for "no event"; pending-export rings
+  must report dropped-event metadata instead of silently losing finalized events.
+- Phase 0+1 is parser-first: Python tools must tolerate unknown transition keys
+  and expose known evidence fields for audit before C emits new fields.
+- Phase 0+1 must explicitly budget the current transition JSON line buffer and
+  add truncation checks before restoring evidence export; do not replace
+  `line[2048]` with a large hot-path stack buffer or shared static scratch
+  buffer. Base transition formatting failures drop the row; evidence-extension
+  failures must clear the partial buffer, fall back to a complete base row, and
+  never append partial JSON to local logs, transition batches, or the network
+  sender.
+- Phase 0+1 evidence export needs a runtime/config rollback gate, for example
+  `rl-agent-export-evidence`. With the gate off, existing base transition rows
+  continue without evidence fields; with it on, evidence-enabled rows emit the
+  full six-field Phase 0+1 shape unless the evidence formatter falls back.
+- Phase 0+1 boolean/edge evidence uses `evidence_bitmask_version = 1`,
+  `evidence_flags_lo`, and `evidence_flags_hi` on every row; both flag fields
+  are always present unsigned 32-bit JSON decimals. Python must reject negative
+  or out-of-range flag values before applying `0xffffffff` masks so signed C
+  formatting bugs cannot become silent all-bits-set evidence.
+- Python analyzers must not guess unknown bitmask versions; default parse keeps
+  transition rows usable with `evidence = None`, while strict audit/debug modes
+  fail clearly and debug expansion maps bits to named fields. Reserved hi/lo
+  bits require visible warning counters, including synthetic hi-bit and
+  mixed-version smokes.
+- Phase 0+1 Python feature builders and model metadata loaders must use explicit
+  feature allowlists; unknown root keys and `evidence_` / `ep_overlay_` fields
+  must not enter default replay/DQN features through `row.keys()` iteration or
+  model `feature_names` metadata.
+- `tools/analyze_rl_transitions.py` must provide an optional expanded
+  human-readable evidence output, e.g. `--expand-evidence --output-expanded
+  PATH`, so compact bitmask logs can be audited without changing the original
+  learner-safe transition log.
+- Phase 0+1 per-decision overlay evidence must be latched and consumed by
+  overlay event sequence/id. It must not read transient latest-overlay
+  `last_overlay_*` state at transition formatting time, because later frames
+  could otherwise overwrite the row's contact/whiff evidence.
+- Phase 0+1 must create zero event structs, zero event rings, and zero event
+  JSON arrays; resolver data structures start in later phases. Phase 0+1
+  `rl_combat_event.h` is limited to evidence bitmask constants, not event
+  type/result/source/confidence/failure enums.
+- The event model is side-symmetric and covers:
+  - attack starts/results
+  - defense results
+  - projectile spawn/results
+  - throw start/results
+  - stun/position/round boundary events
+  - contact/multi-hit evidence
+  - punish relationships
+  - attribution failures
+- Every resolved event must carry source, confidence, and failure reason when
+  unresolved. Unknown labels are valid output; wrong forced labels are not.
+- Pending events must be finalized or explicitly failed at episode boundary;
+  no event can leak across rounds.
+- Event labels must stay analysis/debug-only until the move-family validation
+  matrix passes for normals, specials, projectiles, throws, and multistage moves.
 
 Full-action DQN sparse-action plan:
 

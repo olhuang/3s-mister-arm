@@ -1,5 +1,6 @@
 #include "rl/rl_session.h"
 
+#include "rl/rl_combat_event.h"
 #include "rl/rl_net.h"
 #include "rl/rl_observation.h"
 #include "port/paths.h"
@@ -12,6 +13,7 @@
 
 #include <SDL3/SDL.h>
 #include <inttypes.h>
+#include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -208,6 +210,7 @@ static const RLLocalFakeAction kLocalFakeAgentSequence[] = {
 #define RL_REMOTE_EXPECTED_CAP 16u
 #define RL_REMOTE_SEEN_CAP 32u
 #define RL_DECISION_LEDGER_CAP 128u
+#define RL_TRANSITION_FORMAT_BUFFER_SIZE 4096u
 #define RL_POLICY_ACTION_NEUTRAL 0u
 #define RL_POLICY_ACTION_WALK 1u
 #define RL_POLICY_ACTION_JUMP 3u
@@ -270,12 +273,16 @@ static bool overlay_attack_event_pending;
 static bool overlay_attack_event_contact_seen;
 static u32 overlay_attack_event_seq;
 static u32 overlay_attack_event_logged_seq;
+static u8 overlay_attack_unlogged_contact;
+static u8 overlay_attack_unlogged_whiff;
 static u16 last_executed_action_wire;
 static u16 last_executed_policy_action_id;
 static u16 last_executed_policy_sub_action_id;
 static u16 last_executed_policy_action_step;
 static u32 last_executed_model_version;
 static u32 transition_batch_episode_id = UINT32_MAX;
+static char* transition_format_buffer;
+static size_t transition_format_buffer_cap;
 static char* transition_batch_payload;
 static size_t transition_batch_payload_len;
 static size_t transition_batch_payload_cap;
@@ -459,21 +466,27 @@ static void RLSession_ResetOverlayAttackCounters() {
     overlay_attack_event_contact_seen = false;
     overlay_attack_event_seq = 0;
     overlay_attack_event_logged_seq = 0;
+    overlay_attack_unlogged_contact = 0;
+    overlay_attack_unlogged_whiff = 0;
 }
 
 static void RLSession_FinalizeOverlayAttackEvent() {
+    const bool contact = overlay_attack_event_contact_seen;
+
     if (!overlay_attack_event_pending) {
         return;
     }
     remote_debug.episode_attack_active_count++;
-    if (overlay_attack_event_contact_seen) {
+    if (contact) {
         remote_debug.episode_attack_contact_count++;
         remote_debug.last_overlay_attack_contact = 1;
         remote_debug.last_overlay_attack_whiff = 0;
+        overlay_attack_unlogged_contact = 1;
     } else {
         remote_debug.episode_attack_whiff_count++;
         remote_debug.last_overlay_attack_contact = 0;
         remote_debug.last_overlay_attack_whiff = 1;
+        overlay_attack_unlogged_whiff = 1;
     }
     overlay_attack_event_seq++;
     overlay_attack_event_pending = false;
@@ -494,6 +507,31 @@ static void RLSession_ResetRemoteRuntime(bool reset_counters) {
 
 bool RLSession_IsActive() {
     return configuration.remote_rl_agent.enabled;
+}
+
+bool RLSession_AllocFormatBuffer(void) {
+    if (transition_format_buffer != NULL && transition_format_buffer_cap >= RL_TRANSITION_FORMAT_BUFFER_SIZE) {
+        return true;
+    }
+
+    RLSession_FreeFormatBuffer();
+    transition_format_buffer = (char*)SDL_malloc(RL_TRANSITION_FORMAT_BUFFER_SIZE);
+    if (transition_format_buffer == NULL) {
+        transition_format_buffer_cap = 0;
+        remote_debug.transition_format_error_count++;
+        SDL_Log("RL transition formatter buffer allocation failed: size=%u", (unsigned)RL_TRANSITION_FORMAT_BUFFER_SIZE);
+        return false;
+    }
+
+    transition_format_buffer[0] = '\0';
+    transition_format_buffer_cap = RL_TRANSITION_FORMAT_BUFFER_SIZE;
+    return true;
+}
+
+void RLSession_FreeFormatBuffer(void) {
+    SDL_free(transition_format_buffer);
+    transition_format_buffer = NULL;
+    transition_format_buffer_cap = 0;
 }
 
 s16 RLSession_AgentPlayerIndex() {
@@ -1089,9 +1127,11 @@ static void RLSession_UpdateDerivedOutcomeFields(RLDecisionLedgerEntry* entry) {
 
     if (overlay_attack_event_seq != overlay_attack_event_logged_seq) {
         entry->overlay_attack_event_finalized = 1;
-        entry->overlay_attack_contact = remote_debug.last_overlay_attack_contact;
-        entry->overlay_attack_whiff = remote_debug.last_overlay_attack_whiff;
+        entry->overlay_attack_contact = overlay_attack_unlogged_contact;
+        entry->overlay_attack_whiff = overlay_attack_unlogged_whiff;
         overlay_attack_event_logged_seq = overlay_attack_event_seq;
+        overlay_attack_unlogged_contact = 0;
+        overlay_attack_unlogged_whiff = 0;
     }
 }
 
@@ -1301,13 +1341,111 @@ static bool RLSession_EnsureTransitionBatchCapacity(size_t extra_len) {
     return true;
 }
 
-static int RLSession_FormatTransitionLogLine(const RLDecisionLedgerEntry* entry, char* line, size_t line_size) {
-    if (entry == NULL || line == NULL || line_size == 0) {
-        return -1;
+typedef enum RLTransitionFormatStatus {
+    RL_TRANSITION_FORMAT_OK = 0,
+    RL_TRANSITION_FORMAT_ERROR = 1,
+    RL_TRANSITION_FORMAT_TRUNCATED = 2,
+    RL_TRANSITION_FORMAT_EVIDENCE_ERROR = 3,
+    RL_TRANSITION_FORMAT_EVIDENCE_TRUNCATED = 4,
+} RLTransitionFormatStatus;
+
+static bool RLSession_FormatAppend(char* buf,
+                                   size_t buf_size,
+                                   size_t* offset,
+                                   bool* truncated,
+                                   const char* fmt,
+                                   ...) {
+    va_list args;
+    int written = 0;
+    size_t remaining = 0;
+
+    if (buf == NULL || buf_size == 0 || offset == NULL || fmt == NULL || *offset >= buf_size) {
+        if (buf != NULL && buf_size > 0) {
+            buf[0] = '\0';
+        }
+        if (offset != NULL) {
+            *offset = 0;
+        }
+        return false;
     }
-    return SDL_snprintf(line,
-                        line_size,
-                        "{\"run_id\":%" PRIu64 ",\"episode_id\":%u,\"decision_id\":%u,"
+
+    SDL_assert(*offset < buf_size);
+    remaining = buf_size - *offset;
+    va_start(args, fmt);
+    written = SDL_vsnprintf(buf + *offset, remaining, fmt, args);
+    va_end(args);
+
+    if (written < 0 || (size_t)written >= remaining) {
+        if (truncated != NULL && written >= 0) {
+            *truncated = true;
+        }
+        buf[0] = '\0';
+        *offset = 0;
+        return false;
+    }
+
+    SDL_assert(*offset + (size_t)written < buf_size);
+    *offset += (size_t)written;
+    return true;
+}
+
+static void RLSession_BuildEvidenceFlags(const RLDecisionLedgerEntry* entry, u32* out_lo, u32* out_hi) {
+    u32 lo = 0;
+
+    if (entry == NULL || out_lo == NULL || out_hi == NULL) {
+        return;
+    }
+
+    lo |= ((u32)(entry->requested_attack_input_started != 0)) << RL_COMBAT_EVIDENCE_BIT_REQUESTED_ATTACK_INPUT_STARTED;
+    lo |= ((u32)(entry->requested_attack_became_active != 0)) << RL_COMBAT_EVIDENCE_BIT_REQUESTED_ATTACK_BECAME_ACTIVE;
+    lo |= ((u32)(entry->requested_attack_entered_state != 0)) << RL_COMBAT_EVIDENCE_BIT_REQUESTED_ATTACK_ENTERED_STATE;
+    lo |= ((u32)(entry->requested_attack_made_contact != 0)) << RL_COMBAT_EVIDENCE_BIT_REQUESTED_ATTACK_MADE_CONTACT;
+    lo |= ((u32)(entry->requested_attack_likely_whiffed != 0)) << RL_COMBAT_EVIDENCE_BIT_REQUESTED_ATTACK_LIKELY_WHIFFED;
+    lo |= ((u32)(entry->requested_jump_started != 0)) << RL_COMBAT_EVIDENCE_BIT_REQUESTED_JUMP_STARTED;
+    lo |= ((u32)(entry->requested_movement_succeeded != 0)) << RL_COMBAT_EVIDENCE_BIT_REQUESTED_MOVEMENT_SUCCEEDED;
+    lo |= ((u32)(entry->observed_attack_state_started != 0)) << RL_COMBAT_EVIDENCE_BIT_OBSERVED_ATTACK_STATE_STARTED;
+    lo |= ((u32)(entry->observed_attack_code_changed != 0)) << RL_COMBAT_EVIDENCE_BIT_OBSERVED_ATTACK_CODE_CHANGED;
+    lo |= ((u32)(entry->observed_attack_counter_started != 0)) << RL_COMBAT_EVIDENCE_BIT_OBSERVED_ATTACK_COUNTER_STARTED;
+    lo |= ((u32)(entry->overlay_attack_event_finalized != 0)) << RL_COMBAT_EVIDENCE_BIT_OVERLAY_ATTACK_EVENT_FINALIZED;
+    lo |= ((u32)(entry->overlay_attack_contact != 0)) << RL_COMBAT_EVIDENCE_BIT_OVERLAY_ATTACK_CONTACT;
+    lo |= ((u32)(entry->overlay_attack_whiff != 0)) << RL_COMBAT_EVIDENCE_BIT_OVERLAY_ATTACK_WHIFF;
+    lo |= ((u32)(entry->self_attack_started != 0)) << RL_COMBAT_EVIDENCE_BIT_SELF_ATTACK_STARTED;
+    lo |= ((u32)(entry->opp_attack_started != 0)) << RL_COMBAT_EVIDENCE_BIT_OPP_ATTACK_STARTED;
+    lo |= ((u32)(entry->self_airborne_started != 0)) << RL_COMBAT_EVIDENCE_BIT_SELF_AIRBORNE_STARTED;
+    lo |= ((u32)(entry->opp_airborne_started != 0)) << RL_COMBAT_EVIDENCE_BIT_OPP_AIRBORNE_STARTED;
+    lo |= ((u32)(entry->self_entered_hit_stop != 0)) << RL_COMBAT_EVIDENCE_BIT_SELF_ENTERED_HIT_STOP;
+    lo |= ((u32)(entry->opp_entered_hit_stop != 0)) << RL_COMBAT_EVIDENCE_BIT_OPP_ENTERED_HIT_STOP;
+    lo |= ((u32)(entry->self_entered_contact_state != 0)) << RL_COMBAT_EVIDENCE_BIT_SELF_ENTERED_CONTACT_STATE;
+    lo |= ((u32)(entry->opp_entered_contact_state != 0)) << RL_COMBAT_EVIDENCE_BIT_OPP_ENTERED_CONTACT_STATE;
+    lo |= ((u32)(entry->self_entered_damage_state != 0)) << RL_COMBAT_EVIDENCE_BIT_SELF_ENTERED_DAMAGE_STATE;
+    lo |= ((u32)(entry->opp_entered_damage_state != 0)) << RL_COMBAT_EVIDENCE_BIT_OPP_ENTERED_DAMAGE_STATE;
+    lo |= ((u32)(entry->self_throw_started != 0)) << RL_COMBAT_EVIDENCE_BIT_SELF_THROW_STARTED;
+    lo |= ((u32)(entry->opp_throw_caught_started != 0)) << RL_COMBAT_EVIDENCE_BIT_OPP_THROW_CAUGHT_STARTED;
+
+    *out_lo = lo;
+    *out_hi = 0;
+}
+
+static RLTransitionFormatStatus RLSession_FormatTransitionLogLine(const RLDecisionLedgerEntry* entry,
+                                                                  char* buf,
+                                                                  size_t buf_size,
+                                                                  bool include_evidence,
+                                                                  size_t* out_len) {
+    size_t offset = 0;
+    bool truncated = false;
+
+    if (out_len != NULL) {
+        *out_len = 0;
+    }
+    if (entry == NULL || buf == NULL || buf_size == 0) {
+        return RL_TRANSITION_FORMAT_ERROR;
+    }
+    buf[0] = '\0';
+    if (!RLSession_FormatAppend(buf,
+                                buf_size,
+                                &offset,
+                                &truncated,
+                                "{\"run_id\":%" PRIu64 ",\"episode_id\":%u,\"decision_id\":%u,"
                         "\"round_num\":%u,\"mode_type\":%u,\"play_mode\":%u,\"obs_frame\":%u,"
                         "\"transition_schema_version\":%u,"
                         "\"agent_character_id\":%u,\"opponent_character_id\":%u,"
@@ -1356,7 +1494,7 @@ static int RLSession_FormatTransitionLogLine(const RLDecisionLedgerEntry* entry,
                         "\"model_version_executed\":%u,"
                         "\"execution_source\":%u,"
                         "\"reward_accum\":%.3f,\"done\":%s,"
-                        "\"terminal_reason\":\"%s\"}\n",
+                                "\"terminal_reason\":\"%s\"",
                         entry->run_id,
                         entry->episode_id,
                         entry->decision_id,
@@ -1427,7 +1565,46 @@ static int RLSession_FormatTransitionLogLine(const RLDecisionLedgerEntry* entry,
                         entry->execution_source,
                         (double)entry->reward_accum,
                         entry->done ? "true" : "false",
-                        RLSession_TerminalReasonLabel(entry->terminal_reason));
+                                RLSession_TerminalReasonLabel(entry->terminal_reason))) {
+        return truncated ? RL_TRANSITION_FORMAT_TRUNCATED : RL_TRANSITION_FORMAT_ERROR;
+    }
+
+    if (include_evidence) {
+        u32 evidence_flags_lo = 0;
+        u32 evidence_flags_hi = 0;
+
+        RLSession_BuildEvidenceFlags(entry, &evidence_flags_lo, &evidence_flags_hi);
+        if (!RLSession_FormatAppend(buf,
+                                    buf_size,
+                                    &offset,
+                                    &truncated,
+                                    ",\"evidence_bitmask_version\":%u,"
+                                    "\"evidence_flags_lo\":%" PRIu32 ","
+                                    "\"evidence_flags_hi\":%" PRIu32 ","
+                                    "\"ep_overlay_attack_active_count\":%" PRIu32 ","
+                                    "\"ep_overlay_attack_contact_count\":%" PRIu32 ","
+                                    "\"ep_overlay_attack_whiff_count\":%" PRIu32,
+                                    RL_COMBAT_EVIDENCE_BITMASK_VERSION,
+                                    (uint32_t)evidence_flags_lo,
+                                    (uint32_t)evidence_flags_hi,
+                                    (uint32_t)entry->overlay_attack_active_count,
+                                    (uint32_t)entry->overlay_attack_contact_count,
+                                    (uint32_t)entry->overlay_attack_whiff_count)) {
+            return truncated ? RL_TRANSITION_FORMAT_EVIDENCE_TRUNCATED : RL_TRANSITION_FORMAT_EVIDENCE_ERROR;
+        }
+    }
+
+    if (!RLSession_FormatAppend(buf, buf_size, &offset, &truncated, "}\n")) {
+        if (include_evidence) {
+            return truncated ? RL_TRANSITION_FORMAT_EVIDENCE_TRUNCATED : RL_TRANSITION_FORMAT_EVIDENCE_ERROR;
+        }
+        return truncated ? RL_TRANSITION_FORMAT_TRUNCATED : RL_TRANSITION_FORMAT_ERROR;
+    }
+
+    if (out_len != NULL) {
+        *out_len = offset;
+    }
+    return RL_TRANSITION_FORMAT_OK;
 }
 
 static void RLSession_AppendTransitionBatchLine(const RLDecisionLedgerEntry* entry, const char* line, size_t line_len) {
@@ -1449,8 +1626,11 @@ static void RLSession_AppendTransitionBatchLine(const RLDecisionLedgerEntry* ent
 }
 
 static void RLSession_FinalizeLedgerEntry(RLDecisionLedgerEntry* entry, bool done, u8 terminal_reason) {
-    char line[2048];
-    int written = 0;
+    char* line = transition_format_buffer;
+    size_t line_size = transition_format_buffer_cap;
+    size_t line_len = 0;
+    RLTransitionFormatStatus status = RL_TRANSITION_FORMAT_ERROR;
+    const bool include_evidence = configuration.remote_rl_agent.export_evidence;
 
     if (entry == NULL || !entry->valid || entry->exported) {
         return;
@@ -1460,9 +1640,32 @@ static void RLSession_FinalizeLedgerEntry(RLDecisionLedgerEntry* entry, bool don
     entry->terminal_reason = terminal_reason;
 
     RLSession_UpdateDerivedOutcomeFields(entry);
-    written = RLSession_FormatTransitionLogLine(entry, line, sizeof(line));
-    if (written > 0) {
-        RLSession_AppendTransitionBatchLine(entry, line, (size_t)written);
+    if (line == NULL || line_size == 0) {
+        remote_debug.transition_format_error_count++;
+        SDL_Log("RL transition formatter buffer unavailable; dropping transition row");
+    } else {
+        status = RLSession_FormatTransitionLogLine(entry, line, line_size, include_evidence, &line_len);
+        if ((status == RL_TRANSITION_FORMAT_EVIDENCE_ERROR ||
+             status == RL_TRANSITION_FORMAT_EVIDENCE_TRUNCATED) &&
+            include_evidence) {
+            remote_debug.transition_evidence_fallback_count++;
+            if (status == RL_TRANSITION_FORMAT_EVIDENCE_TRUNCATED) {
+                remote_debug.transition_format_truncation_count++;
+            }
+            status = RLSession_FormatTransitionLogLine(entry, line, line_size, false, &line_len);
+        }
+        if (status == RL_TRANSITION_FORMAT_OK && line_len > 0 && line_len < line_size) {
+            RLSession_AppendTransitionBatchLine(entry, line, line_len);
+        } else {
+            if (status == RL_TRANSITION_FORMAT_TRUNCATED || status == RL_TRANSITION_FORMAT_EVIDENCE_TRUNCATED) {
+                remote_debug.transition_format_truncation_count++;
+            } else {
+                remote_debug.transition_format_error_count++;
+            }
+            if (line != NULL && line_size > 0) {
+                line[0] = '\0';
+            }
+        }
     }
     entry->exported = true;
     remote_debug.transition_export_count++;

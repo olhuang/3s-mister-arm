@@ -63,6 +63,7 @@
 #define CFG_KEY_RL_AGENT_DELAY_FRAMES "rl-agent-delay-frames"
 #define CFG_KEY_RL_AGENT_DECISION_INTERVAL "rl-agent-decision-interval"
 #define CFG_KEY_RL_AGENT_ACTION_HOLD "rl-agent-action-hold"
+#define CFG_KEY_RL_AGENT_EXPORT_EVIDENCE "rl-agent-export-evidence"
 
 /// Initialize config system
 void Config_Init();

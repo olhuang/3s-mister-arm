@@ -5778,7 +5778,9 @@ def load_init_dqn_model(
     raw_feature_names = raw_dqn.get("feature_names")
     if not isinstance(raw_feature_names, list):
         raise SystemExit(f"--init-model {path}: missing dqn.feature_names")
-    feature_names = tuple(str(name) for name in raw_feature_names)
+    feature_names = rl.sanitized_dqn_feature_names(raw_feature_names, f"--init-model {path}")
+    if not feature_names:
+        feature_names = tuple(rl.DQN_FEATURE_NAMES)
     expected_feature_names = tuple(rl.DQN_FEATURE_NAMES)
     feature_expansion_required = feature_names != expected_feature_names
     if feature_expansion_required and not set(feature_names).issubset(set(expected_feature_names)):

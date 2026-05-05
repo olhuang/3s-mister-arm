@@ -153,6 +153,13 @@ enum RuntimeRLNetworkMenu
 	kRLNetworkMenuCount
 };
 
+enum RuntimeRLEvidenceExportMenu
+{
+	kRLEvidenceExportOff = 0,
+	kRLEvidenceExportOn,
+	kRLEvidenceExportMenuCount
+};
+
 enum RuntimeRLControlSourceMenu
 {
 	kRLControlSourceRemote = 0,
@@ -201,6 +208,7 @@ int g_wrapper_rl_agent_mode = kRLAgentOff;
 int g_wrapper_rl_opponent_mode = kRLOpponentCPU;
 int g_wrapper_rl_movement_mode = kRLMovementForward;
 int g_wrapper_rl_network_mode = kRLNetworkOff;
+int g_wrapper_rl_export_evidence_mode = kRLEvidenceExportOff;
 int g_wrapper_rl_control_source_mode = kRLControlSourceRemote;
 int g_wrapper_rl_debug_view_mode = kRLDebugViewAll;
 int g_wrapper_aspect_ratio = kAspectRatio4x3;
@@ -243,6 +251,7 @@ static const RuntimeConfigDefaultEntry kRuntimeGeneratedDefaults[] = {
 	{ "show-fps", "false" },
 	{ "rl-debug-view", "all" },
 	{ "rl-network", "off" },
+	{ "rl-agent-export-evidence", "off" },
 	{ "rl-control-source", "remote" },
 	{ "rl-opponent-mode", "cpu" },
 	{ "rl-movement", "forward" },
@@ -2399,6 +2408,96 @@ bool write_runtime_rl_network_default(int mode)
 	return true;
 }
 
+int read_runtime_rl_export_evidence_default()
+{
+	char value[64] = {};
+	if (!read_runtime_config_value("rl-agent-export-evidence", value, sizeof(value))) return kRLEvidenceExportOff;
+
+	if (!strcasecmp(value, "on") || !strcasecmp(value, "true") || !strcasecmp(value, "1"))
+		return kRLEvidenceExportOn;
+	return kRLEvidenceExportOff;
+}
+
+static const char *runtime_rl_export_evidence_config_value(int mode)
+{
+	switch (mode)
+	{
+	case kRLEvidenceExportOn: return "on";
+	default: return "off";
+	}
+}
+
+static const char *runtime_rl_export_evidence_mode_name(int mode)
+{
+	return runtime_rl_export_evidence_config_value(mode);
+}
+
+bool write_runtime_rl_export_evidence_default(int mode)
+{
+	char path[PATH_MAX] = {};
+	char temp_path[PATH_MAX] = {};
+	snprintf(path, sizeof(path), "%s/config", kRuntimeHome);
+	snprintf(temp_path, sizeof(temp_path), "%s/config.tmp", kRuntimeHome);
+
+	FILE *in = fopen(path, "r");
+	FILE *out = fopen(temp_path, "w");
+	if (!out)
+	{
+		if (in) fclose(in);
+		return false;
+	}
+
+	bool wrote_value = false;
+	char line[256] = {};
+	if (in)
+	{
+		while (fgets(line, sizeof(line), in))
+		{
+			char inspect[256] = {};
+			snprintf(inspect, sizeof(inspect), "%s", line);
+
+			char *cursor = inspect;
+			while (*cursor && isspace((unsigned char)*cursor)) cursor++;
+			if (*cursor == '#')
+			{
+				fputs(line, out);
+				continue;
+			}
+
+			char *equals = strchr(cursor, '=');
+			if (equals)
+			{
+				*equals = 0;
+				trim_in_place(cursor);
+				if (!strcasecmp(cursor, "rl-agent-export-evidence"))
+				{
+					fprintf(out, "rl-agent-export-evidence = %s\n", runtime_rl_export_evidence_config_value(mode));
+					wrote_value = true;
+					continue;
+				}
+			}
+
+			fputs(line, out);
+		}
+
+		fclose(in);
+	}
+
+	if (!wrote_value)
+	{
+		fprintf(out, "\nrl-agent-export-evidence = %s\n", runtime_rl_export_evidence_config_value(mode));
+	}
+
+	if (fclose(out) != 0) return false;
+	if (rename(temp_path, path) != 0)
+	{
+		remove(temp_path);
+		return false;
+	}
+
+	return true;
+}
+
 int read_runtime_rl_control_source_default()
 {
 	char value[64] = {};
@@ -2593,6 +2692,7 @@ void append_runtime_launch_args(std::vector<char *> &child_argv, int argc, char 
 		if (!argv[i]) continue;
 		if (!strcmp(argv[i], "--rl-agent")) continue;
 		if (!strcmp(argv[i], "--rl-network")) continue;
+		if (!strcmp(argv[i], "--rl-export-evidence")) continue;
 		if (!strcmp(argv[i], "--rl-control-source"))
 		{
 			if (i + 1 < argc) i++;
@@ -2639,6 +2739,10 @@ void append_runtime_launch_args(std::vector<char *> &child_argv, int argc, char 
 		{
 			child_argv.push_back(const_cast<char *>("--rl-network"));
 		}
+		if (g_wrapper_rl_export_evidence_mode == kRLEvidenceExportOn)
+		{
+			child_argv.push_back(const_cast<char *>("--rl-export-evidence"));
+		}
 	}
 }
 
@@ -2658,6 +2762,7 @@ void poll_status_changes(pid_t child)
 	static uint32_t prev_rl_opponent = 0xFFFFFFFF;
 	static uint32_t prev_rl_movement = 0xFFFFFFFF;
 	static uint32_t prev_rl_network = 0xFFFFFFFF;
+	static uint32_t prev_rl_export_evidence = 0xFFFFFFFF;
 	static uint32_t prev_rl_control_source = 0xFFFFFFFF;
 	static uint32_t prev_rl_debug_view = 0xFFFFFFFF;
 	static uint32_t prev_aspect_ratio = 0xFFFFFFFF;
@@ -2816,6 +2921,18 @@ void poll_status_changes(pid_t child)
 		}
 	}
 
+	uint32_t rl_export_evidence = user_io_status_get("[55]");
+	if (rl_export_evidence != prev_rl_export_evidence) {
+		prev_rl_export_evidence = rl_export_evidence;
+		int target = (int)rl_export_evidence;
+		if (target >= kRLEvidenceExportMenuCount) target = kRLEvidenceExportOff;
+		if (target != g_wrapper_rl_export_evidence_mode) {
+			write_runtime_rl_export_evidence_default(target);
+			g_wrapper_rl_export_evidence_mode = target;
+			// Evidence export is launch-time. Persist now and apply on restart.
+		}
+	}
+
 	uint32_t rl_control_source = user_io_status_get("[54:53]");
 	if (rl_control_source != prev_rl_control_source) {
 		prev_rl_control_source = rl_control_source;
@@ -2938,6 +3055,7 @@ void poll_status_changes(pid_t child)
 		user_io_status_set("[29]", 0);    // RL Opponent = CPU
 		user_io_status_set("[31:30]", 0); // RL Movement = Forward
 		user_io_status_set("[49]", 0);    // RL Network = Off
+		user_io_status_set("[55]", 0);    // RL Evidence Log = Off
 		user_io_status_set("[54:53]", 0); // RL Control Source = Remote
 		user_io_status_set("[52:50]", kRLDebugViewAll); // RL Debug View = All
 		user_io_status_set("[28:25]", 0); // H Position = 0
@@ -2957,6 +3075,7 @@ void poll_status_changes(pid_t child)
 		prev_rl_opponent = 0xFFFFFFFF;
 		prev_rl_movement = 0xFFFFFFFF;
 		prev_rl_network = 0xFFFFFFFF;
+		prev_rl_export_evidence = 0xFFFFFFFF;
 		prev_rl_control_source = 0xFFFFFFFF;
 		prev_rl_debug_view = 0xFFFFFFFF;
 		prev_aspect_ratio = 0xFFFFFFFF;
@@ -3301,6 +3420,7 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 	g_wrapper_rl_opponent_mode = read_runtime_rl_opponent_default();
 	g_wrapper_rl_movement_mode = read_runtime_rl_movement_default();
 	g_wrapper_rl_network_mode = read_runtime_rl_network_default();
+	g_wrapper_rl_export_evidence_mode = read_runtime_rl_export_evidence_default();
 	g_wrapper_rl_control_source_mode = read_runtime_rl_control_source_default();
 	g_wrapper_rl_debug_view_mode = read_runtime_rl_debug_view_default();
 	g_wrapper_aspect_ratio = read_runtime_aspect_ratio_default();
@@ -3371,6 +3491,7 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 		user_io_status_set("[29]", (uint32_t)g_wrapper_rl_opponent_mode);
 		user_io_status_set("[31:30]", (uint32_t)g_wrapper_rl_movement_mode);
 		user_io_status_set("[49]", (uint32_t)g_wrapper_rl_network_mode);
+		user_io_status_set("[55]", (uint32_t)g_wrapper_rl_export_evidence_mode);
 		user_io_status_set("[54:53]", (uint32_t)g_wrapper_rl_control_source_mode);
 		user_io_status_set("[52:50]", (uint32_t)g_wrapper_rl_debug_view_mode);
 		user_io_status_set("[28:25]", (uint32_t)g_wrapper_h_position);
@@ -3394,6 +3515,7 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 	write_log_line(wrapper_log, "rl_opponent_mode=%s", runtime_rl_opponent_mode_name(g_wrapper_rl_opponent_mode));
 	write_log_line(wrapper_log, "rl_movement_mode=%s", runtime_rl_movement_mode_name(g_wrapper_rl_movement_mode));
 	write_log_line(wrapper_log, "rl_network_mode=%s", runtime_rl_network_mode_name(g_wrapper_rl_network_mode));
+	write_log_line(wrapper_log, "rl_export_evidence_mode=%s", runtime_rl_export_evidence_mode_name(g_wrapper_rl_export_evidence_mode));
 	write_log_line(wrapper_log, "rl_control_source_mode=%s", runtime_rl_control_source_mode_name(g_wrapper_rl_control_source_mode));
 	write_log_line(wrapper_log, "volume_init global=%d core=%d filter=%d", get_volume(), get_core_volume(), audio_filter_en());
 
@@ -3588,6 +3710,7 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 		write_log_line(wrapper_log, "runtime_rl_opponent_mode=%s", runtime_rl_opponent_mode_name(g_wrapper_rl_opponent_mode));
 		write_log_line(wrapper_log, "runtime_rl_movement_mode=%s", runtime_rl_movement_mode_name(g_wrapper_rl_movement_mode));
 		write_log_line(wrapper_log, "runtime_rl_network_mode=%s", runtime_rl_network_mode_name(g_wrapper_rl_network_mode));
+		write_log_line(wrapper_log, "runtime_rl_export_evidence_mode=%s", runtime_rl_export_evidence_mode_name(g_wrapper_rl_export_evidence_mode));
 		write_log_line(wrapper_log, "runtime_rl_control_source_mode=%s", runtime_rl_control_source_mode_name(g_wrapper_rl_control_source_mode));
 
 		if (!forced)
@@ -3693,6 +3816,7 @@ int thirdsarm_wrapper_run(int argc, char *argv[])
 			user_io_status_set("[29]", (uint32_t)g_wrapper_rl_opponent_mode);
 			user_io_status_set("[31:30]", (uint32_t)g_wrapper_rl_movement_mode);
 			user_io_status_set("[49]", (uint32_t)g_wrapper_rl_network_mode);
+			user_io_status_set("[55]", (uint32_t)g_wrapper_rl_export_evidence_mode);
 			user_io_status_set("[54:53]", (uint32_t)g_wrapper_rl_control_source_mode);
 			user_io_status_set("[52:50]", (uint32_t)g_wrapper_rl_debug_view_mode);
 			user_io_status_set("[28:25]", (uint32_t)g_wrapper_h_position);

@@ -59,6 +59,9 @@ typedef struct RLRemoteDebugState {
     u32 target_mismatch_count;
     u32 fallback_count;
     u32 transition_export_count;
+    u32 transition_format_error_count;
+    u32 transition_format_truncation_count;
+    u32 transition_evidence_fallback_count;
     u32 episode_attack_active_count;
     u32 episode_attack_contact_count;
     u32 episode_attack_whiff_count;
@@ -87,6 +90,8 @@ const char* RLSession_TestMovementLabel();
 const RLActionContext* RLSession_GetActionContext();
 const RLRemoteDebugState* RLSession_GetRemoteDebugState();
 u32 RLSession_GetCurrentFrameId();
+bool RLSession_AllocFormatBuffer(void);
+void RLSession_FreeFormatBuffer(void);
 RLRemoteActionSubmitResult RLSession_SubmitRemoteAction(const RLActionPacket* packet);
 bool RLSession_SendRemoteObservationIfDue();
 void RLSession_OnObservationFrameEnd(const RLObservationV1* obs);

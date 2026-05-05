@@ -141,6 +141,7 @@ static const ConfigEntry default_entries[] = {
     { .key = CFG_KEY_RL_AGENT_DELAY_FRAMES, .type = CFG_INT, .value.i = DEFAULT_RL_AGENT_DELAY_FRAMES },
     { .key = CFG_KEY_RL_AGENT_DECISION_INTERVAL, .type = CFG_INT, .value.i = DEFAULT_RL_AGENT_DECISION_INTERVAL },
     { .key = CFG_KEY_RL_AGENT_ACTION_HOLD, .type = CFG_INT, .value.i = DEFAULT_RL_AGENT_ACTION_HOLD },
+    { .key = CFG_KEY_RL_AGENT_EXPORT_EVIDENCE, .type = CFG_STRING, .value.s = "off" },
     { .key = CFG_KEY_SHOW_FPS, .type = CFG_STRING, .value.s = "off" },
     { .key = CFG_KEY_RL_DEBUG_VIEW, .type = CFG_STRING, .value.s = "all" },
     { .key = CFG_KEY_VIDEO_DRIVER_ORDER, .type = CFG_STRING, .value.s = DEFAULT_VIDEO_DRIVER_ORDER },

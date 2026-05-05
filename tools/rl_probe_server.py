@@ -11,10 +11,13 @@ import random
 import socket
 import struct
 import subprocess
+import sys
 import tempfile
 import threading
 import time
 from dataclasses import dataclass, field
+
+import rl_evidence
 
 
 MAGIC = 0x33524C41
@@ -33,6 +36,7 @@ OBS_SPACING_PAYLOAD_VERSION = 5
 TRANSITION_BATCH_HEADER = struct.Struct("<IHHQQIII")
 TRANSITION_BATCH_ACK = struct.Struct("<IHHQQII")
 ACTION_SET_VERSION = 5
+_warned_stripped_feature_sets: set[tuple[str, tuple[str, ...]]] = set()
 
 RL_MOVE_NEUTRAL = 0x0000
 RL_MOVE_UP = 0x0001
@@ -682,13 +686,28 @@ def _coerce_action_reward_map(value: object) -> dict[str, float]:
     return rewards
 
 
+def sanitized_dqn_feature_names(value: object, context: str) -> tuple[str, ...]:
+    feature_names, stripped = rl_evidence.sanitize_feature_names(value)
+    if stripped:
+        key = (context, stripped)
+        if key not in _warned_stripped_feature_sets:
+            _warned_stripped_feature_sets.add(key)
+            print(
+                f"WARNING: {context}: stripped combat evidence feature names: {','.join(stripped)}",
+                file=sys.stderr,
+            )
+    return feature_names
+
+
 def _coerce_dqn_model(value: object) -> dict[str, object]:
     if not isinstance(value, dict):
         return {}
 
     raw_feature_names = value.get("feature_names")
     if isinstance(raw_feature_names, list):
-        feature_names = tuple(str(name) for name in raw_feature_names if str(name) in DQN_FEATURE_SCALES)
+        feature_names = tuple(
+            name for name in sanitized_dqn_feature_names(raw_feature_names, "dqn model") if name in DQN_FEATURE_SCALES
+        )
     else:
         feature_names = DQN_FEATURE_NAMES
     if not feature_names:
@@ -1834,6 +1853,10 @@ def dqn_predict_values(dqn_model: dict[str, object], row: dict[str, object]) -> 
     feature_names = dqn_model.get("feature_names", list(DQN_FEATURE_NAMES))
     if not isinstance(feature_names, list):
         feature_names = list(DQN_FEATURE_NAMES)
+    else:
+        feature_names = list(sanitized_dqn_feature_names(feature_names, "dqn inference metadata"))
+        if not feature_names:
+            feature_names = list(DQN_FEATURE_NAMES)
     feature_scales = dqn_model.get("feature_scales", dict(DQN_FEATURE_SCALES))
     if not isinstance(feature_scales, dict):
         feature_scales = dict(DQN_FEATURE_SCALES)

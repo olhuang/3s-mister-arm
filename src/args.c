@@ -95,6 +95,12 @@ static void load_remote_rl_agent_config(Configuration* configuration) {
     rl->delay_frames = Config_GetInt(CFG_KEY_RL_AGENT_DELAY_FRAMES);
     rl->decision_interval_frames = Config_GetInt(CFG_KEY_RL_AGENT_DECISION_INTERVAL);
     rl->action_hold_frames = Config_GetInt(CFG_KEY_RL_AGENT_ACTION_HOLD);
+    if (Config_HasExplicitKey(CFG_KEY_RL_AGENT_EXPORT_EVIDENCE)) {
+        const char* value = Config_GetString(CFG_KEY_RL_AGENT_EXPORT_EVIDENCE);
+        rl->export_evidence = value != NULL &&
+                              (SDL_strcmp(value, "on") == 0 || SDL_strcmp(value, "true") == 0 ||
+                               SDL_strcmp(value, "1") == 0);
+    }
 }
 
 static bool is_valid_port(int port) {
@@ -361,6 +367,13 @@ void read_args(int argc, const char* argv[], Configuration* configuration) {
                     "rl-action-hold",
                     &configuration->remote_rl_agent.action_hold_frames,
                     "Frames to hold each executed RL wire action.",
+                    NULL,
+                    0,
+                    0),
+        OPT_BOOLEAN(0,
+                    "rl-export-evidence",
+                    &configuration->remote_rl_agent.export_evidence,
+                    "Emit Phase 0+1 compact combat evidence fields in transition rows.",
                     NULL,
                     0,
                     0),

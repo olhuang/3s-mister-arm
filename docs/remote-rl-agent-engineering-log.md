@@ -2,6 +2,36 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-05: Combat Event Overlay Input Legend Cleanup
+
+Milestone:
+- Milestone 6: Combat event attribution Phase 2 live overlay smoke refinement
+
+Files changed:
+- `src/port/sdl/sdl_app.c`
+- `src/port/sdl/fbdev_presenter.h`
+- `src/port/sdl/fbdev_presenter.c`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Remove the `U D L R LP MP HP LK MK HK` input-token legend from `All` and
+  `Outcome` RL debug overlay views so combat-event counters are easier to read
+  during live smoke testing.
+
+Implementation notes:
+- The input legend now renders only when `rl-debug-view=input`.
+- Desktop renderer sizing and MiSTer fbdev overlay rasterization both use the
+  same visibility rule.
+- Observation packets, transition logs, combat-event lifecycle, rewards,
+  inference, and trainer features are unchanged.
+
+Validation:
+- `git diff --check` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed and rebuilt
+  `src/port/sdl/fbdev_presenter.c` plus `src/port/sdl/sdl_app.c`; only the
+  pre-existing minizip `mktemp` linker warning appeared.
+
 ## 2026-05-05: Combat Event Attribution Timeout Cause Overlay
 
 Milestone:

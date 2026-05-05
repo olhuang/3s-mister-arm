@@ -84,8 +84,8 @@ static int fps_overlay_cached_text_x = 0;
 static int fps_overlay_cached_text_y = 0;
 static int fps_overlay_cached_scale = 0;
 static char fps_overlay_cached_text[512] = "";
-static Uint16 fps_overlay_input_swkey = 0;
-static Uint16 fps_overlay_cached_input_swkey = 0;
+static Uint16 fps_overlay_input_swkey = FBDEV_PRESENTER_FPS_OVERLAY_INPUT_HIDDEN;
+static Uint16 fps_overlay_cached_input_swkey = FBDEV_PRESENTER_FPS_OVERLAY_INPUT_HIDDEN;
 static bool fps_overlay_cache_valid = false;
 #if ENABLE_PERF_TELEMETRY
 static bool frame_stats_breakdown_enabled = false;
@@ -1188,6 +1188,10 @@ static void draw_overlay_input_line(Uint32* pixels,
     }
 }
 
+static bool fps_overlay_should_show_input_line(void) {
+    return fps_overlay_mode == 3 && fps_overlay_input_swkey != FBDEV_PRESENTER_FPS_OVERLAY_INPUT_HIDDEN;
+}
+
 static bool compute_fps_overlay_layout(const SDL_FRect* content_rect, FpsOverlayLayout* out_layout) {
     if ((out_layout == NULL) || (fps_overlay_mode == 0) || (fps_overlay_text[0] == '\0') || !fbdev_active || (fb_map == NULL)) {
         return false;
@@ -1223,7 +1227,7 @@ static bool compute_fps_overlay_layout(const SDL_FRect* content_rect, FpsOverlay
     const int char_gap = scale;
     int line_count = overlay_text_line_count(fps_overlay_text);
     int max_line_len = overlay_max_line_len(fps_overlay_text);
-    if (fps_overlay_mode == 3) {
+    if (fps_overlay_should_show_input_line()) {
         line_count += 1;
     }
     if (max_line_len <= 0) {
@@ -1232,7 +1236,7 @@ static bool compute_fps_overlay_layout(const SDL_FRect* content_rect, FpsOverlay
 
     const int line_gap = scale;
     int text_w = (max_line_len * glyph_w) + ((max_line_len - 1) * char_gap);
-    if (fps_overlay_mode == 3) {
+    if (fps_overlay_should_show_input_line()) {
         const int input_line_w = overlay_input_line_width(scale);
         if (input_line_w > text_w) {
             text_w = input_line_w;
@@ -1354,7 +1358,7 @@ static bool ensure_rasterized_fps_overlay(const FpsOverlayLayout* layout, bool* 
         column++;
     }
 
-    if (fps_overlay_mode == 3) {
+    if (fps_overlay_should_show_input_line()) {
         const int input_y = layout->text_y + ((line + 1) * (glyph_h + line_gap));
         draw_overlay_input_line(fps_overlay_pixels,
                                 fps_overlay_width,
@@ -2678,7 +2682,7 @@ void FBDevPresenter_SetFPSOverlayMode(int mode) {
     fps_overlay_mode = mode;
     if (mode == 0) {
         fps_overlay_text[0] = '\0';
-        fps_overlay_input_swkey = 0;
+        fps_overlay_input_swkey = FBDEV_PRESENTER_FPS_OVERLAY_INPUT_HIDDEN;
     }
 }
 
@@ -2785,7 +2789,7 @@ void FBDevPresenter_ApplyFPSOverlayToBuffer(Uint32* pixels, int width, int heigh
     const int char_gap = scale;
     int line_count = overlay_text_line_count(fps_overlay_text);
     int max_line_len = overlay_max_line_len(fps_overlay_text);
-    if (fps_overlay_mode == 3) {
+    if (fps_overlay_should_show_input_line()) {
         line_count += 1;
     }
     if (max_line_len <= 0) {
@@ -2794,7 +2798,7 @@ void FBDevPresenter_ApplyFPSOverlayToBuffer(Uint32* pixels, int width, int heigh
 
     const int line_gap = scale;
     int text_w = (max_line_len * glyph_w) + ((max_line_len - 1) * char_gap);
-    if (fps_overlay_mode == 3) {
+    if (fps_overlay_should_show_input_line()) {
         const int input_line_w = overlay_input_line_width(scale);
         if (input_line_w > text_w) {
             text_w = input_line_w;

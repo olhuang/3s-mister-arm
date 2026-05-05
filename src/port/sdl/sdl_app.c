@@ -9125,8 +9125,7 @@ static RLDebugOverlayView parse_rl_debug_overlay_view(const char* value) {
 }
 
 static bool rl_debug_overlay_view_shows_input(void) {
-    return rl_debug_overlay_view == RL_DEBUG_OVERLAY_VIEW_ALL ||
-           rl_debug_overlay_view == RL_DEBUG_OVERLAY_VIEW_INPUT;
+    return rl_debug_overlay_view == RL_DEBUG_OVERLAY_VIEW_INPUT;
 }
 
 static void init_show_fps_overlay(void) {
@@ -9200,7 +9199,8 @@ static void publish_fps_overlay_label(void) {
         RLObservation_FormatDebugOverlay(fps_overlay_label, sizeof(fps_overlay_label), rl_label, rl_debug_overlay_view);
         if (fbdev_presenter_enabled) {
             FBDevPresenter_SetFPSOverlayText(fps_overlay_label);
-            FBDevPresenter_SetFPSOverlayInputSwKey(RLObservation_GetDebugInputSwKey());
+            FBDevPresenter_SetFPSOverlayInputSwKey(
+                rl_debug_overlay_view_shows_input() ? RLObservation_GetDebugInputSwKey() : FBDEV_PRESENTER_FPS_OVERLAY_INPUT_HIDDEN);
         }
         return;
     }

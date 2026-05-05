@@ -2620,6 +2620,7 @@ Tasks:
   - [x] Phase 2 overlay stats refinement: `CE` / `CEU` counters are round-local and reset at episode begin; `CEL` / `CELU` lifetime counters remain available in `All` view, while event ids stay run-wide monotonic
   - [x] Phase 2 side-split overlay refinement: round-local `CE` / `CER` / `CEU` lines now show self/opponent splits for S/F/A/W/I/U/F/R/D so simultaneous-whiff misses reveal which side diverged
   - [x] Phase 2 timeout-cause overlay refinement: `All` view now shows `CEUC` / `CEUL` self/opponent cause splits for timeout unknowns: contact, projectile, throw, projectile-like, and not-whiff-eligible
+  - [x] Phase 2 overlay readability refinement: `U D L R LP MP HP LK MK HK` input tokens now render only in the `Input` debug view, not in `All` or `Outcome`
   - [ ] Phase 2 live overlay smoke: deploy telemetry build and compare `CE` / `CEU` debug overlay counts against visible attacks before treating Phase 2 as fully closed
 - [ ] Combat event attribution Phase 3: replace ambiguous generic `engine_*` ownership with side-explicit `self_engine_*` and `opp_engine_*` attribution at attack-event creation time, keeping unknown/confidence fields for unsupported mappings
 - [ ] Combat event attribution Phase 4: implement projectile event tracking so fireball spawn/hit/block/expire results are attributed to projectile ids instead of owner routine snapshots

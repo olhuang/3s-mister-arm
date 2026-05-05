@@ -6,6 +6,8 @@
 
 #include <SDL3/SDL.h>
 
+#define FBDEV_PRESENTER_FPS_OVERLAY_INPUT_HIDDEN ((Uint16)0xFFFFu)
+
 typedef enum FBDevPresenterPath {
     FBDEV_PRESENTER_PATH_NONE = 0,
     FBDEV_PRESENTER_PATH_READBACK_RECT,

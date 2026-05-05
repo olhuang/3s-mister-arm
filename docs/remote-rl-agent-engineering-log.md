@@ -2,6 +2,47 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-05: Combat Event Attribution Fast Light Whiff Fix
+
+Milestone:
+- Milestone 6: Combat event attribution Phase 2 live overlay smoke refinement
+
+Files changed:
+- `src/rl/rl_combat_event.h`
+- `src/rl/rl_combat_event.c`
+- `docs/agent-memory/remote-rl-combat-event-attribution-plan.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Fix live overlay behavior where quick LP whiffs could start an attack event
+  but fail to increment `CE ... W`.
+
+Implementation notes:
+- The previous live-smoke fix required an event to separately observe routine
+  attack state before it could finalize as `WHIFF`. That avoided sticky
+  `current_attack`, but it was too strict for very short light attacks.
+- Attack events now become `whiff_eligible` at accepted start time. Routine
+  attack state is still the active-window signal, so sticky `current_attack`
+  still cannot keep an event artificially active.
+- Contact/projectile/throw/protected events still do not become basic whiffs.
+- No transition JSON, reward, inference, trainer, or event-journal export
+  behavior changed.
+
+Validation:
+- `git diff --check` passed.
+- `cc -std=c11 -Wall -Wextra -Isrc -Iinclude -c src/rl/rl_combat_event.c -o /tmp/rl_combat_event_wall.o` passed.
+- `/tmp/rl_combat_event_fast_whiff_smoke` passed: an accepted short attack
+  start without a routine-active latch became `WHIFF`, routine-active attacks
+  still whiffed after exit, and contact-protected events did not whiff.
+- `tools/mister/build-game.sh --flavor telemetry` passed and rebuilt
+  `src/rl/rl_combat_event.c` plus `src/rl/rl_session.c`; only the pre-existing
+  minizip `mktemp` linker warning appeared.
+
+Follow-up:
+- During the next Outcome overlay smoke, specifically test repeated standing LP
+  or crouching LP at whiff range and confirm round-local `W` tracks them.
+
 ## 2026-05-05: Combat Event Attribution Round-Local Overlay Stats
 
 Milestone:

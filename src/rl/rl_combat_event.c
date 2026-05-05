@@ -238,6 +238,7 @@ const RLCombatAttackEvent* RLCombatEvent_StartAttack(const RLCombatAttackEventSt
     event->current_attack = start->current_attack;
     event->kind_of_waza = start->kind_of_waza;
     event->projectile_like = start->projectile_like;
+    event->whiff_eligible = 1;
     event->policy_action_id = start->policy_action_id;
     event->policy_sub_action_id = start->policy_sub_action_id;
     event->policy_action_step = start->policy_action_step;
@@ -315,7 +316,7 @@ static u32 RLCombatEvent_MaxPendingFrames(const RLCombatAttackEvent* event) {
 static bool RLCombatEvent_TryBasicFinalize(RLCombatAttackEvent* event, const RLCombatAttackEventUpdate* update) {
     const u32 age = RLCombatEvent_FrameAge(update->frame_id, event->start_frame);
 
-    event->saw_actor_attack_state_active |= (u8)(update->actor_attack_state_active != 0);
+    event->whiff_eligible |= (u8)(update->actor_attack_state_active != 0);
     event->saw_target_contact_or_damage |= (u8)(update->target_contact_or_damage != 0);
     event->saw_projectile |= (u8)(update->projectile_active_for_side != 0);
     event->saw_throw |= (u8)(update->throw_active_for_side != 0);
@@ -328,7 +329,7 @@ static bool RLCombatEvent_TryBasicFinalize(RLCombatAttackEvent* event, const RLC
                                           update->decision_id);
     }
 
-    if (!update->actor_attack_state_active && event->saw_actor_attack_state_active &&
+    if (!update->actor_attack_state_active && event->whiff_eligible &&
         age >= RL_COMBAT_ATTACK_MIN_WHIFF_FRAMES && !event->saw_target_contact_or_damage &&
         !event->saw_projectile && !event->saw_throw && !event->projectile_like) {
         return RLCombatEvent_FinalizeSlot(event,

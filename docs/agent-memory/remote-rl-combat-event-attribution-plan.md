@@ -1493,8 +1493,10 @@ Implementation status:
 - 2026-05-05 live-smoke refinement: `current_attack` is retained as attack
   identity/context evidence, but it is not used as the attack active-window
   lifecycle gate because it can remain sticky after visible recovery. Basic
-  whiff finalization uses routine attack state, and an event must have observed
-  routine attack state active before it can become `WHIFF`.
+  whiff finalization treats an accepted attack-start event as whiff-eligible,
+  then uses routine attack state only to tell whether the active window is still
+  open. This keeps very short light attacks from being missed when their routine
+  active state is too brief to latch during live sampling.
 - Phase 2C still does not export event rows, transition summaries, rewards, or
   trainer-visible labels. These results are lifecycle/debug labels until the
   Phase 6 contact resolver and move-family validation prove them safe.

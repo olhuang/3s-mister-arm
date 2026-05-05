@@ -2,6 +2,45 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-05: Combat Event Phase 4A Projectile Parent Cleanup
+
+Milestone:
+- Milestone 6: Combat event attribution Phase 4A live validation
+
+Files changed:
+- `src/rl/rl_combat_event.h`
+- `src/rl/rl_combat_event.c`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Address the remaining live overlay issue after projectile result
+  classification was fixed: fireball hit/block now correctly reaches `CPR H`
+  or `CPR B`, but the projectile-like parent attack still later increments
+  `CEU R +1/+0` when the next same-side attack supersedes it.
+
+Implementation notes:
+- Added `RL_COMBAT_ATTACK_FINALIZE_PROJECTILE_CLAIMED` for projectile-like
+  parent attacks whose result ownership has moved to a projectile event.
+- When `RLCombatEvent_StartProjectile()` links a projectile to an active recent
+  projectile-like attack, it now finalizes that parent attack immediately with
+  the projectile-claimed reason.
+- `RLCombatEvent_FindRecentProjectileAttack()` now only considers active
+  projectile-like attacks, so a later projectile cannot attach to a stale
+  finalized parent.
+- The parent attack still contributes to `CE S/F`, but no longer increments
+  `CEU R`; `CPR H/B/X/U` remains the source of truth for projectile outcome.
+
+Validation:
+- `git diff --check` passed.
+- `cc -std=c11 -Wall -Wextra -Isrc -Iinclude -c src/rl/rl_combat_event.c -o /tmp/rl_combat_event_parent_cleanup.o`
+  passed.
+- `python3 -m py_compile tools/rl_probe_server.py tools/analyze_rl_transitions.py`
+  passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed, rebuilding
+  `rl_combat_event.c` and `rl_session.c` for ARM. The build still emits the
+  existing third-party minizip `mktemp` linker warning.
+
 ## 2026-05-05: Combat Event Phase 4A Pause And Projectile Result Fix
 
 Milestone:

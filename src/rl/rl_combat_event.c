@@ -353,7 +353,7 @@ static const RLCombatAttackEvent* RLCombatEvent_FindRecentProjectileAttack(RLCom
     for (u32 i = 0; i < RL_COMBAT_ATTACK_EVENT_RING_CAP; i++) {
         const RLCombatAttackEvent* event = &ring->events[i];
         u32 age = 0;
-        if (event->status == RL_COMBAT_ATTACK_EVENT_EMPTY || event->run_id != run_id ||
+        if (event->status != RL_COMBAT_ATTACK_EVENT_ACTIVE || event->run_id != run_id ||
             event->episode_id != episode_id || event->side != side || !event->projectile_like) {
             continue;
         }
@@ -633,6 +633,11 @@ static RLCombatProjectileEvent* RLCombatEvent_StartProjectile(const RLCombatProj
         event->engine_action_id = parent->engine_action_id;
         event->engine_sub_action_id = parent->engine_sub_action_id;
         event->engine_label_source = parent->engine_label_source;
+        RLCombatEvent_FinalizeAttack(parent->event_id,
+                                     RL_COMBAT_ATTACK_RESULT_UNKNOWN,
+                                     RL_COMBAT_ATTACK_FINALIZE_PROJECTILE_CLAIMED,
+                                     update->frame_id,
+                                     update->decision_id);
     }
 
     combat_event_stats.projectile_started_count++;

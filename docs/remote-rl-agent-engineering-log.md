@@ -2,6 +2,55 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-05: Combat Event Phase 5A Throw Evidence Audit
+
+Milestone:
+- Milestone 6: Combat event attribution Phase 5A
+
+Files changed:
+- `docs/plan-remote-rl-agent.md`
+- `docs/agent-memory/remote-rl-combat-event-attribution-plan.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Start Phase 5 without prematurely adding a throw ring. Audit the throw
+  evidence already present in observation/transition code and define the minimum
+  symmetric evidence needed before throw result counters are safe.
+
+Implementation notes:
+- Documented the current throw-related raw signals:
+  - self-side `tsukami_f` becomes `obs.self_throw_active`,
+    `self_throw_started`, and `self_throw_seen`;
+  - opponent-side `tsukamare_f` becomes `obs.opp_throw_caught`,
+    `opp_throw_caught_started`, and `opp_throw_caught_seen`;
+  - R1/R2 routine evidence can support throw attribution but must stay
+    character-aware (`R1=2` catch, `R1=3` caught, Ryu `R2=14` grab startup,
+    Ryu `R2=2` completed throw);
+  - HP/stun deltas and close range are supporting evidence, not throw truth by
+    themselves.
+- Recorded the important asymmetry: current observation does not export
+  `opp_throw_active`, `opp_throw_started`, `self_throw_caught`, or
+  `self_throw_caught_started`, even though the previous-frame arrays track the
+  raw game variables internally. Phase 5B must add this before a side-symmetric
+  throw ring.
+- Defined conservative planned semantics:
+  - `throw_success`: owner throw-active/start plus target caught edge/state.
+  - `throw_whiff`: owner throw-active ends with no caught/contact evidence
+    inside the whiff window.
+  - `throw_unknown`: timeout, possible tech, interruption, round end,
+    conflicting contact evidence, or missing symmetric evidence.
+- Defined the future Outcome overlay shape: `CT S/F/A` and `CTR T/W/U`, with
+  side splits and no non-event/raw input text added back into `Outcome`.
+
+Validation:
+- `git diff --check` passed.
+
+Follow-up:
+- Implement Phase 5B symmetric throw observation fields before creating throw
+  counters or result labels.
+- Keep throw labels out of reward/trainer features until Phase 6 contact/delta
+  matching can arbitrate attack/projectile/throw candidates.
+
 ## 2026-05-05: Combat Event Phase 4B Projectile Edge-Case Contract
 
 Milestone:

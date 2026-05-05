@@ -1705,11 +1705,76 @@ Work:
 - classify success/tech/whiff/unknown
 - link close-range guard failures to throw when evidence supports it
 
+Phase 5A throw evidence audit:
+
+| Signal | Current source | Current meaning | Reliability / limitation | Phase 5 use |
+|--------|----------------|-----------------|--------------------------|-------------|
+| `obs.self_throw_active` | `plw[self].tsukami_f != 0` | selected RL-side actor is in a throw/catch attempt | useful owner-active evidence, but currently self-side only | self throw start/active candidate |
+| `obs.self_throw_started` | rising edge of `self_throw_active` | selected RL-side throw/catch attempt began | good edge for self starts when previous frame state is valid | self `throw_start` candidate |
+| `obs.opp_throw_caught` | `plw[opp].tsukamare_f != 0` | opponent is caught by selected RL-side throw/catch | strong success evidence for self throw | self `throw_success` candidate |
+| `obs.opp_throw_caught_started` | rising edge of `opp_throw_caught` | opponent newly entered caught state | strong success edge for self throw | self result edge |
+| `plw[opp].tsukami_f` | currently only stored in `prev_frame_throw_active[opp]` | opponent-side throw/catch attempt | not exported in `RLObservationV1`; no current `opp_throw_started` field | must add before opponent throw ring |
+| `plw[self].tsukamare_f` | currently only stored in `prev_frame_throw_caught[self]` | selected RL-side actor is caught by opponent throw | not exported in `RLObservationV1`; no current `self_throw_caught_started` field | must add before opponent throw result |
+| routine `R1=2` | `obs_*_routine[1]` | catch/grab state bucket | useful support evidence, not enough by itself | confidence/support |
+| routine `R1=3` | `obs_*_routine[1]` | caught state bucket | useful support evidence, not enough by itself | success/support |
+| Ryu `R2=14` | engine routine substate | previously observed grab/catch startup path | Ryu-specific; must not be universalized without per-character validation | Ryu throw start support |
+| Ryu `R2=2` | engine routine substate | previously observed completed throw path | Ryu-specific; must not be universalized without per-character validation | Ryu throw result support |
+| HP/stun deltas | transition deltas | damage happened in the decision span | not throw-specific; can be strike/projectile/throw/round-end sync | result support only after throw evidence |
+| close range | `obs_abs_dx` / front-edge distances | throw plausibility gate | spacing support only; not an event signal | confidence/failure reason support |
+
+Phase 5A conclusion:
+
+- Existing transition/evidence fields are enough to validate self throw success
+  in logs, but they are not self/opponent symmetric.
+- Do not implement the throw event ring by guessing opponent throws from HP
+  deltas, `guard_flag`, or contact reaction alone.
+- Phase 5B must first add symmetric observation evidence:
+  - `self_throw_active`
+  - `opp_throw_active`
+  - `self_throw_caught`
+  - `opp_throw_caught`
+  - rising-edge fields for all four states
+- The first throw ring should treat HP/stun deltas as supporting evidence only
+  after throw-active/caught evidence exists.
+- `tech` remains unresolved in Phase 5 unless a distinct engine signal is found.
+  Until then, tech-like or interrupted/cancelled interactions should finalize
+  as `unknown`, not as success or whiff.
+
+Phase 5B/C planned result semantics:
+
+- `throw_success`: owner throw-active/start evidence plus target caught edge or
+  target caught state, optionally supported by close range and HP/stun delta.
+- `throw_whiff`: owner throw-active event ends after a short window with no
+  target caught evidence, no clear throw damage, and no stronger contact source.
+- `throw_unknown`: timeout, interruption, possible tech, round end, conflicting
+  strike/projectile/contact evidence, or missing symmetric evidence.
+- Do not add throw labels to reward/trainer features until Phase 6 matching can
+  consume HP/stun/contact deltas across attack/projectile/throw candidates.
+
+Minimal overlay/debug plan:
+
+- Phase 5C should add combat-event `CT S/F/A` side-split counters for throw
+  started/finalized/active.
+- Phase 5C should add `CTR T/W/U` side-split counters for throw success, whiff,
+  and unknown.
+- Keep these in the `Outcome` debug view with existing combat-event counters.
+- Do not re-add raw input text or broad non-event debug lines to `Outcome`.
+- If raw bring-up evidence is needed before the ring is trusted, put it in a
+  temporary Fight/Input diagnostic line or transition analyzer, not as learner
+  truth.
+
 Validation:
 
 - scripted throw policy
 - close guard/back/forward scenarios
 - CPU close-pressure logs
+- self throw success should increment self-side `CT S/F` and `CTR T`
+- opponent throw success should increment opponent-side `CT S/F` and `CTR T`
+- out-of-range throw should become `CTR W` only when no caught/contact evidence
+  appears inside the whiff window
+- tech-like or ambiguous interactions should remain `CTR U`
+- pause menu should not reset throw counters, matching Phase 4 projectile
+  counter behavior
 
 Done when:
 

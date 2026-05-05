@@ -2,6 +2,39 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-05: Combat Event Overlay Outcome Cleanup
+
+Milestone:
+- Milestone 6: Combat event attribution overlay refinement
+
+Files changed:
+- `src/rl/rl_observation.c`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Make the RL debug `Outcome` page a combat-event-only page, so live validation
+  no longer has to read CE/CP counters mixed with raw deltas, input heuristics,
+  or the broad `All` bring-up view.
+
+Implementation notes:
+- Moved combat-event attack/projectile counters out of `All` and into
+  `Outcome` only.
+- Removed the older non-event `DH/DS/AB`, `EH/EC/ED`, and `RF/MS/AI/AR/OS`
+  heuristic lines from `Outcome`.
+- Promoted the detailed combat-event lines that were formerly `All`-only
+  (`CEU`, `CEUC`, `CEUD`, `CEUH`, `CEUL`, `CEL`, `CELU`) into `Outcome`, so
+  the page contains the full combat-event overlay set.
+
+Validation:
+- `git diff --check` passed.
+- Standalone host compile of `rl_observation.c` is not representative because
+  it depends on generated `port/build_config.h`; canonical MiSTer validation
+  used the telemetry build instead.
+- `tools/mister/build-game.sh --flavor telemetry` passed, rebuilding
+  `rl_observation.c` for ARM. The build still emits the existing third-party
+  minizip `mktemp` linker warning.
+
 ## 2026-05-05: Combat Event Phase 4A Projectile Lifecycle Foundation
 
 Milestone:

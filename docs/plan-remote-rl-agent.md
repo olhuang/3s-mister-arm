@@ -2090,11 +2090,11 @@ Current first-pass action outcome / delta fields:
 - `overlay_attack_active_count`, `overlay_attack_contact_count`, and `overlay_attack_whiff_count` are the current round's cumulative attack-event counters at export time.
 - `self_airborne_seen` / `opp_airborne_seen` are span-level state-seen flags. Use `self_airborne_started` / `opp_airborne_started` when counting jump/airborne entry edges.
 - `RL Debug` is now split by `rl-debug-view` / OSD `RL Debug View`:
-  - `All`: full bring-up view
+  - `All`: broad bring-up view for fight/input/net state, excluding the dedicated combat-event outcome page
   - `Net`: network / action-gate / queue counters
   - `Input`: action context plus colored input row
   - `Fight`: match, resources, spacing, and raw combat state
-  - `Outcome`: delta and first-pass action outcome heuristics
+  - `Outcome`: combat-event counters/results only (`AH`/`CE`/`CER`/`CEU`/`CP`/`CPR`/lifetime lines)
   - `Off`: keeps `show-fps = rl-debug` selected but hides the RL text
 - deferred for a later schema revision because the current runtime source is not yet trustworthy enough:
   - `self_crouching`, `opp_crouching`
@@ -2631,6 +2631,7 @@ Tasks:
   - [x] Phase 3 live validation: `logs/phase3-side-engine-live.ndjson` schema v7 showed self/opponent engine labels through four visual side swaps; generic `engine_*` matched self only with zero opponent pollution
 - [ ] Combat event attribution Phase 4: implement projectile event tracking so fireball spawn/hit/block/expire results are attributed to projectile ids instead of owner routine snapshots
   - [x] Phase 4A projectile lifecycle foundation: added a fixed-size projectile event ring with shared monotonic event ids, owner-side spawn tracking, parent fireball attack linking, conservative hit/block/expired/unknown finalization, OSD `CP`/`CPR` counters, and schema v8 transition counter snapshots
+  - [x] Phase 4A overlay cleanup: moved combat-event attack/projectile counters exclusively into the `Outcome` view and removed older non-event delta/input heuristic lines from that view
   - [ ] Phase 4 live validation: fireball-lp/mp/hp at close/mid/far should increment `CP S/F/A`; blocked fireballs should prefer `CPR B`, damaging fireballs should prefer `CPR H`, and fireball clashes / ambiguous disappearance may remain `CPR X` or `CPR U`
 - [ ] Combat event attribution Phase 5: implement throw event tracking so close guard failures can distinguish thrown/tech/whiff/unknown from strike or chip damage
 - [ ] Combat event attribution Phase 6a: implement edge-triggered contact-to-attack/projectile/throw matching with consumed HP/stun deltas, trade handling, confidence, and attribution failure events

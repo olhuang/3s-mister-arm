@@ -797,6 +797,26 @@ void RLObservation_FormatDebugOverlay(char* out, size_t out_size, const char* se
                             (unsigned long)remote->episode_attack_active_count,
                             (unsigned long)remote->episode_attack_contact_count,
                             (unsigned long)remote->episode_attack_whiff_count);
+        append_overlay_line(out,
+                            out_size,
+                            &used,
+                            "CE S%lu F%lu A%lu/%lu W%lu I%lu U%lu",
+                            (unsigned long)remote->combat_attack_started_count,
+                            (unsigned long)remote->combat_attack_finalized_count,
+                            (unsigned long)remote->combat_attack_active_self_count,
+                            (unsigned long)remote->combat_attack_active_opp_count,
+                            (unsigned long)remote->combat_attack_whiff_count,
+                            (unsigned long)remote->combat_attack_interrupted_count,
+                            (unsigned long)remote->combat_attack_unknown_timeout_count);
+        if (show_all) {
+            append_overlay_line(out,
+                                out_size,
+                                &used,
+                                "CEU F%lu R%lu D%lu",
+                                (unsigned long)remote->combat_attack_unknown_flush_count,
+                                (unsigned long)remote->combat_attack_unknown_rollover_count,
+                                (unsigned long)remote->combat_attack_dropped_start_count);
+        }
     }
 
     if (show_all || view == RL_DEBUG_OVERLAY_VIEW_INPUT) {

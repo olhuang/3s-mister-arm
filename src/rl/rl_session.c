@@ -577,7 +577,27 @@ const RLActionContext* RLSession_GetActionContext() {
     return &action_context;
 }
 
+static void RLSession_UpdateCombatEventDebugStats(void) {
+    const RLCombatEventStats* stats = RLCombatEvent_GetStats();
+
+    if (stats == NULL) {
+        return;
+    }
+
+    remote_debug.combat_attack_started_count = stats->attack_started_count;
+    remote_debug.combat_attack_finalized_count = stats->attack_finalized_count;
+    remote_debug.combat_attack_whiff_count = stats->attack_whiff_count;
+    remote_debug.combat_attack_interrupted_count = stats->attack_interrupted_count;
+    remote_debug.combat_attack_unknown_timeout_count = stats->attack_unknown_timeout_count;
+    remote_debug.combat_attack_unknown_flush_count = stats->attack_unknown_flush_count;
+    remote_debug.combat_attack_unknown_rollover_count = stats->attack_unknown_rollover_count;
+    remote_debug.combat_attack_dropped_start_count = stats->attack_dropped_start_count;
+    remote_debug.combat_attack_active_self_count = stats->attack_active_self_count;
+    remote_debug.combat_attack_active_opp_count = stats->attack_active_opponent_count;
+}
+
 const RLRemoteDebugState* RLSession_GetRemoteDebugState() {
+    RLSession_UpdateCombatEventDebugStats();
     return &remote_debug;
 }
 

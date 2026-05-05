@@ -1493,6 +1493,15 @@ Implementation status:
 - Phase 2C still does not export event rows, transition summaries, rewards, or
   trainer-visible labels. These results are lifecycle/debug labels until the
   Phase 6 contact resolver and move-family validation prove them safe.
+- 2026-05-05 Phase 2D exposes attack-event lifecycle stats through the existing
+  RL debug state and OSD overlay. The outcome overlay includes started,
+  finalized, active self/opponent, whiff, interrupted, and timeout-unknown
+  counts; the all-view overlay also shows flush unknowns, rollover unknowns,
+  and dropped starts.
+- Phase 2D intentionally does not add temporary transition-log fields or a
+  partial event log. Disk/analyzer event visibility starts with the Phase 7
+  schema v4 summary plus combat-event journal export, carried in the shared
+  transition batch/envelope.
 
 Work:
 

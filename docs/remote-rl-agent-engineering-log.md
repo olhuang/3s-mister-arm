@@ -2,6 +2,52 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-05: Combat Event Attribution Phase 2D Debug Visibility
+
+Milestone:
+- Milestone 6: Combat event attribution Phase 2D
+
+Files changed:
+- `src/rl/rl_session.h`
+- `src/rl/rl_session.c`
+- `src/rl/rl_observation.c`
+- `docs/agent-memory/remote-rl-combat-event-attribution-plan.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Make Phase 2 attack event lifecycle visible during live MiSTer testing without
+  changing transition NDJSON, reward, inference, or trainer features.
+
+Implementation notes:
+- Added combat-event counters to `RLRemoteDebugState`:
+  started, finalized, whiff, interrupted, timeout unknown, episode-flush
+  unknown, rollover unknown, dropped starts, and active self/opponent counts.
+- `RLSession_GetRemoteDebugState()` now snapshots `RLCombatEvent_GetStats()` so
+  overlay/debug readers see current event-ring stats.
+- The outcome debug overlay adds:
+  `CE S/F Aself/opp W/I/U`, where `U` is timeout unknown.
+- The all-view overlay also adds `CEU F/R/D` for episode-flush unknown,
+  rollover unknown, and dropped start counts.
+
+Non-goals:
+- No temporary transition-log fields and no partial event journal export. Disk
+  analyzer visibility stays with Phase 7 so schema and two-file persistence
+  remain coherent.
+- No reward, inference, model metadata, or trainer feature change.
+
+Validation:
+- `git diff --check` passed.
+- `cc -std=c11 -Wall -Wextra -Isrc -Iinclude -c src/rl/rl_combat_event.c -o /tmp/rl_combat_event_wall.o` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed and rebuilt
+  `src/rl/rl_observation.c` plus `src/rl/rl_session.c`; only the pre-existing
+  minizip `mktemp` linker warning appeared.
+
+Follow-up:
+- Deploy a telemetry build and use the RL outcome/all debug overlay to compare
+  combat-event counts against visible attacks before moving to Phase 3 or
+  Phase 7 export work.
+
 ## 2026-05-05: Combat Event Attribution Phase 2C Basic Attack Finalization
 
 Milestone:

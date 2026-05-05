@@ -2613,7 +2613,8 @@ Tasks:
   - [x] Phase 2A: wired combat-event run/episode lifecycle into `rl_session.c` start/reset/finalize paths without changing transition JSON, reward, inference, or trainer feature inputs
   - [x] Phase 2B: create attack events from self/opponent attack-start edges and attach raw routine/current-attack/policy context; same-side new starts roll active prior events to unknown instead of filling the ring
   - [x] Phase 2C: added conservative basic finalization windows: clean non-projectile attacks can finalize as whiff after the attack state ends, actor damage can finalize as interrupted, and contact/projectile/throw-protected events timeout as unknown instead of being mislabeled
-  - [ ] Phase 2D: expose debug/analyzer visibility for event counts without promoting event labels into rewards
+  - [x] Phase 2D: expose OSD/debug visibility for event counts/results without promoting event labels into rewards or changing transition NDJSON; disk/analyzer event visibility remains Phase 7 event-journal work
+  - [ ] Phase 2 live overlay smoke: deploy telemetry build and compare `CE` / `CEU` debug overlay counts against visible attacks before treating Phase 2 as fully closed
 - [ ] Combat event attribution Phase 3: replace ambiguous generic `engine_*` ownership with side-explicit `self_engine_*` and `opp_engine_*` attribution at attack-event creation time, keeping unknown/confidence fields for unsupported mappings
 - [ ] Combat event attribution Phase 4: implement projectile event tracking so fireball spawn/hit/block/expire results are attributed to projectile ids instead of owner routine snapshots
 - [ ] Combat event attribution Phase 5: implement throw event tracking so close guard failures can distinguish thrown/tech/whiff/unknown from strike or chip damage

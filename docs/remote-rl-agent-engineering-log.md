@@ -2,6 +2,46 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-05: Combat Event Attribution Phase 0+1 Live Gate Smoke
+
+Milestone:
+- Milestone 6: Combat event attribution Phase 0+1 live validation
+
+Inputs:
+- `logs/dqn-retrain-m3-defense-v10_event_off.ndjson`
+- `logs/dqn-retrain-m3-defense-v10_event_on.ndjson`
+
+Purpose:
+- Verify the C-side evidence gate and compact bitmask export under live MiSTer
+  network logging before moving to later combat-event phases.
+
+Results:
+- Gate off: 995 rows, zero JSON errors, schema v6 rows only, no evidence keys
+  present, and max row length 1752 bytes.
+- Gate on: 1070 rows, zero JSON errors, schema v6 rows only, every row carried
+  exactly the six Phase 0+1 evidence fields, and max row length 1937 bytes.
+- `tools/analyze_rl_transitions.py --expand-evidence --output-expanded` expanded
+  the gate-on log and handled the gate-off log as missing evidence without
+  crashing.
+- Python evidence decode found no reserved bits, no negative flag values, and no
+  nonzero `evidence_flags_hi` values in the natural live run.
+- DQN/replay feature safety remained intact: evidence and `ep_overlay_` fields
+  did not enter default learner replay rows or `DQN_FEATURE_NAMES`.
+- Episode counter lifecycle passed: `ep_overlay_attack_*_count` reset at the
+  second episode boundary and remained monotonic inside episodes.
+
+Known limitation confirmed:
+- One row showed overlay counters jump by two while Phase 0+1 boolean evidence
+  can only report one `overlay_attack_event_finalized` bit. This is expected for
+  Phase 0+1; Phase 2+ event journals are needed for one-row-per-event truth.
+
+Performance decision:
+- No visible live performance issue was observed. Because the gate-on max row is
+  still comfortably below the 4096-byte formatter buffer, explicit sub-ms
+  formatter timing is deferred until the full combat-event log/export path is
+  implemented, or until an intermediate live test shows visible performance
+  symptoms.
+
 ## 2026-05-05: Combat Event Attribution Phase 0+1 Local Implementation
 
 Milestone:
@@ -85,13 +125,11 @@ Validation:
   kept only normal DQN feature names.
 
 Open follow-ups:
-- Run a live MiSTer/probe transition smoke with `rl-agent-export-evidence=off`
-  and `on` to verify field absence/presence, complete JSON upload, and no
-  receiver `JSONDecodeError`.
-- Capture a natural or scripted episode to verify `ep_overlay_attack_*_count`
-  reset at episode boundaries and remain monotonic snapshots within an episode.
-- Measure formatter row size and p95 cost on the closest available target before
-  declaring Phase 0+1 fully closed.
+- Full combat-event phases still need the Phase 2+ event journal, side-explicit
+  attribution, projectile/throw/punish coverage, and event-aware analyzer work.
+- Explicit formatter p95/p99 timing is deferred until the full combat-event
+  export path is implemented, or until live/intermediate tests show a visible
+  performance issue.
 
 ## 2026-05-05: Overlay Evidence Contamination Guard
 

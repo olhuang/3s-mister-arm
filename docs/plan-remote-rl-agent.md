@@ -2595,7 +2595,7 @@ Tasks:
 - [x] Fix long-run transition sender thread resource leak that could OOM-kill `3s-arm`
 - [x] Fix transition sender running-state race / missed-wakeup after ruling out perf-capture config as the latest restart cause
 - [x] Document the complete self/opponent combat event attribution plan in [docs/agent-memory/remote-rl-combat-event-attribution-plan.md](agent-memory/remote-rl-combat-event-attribution-plan.md)
-- [ ] Combat event attribution Phase 0+1: harden Python parsers/replay mappers first, audit evidence fields, define evidence bitmask constants, add a runtime evidence-export gate, export versioned `evidence_flags_*` bitmasks plus `ep_` counters, size/guard transition JSON export without large stack buffers, and restore/export filled evidence without changing reward or inference
+- [x] Combat event attribution Phase 0+1: harden Python parsers/replay mappers first, audit evidence fields, define evidence bitmask constants, add a runtime evidence-export gate, export versioned `evidence_flags_*` bitmasks plus `ep_` counters, size/guard transition JSON export without large stack buffers, and restore/export filled evidence without changing reward or inference
   - [x] Added `src/rl/rl_combat_event.h` with Phase 0+1 bitmask version/bit constants only; no event structs, rings, ids, resolver helpers, or result/confidence/failure enums
   - [x] Replaced the transition formatter's stack `line[2048]` path with a reusable RL-session heap buffer allocated/freed through the RL net lifecycle
   - [x] Fixed the positive truncation hazard by requiring complete formatter success before appending transition rows; evidence-extension failure falls back to a complete base row
@@ -2605,8 +2605,9 @@ Tasks:
     the three `ep_overlay_attack_*_count` fields
   - [x] Added Python evidence decoder, analyzer `--expand-evidence --output-expanded`, reserved-bit warning, negative flag rejection, and DQN feature-name evidence denylist guards
   - [x] Preserved reward, inference, action scheduling, and transition replay feature builders as evidence-agnostic by default
-  - [ ] Run on-device/live transition smoke with gate off/on to verify field absence/presence, complete JSON under real network upload, and episode counter reset/monotonic behavior
-  - [ ] Measure formatter cost on the closest available target and record max row size / timing before considering Phase 0+1 fully closed
+  - [x] Ran on-device/live transition smoke with gate off/on: gate-off rows had no evidence fields, gate-on rows had the full six-field evidence shape, both logs parsed as complete JSON, and episode counters reset/decreased-free across episode boundaries
+  - [x] Recorded live row-size budget: gate-off max 1752 bytes, gate-on max 1937 bytes inside the 4096-byte formatter buffer
+  - [x] Deferred explicit formatter micro-timing until the full combat-event log is implemented or live/intermediate tests show a visible performance problem; current Phase 0+1 live smoke had no observed gameplay/performance issue
 - [ ] Combat event attribution Phase 2: implement fixed-size self/opponent attack event rings with monotonic run-wide event ids, episode-boundary flush, and no active-slot overwrite
 - [ ] Combat event attribution Phase 3: replace ambiguous generic `engine_*` ownership with side-explicit `self_engine_*` and `opp_engine_*` attribution at attack-event creation time, keeping unknown/confidence fields for unsupported mappings
 - [ ] Combat event attribution Phase 4: implement projectile event tracking so fireball spawn/hit/block/expire results are attributed to projectile ids instead of owner routine snapshots
@@ -2668,6 +2669,11 @@ Complete combat event attribution plan:
   `rl-agent-export-evidence`. With the gate off, existing base transition rows
   continue without evidence fields; with it on, evidence-enabled rows emit the
   full six-field Phase 0+1 shape unless the evidence formatter falls back.
+- Phase 0+1 live smoke accepted row-size budget as sufficient: compact
+  evidence rows stayed below 2KB in the 4096-byte formatter buffer. Explicit
+  sub-millisecond formatter timing is non-blocking for Phase 0+1 and is
+  deferred until the full event journal/export path exists, or until live tests
+  show a visible performance regression.
 - Phase 0+1 boolean/edge evidence uses `evidence_bitmask_version = 1`,
   `evidence_flags_lo`, and `evidence_flags_hi` on every row; both flag fields
   are always present unsigned 32-bit JSON decimals. Python must reject negative

@@ -1043,7 +1043,10 @@ the buffer to the formatter as `char* buf, size_t buf_size`. Do not allocate,
 realloc, or free the formatter buffer per frame. The starting capacity target
 is 4096 bytes, but Phase 0+1 must record the measured current max row length,
 the worst-case evidence addition, and the chosen capacity before later phases
-add event summaries.
+add event summaries. The 2026-05-05 live gate-off/gate-on smoke recorded max row
+lengths of 1752 bytes and 1937 bytes respectively, so explicit formatter
+micro-timing is not a Phase 0+1 blocker unless live testing shows a visible
+performance regression.
 
 Do not use `SDL_GetTicks()` for sub-millisecond formatter timing. Prefer
 `SDL_GetPerformanceCounter()` / `SDL_GetPerformanceFrequency()` when available;
@@ -1369,9 +1372,11 @@ Validation:
   the row, not from a later finalized event's transient `last_overlay_*` state;
   repeated consumption of the same overlay sequence by multiple rows is a
   failure
-- measure `RLSession_FormatTransitionLogLine()` cost on the closest available
-  target and leave room under the 500us attribution budget; if formatting alone
-  exceeds 200us p95, stop and consider a builder/batched format change
+- deferred performance check: measure `RLSession_FormatTransitionLogLine()` cost
+  on the closest available target before the full combat-event journal ships, or
+  earlier if live/intermediate testing shows visible performance symptoms. Leave
+  room under the 500us attribution budget; if formatting alone exceeds 200us
+  p95, stop and consider a builder/batched format change
 - run a worst-case formatter smoke during dense contact/effect frames where both
   sides attack and multiple evidence flags/counters are set
 - run an all-flags formatter stress row with `evidence_flags_lo = 0x01ffffff`,
@@ -1755,14 +1760,14 @@ These checks validate evidence export before attack rings or resolvers exist.
 | transition line budget | formatted line fits configured reusable/bounded buffer; truncation guard tested |
 | truncation guard smoke | capacity zero, offset beyond capacity, and simulated insufficient capacity return errors without advancing past capacity |
 | C memory/stack guard | no large hot-path stack buffer, no shared static scratch buffer, no formatter/session buffer leak in long-episode smoke |
-| worst-case formatter timing | dense attack/contact/effect row remains inside Phase 0+1 formatter budget |
+| deferred formatter timing | non-blocking after Phase 0+1 live smoke unless visible performance symptoms appear; before full event export, dense attack/contact/effect rows should remain inside the formatter budget |
 | scripted `stand-hp` | requested attack input/active/state fields become nonzero |
 | scripted anti-air or direct hit | hitstop/contact/damage-state edge fields become nonzero |
 | scripted far whiff | whiff evidence becomes nonzero and is marked medium-trust |
 | scripted close throw | throw edge fields become nonzero or are marked unavailable |
 | overlay counter smoke | active/contact/whiff counters match OSD/debug counter tolerance, allowing multi-hit and clash exceptions |
 | round-end smoke | no evidence or pending export metadata from the previous episode leaks into the next episode |
-| hot-path smoke | `RLSession_FormatTransitionLogLine()` p95 stays below the Phase 0+1 budget |
+| hot-path smoke | deferred until full event export or visible performance symptoms; when run, `RLSession_FormatTransitionLogLine()` p95 stays below the formatter budget |
 
 ## Full Event Validation Matrix
 

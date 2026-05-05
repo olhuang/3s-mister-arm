@@ -1502,6 +1502,10 @@ Implementation status:
   as `WHIFF`, not `UNKNOWN`. Normal LP events also use a 20-frame fast whiff
   fallback so sticky active-window evidence or unrelated same-side projectile
   noise does not turn a visible light-punch whiff into timeout unknown.
+- 2026-05-05 rollover refinement: if a same-side new attack start supersedes a
+  still-active clean event, the old event is finalized as `WHIFF` instead of
+  `UNKNOWN + SUPERSEDED_BY_NEW_START`. `R` / rollover unknown remains reserved
+  for contact/projectile-like/throw-protected ambiguous events.
 - Phase 2C still does not export event rows, transition summaries, rewards, or
   trainer-visible labels. These results are lifecycle/debug labels until the
   Phase 6 contact resolver and move-family validation prove them safe.

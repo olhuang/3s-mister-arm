@@ -11,6 +11,9 @@ static RLCombatAttackEventRing self_attack_ring;
 static RLCombatAttackEventRing opponent_attack_ring;
 static RLCombatEventStats combat_event_stats;
 
+static bool RLCombatEvent_IsCleanBasicWhiff(const RLCombatAttackEvent* event);
+static bool RLCombatEvent_IsCleanFastWhiff(const RLCombatAttackEvent* event);
+
 static RLCombatAttackEventRing* RLCombatEvent_RingForSide(RLCombatEventSide side) {
     switch (side) {
     case RL_COMBAT_EVENT_SIDE_SELF:
@@ -290,11 +293,19 @@ u32 RLCombatEvent_FinalizeActiveSide(u64 run_id,
 
     for (u32 i = 0; i < RL_COMBAT_ATTACK_EVENT_RING_CAP; i++) {
         RLCombatAttackEvent* event = &ring->events[i];
+        RLCombatAttackEventResult event_result = result;
+        RLCombatAttackFinalizeReason event_reason = reason;
         if (event->status != RL_COMBAT_ATTACK_EVENT_ACTIVE || event->run_id != run_id ||
             event->episode_id != episode_id || event->side != side) {
             continue;
         }
-        if (RLCombatEvent_FinalizeSlot(event, result, reason, frame_id, decision_id)) {
+        if (reason == RL_COMBAT_ATTACK_FINALIZE_SUPERSEDED_BY_NEW_START &&
+            result == RL_COMBAT_ATTACK_RESULT_UNKNOWN &&
+            (RLCombatEvent_IsCleanBasicWhiff(event) || RLCombatEvent_IsCleanFastWhiff(event))) {
+            event_result = RL_COMBAT_ATTACK_RESULT_WHIFF;
+            event_reason = RL_COMBAT_ATTACK_FINALIZE_BASIC_WHIFF_WINDOW;
+        }
+        if (RLCombatEvent_FinalizeSlot(event, event_result, event_reason, frame_id, decision_id)) {
             finalized++;
         }
     }

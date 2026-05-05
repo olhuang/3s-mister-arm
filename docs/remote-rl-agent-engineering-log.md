@@ -2,6 +2,47 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-05: Combat Event Attribution Clean Rollover Whiff Fix
+
+Milestone:
+- Milestone 6: Combat event attribution Phase 2 live overlay smoke refinement
+
+Files changed:
+- `src/rl/rl_combat_event.c`
+- `docs/agent-memory/remote-rl-combat-event-attribution-plan.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Reduce intermittent `CEU ... R` rollover-unknown increments during live
+  overlay validation.
+
+Implementation notes:
+- `R` means a same-side new attack start arrived while the previous same-side
+  event was still active.
+- Clean superseded events now finalize as `WHIFF + BASIC_WHIFF_WINDOW` instead
+  of `UNKNOWN + SUPERSEDED_BY_NEW_START`.
+- Contact-protected, projectile-like, and throw-protected superseded events
+  still remain rollover unknowns because Phase 2 does not yet resolve those
+  outcomes.
+- No transition JSON, reward, inference, trainer, or event-journal export
+  behavior changed.
+
+Validation:
+- `git diff --check` passed.
+- `cc -std=c11 -Wall -Wextra -Isrc -Iinclude -c src/rl/rl_combat_event.c -o /tmp/rl_combat_event_wall.o` passed.
+- `/tmp/rl_combat_event_rollover_whiff_smoke` passed: clean rollover became
+  whiff, fast clean rollover tolerated projectile noise, and contact /
+  projectile-like rollovers remained `R`.
+- `tools/mister/build-game.sh --flavor telemetry` passed and rebuilt
+  `src/rl/rl_combat_event.c`; only the pre-existing minizip `mktemp` linker
+  warning appeared.
+
+Follow-up:
+- Rerun the Outcome / All overlay smoke. Occasional `R` after this change
+  should mostly correspond to protected ambiguous events, not ordinary clean
+  whiffs being superseded by the next attack.
+
 ## 2026-05-05: Combat Event Attribution Timeout Unknown Cleanup
 
 Milestone:

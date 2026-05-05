@@ -56,6 +56,21 @@ static void RLCombatEvent_RefreshActiveStats(void) {
     combat_event_stats.attack_active_opponent_count = RLCombatEvent_CountActive(&opponent_attack_ring);
 }
 
+static void RLCombatEvent_ResetEpisodeStats(void) {
+    combat_event_stats.attack_started_count = 0;
+    combat_event_stats.attack_finalized_count = 0;
+    combat_event_stats.attack_unknown_flush_count = 0;
+    combat_event_stats.attack_unknown_rollover_count = 0;
+    combat_event_stats.attack_whiff_count = 0;
+    combat_event_stats.attack_interrupted_count = 0;
+    combat_event_stats.attack_unknown_timeout_count = 0;
+    combat_event_stats.attack_dropped_start_count = 0;
+    combat_event_stats.attack_active_self_count = 0;
+    combat_event_stats.attack_active_opponent_count = 0;
+    combat_event_stats.episode_flush_count = 0;
+    combat_event_stats.episode_switch_flush_count = 0;
+}
+
 static u64 RLCombatEvent_AllocateEventId(void) {
     u64 event_id = combat_event_stats.next_event_id;
 
@@ -103,22 +118,28 @@ static bool RLCombatEvent_FinalizeSlot(RLCombatAttackEvent* event,
     event->end_frame = frame_id;
     event->end_decision_id = decision_id;
     combat_event_stats.attack_finalized_count++;
+    combat_event_stats.lifetime_attack_finalized_count++;
     if (reason == RL_COMBAT_ATTACK_FINALIZE_EPISODE_FLUSH && result == RL_COMBAT_ATTACK_RESULT_UNKNOWN) {
         combat_event_stats.attack_unknown_flush_count++;
+        combat_event_stats.lifetime_attack_unknown_flush_count++;
     }
     if (reason == RL_COMBAT_ATTACK_FINALIZE_SUPERSEDED_BY_NEW_START &&
         result == RL_COMBAT_ATTACK_RESULT_UNKNOWN) {
         combat_event_stats.attack_unknown_rollover_count++;
+        combat_event_stats.lifetime_attack_unknown_rollover_count++;
     }
     if (reason == RL_COMBAT_ATTACK_FINALIZE_BASIC_WHIFF_WINDOW && result == RL_COMBAT_ATTACK_RESULT_WHIFF) {
         combat_event_stats.attack_whiff_count++;
+        combat_event_stats.lifetime_attack_whiff_count++;
     }
     if (reason == RL_COMBAT_ATTACK_FINALIZE_BASIC_INTERRUPTED &&
         result == RL_COMBAT_ATTACK_RESULT_INTERRUPTED) {
         combat_event_stats.attack_interrupted_count++;
+        combat_event_stats.lifetime_attack_interrupted_count++;
     }
     if (reason == RL_COMBAT_ATTACK_FINALIZE_BASIC_UNKNOWN_TIMEOUT && result == RL_COMBAT_ATTACK_RESULT_UNKNOWN) {
         combat_event_stats.attack_unknown_timeout_count++;
+        combat_event_stats.lifetime_attack_unknown_timeout_count++;
     }
     RLCombatEvent_RefreshActiveStats();
     return true;
@@ -142,6 +163,7 @@ void RLCombatEvent_BeginEpisode(u64 run_id, u32 episode_id) {
         (combat_event_stats.run_id != run_id || combat_event_stats.episode_id != episode_id)) {
         RLCombatEvent_FlushEpisode(combat_event_stats.run_id, combat_event_stats.episode_id, 0, 0);
         combat_event_stats.episode_switch_flush_count++;
+        combat_event_stats.lifetime_episode_switch_flush_count++;
     }
 
     if (combat_event_stats.run_id != run_id) {
@@ -150,6 +172,7 @@ void RLCombatEvent_BeginEpisode(u64 run_id, u32 episode_id) {
 
     combat_event_stats.run_id = run_id;
     combat_event_stats.episode_id = episode_id;
+    RLCombatEvent_ResetEpisodeStats();
     RLCombatEvent_ClearRings();
 }
 
@@ -157,6 +180,7 @@ void RLCombatEvent_FlushEpisode(u64 run_id, u32 episode_id, u32 frame_id, u32 de
     RLCombatAttackEventRing* rings[] = { &self_attack_ring, &opponent_attack_ring };
 
     combat_event_stats.episode_flush_count++;
+    combat_event_stats.lifetime_episode_flush_count++;
     for (u32 r = 0; r < 2u; r++) {
         RLCombatAttackEventRing* ring = rings[r];
         for (u32 i = 0; i < RL_COMBAT_ATTACK_EVENT_RING_CAP; i++) {
@@ -182,6 +206,7 @@ const RLCombatAttackEvent* RLCombatEvent_StartAttack(const RLCombatAttackEventSt
     if (start == NULL || start->run_id == 0 || start->episode_id == 0 ||
         start->side == RL_COMBAT_EVENT_SIDE_NONE) {
         combat_event_stats.attack_dropped_start_count++;
+        combat_event_stats.lifetime_attack_dropped_start_count++;
         return NULL;
     }
 
@@ -193,6 +218,7 @@ const RLCombatAttackEvent* RLCombatEvent_StartAttack(const RLCombatAttackEventSt
     event = RLCombatEvent_FindReusableSlot(ring);
     if (event == NULL) {
         combat_event_stats.attack_dropped_start_count++;
+        combat_event_stats.lifetime_attack_dropped_start_count++;
         RLCombatEvent_RefreshActiveStats();
         return NULL;
     }
@@ -217,6 +243,7 @@ const RLCombatAttackEvent* RLCombatEvent_StartAttack(const RLCombatAttackEventSt
     event->policy_action_step = start->policy_action_step;
 
     combat_event_stats.attack_started_count++;
+    combat_event_stats.lifetime_attack_started_count++;
     RLCombatEvent_RefreshActiveStats();
     return event;
 }

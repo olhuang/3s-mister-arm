@@ -75,6 +75,14 @@ typedef struct RLRemoteDebugState {
     u32 combat_attack_dropped_start_count;
     u32 combat_attack_active_self_count;
     u32 combat_attack_active_opp_count;
+    u32 combat_lifetime_attack_started_count;
+    u32 combat_lifetime_attack_finalized_count;
+    u32 combat_lifetime_attack_whiff_count;
+    u32 combat_lifetime_attack_interrupted_count;
+    u32 combat_lifetime_attack_unknown_timeout_count;
+    u32 combat_lifetime_attack_unknown_flush_count;
+    u32 combat_lifetime_attack_unknown_rollover_count;
+    u32 combat_lifetime_attack_dropped_start_count;
     u32 model_version_current;
     u8 last_overlay_attack_contact;
     u8 last_overlay_attack_whiff;

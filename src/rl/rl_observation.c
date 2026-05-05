@@ -816,6 +816,22 @@ void RLObservation_FormatDebugOverlay(char* out, size_t out_size, const char* se
                                 (unsigned long)remote->combat_attack_unknown_flush_count,
                                 (unsigned long)remote->combat_attack_unknown_rollover_count,
                                 (unsigned long)remote->combat_attack_dropped_start_count);
+            append_overlay_line(out,
+                                out_size,
+                                &used,
+                                "CEL S%lu F%lu W%lu I%lu U%lu",
+                                (unsigned long)remote->combat_lifetime_attack_started_count,
+                                (unsigned long)remote->combat_lifetime_attack_finalized_count,
+                                (unsigned long)remote->combat_lifetime_attack_whiff_count,
+                                (unsigned long)remote->combat_lifetime_attack_interrupted_count,
+                                (unsigned long)remote->combat_lifetime_attack_unknown_timeout_count);
+            append_overlay_line(out,
+                                out_size,
+                                &used,
+                                "CELU F%lu R%lu D%lu",
+                                (unsigned long)remote->combat_lifetime_attack_unknown_flush_count,
+                                (unsigned long)remote->combat_lifetime_attack_unknown_rollover_count,
+                                (unsigned long)remote->combat_lifetime_attack_dropped_start_count);
         }
     }
 

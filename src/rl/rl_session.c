@@ -594,6 +594,14 @@ static void RLSession_UpdateCombatEventDebugStats(void) {
     remote_debug.combat_attack_dropped_start_count = stats->attack_dropped_start_count;
     remote_debug.combat_attack_active_self_count = stats->attack_active_self_count;
     remote_debug.combat_attack_active_opp_count = stats->attack_active_opponent_count;
+    remote_debug.combat_lifetime_attack_started_count = stats->lifetime_attack_started_count;
+    remote_debug.combat_lifetime_attack_finalized_count = stats->lifetime_attack_finalized_count;
+    remote_debug.combat_lifetime_attack_whiff_count = stats->lifetime_attack_whiff_count;
+    remote_debug.combat_lifetime_attack_interrupted_count = stats->lifetime_attack_interrupted_count;
+    remote_debug.combat_lifetime_attack_unknown_timeout_count = stats->lifetime_attack_unknown_timeout_count;
+    remote_debug.combat_lifetime_attack_unknown_flush_count = stats->lifetime_attack_unknown_flush_count;
+    remote_debug.combat_lifetime_attack_unknown_rollover_count = stats->lifetime_attack_unknown_rollover_count;
+    remote_debug.combat_lifetime_attack_dropped_start_count = stats->lifetime_attack_dropped_start_count;
 }
 
 const RLRemoteDebugState* RLSession_GetRemoteDebugState() {

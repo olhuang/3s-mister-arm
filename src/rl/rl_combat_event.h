@@ -144,6 +144,16 @@ typedef struct RLCombatEventStats {
     u32 attack_active_opponent_count;
     u32 episode_flush_count;
     u32 episode_switch_flush_count;
+    u32 lifetime_attack_started_count;
+    u32 lifetime_attack_finalized_count;
+    u32 lifetime_attack_unknown_flush_count;
+    u32 lifetime_attack_unknown_rollover_count;
+    u32 lifetime_attack_whiff_count;
+    u32 lifetime_attack_interrupted_count;
+    u32 lifetime_attack_unknown_timeout_count;
+    u32 lifetime_attack_dropped_start_count;
+    u32 lifetime_episode_flush_count;
+    u32 lifetime_episode_switch_flush_count;
 } RLCombatEventStats;
 
 void RLCombatEvent_ResetRun(u64 run_id);

@@ -1503,6 +1503,10 @@ Implementation status:
   finalized, active self/opponent, whiff, interrupted, and timeout-unknown
   counts; the all-view overlay also shows flush unknowns, rollover unknowns,
   and dropped starts.
+- 2026-05-05 round-stat refinement: the main `CE` / `CEU` overlay counters are
+  round-local and reset at episode begin, while event ids remain run-wide and
+  monotonic. `All` view additionally shows `CEL` / `CELU` lifetime counters for
+  long-run health checks.
 - Phase 2D intentionally does not add temporary transition-log fields or a
   partial event log. Disk/analyzer event visibility starts with the Phase 7
   schema v4 summary plus combat-event journal export, carried in the shared

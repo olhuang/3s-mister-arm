@@ -2615,6 +2615,7 @@ Tasks:
   - [x] Phase 2C: added conservative basic finalization windows: clean non-projectile attacks can finalize as whiff after the attack state ends, actor damage can finalize as interrupted, and contact/projectile/throw-protected events timeout as unknown instead of being mislabeled
   - [x] Phase 2D: expose OSD/debug visibility for event counts/results without promoting event labels into rewards or changing transition NDJSON; disk/analyzer event visibility remains Phase 7 event-journal work
   - [x] Phase 2 live-smoke refinement: whiff lifecycle now treats routine attack state as the active-window signal, not sticky `current_attack`, and requires each event to have seen attack routine active before it can finalize as `W`
+  - [x] Phase 2 overlay stats refinement: `CE` / `CEU` counters are round-local and reset at episode begin; `CEL` / `CELU` lifetime counters remain available in `All` view, while event ids stay run-wide monotonic
   - [ ] Phase 2 live overlay smoke: deploy telemetry build and compare `CE` / `CEU` debug overlay counts against visible attacks before treating Phase 2 as fully closed
 - [ ] Combat event attribution Phase 3: replace ambiguous generic `engine_*` ownership with side-explicit `self_engine_*` and `opp_engine_*` attribution at attack-event creation time, keeping unknown/confidence fields for unsupported mappings
 - [ ] Combat event attribution Phase 4: implement projectile event tracking so fireball spawn/hit/block/expire results are attributed to projectile ids instead of owner routine snapshots

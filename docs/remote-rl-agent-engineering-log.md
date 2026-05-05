@@ -2,6 +2,52 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-05: Combat Event Attribution Round-Local Overlay Stats
+
+Milestone:
+- Milestone 6: Combat event attribution Phase 2 live overlay smoke refinement
+
+Files changed:
+- `src/rl/rl_combat_event.h`
+- `src/rl/rl_combat_event.c`
+- `src/rl/rl_session.h`
+- `src/rl/rl_session.c`
+- `src/rl/rl_observation.c`
+- `docs/agent-memory/remote-rl-combat-event-attribution-plan.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Make combat-event OSD stats easier to validate by eye during live round
+  testing.
+
+Implementation notes:
+- Existing `CE` / `CEU` counters are now round-local and reset at
+  `RLCombatEvent_BeginEpisode()`.
+- Event ids and `next_event_id` remain run-wide and monotonic across rounds.
+- Added lifetime combat-event counters to `RLCombatEventStats` and
+  `RLRemoteDebugState`.
+- `All` overlay view now adds `CEL S/F/W/I/U` and `CELU F/R/D` lifetime lines
+  for long-run health checks, while the regular Outcome view stays focused on
+  current-round behavior.
+- No transition JSON, reward, inference, trainer, or event-journal export
+  behavior changed.
+
+Validation:
+- `git diff --check` passed.
+- `cc -std=c11 -Wall -Wextra -Isrc -Iinclude -c src/rl/rl_combat_event.c -o /tmp/rl_combat_event_wall.o` passed.
+- `/tmp/rl_combat_event_episode_stats_smoke` passed: round-local start/whiff
+  counts reset on episode begin, lifetime counts persisted, and event ids kept
+  increasing across episodes.
+- `tools/mister/build-game.sh --flavor telemetry` passed and rebuilt the RL and
+  touched game/menu objects; only the pre-existing minizip `mktemp` linker
+  warning appeared.
+
+Follow-up:
+- During the next MiSTer live smoke, use Outcome view for per-round `CE` /
+  `CEU` validation and All view only when checking lifetime drift or dropped
+  starts.
+
 ## 2026-05-05: Combat Event Attribution Phase 2 Whiff Lifecycle Live Fix
 
 Milestone:

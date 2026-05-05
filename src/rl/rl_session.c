@@ -1849,6 +1849,21 @@ static bool RLSession_CombatPolicyActionIsProjectileLike(u16 policy_action_id) {
     }
 }
 
+static bool RLSession_CombatAttackUsesFastWhiffFallback(u16 policy_action_id,
+                                                        u16 policy_sub_action_id,
+                                                        u16 current_attack,
+                                                        u8 kind_of_waza) {
+    const u16 attack_sub = RLSession_FirstAttackSubAction(current_attack);
+
+    if (RLSession_IsNormalPolicyAction(policy_action_id) && policy_sub_action_id == RL_POLICY_SUB_ACTION_LP) {
+        return true;
+    }
+    if (policy_action_id != RL_POLICY_ACTION_NEUTRAL && !RLSession_IsNormalPolicyAction(policy_action_id)) {
+        return false;
+    }
+    return (u8)(kind_of_waza & 0xf8u) == 0 && attack_sub == RL_POLICY_SUB_ACTION_LP;
+}
+
 static void RLSession_FillCombatAttackStart(RLCombatAttackEventStart* start,
                                             const RLDecisionLedgerEntry* entry,
                                             const RLObservationV1* obs,
@@ -1884,12 +1899,22 @@ static void RLSession_FillCombatAttackStart(RLCombatAttackEventStart* start,
             start->policy_action_step = entry->policy_requested_action_step;
         }
         start->projectile_like = (u8)RLSession_CombatPolicyActionIsProjectileLike(start->policy_action_id);
+        start->fast_whiff_fallback =
+            (u8)RLSession_CombatAttackUsesFastWhiffFallback(start->policy_action_id,
+                                                            start->policy_sub_action_id,
+                                                            start->current_attack,
+                                                            start->kind_of_waza);
     } else if (side == RL_COMBAT_EVENT_SIDE_OPPONENT) {
         start->character_id = entry->opponent_character_id;
         start->routine_1 = obs->opp_routine[1];
         start->routine_2 = obs->opp_routine[2];
         start->current_attack = obs->opp_current_attack;
         start->kind_of_waza = obs->opp_kind_of_waza;
+        start->fast_whiff_fallback =
+            (u8)RLSession_CombatAttackUsesFastWhiffFallback(RL_POLICY_ACTION_NEUTRAL,
+                                                            RL_POLICY_SUB_ACTION_NONE,
+                                                            start->current_attack,
+                                                            start->kind_of_waza);
     }
 }
 

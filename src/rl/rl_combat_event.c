@@ -238,6 +238,7 @@ const RLCombatAttackEvent* RLCombatEvent_StartAttack(const RLCombatAttackEventSt
     event->current_attack = start->current_attack;
     event->kind_of_waza = start->kind_of_waza;
     event->projectile_like = start->projectile_like;
+    event->fast_whiff_fallback = start->fast_whiff_fallback;
     event->whiff_eligible = 1;
     event->policy_action_id = start->policy_action_id;
     event->policy_sub_action_id = start->policy_sub_action_id;
@@ -313,6 +314,16 @@ static u32 RLCombatEvent_MaxPendingFrames(const RLCombatAttackEvent* event) {
     return RL_COMBAT_ATTACK_MAX_PENDING_FRAMES;
 }
 
+static bool RLCombatEvent_IsCleanBasicWhiff(const RLCombatAttackEvent* event) {
+    return event != NULL && event->whiff_eligible && !event->saw_target_contact_or_damage &&
+           !event->saw_projectile && !event->saw_throw && !event->projectile_like;
+}
+
+static bool RLCombatEvent_IsCleanFastWhiff(const RLCombatAttackEvent* event) {
+    return event != NULL && event->fast_whiff_fallback && event->whiff_eligible &&
+           !event->saw_target_contact_or_damage && !event->saw_throw && !event->projectile_like;
+}
+
 static bool RLCombatEvent_TryBasicFinalize(RLCombatAttackEvent* event, const RLCombatAttackEventUpdate* update) {
     const u32 age = RLCombatEvent_FrameAge(update->frame_id, event->start_frame);
 
@@ -329,9 +340,16 @@ static bool RLCombatEvent_TryBasicFinalize(RLCombatAttackEvent* event, const RLC
                                           update->decision_id);
     }
 
-    if (!update->actor_attack_state_active && event->whiff_eligible &&
-        age >= RL_COMBAT_ATTACK_MIN_WHIFF_FRAMES && !event->saw_target_contact_or_damage &&
-        !event->saw_projectile && !event->saw_throw && !event->projectile_like) {
+    if (RLCombatEvent_IsCleanFastWhiff(event) && age >= RL_COMBAT_ATTACK_FAST_WHIFF_FALLBACK_FRAMES) {
+        return RLCombatEvent_FinalizeSlot(event,
+                                          RL_COMBAT_ATTACK_RESULT_WHIFF,
+                                          RL_COMBAT_ATTACK_FINALIZE_BASIC_WHIFF_WINDOW,
+                                          update->frame_id,
+                                          update->decision_id);
+    }
+
+    if (!update->actor_attack_state_active && age >= RL_COMBAT_ATTACK_MIN_WHIFF_FRAMES &&
+        RLCombatEvent_IsCleanBasicWhiff(event)) {
         return RLCombatEvent_FinalizeSlot(event,
                                           RL_COMBAT_ATTACK_RESULT_WHIFF,
                                           RL_COMBAT_ATTACK_FINALIZE_BASIC_WHIFF_WINDOW,
@@ -340,6 +358,13 @@ static bool RLCombatEvent_TryBasicFinalize(RLCombatAttackEvent* event, const RLC
     }
 
     if (age >= RLCombatEvent_MaxPendingFrames(event)) {
+        if (RLCombatEvent_IsCleanBasicWhiff(event)) {
+            return RLCombatEvent_FinalizeSlot(event,
+                                              RL_COMBAT_ATTACK_RESULT_WHIFF,
+                                              RL_COMBAT_ATTACK_FINALIZE_BASIC_WHIFF_WINDOW,
+                                              update->frame_id,
+                                              update->decision_id);
+        }
         return RLCombatEvent_FinalizeSlot(event,
                                           RL_COMBAT_ATTACK_RESULT_UNKNOWN,
                                           RL_COMBAT_ATTACK_FINALIZE_BASIC_UNKNOWN_TIMEOUT,

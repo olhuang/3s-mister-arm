@@ -2,6 +2,53 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-05: Combat Event Attribution Timeout Unknown Cleanup
+
+Milestone:
+- Milestone 6: Combat event attribution Phase 2 live overlay smoke refinement
+
+Files changed:
+- `src/rl/rl_combat_event.h`
+- `src/rl/rl_combat_event.c`
+- `src/rl/rl_session.c`
+- `docs/agent-memory/remote-rl-combat-event-attribution-plan.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Reduce excessive round-local `CE ... U` counts and fix remaining quick LP
+  whiff misses observed during live overlay validation.
+
+Implementation notes:
+- Clean non-projectile events that reach the basic pending timeout without
+  target contact/damage, projectile, throw, or projectile-like evidence now
+  finalize as `WHIFF` instead of timeout `UNKNOWN`.
+- Normal LP starts now carry `fast_whiff_fallback`; if they remain clean for
+  20 frames they finalize as `WHIFF` even when the active-window signal stays
+  sticky.
+- The fast LP fallback intentionally ignores unrelated same-side projectile
+  noise, but still refuses to whiff if target contact/damage, throw evidence,
+  or projectile-like action evidence is present.
+- Contact/projectile-like/throw-protected events still remain `UNKNOWN` until
+  later attribution phases add explicit hit/block/projectile/throw resolvers.
+- No transition JSON, reward, inference, trainer, or event-journal export
+  behavior changed.
+
+Validation:
+- `git diff --check` passed.
+- `cc -std=c11 -Wall -Wextra -Isrc -Iinclude -c src/rl/rl_combat_event.c -o /tmp/rl_combat_event_wall.o` passed.
+- `/tmp/rl_combat_event_unknown_whiff_smoke` passed: fast LP whiffed despite
+  sticky active/projectile noise, clean non-fast timeouts became whiff, and
+  contact/projectile-like protected timeouts remained unknown.
+- `tools/mister/build-game.sh --flavor telemetry` passed and rebuilt
+  `src/rl/rl_combat_event.c` plus `src/rl/rl_session.c`; only the pre-existing
+  minizip `mktemp` linker warning appeared.
+
+Follow-up:
+- Rerun the Outcome overlay smoke. A high `U` count after this change should
+  mostly indicate contact/projectile-like/throw-protected events, not clean
+  whiffs leaking to timeout.
+
 ## 2026-05-05: Combat Event Attribution Fast Light Whiff Fix
 
 Milestone:

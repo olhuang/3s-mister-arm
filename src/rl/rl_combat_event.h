@@ -39,6 +39,7 @@
 #define RL_COMBAT_EVENT_ID_NONE 0ull
 #define RL_COMBAT_ATTACK_EVENT_RING_CAP 32u
 #define RL_COMBAT_ATTACK_MIN_WHIFF_FRAMES 12u
+#define RL_COMBAT_ATTACK_FAST_WHIFF_FALLBACK_FRAMES 20u
 #define RL_COMBAT_ATTACK_MAX_PENDING_FRAMES 96u
 #define RL_COMBAT_ATTACK_PROJECTILE_MAX_PENDING_FRAMES 180u
 
@@ -83,6 +84,7 @@ typedef struct RLCombatAttackEventStart {
     u16 current_attack;
     u8 kind_of_waza;
     u8 projectile_like;
+    u8 fast_whiff_fallback;
     u16 policy_action_id;
     u16 policy_sub_action_id;
     u16 policy_action_step;
@@ -107,6 +109,7 @@ typedef struct RLCombatAttackEvent {
     u8 kind_of_waza;
     u8 projectile_like;
     u8 whiff_eligible;
+    u8 fast_whiff_fallback;
     u8 saw_target_contact_or_damage;
     u8 saw_projectile;
     u8 saw_throw;

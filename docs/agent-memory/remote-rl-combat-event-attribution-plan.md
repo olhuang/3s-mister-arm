@@ -1497,6 +1497,11 @@ Implementation status:
   then uses routine attack state only to tell whether the active window is still
   open. This keeps very short light attacks from being missed when their routine
   active state is too brief to latch during live sampling.
+- 2026-05-05 timeout/LP refinement: clean non-projectile events that reach the
+  basic pending timeout without contact/projectile/throw evidence are finalized
+  as `WHIFF`, not `UNKNOWN`. Normal LP events also use a 20-frame fast whiff
+  fallback so sticky active-window evidence or unrelated same-side projectile
+  noise does not turn a visible light-punch whiff into timeout unknown.
 - Phase 2C still does not export event rows, transition summaries, rewards, or
   trainer-visible labels. These results are lifecycle/debug labels until the
   Phase 6 contact resolver and move-family validation prove them safe.

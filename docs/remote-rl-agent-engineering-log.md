@@ -2,6 +2,48 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-05: Combat Event Attribution Timeout Cause Overlay
+
+Milestone:
+- Milestone 6: Combat event attribution Phase 2 live overlay smoke refinement
+
+Files changed:
+- `src/rl/rl_combat_event.h`
+- `src/rl/rl_combat_event.c`
+- `src/rl/rl_session.h`
+- `src/rl/rl_session.c`
+- `src/rl/rl_observation.c`
+- `docs/agent-memory/remote-rl-combat-event-attribution-plan.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Diagnose live cases where simultaneous self/opponent whiffs show `S1/1` but
+  one side goes to timeout unknown.
+
+Implementation notes:
+- Added round-local self/opponent timeout-unknown cause counters for:
+  target contact/damage evidence, projectile evidence, throw evidence,
+  projectile-like action evidence, and not-whiff-eligible events.
+- All view now adds:
+  `CEUC Cself/opp Pself/opp Tself/opp` and
+  `CEUL Lself/opp Nself/opp`.
+- Outcome/event lifecycle, transition JSON, reward, inference, trainer, and
+  event-journal export behavior are unchanged.
+
+Validation:
+- `git diff --check` passed.
+- `cc -std=c11 -Wall -Wextra -Isrc -Iinclude -c src/rl/rl_combat_event.c -o /tmp/rl_combat_event_wall.o` passed.
+- `/tmp/rl_combat_event_u_cause_smoke` passed: timeout unknown causes were
+  counted on the correct self/opponent side.
+- `tools/mister/build-game.sh --flavor telemetry` passed and rebuilt the RL and
+  touched game/menu objects; only the pre-existing minizip `mktemp` linker
+  warning appeared.
+
+Follow-up:
+- In the next All-view smoke, inspect the side that goes `U`: `C`, `P`, `T`,
+  `L`, or `N` indicates which protection latch blocked clean whiff.
+
 ## 2026-05-05: Combat Event Attribution Side-Split Overlay Stats
 
 Milestone:

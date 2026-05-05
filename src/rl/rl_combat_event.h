@@ -159,6 +159,16 @@ typedef struct RLCombatEventStats {
     u32 attack_unknown_rollover_opponent_count;
     u32 attack_dropped_start_self_count;
     u32 attack_dropped_start_opponent_count;
+    u32 attack_unknown_timeout_contact_self_count;
+    u32 attack_unknown_timeout_contact_opponent_count;
+    u32 attack_unknown_timeout_projectile_self_count;
+    u32 attack_unknown_timeout_projectile_opponent_count;
+    u32 attack_unknown_timeout_throw_self_count;
+    u32 attack_unknown_timeout_throw_opponent_count;
+    u32 attack_unknown_timeout_projectile_like_self_count;
+    u32 attack_unknown_timeout_projectile_like_opponent_count;
+    u32 attack_unknown_timeout_not_whiff_self_count;
+    u32 attack_unknown_timeout_not_whiff_opponent_count;
     u32 attack_active_self_count;
     u32 attack_active_opponent_count;
     u32 episode_flush_count;

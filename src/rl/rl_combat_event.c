@@ -67,6 +67,37 @@ static void RLCombatEvent_IncrementSideCounter(RLCombatEventSide side, u32* self
     }
 }
 
+static void RLCombatEvent_RecordTimeoutUnknownCauses(const RLCombatAttackEvent* event) {
+    if (event == NULL) {
+        return;
+    }
+    if (event->saw_target_contact_or_damage) {
+        RLCombatEvent_IncrementSideCounter(event->side,
+                                           &combat_event_stats.attack_unknown_timeout_contact_self_count,
+                                           &combat_event_stats.attack_unknown_timeout_contact_opponent_count);
+    }
+    if (event->saw_projectile) {
+        RLCombatEvent_IncrementSideCounter(event->side,
+                                           &combat_event_stats.attack_unknown_timeout_projectile_self_count,
+                                           &combat_event_stats.attack_unknown_timeout_projectile_opponent_count);
+    }
+    if (event->saw_throw) {
+        RLCombatEvent_IncrementSideCounter(event->side,
+                                           &combat_event_stats.attack_unknown_timeout_throw_self_count,
+                                           &combat_event_stats.attack_unknown_timeout_throw_opponent_count);
+    }
+    if (event->projectile_like) {
+        RLCombatEvent_IncrementSideCounter(event->side,
+                                           &combat_event_stats.attack_unknown_timeout_projectile_like_self_count,
+                                           &combat_event_stats.attack_unknown_timeout_projectile_like_opponent_count);
+    }
+    if (!event->whiff_eligible) {
+        RLCombatEvent_IncrementSideCounter(event->side,
+                                           &combat_event_stats.attack_unknown_timeout_not_whiff_self_count,
+                                           &combat_event_stats.attack_unknown_timeout_not_whiff_opponent_count);
+    }
+}
+
 static void RLCombatEvent_ResetEpisodeStats(void) {
     combat_event_stats.attack_started_count = 0;
     combat_event_stats.attack_finalized_count = 0;
@@ -92,6 +123,16 @@ static void RLCombatEvent_ResetEpisodeStats(void) {
     combat_event_stats.attack_unknown_rollover_opponent_count = 0;
     combat_event_stats.attack_dropped_start_self_count = 0;
     combat_event_stats.attack_dropped_start_opponent_count = 0;
+    combat_event_stats.attack_unknown_timeout_contact_self_count = 0;
+    combat_event_stats.attack_unknown_timeout_contact_opponent_count = 0;
+    combat_event_stats.attack_unknown_timeout_projectile_self_count = 0;
+    combat_event_stats.attack_unknown_timeout_projectile_opponent_count = 0;
+    combat_event_stats.attack_unknown_timeout_throw_self_count = 0;
+    combat_event_stats.attack_unknown_timeout_throw_opponent_count = 0;
+    combat_event_stats.attack_unknown_timeout_projectile_like_self_count = 0;
+    combat_event_stats.attack_unknown_timeout_projectile_like_opponent_count = 0;
+    combat_event_stats.attack_unknown_timeout_not_whiff_self_count = 0;
+    combat_event_stats.attack_unknown_timeout_not_whiff_opponent_count = 0;
     combat_event_stats.attack_active_self_count = 0;
     combat_event_stats.attack_active_opponent_count = 0;
     combat_event_stats.episode_flush_count = 0;
@@ -185,6 +226,7 @@ static bool RLCombatEvent_FinalizeSlot(RLCombatAttackEvent* event,
         RLCombatEvent_IncrementSideCounter(event->side,
                                            &combat_event_stats.attack_unknown_timeout_self_count,
                                            &combat_event_stats.attack_unknown_timeout_opponent_count);
+        RLCombatEvent_RecordTimeoutUnknownCauses(event);
     }
     RLCombatEvent_RefreshActiveStats();
     return true;

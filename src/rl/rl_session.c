@@ -608,6 +608,21 @@ static void RLSession_UpdateCombatEventDebugStats(void) {
     remote_debug.combat_attack_unknown_rollover_opp_count = stats->attack_unknown_rollover_opponent_count;
     remote_debug.combat_attack_dropped_start_self_count = stats->attack_dropped_start_self_count;
     remote_debug.combat_attack_dropped_start_opp_count = stats->attack_dropped_start_opponent_count;
+    remote_debug.combat_attack_unknown_timeout_contact_self_count = stats->attack_unknown_timeout_contact_self_count;
+    remote_debug.combat_attack_unknown_timeout_contact_opp_count = stats->attack_unknown_timeout_contact_opponent_count;
+    remote_debug.combat_attack_unknown_timeout_projectile_self_count = stats->attack_unknown_timeout_projectile_self_count;
+    remote_debug.combat_attack_unknown_timeout_projectile_opp_count =
+        stats->attack_unknown_timeout_projectile_opponent_count;
+    remote_debug.combat_attack_unknown_timeout_throw_self_count = stats->attack_unknown_timeout_throw_self_count;
+    remote_debug.combat_attack_unknown_timeout_throw_opp_count = stats->attack_unknown_timeout_throw_opponent_count;
+    remote_debug.combat_attack_unknown_timeout_projectile_like_self_count =
+        stats->attack_unknown_timeout_projectile_like_self_count;
+    remote_debug.combat_attack_unknown_timeout_projectile_like_opp_count =
+        stats->attack_unknown_timeout_projectile_like_opponent_count;
+    remote_debug.combat_attack_unknown_timeout_not_whiff_self_count =
+        stats->attack_unknown_timeout_not_whiff_self_count;
+    remote_debug.combat_attack_unknown_timeout_not_whiff_opp_count =
+        stats->attack_unknown_timeout_not_whiff_opponent_count;
     remote_debug.combat_attack_active_self_count = stats->attack_active_self_count;
     remote_debug.combat_attack_active_opp_count = stats->attack_active_opponent_count;
     remote_debug.combat_lifetime_attack_started_count = stats->lifetime_attack_started_count;

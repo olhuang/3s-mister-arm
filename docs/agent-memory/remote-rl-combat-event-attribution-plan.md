@@ -1511,6 +1511,11 @@ Implementation status:
   Iself/opp Uself/opp`, and in All view `CEU Fself/opp Rself/opp Dself/opp`.
   This is debug visibility only; event totals and trainer behavior are
   unchanged.
+- 2026-05-05 timeout-cause overlay refinement: All view additionally shows
+  `CEUC Cself/opp Pself/opp Tself/opp` for timeout unknowns caused by
+  contact/damage, projectile, or throw evidence, plus `CEUL Lself/opp
+  Nself/opp` for projectile-like and not-whiff-eligible timeout unknowns.
+  These are diagnostic counters only.
 - Phase 2C still does not export event rows, transition summaries, rewards, or
   trainer-visible labels. These results are lifecycle/debug labels until the
   Phase 6 contact resolver and move-family validation prove them safe.

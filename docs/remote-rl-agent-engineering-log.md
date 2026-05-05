@@ -2,6 +2,46 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-05: Combat Event Phase 4B Projectile Edge-Case Contract
+
+Milestone:
+- Milestone 6: Combat event attribution Phase 4B documentation closeout
+
+Files changed:
+- `docs/plan-remote-rl-agent.md`
+- `docs/agent-memory/remote-rl-combat-event-attribution-plan.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Record the projectile edge-case behavior that passed live MiSTer validation
+  so later Phase 6/7 work has a stable contract for what Phase 4 owns and what
+  remains intentionally conservative.
+
+Implementation notes:
+- Marked Phase 4 live validation complete in the main RL plan.
+- Documented `CP` as projectile started/finalized/active counters and `CPR` as
+  projectile result counters.
+- Recorded the accepted result contract:
+  - `CPR H`: clear damage / HP / stun evidence.
+  - `CPR B`: explicit block reaction only.
+  - `CPR X`: clean disappearance/expiry, including the accepted current clash
+    behavior of `X +1/+1`.
+  - `CPR U`: parry and evidence-insufficient projectile outcomes until Phase 6.
+- Recorded that projectile-like parent attacks are projectile-claimed after
+  spawn linkage, so `CPR` is the fireball outcome source of truth and `CEU R`
+  should not be interpreted as projectile failure.
+- Recorded that transient VS pause preserves combat counters.
+
+Validation:
+- User live report: pause preservation, fireball spawn, hit, block, fly-out,
+  clash, parry, and parent `CEU R` cleanup all passed.
+- `git diff --check` passed.
+
+Follow-up:
+- Phase 5 can proceed to throw tracking.
+- Phase 6 should revisit parry and projectile clash as attribution/contact
+  matching problems rather than Phase 4 lifecycle bugs.
+
 ## 2026-05-05: Combat Event Phase 4A Projectile Parent Cleanup
 
 Milestone:

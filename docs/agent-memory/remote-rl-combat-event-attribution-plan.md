@@ -1642,12 +1642,49 @@ Implementation status:
 - Transition schema v8 adds projectile counter snapshots for live validation,
   and the overlay adds `CP` / `CPR` side-split projectile counters. Event journal
   rows remain Phase 7.
+- 2026-05-05 Phase 4 live validation passed on MiSTer. The accepted Phase 4B
+  contract is:
+  - `CP S/F/A` tracks projectile event started/finalized/active counters, not
+    owner routine snapshots.
+  - `CPR H` means the projectile saw clear damage / HP / stun evidence.
+  - `CPR B` means the projectile saw an explicit block reaction. Broad
+    `guard_flag` / `entered_contact_state` evidence is not enough by itself.
+  - `CPR X` means the projectile cleanly disappeared/expired, including the
+    accepted Phase 4 clash behavior where both sides' projectile events expire
+    as `X +1/+1`.
+  - `CPR U` is accepted for parry and other evidence-insufficient projectile
+    outcomes until Phase 6 contact matching adds stronger attribution.
+  - Projectile-like parent attacks are finalized as projectile-claimed when a
+    projectile spawn links to them. `CPR` is therefore the source of truth for
+    fireball success/failure; `CEU R` must not be used as fireball failure.
+  - Transient VS pause suspends RL action/observation handling but does not
+    flush or reset combat-event counters.
+
+Phase 4B edge-case notes:
+
+- Fireball spawn: expect `CP S +1/+0` and `CP F +1/+0` for a complete visible
+  projectile lifecycle.
+- Fireball hit: expect `CPR H +1/+0`; the linked parent attack must not add
+  `CEU R +1/+0`.
+- Fireball block: expect `CPR B +1/+0`; the linked parent attack must not add
+  `CEU R +1/+0`.
+- Fireball fly-out: expect `CPR X +1/+0`.
+- Fireball clash/cancel: Phase 4 accepts `CPR X +1/+1`. Exact
+  projectile-nullification identity is deferred to Phase 6.
+- Fireball parry: Phase 4 accepts `CPR U +1/+0`. A dedicated parry result is a
+  Phase 6+ schema/semantic decision, not a Phase 4 requirement.
+- Current observation still exposes only one selected projectile per frame, so
+  simultaneous-projectile handling remains conservative. Do not promote `CPR`
+  edge cases to hard reward labels until Phase 6 consumed-delta/contact matching
+  validates them across characters and projectile families.
 
 Validation:
 
 - scripted `fireball-lp/mp/hp` at close/mid/far
 - projectile spawn count matches visible projectiles
 - projectile hit/block/chip results consume the matching HP/stun/contact delta
+- live Outcome overlay confirms pause preservation, hit/block/fly-out/clash/parry
+  behavior, and no projectile-parent `CEU R` pollution
 
 Done when:
 

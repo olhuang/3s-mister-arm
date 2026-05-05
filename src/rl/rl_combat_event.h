@@ -38,10 +38,13 @@
 
 #define RL_COMBAT_EVENT_ID_NONE 0ull
 #define RL_COMBAT_ATTACK_EVENT_RING_CAP 32u
+#define RL_COMBAT_PROJECTILE_EVENT_RING_CAP 16u
 #define RL_COMBAT_ATTACK_MIN_WHIFF_FRAMES 12u
 #define RL_COMBAT_ATTACK_FAST_WHIFF_FALLBACK_FRAMES 20u
 #define RL_COMBAT_ATTACK_MAX_PENDING_FRAMES 96u
 #define RL_COMBAT_ATTACK_PROJECTILE_MAX_PENDING_FRAMES 180u
+#define RL_COMBAT_PROJECTILE_MAX_PENDING_FRAMES 240u
+#define RL_COMBAT_PROJECTILE_MISSING_FINALIZE_FRAMES 2u
 
 typedef enum RLCombatEventSide {
     RL_COMBAT_EVENT_SIDE_NONE = 0,
@@ -71,6 +74,28 @@ typedef enum RLCombatAttackFinalizeReason {
     RL_COMBAT_ATTACK_FINALIZE_BASIC_INTERRUPTED = 5,
     RL_COMBAT_ATTACK_FINALIZE_BASIC_UNKNOWN_TIMEOUT = 6,
 } RLCombatAttackFinalizeReason;
+
+typedef enum RLCombatProjectileEventStatus {
+    RL_COMBAT_PROJECTILE_EVENT_EMPTY = 0,
+    RL_COMBAT_PROJECTILE_EVENT_ACTIVE = 1,
+    RL_COMBAT_PROJECTILE_EVENT_FINALIZED = 2,
+} RLCombatProjectileEventStatus;
+
+typedef enum RLCombatProjectileResult {
+    RL_COMBAT_PROJECTILE_RESULT_PENDING = 0,
+    RL_COMBAT_PROJECTILE_RESULT_HIT = 1,
+    RL_COMBAT_PROJECTILE_RESULT_BLOCKED = 2,
+    RL_COMBAT_PROJECTILE_RESULT_EXPIRED = 3,
+    RL_COMBAT_PROJECTILE_RESULT_UNKNOWN = 4,
+} RLCombatProjectileResult;
+
+typedef enum RLCombatProjectileFinalizeReason {
+    RL_COMBAT_PROJECTILE_FINALIZE_NONE = 0,
+    RL_COMBAT_PROJECTILE_FINALIZE_EPISODE_FLUSH = 1,
+    RL_COMBAT_PROJECTILE_FINALIZE_DISAPPEARED = 2,
+    RL_COMBAT_PROJECTILE_FINALIZE_CONTACT = 3,
+    RL_COMBAT_PROJECTILE_FINALIZE_TIMEOUT = 4,
+} RLCombatProjectileFinalizeReason;
 
 typedef struct RLCombatAttackEventStart {
     u64 run_id;
@@ -157,6 +182,61 @@ typedef struct RLCombatAttackEventUpdate {
     u8 throw_active_for_side;
 } RLCombatAttackEventUpdate;
 
+typedef struct RLCombatProjectileEventUpdate {
+    u64 run_id;
+    u32 episode_id;
+    u32 decision_id;
+    u32 frame_id;
+    RLCombatEventSide owner_side;
+    u8 any_projectile_active;
+    u8 projectile_active_for_side;
+    s16 projectile_rel_x;
+    s16 projectile_rel_y;
+    s16 projectile_vel_x;
+    s16 projectile_time_to_self;
+    u8 target_guard;
+    u8 target_contact_or_damage;
+    u8 target_entered_hit_stop;
+    u8 target_entered_contact_state;
+    u8 target_entered_damage_state;
+    u8 target_hp_delta;
+    u8 target_stun_delta;
+} RLCombatProjectileEventUpdate;
+
+typedef struct RLCombatProjectileEvent {
+    RLCombatProjectileEventStatus status;
+    RLCombatProjectileResult result;
+    RLCombatProjectileFinalizeReason finalize_reason;
+    u64 event_id;
+    u64 parent_attack_event_id;
+    u64 run_id;
+    u32 episode_id;
+    u32 start_decision_id;
+    u32 start_frame;
+    u32 end_decision_id;
+    u32 end_frame;
+    RLCombatEventSide owner_side;
+    s16 spawn_rel_x;
+    s16 spawn_rel_y;
+    s16 spawn_vel_x;
+    s16 spawn_time_to_self;
+    s16 last_rel_x;
+    s16 last_rel_y;
+    s16 last_vel_x;
+    s16 last_time_to_self;
+    u16 engine_action_id;
+    u16 engine_sub_action_id;
+    u8 engine_label_source;
+    u8 missing_frames;
+    u8 saw_target_guard;
+    u8 saw_target_contact_or_damage;
+    u8 saw_target_hit_stop;
+    u8 saw_target_contact_state;
+    u8 saw_target_damage_state;
+    u8 saw_target_hp_delta;
+    u8 saw_target_stun_delta;
+} RLCombatProjectileEvent;
+
 typedef struct RLCombatEventStats {
     u64 run_id;
     u32 episode_id;
@@ -207,6 +287,29 @@ typedef struct RLCombatEventStats {
     u32 attack_unknown_timeout_not_whiff_opponent_count;
     u32 attack_active_self_count;
     u32 attack_active_opponent_count;
+    u32 projectile_started_count;
+    u32 projectile_finalized_count;
+    u32 projectile_hit_count;
+    u32 projectile_blocked_count;
+    u32 projectile_expired_count;
+    u32 projectile_unknown_count;
+    u32 projectile_dropped_start_count;
+    u32 projectile_started_self_count;
+    u32 projectile_started_opponent_count;
+    u32 projectile_finalized_self_count;
+    u32 projectile_finalized_opponent_count;
+    u32 projectile_hit_self_count;
+    u32 projectile_hit_opponent_count;
+    u32 projectile_blocked_self_count;
+    u32 projectile_blocked_opponent_count;
+    u32 projectile_expired_self_count;
+    u32 projectile_expired_opponent_count;
+    u32 projectile_unknown_self_count;
+    u32 projectile_unknown_opponent_count;
+    u32 projectile_dropped_start_self_count;
+    u32 projectile_dropped_start_opponent_count;
+    u32 projectile_active_self_count;
+    u32 projectile_active_opponent_count;
     u32 episode_flush_count;
     u32 episode_switch_flush_count;
     u32 lifetime_attack_started_count;
@@ -217,6 +320,13 @@ typedef struct RLCombatEventStats {
     u32 lifetime_attack_interrupted_count;
     u32 lifetime_attack_unknown_timeout_count;
     u32 lifetime_attack_dropped_start_count;
+    u32 lifetime_projectile_started_count;
+    u32 lifetime_projectile_finalized_count;
+    u32 lifetime_projectile_hit_count;
+    u32 lifetime_projectile_blocked_count;
+    u32 lifetime_projectile_expired_count;
+    u32 lifetime_projectile_unknown_count;
+    u32 lifetime_projectile_dropped_start_count;
     u32 lifetime_episode_flush_count;
     u32 lifetime_episode_switch_flush_count;
 } RLCombatEventStats;
@@ -238,7 +348,9 @@ u32 RLCombatEvent_FinalizeActiveSide(u64 run_id,
                                      u32 frame_id,
                                      u32 decision_id);
 u32 RLCombatEvent_UpdateActiveAttacks(const RLCombatAttackEventUpdate* update);
+u32 RLCombatEvent_UpdateProjectiles(const RLCombatProjectileEventUpdate* update);
 const RLCombatAttackEvent* RLCombatEvent_FindAttack(u64 event_id);
+const RLCombatProjectileEvent* RLCombatEvent_FindProjectile(u64 event_id);
 const RLCombatEventStats* RLCombatEvent_GetStats(void);
 
 #endif

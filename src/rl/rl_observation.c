@@ -817,6 +817,28 @@ void RLObservation_FormatDebugOverlay(char* out, size_t out_size, const char* se
                             (unsigned long)remote->combat_attack_interrupted_opp_count,
                             (unsigned long)remote->combat_attack_unknown_timeout_self_count,
                             (unsigned long)remote->combat_attack_unknown_timeout_opp_count);
+        append_overlay_line(out,
+                            out_size,
+                            &used,
+                            "CP S%lu/%lu F%lu/%lu A%lu/%lu",
+                            (unsigned long)remote->combat_projectile_started_self_count,
+                            (unsigned long)remote->combat_projectile_started_opp_count,
+                            (unsigned long)remote->combat_projectile_finalized_self_count,
+                            (unsigned long)remote->combat_projectile_finalized_opp_count,
+                            (unsigned long)remote->combat_projectile_active_self_count,
+                            (unsigned long)remote->combat_projectile_active_opp_count);
+        append_overlay_line(out,
+                            out_size,
+                            &used,
+                            "CPR H%lu/%lu B%lu/%lu X%lu/%lu U%lu/%lu",
+                            (unsigned long)remote->combat_projectile_hit_self_count,
+                            (unsigned long)remote->combat_projectile_hit_opp_count,
+                            (unsigned long)remote->combat_projectile_blocked_self_count,
+                            (unsigned long)remote->combat_projectile_blocked_opp_count,
+                            (unsigned long)remote->combat_projectile_expired_self_count,
+                            (unsigned long)remote->combat_projectile_expired_opp_count,
+                            (unsigned long)remote->combat_projectile_unknown_self_count,
+                            (unsigned long)remote->combat_projectile_unknown_opp_count);
         if (show_all) {
             append_overlay_line(out,
                                 out_size,

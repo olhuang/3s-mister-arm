@@ -1623,6 +1623,26 @@ Work:
 - resolve projectile hit/block/chip/expired
 - avoid using owner current routine as the hit source after spawn
 
+Implementation status:
+
+- 2026-05-05 Phase 4A foundation added an owner-side projectile event ring in
+  `rl_combat_event.*`. Projectile events use the same monotonic event id
+  allocator as attack events and keep `parent_attack_event_id` when a recent
+  projectile-like fireball attack event is available.
+- Projectile updates are intentionally conservative: each active owner-side
+  projectile records spawn/last relative position, velocity, time-to-self, and
+  target contact/damage/guard evidence. Disappearance after a short missing
+  window finalizes as hit, blocked, expired, or unknown only when evidence is
+  strong enough.
+- The current observation schema still exposes only one selected projectile per
+  frame. If another projectile hides the owner-side projectile, the tracker does
+  not immediately expire the hidden event; it waits for no projectile to be
+  visible or for timeout. This avoids false expirations during clashes but may
+  leave conservative unknowns.
+- Transition schema v8 adds projectile counter snapshots for live validation,
+  and the overlay adds `CP` / `CPR` side-split projectile counters. Event journal
+  rows remain Phase 7.
+
 Validation:
 
 - scripted `fireball-lp/mp/hp` at close/mid/far

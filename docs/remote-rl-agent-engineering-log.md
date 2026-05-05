@@ -2,6 +2,56 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-05: Combat Event Phase 4A Projectile Lifecycle Foundation
+
+Milestone:
+- Milestone 6: Combat event attribution Phase 4A
+
+Files changed:
+- `src/rl/rl_combat_event.h`
+- `src/rl/rl_combat_event.c`
+- `src/rl/rl_session.h`
+- `src/rl/rl_session.c`
+- `src/rl/rl_observation.c`
+- `tools/rl_probe_server.py`
+- `docs/agent-memory/remote-rl-combat-event-attribution-plan.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Start Phase 4 by giving projectiles their own lifecycle tracker instead of
+  relying on delayed owner routine snapshots. This foundation is conservative:
+  it records projectile spawn/active/finalize counters and links spawns to
+  recent projectile-like attack events, but leaves exact contact consumption to
+  the later matcher work.
+
+Implementation notes:
+- Added a fixed-size projectile event ring with shared monotonic event ids,
+  owner side, optional `parent_attack_event_id`, spawn/last projectile position,
+  velocity, time-to-self, and target contact/damage/guard evidence.
+- Projectile finalization now classifies clear damage as hit, guarded contact
+  as blocked, clean disappearance as expired, and ambiguous contact/clash as
+  unknown.
+- Because `RLObservationV1` currently exports only one selected projectile per
+  frame, hidden owner-side projectiles are not immediately expired while any
+  projectile is still visible. They finalize when no projectile is visible for
+  a short missing window or when timeout is reached.
+- Added OSD `CP` / `CPR` side-split counters and transition schema v8 projectile
+  counter snapshots for live validation.
+
+Validation:
+- `cc -std=c11 -Wall -Wextra -Isrc -Iinclude -c src/rl/rl_combat_event.c -o /tmp/rl_combat_event_phase4.o`
+  passed.
+- `python3 -m py_compile tools/rl_probe_server.py tools/analyze_rl_transitions.py`
+  passed.
+- `git diff --check` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed, rebuilding
+  `rl_combat_event.c`, `rl_observation.c`, and `rl_session.c` for ARM. The
+  build still emits the existing third-party minizip `mktemp` linker warning.
+- Live validation pending: fireball close/mid/far should increment `CP S/F/A`,
+  blocked fireballs should prefer `CPR B`, damaging fireballs should prefer
+  `CPR H`, and ambiguous fireball clashes may remain `CPR X` or `CPR U`.
+
 ## 2026-05-05: Combat Event Phase 3 Side-Explicit Engine Attribution
 
 Milestone:
@@ -50,9 +100,10 @@ Validation:
 - `tools/mister/build-game.sh --flavor telemetry` passed, rebuilding the
   touched RL C files for ARM. The build still emits the existing third-party
   minizip `mktemp` linker warning.
-- Live validation remains pending: deploy the telemetry package and record a
-  short Ryu-vs-Ryu smoke where self/opponent normals and fireballs populate
-  `self_engine_*` / `opp_engine_*` without side swaps.
+- Live validation passed with `logs/phase3-side-engine-live.ndjson`: schema v7
+  had 15 self engine labels, 22 opponent engine labels, 0 generic/self
+  mismatches, and 0 opponent pollution in generic `engine_*` across four visual
+  side swaps.
 
 ## 2026-05-05: Combat Event EC-Only Whiff Refinement
 

@@ -2628,8 +2628,10 @@ Tasks:
   - [x] Phase 3 side-explicit export foundation: transition schema v7 adds `self_engine_*` and `opp_engine_*` root fields while keeping generic `engine_*` as a self-side compatibility alias
   - [x] Phase 3 event-start attribution foundation: self/opponent attack-event starts carry side-local Ryu engine action/sub-action/routine/current-attack/KW/source/lag fields when supported; unsupported characters remain unknown
   - [x] Phase 3 local validation: `rl_combat_event.c` warning compile, Python analyzer/probe compile, `git diff --check`, and telemetry ARM build passed
-  - [ ] Phase 3 live validation: Ryu-vs-Ryu smoke where self and opponent fireballs/normals both populate side-explicit engine fields without side swaps
+  - [x] Phase 3 live validation: `logs/phase3-side-engine-live.ndjson` schema v7 showed self/opponent engine labels through four visual side swaps; generic `engine_*` matched self only with zero opponent pollution
 - [ ] Combat event attribution Phase 4: implement projectile event tracking so fireball spawn/hit/block/expire results are attributed to projectile ids instead of owner routine snapshots
+  - [x] Phase 4A projectile lifecycle foundation: added a fixed-size projectile event ring with shared monotonic event ids, owner-side spawn tracking, parent fireball attack linking, conservative hit/block/expired/unknown finalization, OSD `CP`/`CPR` counters, and schema v8 transition counter snapshots
+  - [ ] Phase 4 live validation: fireball-lp/mp/hp at close/mid/far should increment `CP S/F/A`; blocked fireballs should prefer `CPR B`, damaging fireballs should prefer `CPR H`, and fireball clashes / ambiguous disappearance may remain `CPR X` or `CPR U`
 - [ ] Combat event attribution Phase 5: implement throw event tracking so close guard failures can distinguish thrown/tech/whiff/unknown from strike or chip damage
 - [ ] Combat event attribution Phase 6a: implement edge-triggered contact-to-attack/projectile/throw matching with consumed HP/stun deltas, trade handling, confidence, and attribution failure events
 - [ ] Combat event attribution Phase 6b: implement defense result emission with intended action, actual guard state at contact, target_state, wakeup context, block_possible, confidence, and failure reasons

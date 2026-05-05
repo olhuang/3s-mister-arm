@@ -7,12 +7,19 @@ typedef struct RLCombatAttackEventRing {
     u32 cursor;
 } RLCombatAttackEventRing;
 
+typedef struct RLCombatProjectileEventRing {
+    RLCombatProjectileEvent events[RL_COMBAT_PROJECTILE_EVENT_RING_CAP];
+    u32 cursor;
+} RLCombatProjectileEventRing;
+
 static RLCombatAttackEventRing self_attack_ring;
 static RLCombatAttackEventRing opponent_attack_ring;
+static RLCombatProjectileEventRing projectile_ring;
 static RLCombatEventStats combat_event_stats;
 
 static bool RLCombatEvent_IsCleanBasicWhiff(const RLCombatAttackEvent* event);
 static bool RLCombatEvent_IsCleanFastWhiff(const RLCombatAttackEvent* event);
+static u32 RLCombatEvent_FrameAge(u32 frame_id, u32 start_frame);
 
 static RLCombatAttackEventRing* RLCombatEvent_RingForSide(RLCombatEventSide side) {
     switch (side) {
@@ -54,9 +61,26 @@ static u32 RLCombatEvent_CountActive(const RLCombatAttackEventRing* ring) {
     return count;
 }
 
+static u32 RLCombatEvent_CountActiveProjectilesForSide(RLCombatEventSide side) {
+    u32 count = 0;
+
+    for (u32 i = 0; i < RL_COMBAT_PROJECTILE_EVENT_RING_CAP; i++) {
+        const RLCombatProjectileEvent* event = &projectile_ring.events[i];
+        if (event->status == RL_COMBAT_PROJECTILE_EVENT_ACTIVE && event->owner_side == side) {
+            count++;
+        }
+    }
+
+    return count;
+}
+
 static void RLCombatEvent_RefreshActiveStats(void) {
     combat_event_stats.attack_active_self_count = RLCombatEvent_CountActive(&self_attack_ring);
     combat_event_stats.attack_active_opponent_count = RLCombatEvent_CountActive(&opponent_attack_ring);
+    combat_event_stats.projectile_active_self_count =
+        RLCombatEvent_CountActiveProjectilesForSide(RL_COMBAT_EVENT_SIDE_SELF);
+    combat_event_stats.projectile_active_opponent_count =
+        RLCombatEvent_CountActiveProjectilesForSide(RL_COMBAT_EVENT_SIDE_OPPONENT);
 }
 
 static void RLCombatEvent_IncrementSideCounter(RLCombatEventSide side, u32* self_count, u32* opponent_count) {
@@ -170,6 +194,29 @@ static void RLCombatEvent_ResetEpisodeStats(void) {
     combat_event_stats.attack_unknown_timeout_not_whiff_opponent_count = 0;
     combat_event_stats.attack_active_self_count = 0;
     combat_event_stats.attack_active_opponent_count = 0;
+    combat_event_stats.projectile_started_count = 0;
+    combat_event_stats.projectile_finalized_count = 0;
+    combat_event_stats.projectile_hit_count = 0;
+    combat_event_stats.projectile_blocked_count = 0;
+    combat_event_stats.projectile_expired_count = 0;
+    combat_event_stats.projectile_unknown_count = 0;
+    combat_event_stats.projectile_dropped_start_count = 0;
+    combat_event_stats.projectile_started_self_count = 0;
+    combat_event_stats.projectile_started_opponent_count = 0;
+    combat_event_stats.projectile_finalized_self_count = 0;
+    combat_event_stats.projectile_finalized_opponent_count = 0;
+    combat_event_stats.projectile_hit_self_count = 0;
+    combat_event_stats.projectile_hit_opponent_count = 0;
+    combat_event_stats.projectile_blocked_self_count = 0;
+    combat_event_stats.projectile_blocked_opponent_count = 0;
+    combat_event_stats.projectile_expired_self_count = 0;
+    combat_event_stats.projectile_expired_opponent_count = 0;
+    combat_event_stats.projectile_unknown_self_count = 0;
+    combat_event_stats.projectile_unknown_opponent_count = 0;
+    combat_event_stats.projectile_dropped_start_self_count = 0;
+    combat_event_stats.projectile_dropped_start_opponent_count = 0;
+    combat_event_stats.projectile_active_self_count = 0;
+    combat_event_stats.projectile_active_opponent_count = 0;
     combat_event_stats.episode_flush_count = 0;
     combat_event_stats.episode_switch_flush_count = 0;
 }
@@ -267,9 +314,132 @@ static bool RLCombatEvent_FinalizeSlot(RLCombatAttackEvent* event,
     return true;
 }
 
+static RLCombatProjectileEvent* RLCombatEvent_FindReusableProjectileSlot(void) {
+    for (u32 scanned = 0; scanned < RL_COMBAT_PROJECTILE_EVENT_RING_CAP; scanned++) {
+        const u32 index = (projectile_ring.cursor + scanned) % RL_COMBAT_PROJECTILE_EVENT_RING_CAP;
+        RLCombatProjectileEvent* event = &projectile_ring.events[index];
+        if (event->status != RL_COMBAT_PROJECTILE_EVENT_ACTIVE) {
+            projectile_ring.cursor = (index + 1u) % RL_COMBAT_PROJECTILE_EVENT_RING_CAP;
+            return event;
+        }
+    }
+
+    return NULL;
+}
+
+static RLCombatProjectileEvent* RLCombatEvent_FindActiveProjectileForSide(RLCombatEventSide side) {
+    for (u32 i = 0; i < RL_COMBAT_PROJECTILE_EVENT_RING_CAP; i++) {
+        RLCombatProjectileEvent* event = &projectile_ring.events[i];
+        if (event->status == RL_COMBAT_PROJECTILE_EVENT_ACTIVE && event->owner_side == side) {
+            return event;
+        }
+    }
+
+    return NULL;
+}
+
+static const RLCombatAttackEvent* RLCombatEvent_FindRecentProjectileAttack(RLCombatEventSide side,
+                                                                           u64 run_id,
+                                                                           u32 episode_id,
+                                                                           u32 frame_id) {
+    const RLCombatAttackEventRing* ring = RLCombatEvent_ConstRingForSide(side);
+    const RLCombatAttackEvent* best = NULL;
+    u32 best_age = RL_COMBAT_ATTACK_PROJECTILE_MAX_PENDING_FRAMES + 1u;
+
+    if (ring == NULL) {
+        return NULL;
+    }
+
+    for (u32 i = 0; i < RL_COMBAT_ATTACK_EVENT_RING_CAP; i++) {
+        const RLCombatAttackEvent* event = &ring->events[i];
+        u32 age = 0;
+        if (event->status == RL_COMBAT_ATTACK_EVENT_EMPTY || event->run_id != run_id ||
+            event->episode_id != episode_id || event->side != side || !event->projectile_like) {
+            continue;
+        }
+        age = RLCombatEvent_FrameAge(frame_id, event->start_frame);
+        if (age <= RL_COMBAT_ATTACK_PROJECTILE_MAX_PENDING_FRAMES && age < best_age) {
+            best = event;
+            best_age = age;
+        }
+    }
+
+    return best;
+}
+
+static RLCombatProjectileResult RLCombatEvent_ProjectileResultFromEvidence(const RLCombatProjectileEvent* event,
+                                                                           bool disappeared) {
+    if (event == NULL) {
+        return RL_COMBAT_PROJECTILE_RESULT_UNKNOWN;
+    }
+    if (event->saw_target_guard &&
+        (event->saw_target_contact_or_damage || event->saw_target_hit_stop || event->saw_target_contact_state ||
+         event->saw_target_hp_delta)) {
+        return RL_COMBAT_PROJECTILE_RESULT_BLOCKED;
+    }
+    if (event->saw_target_damage_state || event->saw_target_hp_delta || event->saw_target_stun_delta) {
+        return RL_COMBAT_PROJECTILE_RESULT_HIT;
+    }
+    if (event->saw_target_contact_or_damage || event->saw_target_hit_stop || event->saw_target_contact_state) {
+        return RL_COMBAT_PROJECTILE_RESULT_UNKNOWN;
+    }
+    return disappeared ? RL_COMBAT_PROJECTILE_RESULT_EXPIRED : RL_COMBAT_PROJECTILE_RESULT_UNKNOWN;
+}
+
+static bool RLCombatEvent_FinalizeProjectileSlot(RLCombatProjectileEvent* event,
+                                                 RLCombatProjectileResult result,
+                                                 RLCombatProjectileFinalizeReason reason,
+                                                 u32 frame_id,
+                                                 u32 decision_id) {
+    if (event == NULL || event->status != RL_COMBAT_PROJECTILE_EVENT_ACTIVE ||
+        result == RL_COMBAT_PROJECTILE_RESULT_PENDING) {
+        return false;
+    }
+
+    event->status = RL_COMBAT_PROJECTILE_EVENT_FINALIZED;
+    event->result = result;
+    event->finalize_reason = reason;
+    event->end_frame = frame_id;
+    event->end_decision_id = decision_id;
+    combat_event_stats.projectile_finalized_count++;
+    combat_event_stats.lifetime_projectile_finalized_count++;
+    RLCombatEvent_IncrementSideCounter(event->owner_side,
+                                       &combat_event_stats.projectile_finalized_self_count,
+                                       &combat_event_stats.projectile_finalized_opponent_count);
+    if (result == RL_COMBAT_PROJECTILE_RESULT_HIT) {
+        combat_event_stats.projectile_hit_count++;
+        combat_event_stats.lifetime_projectile_hit_count++;
+        RLCombatEvent_IncrementSideCounter(event->owner_side,
+                                           &combat_event_stats.projectile_hit_self_count,
+                                           &combat_event_stats.projectile_hit_opponent_count);
+    } else if (result == RL_COMBAT_PROJECTILE_RESULT_BLOCKED) {
+        combat_event_stats.projectile_blocked_count++;
+        combat_event_stats.lifetime_projectile_blocked_count++;
+        RLCombatEvent_IncrementSideCounter(event->owner_side,
+                                           &combat_event_stats.projectile_blocked_self_count,
+                                           &combat_event_stats.projectile_blocked_opponent_count);
+    } else if (result == RL_COMBAT_PROJECTILE_RESULT_EXPIRED) {
+        combat_event_stats.projectile_expired_count++;
+        combat_event_stats.lifetime_projectile_expired_count++;
+        RLCombatEvent_IncrementSideCounter(event->owner_side,
+                                           &combat_event_stats.projectile_expired_self_count,
+                                           &combat_event_stats.projectile_expired_opponent_count);
+    } else if (result == RL_COMBAT_PROJECTILE_RESULT_UNKNOWN) {
+        combat_event_stats.projectile_unknown_count++;
+        combat_event_stats.lifetime_projectile_unknown_count++;
+        RLCombatEvent_IncrementSideCounter(event->owner_side,
+                                           &combat_event_stats.projectile_unknown_self_count,
+                                           &combat_event_stats.projectile_unknown_opponent_count);
+    }
+
+    RLCombatEvent_RefreshActiveStats();
+    return true;
+}
+
 static void RLCombatEvent_ClearRings(void) {
     memset(&self_attack_ring, 0, sizeof(self_attack_ring));
     memset(&opponent_attack_ring, 0, sizeof(opponent_attack_ring));
+    memset(&projectile_ring, 0, sizeof(projectile_ring));
     RLCombatEvent_RefreshActiveStats();
 }
 
@@ -317,6 +487,18 @@ void RLCombatEvent_FlushEpisode(u64 run_id, u32 episode_id, u32 frame_id, u32 de
                                        frame_id,
                                        decision_id);
         }
+    }
+    for (u32 i = 0; i < RL_COMBAT_PROJECTILE_EVENT_RING_CAP; i++) {
+        RLCombatProjectileEvent* event = &projectile_ring.events[i];
+        if (event->status != RL_COMBAT_PROJECTILE_EVENT_ACTIVE || event->run_id != run_id ||
+            event->episode_id != episode_id) {
+            continue;
+        }
+        RLCombatEvent_FinalizeProjectileSlot(event,
+                                             RL_COMBAT_PROJECTILE_RESULT_UNKNOWN,
+                                             RL_COMBAT_PROJECTILE_FINALIZE_EPISODE_FLUSH,
+                                             frame_id,
+                                             decision_id);
     }
     RLCombatEvent_RefreshActiveStats();
 }
@@ -387,6 +569,75 @@ const RLCombatAttackEvent* RLCombatEvent_StartAttack(const RLCombatAttackEventSt
     RLCombatEvent_IncrementSideCounter(event->side,
                                        &combat_event_stats.attack_started_self_count,
                                        &combat_event_stats.attack_started_opponent_count);
+    RLCombatEvent_RefreshActiveStats();
+    return event;
+}
+
+static RLCombatProjectileEvent* RLCombatEvent_StartProjectile(const RLCombatProjectileEventUpdate* update) {
+    RLCombatProjectileEvent* event = NULL;
+    const RLCombatAttackEvent* parent = NULL;
+
+    if (update == NULL || update->run_id == 0 || update->episode_id == 0 ||
+        update->owner_side == RL_COMBAT_EVENT_SIDE_NONE || !update->projectile_active_for_side) {
+        combat_event_stats.projectile_dropped_start_count++;
+        combat_event_stats.lifetime_projectile_dropped_start_count++;
+        if (update != NULL) {
+            RLCombatEvent_IncrementSideCounter(update->owner_side,
+                                               &combat_event_stats.projectile_dropped_start_self_count,
+                                               &combat_event_stats.projectile_dropped_start_opponent_count);
+        }
+        return NULL;
+    }
+
+    if (combat_event_stats.run_id != update->run_id || combat_event_stats.episode_id != update->episode_id) {
+        RLCombatEvent_BeginEpisode(update->run_id, update->episode_id);
+    }
+
+    event = RLCombatEvent_FindReusableProjectileSlot();
+    if (event == NULL) {
+        combat_event_stats.projectile_dropped_start_count++;
+        combat_event_stats.lifetime_projectile_dropped_start_count++;
+        RLCombatEvent_IncrementSideCounter(update->owner_side,
+                                           &combat_event_stats.projectile_dropped_start_self_count,
+                                           &combat_event_stats.projectile_dropped_start_opponent_count);
+        RLCombatEvent_RefreshActiveStats();
+        return NULL;
+    }
+
+    parent = RLCombatEvent_FindRecentProjectileAttack(update->owner_side,
+                                                     update->run_id,
+                                                     update->episode_id,
+                                                     update->frame_id);
+
+    memset(event, 0, sizeof(*event));
+    event->status = RL_COMBAT_PROJECTILE_EVENT_ACTIVE;
+    event->result = RL_COMBAT_PROJECTILE_RESULT_PENDING;
+    event->event_id = RLCombatEvent_AllocateEventId();
+    event->parent_attack_event_id = parent != NULL ? parent->event_id : RL_COMBAT_EVENT_ID_NONE;
+    event->run_id = update->run_id;
+    event->episode_id = update->episode_id;
+    event->start_decision_id = update->decision_id;
+    event->start_frame = update->frame_id;
+    event->owner_side = update->owner_side;
+    event->spawn_rel_x = update->projectile_rel_x;
+    event->spawn_rel_y = update->projectile_rel_y;
+    event->spawn_vel_x = update->projectile_vel_x;
+    event->spawn_time_to_self = update->projectile_time_to_self;
+    event->last_rel_x = update->projectile_rel_x;
+    event->last_rel_y = update->projectile_rel_y;
+    event->last_vel_x = update->projectile_vel_x;
+    event->last_time_to_self = update->projectile_time_to_self;
+    if (parent != NULL) {
+        event->engine_action_id = parent->engine_action_id;
+        event->engine_sub_action_id = parent->engine_sub_action_id;
+        event->engine_label_source = parent->engine_label_source;
+    }
+
+    combat_event_stats.projectile_started_count++;
+    combat_event_stats.lifetime_projectile_started_count++;
+    RLCombatEvent_IncrementSideCounter(event->owner_side,
+                                       &combat_event_stats.projectile_started_self_count,
+                                       &combat_event_stats.projectile_started_opponent_count);
     RLCombatEvent_RefreshActiveStats();
     return event;
 }
@@ -558,6 +809,74 @@ u32 RLCombatEvent_UpdateActiveAttacks(const RLCombatAttackEventUpdate* update) {
     return finalized;
 }
 
+static void RLCombatEvent_AccumulateProjectileEvidence(RLCombatProjectileEvent* event,
+                                                       const RLCombatProjectileEventUpdate* update) {
+    if (event == NULL || update == NULL) {
+        return;
+    }
+
+    event->saw_target_guard |= (u8)(update->target_guard != 0);
+    event->saw_target_contact_or_damage |= (u8)(update->target_contact_or_damage != 0);
+    event->saw_target_hit_stop |= (u8)(update->target_entered_hit_stop != 0);
+    event->saw_target_contact_state |= (u8)(update->target_entered_contact_state != 0);
+    event->saw_target_damage_state |= (u8)(update->target_entered_damage_state != 0);
+    event->saw_target_hp_delta |= (u8)(update->target_hp_delta != 0);
+    event->saw_target_stun_delta |= (u8)(update->target_stun_delta != 0);
+}
+
+u32 RLCombatEvent_UpdateProjectiles(const RLCombatProjectileEventUpdate* update) {
+    RLCombatProjectileEvent* event = NULL;
+    u32 finalized = 0;
+    u32 age = 0;
+
+    if (update == NULL || update->run_id == 0 || update->episode_id == 0 ||
+        update->owner_side == RL_COMBAT_EVENT_SIDE_NONE) {
+        return 0;
+    }
+
+    event = RLCombatEvent_FindActiveProjectileForSide(update->owner_side);
+    if (update->projectile_active_for_side) {
+        if (event == NULL) {
+            event = RLCombatEvent_StartProjectile(update);
+        }
+        if (event != NULL) {
+            event->last_rel_x = update->projectile_rel_x;
+            event->last_rel_y = update->projectile_rel_y;
+            event->last_vel_x = update->projectile_vel_x;
+            event->last_time_to_self = update->projectile_time_to_self;
+            event->missing_frames = 0;
+            RLCombatEvent_AccumulateProjectileEvidence(event, update);
+        }
+    } else if (event != NULL) {
+        RLCombatEvent_AccumulateProjectileEvidence(event, update);
+        if (!update->any_projectile_active && event->missing_frames < 255u) {
+            event->missing_frames++;
+        }
+        age = RLCombatEvent_FrameAge(update->frame_id, event->start_frame);
+        if (event->missing_frames >= RL_COMBAT_PROJECTILE_MISSING_FINALIZE_FRAMES) {
+            const RLCombatProjectileResult result = RLCombatEvent_ProjectileResultFromEvidence(event, true);
+            const RLCombatProjectileFinalizeReason reason =
+                (result == RL_COMBAT_PROJECTILE_RESULT_EXPIRED) ? RL_COMBAT_PROJECTILE_FINALIZE_DISAPPEARED
+                                                                : RL_COMBAT_PROJECTILE_FINALIZE_CONTACT;
+            if (RLCombatEvent_FinalizeProjectileSlot(event, result, reason, update->frame_id, update->decision_id)) {
+                finalized++;
+            }
+        } else if (age >= RL_COMBAT_PROJECTILE_MAX_PENDING_FRAMES) {
+            const RLCombatProjectileResult result = RLCombatEvent_ProjectileResultFromEvidence(event, false);
+            if (RLCombatEvent_FinalizeProjectileSlot(event,
+                                                     result,
+                                                     RL_COMBAT_PROJECTILE_FINALIZE_TIMEOUT,
+                                                     update->frame_id,
+                                                     update->decision_id)) {
+                finalized++;
+            }
+        }
+    }
+
+    RLCombatEvent_RefreshActiveStats();
+    return finalized;
+}
+
 const RLCombatAttackEvent* RLCombatEvent_FindAttack(u64 event_id) {
     const RLCombatAttackEventRing* rings[] = {
         RLCombatEvent_ConstRingForSide(RL_COMBAT_EVENT_SIDE_SELF),
@@ -578,6 +897,21 @@ const RLCombatAttackEvent* RLCombatEvent_FindAttack(u64 event_id) {
             if (event->status != RL_COMBAT_ATTACK_EVENT_EMPTY && event->event_id == event_id) {
                 return event;
             }
+        }
+    }
+
+    return NULL;
+}
+
+const RLCombatProjectileEvent* RLCombatEvent_FindProjectile(u64 event_id) {
+    if (event_id == RL_COMBAT_EVENT_ID_NONE) {
+        return NULL;
+    }
+
+    for (u32 i = 0; i < RL_COMBAT_PROJECTILE_EVENT_RING_CAP; i++) {
+        const RLCombatProjectileEvent* event = &projectile_ring.events[i];
+        if (event->status != RL_COMBAT_PROJECTILE_EVENT_EMPTY && event->event_id == event_id) {
+            return event;
         }
     }
 

@@ -2,6 +2,63 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-05: Combat Event Attribution Phase 2C Basic Attack Finalization
+
+Milestone:
+- Milestone 6: Combat event attribution Phase 2C
+
+Files changed:
+- `src/rl/rl_combat_event.h`
+- `src/rl/rl_combat_event.c`
+- `src/rl/rl_session.c`
+- `docs/agent-memory/remote-rl-combat-event-attribution-plan.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Give Phase 2 attack events a conservative lifecycle beyond rollover and
+  episode flush, without implementing hit/block/projectile/throw attribution.
+
+Implementation notes:
+- Added basic finalize reasons:
+  `BASIC_WHIFF_WINDOW`, `BASIC_INTERRUPTED`, and `BASIC_UNKNOWN_TIMEOUT`.
+- Added event-side evidence latches:
+  `saw_target_contact_or_damage`, `saw_projectile`, `saw_throw`, and
+  `projectile_like`.
+- `RLCombatEvent_UpdateActiveAttacks()` now applies the basic lifecycle:
+  clean non-projectile attacks can become `WHIFF` after leaving attack state and
+  reaching the minimum whiff age; actor damage/stun can become `INTERRUPTED` if
+  target contact/damage was not already seen; protected/long-lived events become
+  `UNKNOWN` at timeout.
+- Projectile-like self policy actions and events that observed a same-side
+  projectile do not become basic whiffs; they use the longer projectile timeout
+  and remain `UNKNOWN` until Phase 4 projectile tracking exists.
+- `rl_session.c` now builds per-side update facts from the active ledger row and
+  current observation/delta facts, then updates both self and opponent active
+  attack events every frame with an active ledger entry.
+
+Non-goals:
+- No event export, transition summary, reward, inference, or trainer feature
+  change.
+- No hit/block/contact attribution, projectile lifecycle, throw lifecycle,
+  punish detection, or confidence/failure-reason model.
+
+Validation:
+- `git diff --check` passed.
+- `cc -std=c11 -Wall -Wextra -Isrc -Iinclude -c src/rl/rl_combat_event.c -o /tmp/rl_combat_event_wall.o` passed.
+- Standalone finalization smoke compiled and ran against
+  `src/rl/rl_combat_event.c`; it verified basic whiff, basic interrupted,
+  contact-protected unknown timeout, projectile-like extended timeout, and final
+  active-count cleanup.
+- `tools/mister/build-game.sh --flavor telemetry` passed and rebuilt
+  `src/rl/rl_combat_event.c` plus `src/rl/rl_session.c`; only the pre-existing
+  minizip `mktemp` linker warning appeared.
+
+Follow-up:
+- Phase 2D should expose debug/analyzer visibility for event counts/results so
+  a live run can compare attack-start/finalization counts against visible
+  attempts before event journal export.
+
 ## 2026-05-05: Combat Event Attribution Phase 2B Attack Start Events
 
 Milestone:

@@ -38,6 +38,9 @@
 
 #define RL_COMBAT_EVENT_ID_NONE 0ull
 #define RL_COMBAT_ATTACK_EVENT_RING_CAP 32u
+#define RL_COMBAT_ATTACK_MIN_WHIFF_FRAMES 12u
+#define RL_COMBAT_ATTACK_MAX_PENDING_FRAMES 96u
+#define RL_COMBAT_ATTACK_PROJECTILE_MAX_PENDING_FRAMES 180u
 
 typedef enum RLCombatEventSide {
     RL_COMBAT_EVENT_SIDE_NONE = 0,
@@ -63,6 +66,9 @@ typedef enum RLCombatAttackFinalizeReason {
     RL_COMBAT_ATTACK_FINALIZE_EXPLICIT = 1,
     RL_COMBAT_ATTACK_FINALIZE_EPISODE_FLUSH = 2,
     RL_COMBAT_ATTACK_FINALIZE_SUPERSEDED_BY_NEW_START = 3,
+    RL_COMBAT_ATTACK_FINALIZE_BASIC_WHIFF_WINDOW = 4,
+    RL_COMBAT_ATTACK_FINALIZE_BASIC_INTERRUPTED = 5,
+    RL_COMBAT_ATTACK_FINALIZE_BASIC_UNKNOWN_TIMEOUT = 6,
 } RLCombatAttackFinalizeReason;
 
 typedef struct RLCombatAttackEventStart {
@@ -76,6 +82,7 @@ typedef struct RLCombatAttackEventStart {
     u16 routine_2;
     u16 current_attack;
     u8 kind_of_waza;
+    u8 projectile_like;
     u16 policy_action_id;
     u16 policy_sub_action_id;
     u16 policy_action_step;
@@ -98,10 +105,27 @@ typedef struct RLCombatAttackEvent {
     u16 routine_2;
     u16 current_attack;
     u8 kind_of_waza;
+    u8 projectile_like;
+    u8 saw_target_contact_or_damage;
+    u8 saw_projectile;
+    u8 saw_throw;
     u16 policy_action_id;
     u16 policy_sub_action_id;
     u16 policy_action_step;
 } RLCombatAttackEvent;
+
+typedef struct RLCombatAttackEventUpdate {
+    u64 run_id;
+    u32 episode_id;
+    u32 decision_id;
+    u32 frame_id;
+    RLCombatEventSide side;
+    u8 actor_attack_state_active;
+    u8 actor_interrupted;
+    u8 target_contact_or_damage;
+    u8 projectile_active_for_side;
+    u8 throw_active_for_side;
+} RLCombatAttackEventUpdate;
 
 typedef struct RLCombatEventStats {
     u64 run_id;
@@ -111,6 +135,9 @@ typedef struct RLCombatEventStats {
     u32 attack_finalized_count;
     u32 attack_unknown_flush_count;
     u32 attack_unknown_rollover_count;
+    u32 attack_whiff_count;
+    u32 attack_interrupted_count;
+    u32 attack_unknown_timeout_count;
     u32 attack_dropped_start_count;
     u32 attack_active_self_count;
     u32 attack_active_opponent_count;
@@ -134,6 +161,7 @@ u32 RLCombatEvent_FinalizeActiveSide(u64 run_id,
                                      RLCombatAttackFinalizeReason reason,
                                      u32 frame_id,
                                      u32 decision_id);
+u32 RLCombatEvent_UpdateActiveAttacks(const RLCombatAttackEventUpdate* update);
 const RLCombatAttackEvent* RLCombatEvent_FindAttack(u64 event_id);
 const RLCombatEventStats* RLCombatEvent_GetStats(void);
 

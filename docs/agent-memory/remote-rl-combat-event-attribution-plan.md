@@ -1483,8 +1483,16 @@ Implementation status:
   active attack event, the previous active event is finalized as
   `UNKNOWN + SUPERSEDED_BY_NEW_START`. This is a ring-hygiene rollover only,
   not hit/block/whiff attribution.
-- Phase 2B still does not export event rows, transition summaries, rewards, or
-  trainer-visible labels.
+- 2026-05-05 Phase 2C adds conservative basic finalization windows. A clean
+  non-projectile event may become `WHIFF + BASIC_WHIFF_WINDOW` only after the
+  actor leaves attack state, the minimum whiff age is reached, and the event has
+  not seen target contact/damage, projectile, throw, or projectile-like policy
+  evidence. Actor damage/stun can become `INTERRUPTED + BASIC_INTERRUPTED`
+  when no target contact/damage was already observed. Protected or long-lived
+  events become `UNKNOWN + BASIC_UNKNOWN_TIMEOUT`.
+- Phase 2C still does not export event rows, transition summaries, rewards, or
+  trainer-visible labels. These results are lifecycle/debug labels until the
+  Phase 6 contact resolver and move-family validation prove them safe.
 
 Work:
 

@@ -255,6 +255,8 @@ static const RLLocalFakeAction kLocalFakeAgentSequence[] = {
 #define RL_DEMO_ATTRIBUTION_NONE 0u
 #define RL_DEMO_ATTRIBUTION_RYU_ENGINE_ROUTINE_START 1u
 #define RL_DEMO_ATTRIBUTION_RYU_ENGINE_NORMAL_ATTACK_START 2u
+#define RL_OBS_PROJECTILE_OWNER_SELF 1u
+#define RL_OBS_PROJECTILE_OWNER_OPPONENT 2u
 
 
 static u16 local_fake_action_index;
@@ -1808,6 +1810,17 @@ static bool RLSession_ObservationAttackStartedForSide(const RLObservationV1* obs
     }
 }
 
+static bool RLSession_CombatPolicyActionIsProjectileLike(u16 policy_action_id) {
+    switch (policy_action_id) {
+    case RL_POLICY_ACTION_RYU_FIREBALL:
+    case RL_POLICY_ACTION_RYU_SHINKUU_HADOUKEN:
+    case RL_POLICY_ACTION_RYU_DENJIN_HADOUKEN:
+        return true;
+    default:
+        return false;
+    }
+}
+
 static void RLSession_FillCombatAttackStart(RLCombatAttackEventStart* start,
                                             const RLDecisionLedgerEntry* entry,
                                             const RLObservationV1* obs,
@@ -1842,6 +1855,7 @@ static void RLSession_FillCombatAttackStart(RLCombatAttackEventStart* start,
             start->policy_sub_action_id = entry->policy_requested_sub_action_id;
             start->policy_action_step = entry->policy_requested_action_step;
         }
+        start->projectile_like = (u8)RLSession_CombatPolicyActionIsProjectileLike(start->policy_action_id);
     } else if (side == RL_COMBAT_EVENT_SIDE_OPPONENT) {
         start->character_id = entry->opponent_character_id;
         start->routine_1 = obs->opp_routine[1];
@@ -1873,6 +1887,69 @@ static void RLSession_MaybeStartCombatAttackEvent(RLDecisionLedgerEntry* entry,
                                      start.frame_id,
                                      start.decision_id);
     RLCombatEvent_StartAttack(&start);
+}
+
+static void RLSession_FillCombatAttackUpdate(RLCombatAttackEventUpdate* update,
+                                             const RLDecisionLedgerEntry* entry,
+                                             const RLObservationV1* obs,
+                                             RLCombatEventSide side,
+                                             s16 self_hp_delta,
+                                             s16 opp_hp_delta) {
+    if (update == NULL || entry == NULL || obs == NULL) {
+        return;
+    }
+
+    memset(update, 0, sizeof(*update));
+    update->run_id = entry->run_id;
+    update->episode_id = entry->episode_id;
+    update->decision_id = entry->decision_id;
+    update->frame_id = remote_debug.frame_id;
+    update->side = side;
+
+    if (side == RL_COMBAT_EVENT_SIDE_SELF) {
+        update->actor_attack_state_active = (u8)(obs->self_current_attack != 0 || obs->self_routine_attack_state);
+        update->actor_interrupted = (u8)(obs->self_entered_damage_state || self_hp_delta > 0 || obs->delta_self_stun > 0);
+        update->target_contact_or_damage =
+            (u8)(obs->opp_entered_hit_stop || obs->opp_entered_contact_state || obs->opp_entered_damage_state ||
+                 opp_hp_delta > 0 || obs->delta_opp_stun > 0);
+        update->projectile_active_for_side =
+            (u8)(obs->projectile_active && obs->projectile_owner == RL_OBS_PROJECTILE_OWNER_SELF);
+        update->throw_active_for_side = (u8)(obs->self_throw_active || obs->opp_throw_caught);
+    } else if (side == RL_COMBAT_EVENT_SIDE_OPPONENT) {
+        update->actor_attack_state_active = (u8)(obs->opp_current_attack != 0 || obs->opp_routine_attack_state);
+        update->actor_interrupted = (u8)(obs->opp_entered_damage_state || opp_hp_delta > 0 || obs->delta_opp_stun > 0);
+        update->target_contact_or_damage =
+            (u8)(obs->self_entered_hit_stop || obs->self_entered_contact_state || obs->self_entered_damage_state ||
+                 self_hp_delta > 0 || obs->delta_self_stun > 0);
+        update->projectile_active_for_side =
+            (u8)(obs->projectile_active && obs->projectile_owner == RL_OBS_PROJECTILE_OWNER_OPPONENT);
+    }
+}
+
+static void RLSession_UpdateCombatAttackEvents(RLDecisionLedgerEntry* entry,
+                                               const RLObservationV1* obs,
+                                               s16 self_hp_delta,
+                                               s16 opp_hp_delta) {
+    RLCombatAttackEventUpdate update;
+
+    if (entry == NULL || obs == NULL) {
+        return;
+    }
+
+    RLSession_FillCombatAttackUpdate(&update,
+                                     entry,
+                                     obs,
+                                     RL_COMBAT_EVENT_SIDE_SELF,
+                                     self_hp_delta,
+                                     opp_hp_delta);
+    RLCombatEvent_UpdateActiveAttacks(&update);
+    RLSession_FillCombatAttackUpdate(&update,
+                                     entry,
+                                     obs,
+                                     RL_COMBAT_EVENT_SIDE_OPPONENT,
+                                     self_hp_delta,
+                                     opp_hp_delta);
+    RLCombatEvent_UpdateActiveAttacks(&update);
 }
 
 static void RLSession_AccumulateAttackSignals(RLDecisionLedgerEntry* entry, const RLObservationV1* obs) {
@@ -1915,6 +1992,7 @@ static void RLSession_AccumulateCombatSpan(RLDecisionLedgerEntry* entry,
     entry->opp_throw_caught_started |= obs->opp_throw_caught_started;
     entry->self_throw_seen |= obs->self_throw_active;
     entry->opp_throw_caught_seen |= obs->opp_throw_caught;
+    RLSession_UpdateCombatAttackEvents(entry, obs, self_hp_delta, opp_hp_delta);
     RLSession_MaybeAttributeDemoEngineAction(entry, obs);
 }
 

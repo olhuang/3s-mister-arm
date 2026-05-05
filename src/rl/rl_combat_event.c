@@ -110,6 +110,16 @@ static bool RLCombatEvent_FinalizeSlot(RLCombatAttackEvent* event,
         result == RL_COMBAT_ATTACK_RESULT_UNKNOWN) {
         combat_event_stats.attack_unknown_rollover_count++;
     }
+    if (reason == RL_COMBAT_ATTACK_FINALIZE_BASIC_WHIFF_WINDOW && result == RL_COMBAT_ATTACK_RESULT_WHIFF) {
+        combat_event_stats.attack_whiff_count++;
+    }
+    if (reason == RL_COMBAT_ATTACK_FINALIZE_BASIC_INTERRUPTED &&
+        result == RL_COMBAT_ATTACK_RESULT_INTERRUPTED) {
+        combat_event_stats.attack_interrupted_count++;
+    }
+    if (reason == RL_COMBAT_ATTACK_FINALIZE_BASIC_UNKNOWN_TIMEOUT && result == RL_COMBAT_ATTACK_RESULT_UNKNOWN) {
+        combat_event_stats.attack_unknown_timeout_count++;
+    }
     RLCombatEvent_RefreshActiveStats();
     return true;
 }
@@ -201,6 +211,7 @@ const RLCombatAttackEvent* RLCombatEvent_StartAttack(const RLCombatAttackEventSt
     event->routine_2 = start->routine_2;
     event->current_attack = start->current_attack;
     event->kind_of_waza = start->kind_of_waza;
+    event->projectile_like = start->projectile_like;
     event->policy_action_id = start->policy_action_id;
     event->policy_sub_action_id = start->policy_sub_action_id;
     event->policy_action_step = start->policy_action_step;
@@ -255,6 +266,82 @@ u32 RLCombatEvent_FinalizeActiveSide(u64 run_id,
             continue;
         }
         if (RLCombatEvent_FinalizeSlot(event, result, reason, frame_id, decision_id)) {
+            finalized++;
+        }
+    }
+
+    RLCombatEvent_RefreshActiveStats();
+    return finalized;
+}
+
+static u32 RLCombatEvent_FrameAge(u32 frame_id, u32 start_frame) {
+    return (frame_id >= start_frame) ? (frame_id - start_frame) : 0;
+}
+
+static u32 RLCombatEvent_MaxPendingFrames(const RLCombatAttackEvent* event) {
+    if (event != NULL && (event->projectile_like || event->saw_projectile)) {
+        return RL_COMBAT_ATTACK_PROJECTILE_MAX_PENDING_FRAMES;
+    }
+    return RL_COMBAT_ATTACK_MAX_PENDING_FRAMES;
+}
+
+static bool RLCombatEvent_TryBasicFinalize(RLCombatAttackEvent* event, const RLCombatAttackEventUpdate* update) {
+    const u32 age = RLCombatEvent_FrameAge(update->frame_id, event->start_frame);
+
+    event->saw_target_contact_or_damage |= (u8)(update->target_contact_or_damage != 0);
+    event->saw_projectile |= (u8)(update->projectile_active_for_side != 0);
+    event->saw_throw |= (u8)(update->throw_active_for_side != 0);
+
+    if (update->actor_interrupted && !event->saw_target_contact_or_damage && age > 0) {
+        return RLCombatEvent_FinalizeSlot(event,
+                                          RL_COMBAT_ATTACK_RESULT_INTERRUPTED,
+                                          RL_COMBAT_ATTACK_FINALIZE_BASIC_INTERRUPTED,
+                                          update->frame_id,
+                                          update->decision_id);
+    }
+
+    if (!update->actor_attack_state_active && age >= RL_COMBAT_ATTACK_MIN_WHIFF_FRAMES &&
+        !event->saw_target_contact_or_damage && !event->saw_projectile && !event->saw_throw &&
+        !event->projectile_like) {
+        return RLCombatEvent_FinalizeSlot(event,
+                                          RL_COMBAT_ATTACK_RESULT_WHIFF,
+                                          RL_COMBAT_ATTACK_FINALIZE_BASIC_WHIFF_WINDOW,
+                                          update->frame_id,
+                                          update->decision_id);
+    }
+
+    if (age >= RLCombatEvent_MaxPendingFrames(event)) {
+        return RLCombatEvent_FinalizeSlot(event,
+                                          RL_COMBAT_ATTACK_RESULT_UNKNOWN,
+                                          RL_COMBAT_ATTACK_FINALIZE_BASIC_UNKNOWN_TIMEOUT,
+                                          update->frame_id,
+                                          update->decision_id);
+    }
+
+    return false;
+}
+
+u32 RLCombatEvent_UpdateActiveAttacks(const RLCombatAttackEventUpdate* update) {
+    RLCombatAttackEventRing* ring = NULL;
+    u32 finalized = 0;
+
+    if (update == NULL || update->run_id == 0 || update->episode_id == 0 ||
+        update->side == RL_COMBAT_EVENT_SIDE_NONE) {
+        return 0;
+    }
+
+    ring = RLCombatEvent_RingForSide(update->side);
+    if (ring == NULL) {
+        return 0;
+    }
+
+    for (u32 i = 0; i < RL_COMBAT_ATTACK_EVENT_RING_CAP; i++) {
+        RLCombatAttackEvent* event = &ring->events[i];
+        if (event->status != RL_COMBAT_ATTACK_EVENT_ACTIVE || event->run_id != update->run_id ||
+            event->episode_id != update->episode_id || event->side != update->side) {
+            continue;
+        }
+        if (RLCombatEvent_TryBasicFinalize(event, update)) {
             finalized++;
         }
     }

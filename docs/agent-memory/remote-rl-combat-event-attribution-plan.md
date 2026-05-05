@@ -1772,13 +1772,36 @@ Phase 5B/C planned result semantics:
 - Do not add throw labels to reward/trainer features until Phase 6 matching can
   consume HP/stun/contact deltas across attack/projectile/throw candidates.
 
+Phase 5C implementation contract:
+
+- `rl_combat_event` owns independent fixed-size throw rings for self and
+  opponent (`RL_COMBAT_THROW_EVENT_RING_CAP = 16` each). Throw event ids share
+  the same run-wide monotonic allocator as attack/projectile events.
+- Throw starts come only from symmetric throw-active rising edges:
+  `self_throw_started` for self owner and `opp_throw_started` for opponent
+  owner.
+- `CTR T` success is emitted only when the target-side caught state/edge is
+  observed (`opp_throw_caught*` for self owner, `self_throw_caught*` for
+  opponent owner).
+- `CTR W` whiff is emitted only when owner throw-active ends after the minimum
+  whiff window with no target caught evidence, no target contact/damage
+  evidence, no HP/stun delta, and no actor interruption.
+- `CTR U` unknown covers episode flush, timeout with conflicting evidence,
+  possible tech, interruption, or ambiguous contact/damage without caught
+  evidence.
+- Outcome overlay now shows:
+  - `CT S/F/A` for throw started/finalized/active side splits
+  - `CTR T/W/U` for throw success/whiff/unknown side splits
+- Phase 5C still does not change transition schema, reward, trainer features,
+  or the future combat event journal export.
+
 Minimal overlay/debug plan:
 
-- Phase 5C should add combat-event `CT S/F/A` side-split counters for throw
+- Phase 5C added combat-event `CT S/F/A` side-split counters for throw
   started/finalized/active.
-- Phase 5C should add `CTR T/W/U` side-split counters for throw success, whiff,
-  and unknown.
-- Keep these in the `Outcome` debug view with existing combat-event counters.
+- Phase 5C added `CTR T/W/U` side-split counters for throw success, whiff, and
+  unknown.
+- These stay in the `Outcome` debug view with existing combat-event counters.
 - Do not re-add raw input text or broad non-event debug lines to `Outcome`.
 - If raw bring-up evidence is needed before the ring is trusted, put it in a
   temporary Fight/Input diagnostic line or transition analyzer, not as learner

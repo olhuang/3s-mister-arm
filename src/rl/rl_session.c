@@ -713,6 +713,18 @@ static void RLSession_UpdateCombatEventDebugStats(void) {
     remote_debug.combat_projectile_unknown_opp_count = stats->projectile_unknown_opponent_count;
     remote_debug.combat_projectile_active_self_count = stats->projectile_active_self_count;
     remote_debug.combat_projectile_active_opp_count = stats->projectile_active_opponent_count;
+    remote_debug.combat_throw_started_self_count = stats->throw_started_self_count;
+    remote_debug.combat_throw_started_opp_count = stats->throw_started_opponent_count;
+    remote_debug.combat_throw_finalized_self_count = stats->throw_finalized_self_count;
+    remote_debug.combat_throw_finalized_opp_count = stats->throw_finalized_opponent_count;
+    remote_debug.combat_throw_success_self_count = stats->throw_success_self_count;
+    remote_debug.combat_throw_success_opp_count = stats->throw_success_opponent_count;
+    remote_debug.combat_throw_whiff_self_count = stats->throw_whiff_self_count;
+    remote_debug.combat_throw_whiff_opp_count = stats->throw_whiff_opponent_count;
+    remote_debug.combat_throw_unknown_self_count = stats->throw_unknown_self_count;
+    remote_debug.combat_throw_unknown_opp_count = stats->throw_unknown_opponent_count;
+    remote_debug.combat_throw_active_self_count = stats->throw_active_self_count;
+    remote_debug.combat_throw_active_opp_count = stats->throw_active_opponent_count;
     remote_debug.combat_lifetime_attack_started_count = stats->lifetime_attack_started_count;
     remote_debug.combat_lifetime_attack_finalized_count = stats->lifetime_attack_finalized_count;
     remote_debug.combat_lifetime_attack_whiff_count = stats->lifetime_attack_whiff_count;
@@ -2439,6 +2451,137 @@ static void RLSession_UpdateCombatProjectileEvents(RLDecisionLedgerEntry* entry,
     RLCombatEvent_UpdateProjectiles(&update);
 }
 
+static bool RLSession_ObservationThrowStartedForSide(const RLObservationV1* obs, RLCombatEventSide side) {
+    if (obs == NULL) {
+        return false;
+    }
+
+    switch (side) {
+    case RL_COMBAT_EVENT_SIDE_SELF:
+        return obs->self_throw_started != 0;
+    case RL_COMBAT_EVENT_SIDE_OPPONENT:
+        return obs->opp_throw_started != 0;
+    case RL_COMBAT_EVENT_SIDE_NONE:
+    default:
+        return false;
+    }
+}
+
+static void RLSession_FillCombatThrowStart(RLCombatThrowEventStart* start,
+                                           const RLDecisionLedgerEntry* entry,
+                                           const RLObservationV1* obs,
+                                           RLCombatEventSide owner_side) {
+    if (start == NULL || entry == NULL || obs == NULL) {
+        return;
+    }
+
+    memset(start, 0, sizeof(*start));
+    start->run_id = entry->run_id;
+    start->episode_id = entry->episode_id;
+    start->decision_id = entry->decision_id;
+    start->frame_id = remote_debug.frame_id;
+    start->owner_side = owner_side;
+    if (owner_side == RL_COMBAT_EVENT_SIDE_SELF) {
+        start->character_id = entry->agent_character_id;
+        start->routine_1 = obs->self_routine[1];
+        start->routine_2 = obs->self_routine[2];
+        start->current_attack = obs->self_current_attack;
+        start->kind_of_waza = obs->self_kind_of_waza;
+    } else if (owner_side == RL_COMBAT_EVENT_SIDE_OPPONENT) {
+        start->character_id = entry->opponent_character_id;
+        start->routine_1 = obs->opp_routine[1];
+        start->routine_2 = obs->opp_routine[2];
+        start->current_attack = obs->opp_current_attack;
+        start->kind_of_waza = obs->opp_kind_of_waza;
+    }
+}
+
+static void RLSession_MaybeStartCombatThrowEvent(RLDecisionLedgerEntry* entry,
+                                                 const RLObservationV1* obs,
+                                                 RLCombatEventSide owner_side) {
+    RLCombatThrowEventStart start;
+
+    if (entry == NULL || obs == NULL || !RLSession_ObservationThrowStartedForSide(obs, owner_side)) {
+        return;
+    }
+
+    RLSession_FillCombatThrowStart(&start, entry, obs, owner_side);
+    if (start.run_id == 0 || start.episode_id == 0 || start.owner_side == RL_COMBAT_EVENT_SIDE_NONE) {
+        return;
+    }
+
+    RLCombatEvent_StartThrow(&start);
+}
+
+static void RLSession_FillCombatThrowUpdate(RLCombatThrowEventUpdate* update,
+                                            const RLDecisionLedgerEntry* entry,
+                                            const RLObservationV1* obs,
+                                            RLCombatEventSide owner_side,
+                                            s16 self_hp_delta,
+                                            s16 opp_hp_delta) {
+    if (update == NULL || entry == NULL || obs == NULL) {
+        return;
+    }
+
+    memset(update, 0, sizeof(*update));
+    update->run_id = entry->run_id;
+    update->episode_id = entry->episode_id;
+    update->decision_id = entry->decision_id;
+    update->frame_id = remote_debug.frame_id;
+    update->owner_side = owner_side;
+
+    if (owner_side == RL_COMBAT_EVENT_SIDE_SELF) {
+        update->owner_throw_active = obs->self_throw_active;
+        update->target_caught = obs->opp_throw_caught;
+        update->target_caught_started = obs->opp_throw_caught_started;
+        update->actor_interrupted = (u8)(obs->self_entered_damage_state || self_hp_delta > 0 || obs->delta_self_stun > 0);
+        update->target_entered_hit_stop = obs->opp_entered_hit_stop;
+        update->target_entered_contact_state = obs->opp_entered_contact_state;
+        update->target_entered_damage_state = obs->opp_entered_damage_state;
+        update->target_hp_delta = (u8)(opp_hp_delta > 0);
+        update->target_stun_delta = (u8)(obs->delta_opp_stun > 0);
+    } else if (owner_side == RL_COMBAT_EVENT_SIDE_OPPONENT) {
+        update->owner_throw_active = obs->opp_throw_active;
+        update->target_caught = obs->self_throw_caught;
+        update->target_caught_started = obs->self_throw_caught_started;
+        update->actor_interrupted = (u8)(obs->opp_entered_damage_state || opp_hp_delta > 0 || obs->delta_opp_stun > 0);
+        update->target_entered_hit_stop = obs->self_entered_hit_stop;
+        update->target_entered_contact_state = obs->self_entered_contact_state;
+        update->target_entered_damage_state = obs->self_entered_damage_state;
+        update->target_hp_delta = (u8)(self_hp_delta > 0);
+        update->target_stun_delta = (u8)(obs->delta_self_stun > 0);
+    }
+    update->target_contact_or_damage =
+        (u8)(update->target_entered_hit_stop || update->target_entered_damage_state ||
+             update->target_hp_delta || update->target_stun_delta);
+}
+
+static void RLSession_UpdateCombatThrowEvents(RLDecisionLedgerEntry* entry,
+                                              const RLObservationV1* obs,
+                                              s16 self_hp_delta,
+                                              s16 opp_hp_delta) {
+    RLCombatThrowEventUpdate update;
+
+    if (entry == NULL || obs == NULL) {
+        return;
+    }
+
+    RLSession_FillCombatThrowUpdate(&update,
+                                    entry,
+                                    obs,
+                                    RL_COMBAT_EVENT_SIDE_SELF,
+                                    self_hp_delta,
+                                    opp_hp_delta);
+    RLCombatEvent_UpdateThrows(&update);
+    RLSession_FillCombatThrowUpdate(&update,
+                                    entry,
+                                    obs,
+                                    RL_COMBAT_EVENT_SIDE_OPPONENT,
+                                    self_hp_delta,
+                                    opp_hp_delta);
+    RLCombatEvent_UpdateThrows(&update);
+}
+
 static void RLSession_AccumulateAttackSignals(RLDecisionLedgerEntry* entry, const RLObservationV1* obs) {
     if (entry == NULL || obs == NULL) {
         return;
@@ -2454,6 +2597,8 @@ static void RLSession_AccumulateAttackSignals(RLDecisionLedgerEntry* entry, cons
     entry->opp_attack_routine_started |= obs->opp_attack_routine_started;
     RLSession_MaybeStartCombatAttackEvent(entry, obs, RL_COMBAT_EVENT_SIDE_SELF);
     RLSession_MaybeStartCombatAttackEvent(entry, obs, RL_COMBAT_EVENT_SIDE_OPPONENT);
+    RLSession_MaybeStartCombatThrowEvent(entry, obs, RL_COMBAT_EVENT_SIDE_SELF);
+    RLSession_MaybeStartCombatThrowEvent(entry, obs, RL_COMBAT_EVENT_SIDE_OPPONENT);
 }
 
 static void RLSession_AccumulateCombatSpan(RLDecisionLedgerEntry* entry,
@@ -2483,6 +2628,7 @@ static void RLSession_AccumulateCombatSpan(RLDecisionLedgerEntry* entry,
     entry->self_throw_caught_seen |= obs->self_throw_caught;
     entry->opp_throw_caught_seen |= obs->opp_throw_caught;
     RLSession_UpdateCombatProjectileEvents(entry, obs, self_hp_delta, opp_hp_delta);
+    RLSession_UpdateCombatThrowEvents(entry, obs, self_hp_delta, opp_hp_delta);
     RLSession_UpdateCombatAttackEvents(entry, obs, self_hp_delta, opp_hp_delta);
     RLSession_MaybeAttributeEngineActionForSide(entry, obs, RL_COMBAT_EVENT_SIDE_SELF);
     RLSession_MaybeAttributeEngineActionForSide(entry, obs, RL_COMBAT_EVENT_SIDE_OPPONENT);

@@ -2639,8 +2639,8 @@ Tasks:
 - [ ] Combat event attribution Phase 5: implement throw event tracking so close guard failures can distinguish thrown/tech/whiff/unknown from strike or chip damage
   - [x] Phase 5A throw evidence audit: documented current `tsukami_f` / `tsukamare_f`, routine-state, R2/KW, HP/stun, and close-range signals; confirmed current transition evidence is self-success oriented and must be made self/opponent symmetric before a throw ring is learner-safe
   - [x] Phase 5B throw observation symmetry: transition schema v9 adds self/opponent symmetric throw-active and throw-caught edge/seen fields (`self_throw_started`, `opp_throw_started`, `self_throw_caught_started`, `opp_throw_caught_started`, `self_throw_seen`, `opp_throw_seen`, `self_throw_caught_seen`, `opp_throw_caught_seen`) before creating result counters
-  - [ ] Phase 5C throw event ring foundation: add fixed-size self/opponent throw events with conservative success/whiff/unknown results, no reward or trainer adoption
-  - [ ] Phase 5D throw Outcome overlay/live validation: add `CT` / `CTR` side-split counters and validate self throw, opponent throw, whiff, ambiguous/tech-like, and pause-preserve cases
+  - [x] Phase 5C throw event ring foundation: added fixed-size self/opponent throw events with conservative success/whiff/unknown results plus Outcome `CT` / `CTR` side-split counters, no reward or trainer adoption
+  - [ ] Phase 5D throw Outcome overlay/live validation: validate `CT` / `CTR` side-split counters for self throw, opponent throw, whiff, ambiguous/tech-like, and pause-preserve cases
 - [ ] Combat event attribution Phase 6a: implement edge-triggered contact-to-attack/projectile/throw matching with consumed HP/stun deltas, trade handling, confidence, and attribution failure events
 - [ ] Combat event attribution Phase 6b: implement defense result emission with intended action, actual guard state at contact, target_state, wakeup context, block_possible, confidence, and failure reasons
 - [ ] Combat event attribution Phase 6c: implement punish detection after finalized unsafe/whiff/interrupted attack events with high-confidence gating

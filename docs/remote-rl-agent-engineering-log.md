@@ -2,6 +2,51 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-05: Combat Event Phase 5C Throw Event Ring Foundation
+
+Milestone:
+- Milestone 6: Combat event attribution Phase 5C
+
+Files changed:
+- `src/rl/rl_combat_event.h`
+- `src/rl/rl_combat_event.c`
+- `src/rl/rl_session.h`
+- `src/rl/rl_session.c`
+- `src/rl/rl_observation.c`
+- `docs/plan-remote-rl-agent.md`
+- `docs/agent-memory/remote-rl-combat-event-attribution-plan.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Add the first side-symmetric throw event ring and live Outcome counters, using
+  the Phase 5B throw/caught evidence without promoting throw labels into reward
+  or training features.
+
+Implementation notes:
+- Added self/opponent fixed-size throw rings in `rl_combat_event` with shared
+  run-wide event ids, episode flush, no active-slot overwrite, and conservative
+  success/whiff/unknown results.
+- Throw starts come only from `self_throw_started` / `opp_throw_started`.
+- Throw success (`CTR T`) requires target caught state/edge evidence.
+- Throw whiff (`CTR W`) requires owner throw-active to end after the whiff
+  window with no caught/contact/damage/HP/stun/interruption evidence.
+- Throw unknown (`CTR U`) covers episode flush, timeout with conflicting
+  evidence, possible tech-like cases, interruption, or ambiguous damage/contact
+  without caught evidence.
+- Outcome overlay now shows `CT S/F/A` and `CTR T/W/U` side-split counters.
+- Transition schema remains v9; no reward, learner feature, or event-journal
+  export adoption was added in this phase.
+
+Validation:
+- `git diff --check` passed.
+- `python3 -m py_compile tools/rl_probe_server.py tools/analyze_rl_transitions.py` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed.
+
+Follow-up:
+- Phase 5D live validation should check self throw success, opponent throw
+  success, clean throw whiff, ambiguous/tech-like cases, and pause-preserve
+  behavior in the Outcome overlay.
+
 ## 2026-05-05: Combat Event Phase 5B Throw Observation Symmetry
 
 Milestone:

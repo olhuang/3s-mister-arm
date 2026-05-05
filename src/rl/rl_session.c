@@ -2019,8 +2019,8 @@ static void RLSession_FillCombatAttackUpdate(RLCombatAttackEventUpdate* update,
         update->target_hp_delta = (u8)(opp_hp_delta > 0);
         update->target_stun_delta = (u8)(obs->delta_opp_stun > 0);
         update->target_contact_or_damage =
-            (u8)(update->target_entered_hit_stop || update->target_entered_contact_state ||
-                 update->target_entered_damage_state || update->target_hp_delta || update->target_stun_delta);
+            (u8)(update->target_entered_hit_stop || update->target_entered_damage_state ||
+                 update->target_hp_delta || update->target_stun_delta);
         update->projectile_active_for_side =
             (u8)(obs->projectile_active && obs->projectile_owner == RL_OBS_PROJECTILE_OWNER_SELF);
         update->throw_active_for_side = (u8)(obs->self_throw_active || obs->opp_throw_caught);
@@ -2033,8 +2033,8 @@ static void RLSession_FillCombatAttackUpdate(RLCombatAttackEventUpdate* update,
         update->target_hp_delta = (u8)(self_hp_delta > 0);
         update->target_stun_delta = (u8)(obs->delta_self_stun > 0);
         update->target_contact_or_damage =
-            (u8)(update->target_entered_hit_stop || update->target_entered_contact_state ||
-                 update->target_entered_damage_state || update->target_hp_delta || update->target_stun_delta);
+            (u8)(update->target_entered_hit_stop || update->target_entered_damage_state ||
+                 update->target_hp_delta || update->target_stun_delta);
         update->projectile_active_for_side =
             (u8)(obs->projectile_active && obs->projectile_owner == RL_OBS_PROJECTILE_OWNER_OPPONENT);
     }

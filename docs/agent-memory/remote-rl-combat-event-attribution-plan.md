@@ -1521,6 +1521,14 @@ Implementation status:
   ECself/opp EDself/opp` and `CEUH HPself/opp STself/opp` so live smoke can
   identify whether hit-stop, contact-state, damage-state, HP delta, or stun
   delta blocked clean whiff classification.
+- 2026-05-05 EC-only whiff refinement: live smoke showed simultaneous visible
+  whiffs as `CEUC C +0/+1` and `CEUD EC +0/+1` with no hit-stop, damage-state,
+  HP, stun, projectile, throw, or not-whiff cause. Because
+  `entered_contact_state` is derived from broad `guard_flag || hit_stop`, and
+  hit-stop is already tracked separately, EC-only evidence is no longer treated
+  as strong target contact/damage for Phase 2 basic whiff classification. Keep
+  latching and displaying `CEUD EC` for diagnostics, but do not let it alone
+  force a clean strike whiff to timeout unknown.
 - Phase 2C still does not export event rows, transition summaries, rewards, or
   trainer-visible labels. These results are lifecycle/debug labels until the
   Phase 6 contact resolver and move-family validation prove them safe.

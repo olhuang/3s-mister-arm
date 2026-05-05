@@ -2,6 +2,40 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-05: Combat Event EC-Only Whiff Refinement
+
+Milestone:
+- Milestone 6: Combat event attribution Phase 2 live overlay smoke refinement
+
+Files changed:
+- `src/rl/rl_session.c`
+- `docs/agent-memory/remote-rl-combat-event-attribution-plan.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Fix live simultaneous-whiff cases where both sides started attacks, but the
+  opponent side ended as timeout unknown: `CEUC C +0/+1`, `CEUD EC +0/+1`, and
+  no `EH`, `ED`, `HP`, `ST`, projectile, throw, projectile-like, or not-whiff
+  cause.
+
+Implementation notes:
+- `entered_contact_state` remains latched and visible as `CEUD EC`.
+- `entered_contact_state` no longer contributes to `target_contact_or_damage`
+  by itself. Strong target contact/damage for Phase 2 basic whiff now requires
+  entered hit-stop, entered damage-state, HP delta, or stun delta.
+- This keeps broad `guard_flag` / contact-state edges from turning visible
+  clean whiffs into timeout unknowns.
+- Transition JSON, rewards, inference, trainer features, and event-journal
+  export are unchanged.
+
+Validation:
+- `git diff --check` passed.
+- `cc -std=c11 -Wall -Wextra -Isrc -Iinclude -c src/rl/rl_combat_event.c -o /tmp/rl_combat_event_wall.o` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed and rebuilt
+  `src/rl/rl_session.c`; only the pre-existing minizip `mktemp` linker warning
+  appeared.
+
 ## 2026-05-05: Combat Event Contact Cause Overlay
 
 Milestone:

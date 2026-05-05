@@ -160,8 +160,8 @@ MODEL_POLICY_CHOICES = (
 POLICY_CHOICES = SCRIPTED_POLICY_CHOICES + MODEL_POLICY_CHOICES
 GUARD_MACRO_DECISION_STEPS = 6
 DEMO_EXECUTION_SOURCES = frozenset({4, 5})
-TRANSITION_SCHEMA_VERSION = 6
-SUPPORTED_TRANSITION_SCHEMA_VERSIONS = frozenset({5, 6})
+TRANSITION_SCHEMA_VERSION = 7
+SUPPORTED_TRANSITION_SCHEMA_VERSIONS = frozenset({5, 6, 7})
 TRAINING_MODE_TYPES = frozenset({3, 4})
 TRAINING_ACTION_SOURCES = ("auto", "policy", "input", "engine", "prefer-engine")
 
@@ -1324,6 +1324,13 @@ def row_int_field(row: dict[str, object], name: str) -> int:
         return 0
 
 
+def self_engine_row_int_field(row: dict[str, object], generic_name: str) -> int:
+    side_name = f"self_{generic_name}"
+    if side_name in row:
+        return row_int_field(row, side_name)
+    return row_int_field(row, generic_name)
+
+
 def dqn_projectile_timing_prior_jump_penalty(
     row: dict[str, object],
     config: DQNProjectileTimingPriorConfig,
@@ -1707,16 +1714,16 @@ def action_name_from_policy_meta(action_id: int, sub_action_id: int) -> str | No
 
 def engine_outcome_present(row: dict[str, object]) -> bool:
     return (
-        row_int_field(row, "engine_label_source") != 0
-        or row_int_field(row, "engine_action_id") != 0
-        or row_int_field(row, "engine_sub_action_id") != 0
+        self_engine_row_int_field(row, "engine_label_source") != 0
+        or self_engine_row_int_field(row, "engine_action_id") != 0
+        or self_engine_row_int_field(row, "engine_sub_action_id") != 0
     )
 
 
 def engine_outcome_action_name(row: dict[str, object]) -> str | None:
     return action_name_from_policy_meta(
-        row_int_field(row, "engine_action_id"),
-        row_int_field(row, "engine_sub_action_id"),
+        self_engine_row_int_field(row, "engine_action_id"),
+        self_engine_row_int_field(row, "engine_sub_action_id"),
     )
 
 
@@ -1741,8 +1748,8 @@ def action_selection_from_fields(
 
 def engine_action_selection(row: dict[str, object]) -> ActionSelection:
     action_name = action_name_from_policy_meta(
-        row_int_field(row, "engine_action_id"),
-        row_int_field(row, "engine_sub_action_id"),
+        self_engine_row_int_field(row, "engine_action_id"),
+        self_engine_row_int_field(row, "engine_sub_action_id"),
     )
     return ActionSelection(action_name, 0, "engine" if action_name is not None else "none")
 
@@ -2103,6 +2110,22 @@ def learner_replay_row(row: dict[str, object]) -> dict[str, object] | None:
         "engine_current_attack": int(row.get("engine_current_attack", 0) or 0),
         "engine_label_source": int(row.get("engine_label_source", 0) or 0),
         "engine_lag_frames": int(row.get("engine_lag_frames", 0) or 0),
+        "self_engine_action_id": int(row.get("self_engine_action_id", 0) or 0),
+        "self_engine_sub_action_id": int(row.get("self_engine_sub_action_id", 0) or 0),
+        "self_engine_routine_1": int(row.get("self_engine_routine_1", 0) or 0),
+        "self_engine_routine_2": int(row.get("self_engine_routine_2", 0) or 0),
+        "self_engine_kind_of_waza": int(row.get("self_engine_kind_of_waza", 0) or 0),
+        "self_engine_current_attack": int(row.get("self_engine_current_attack", 0) or 0),
+        "self_engine_label_source": int(row.get("self_engine_label_source", 0) or 0),
+        "self_engine_lag_frames": int(row.get("self_engine_lag_frames", 0) or 0),
+        "opp_engine_action_id": int(row.get("opp_engine_action_id", 0) or 0),
+        "opp_engine_sub_action_id": int(row.get("opp_engine_sub_action_id", 0) or 0),
+        "opp_engine_routine_1": int(row.get("opp_engine_routine_1", 0) or 0),
+        "opp_engine_routine_2": int(row.get("opp_engine_routine_2", 0) or 0),
+        "opp_engine_kind_of_waza": int(row.get("opp_engine_kind_of_waza", 0) or 0),
+        "opp_engine_current_attack": int(row.get("opp_engine_current_attack", 0) or 0),
+        "opp_engine_label_source": int(row.get("opp_engine_label_source", 0) or 0),
+        "opp_engine_lag_frames": int(row.get("opp_engine_lag_frames", 0) or 0),
         "delta_self_hp": int(row.get("delta_self_hp", 0) or 0),
         "delta_opp_hp": int(row.get("delta_opp_hp", 0) or 0),
         "delta_self_stun": int(row.get("delta_self_stun", 0) or 0),

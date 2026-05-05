@@ -498,6 +498,13 @@ def int_field(row: dict[str, object], name: str) -> int:
     return int(row.get(name, 0) or 0)
 
 
+def self_engine_int_field(row: dict[str, object], generic_name: str) -> int:
+    side_name = f"self_{generic_name}"
+    if side_name in row:
+        return int_field(row, side_name)
+    return int_field(row, generic_name)
+
+
 def optional_int_field(row: dict[str, object], names: tuple[str, ...]) -> int | None:
     for name in names:
         if name not in row:
@@ -1100,10 +1107,10 @@ def analyze_engine_outcome(rows: list[dict[str, object]], args: argparse.Namespa
             event_rows += 1
             action = engine_outcome_action_name(row)
             bucket = dx_bucket(row)
-            r2 = int_field(row, "engine_routine_2")
-            kw = int_field(row, "engine_kind_of_waza")
-            source = int_field(row, "engine_label_source")
-            lag = int_field(row, "engine_lag_frames")
+            r2 = self_engine_int_field(row, "engine_routine_2")
+            kw = self_engine_int_field(row, "engine_kind_of_waza")
+            source = self_engine_int_field(row, "engine_label_source")
+            lag = self_engine_int_field(row, "engine_lag_frames")
             source_counts[source] += 1
             lag_counts[lag] += 1
 

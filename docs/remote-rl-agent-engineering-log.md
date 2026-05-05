@@ -2,6 +2,58 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-05: Combat Event Phase 3 Side-Explicit Engine Attribution
+
+Milestone:
+- Milestone 6: Combat event attribution Phase 3
+
+Files changed:
+- `src/rl/rl_combat_event.h`
+- `src/rl/rl_combat_event.c`
+- `src/rl/rl_session.c`
+- `tools/rl_probe_server.py`
+- `tools/analyze_rl_transitions.py`
+- `docs/agent-memory/remote-rl-combat-event-attribution-plan.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Start Phase 3 after Phase 2 live overlay smoke stabilized strike whiff
+  classification. Make engine attribution side-explicit so self and opponent
+  attacks can both be named without reusing ambiguous generic `engine_*`
+  ownership.
+
+Implementation notes:
+- Bumped transition schema to `7` and added root-level `self_engine_*` and
+  `opp_engine_*` fields. Generic `engine_*` remains a deprecated self-side
+  alias for compatibility.
+- Replaced the self-only engine mapper with a side-local mapper that uses the
+  actor's own routine/current-attack/kind-of-waza/start-edge evidence.
+- Attack-event starts now store side-local engine action/sub-action,
+  routine 1/2, current attack, kind-of-waza, label source, and lag frames.
+- Opponent Ryu specials/projectile-like starts can now mark opponent events as
+  projectile-like without borrowing self policy labels. Unsupported characters
+  stay unknown.
+- Python helpers accept schema `7`, preserve side-explicit fields in learner
+  replay rows, and prefer `self_engine_*` over generic `engine_*` for self-side
+  engine-outcome compatibility.
+
+Validation:
+- `git diff --check` passed.
+- `cc -std=c11 -Wall -Wextra -Isrc -Iinclude -c src/rl/rl_combat_event.c -o /tmp/rl_combat_event_wall.o`
+  passed.
+- `python3 -m py_compile tools/rl_probe_server.py tools/analyze_rl_transitions.py`
+  passed.
+- Standalone `rl_session.c` compile is not representative because it depends on
+  generated `port/build_config.h`; canonical MiSTer validation used the
+  telemetry build instead.
+- `tools/mister/build-game.sh --flavor telemetry` passed, rebuilding the
+  touched RL C files for ARM. The build still emits the existing third-party
+  minizip `mktemp` linker warning.
+- Live validation remains pending: deploy the telemetry package and record a
+  short Ryu-vs-Ryu smoke where self/opponent normals and fireballs populate
+  `self_engine_*` / `opp_engine_*` without side swaps.
+
 ## 2026-05-05: Combat Event EC-Only Whiff Refinement
 
 Milestone:

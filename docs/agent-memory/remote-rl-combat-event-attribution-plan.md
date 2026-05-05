@@ -1583,6 +1583,22 @@ Work:
 - keep character id and confidence in the attribution result
 - keep unknown instead of mapping unsupported characters incorrectly
 
+Implementation status:
+
+- 2026-05-05 Phase 3 foundation added transition schema v7 side-explicit
+  engine fields: `self_engine_*` and `opp_engine_*`. The old generic
+  `engine_*` fields remain as deprecated self-side aliases for v5/v6/v7
+  Python compatibility.
+- Attack-event starts now carry side-local engine action/sub-action,
+  routine 1/2, current attack, kind-of-waza, source, and lag fields when the
+  actor is a supported Ryu mapping. Unsupported characters remain unknown
+  instead of being forced into a Ryu label.
+- Opponent attribution uses opponent observation evidence
+  (`opp_routine`, `opp_current_attack`, `opp_kind_of_waza`, and opponent
+  attack-start edges). It does not reuse the self-side ledger attribution.
+- Python replay/analyzer helpers prefer `self_engine_*` when present and fall
+  back to generic `engine_*` for older logs.
+
 Validation:
 
 - Ryu-vs-Ryu scripted policies

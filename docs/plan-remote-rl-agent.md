@@ -2623,8 +2623,12 @@ Tasks:
   - [x] Phase 2 overlay readability refinement: `U D L R LP MP HP LK MK HK` input tokens now render only in the `Input` debug view, not in `All` or `Outcome`
   - [x] Phase 2 contact-cause overlay refinement: `All` view now splits contact/damage timeout unknowns into `CEUD` hit-stop/contact-state/damage-state and `CEUH` HP/stun deltas
   - [x] Phase 2 EC-only whiff refinement: broad `entered_contact_state` / `guard_flag` evidence remains visible in `CEUD EC`, but no longer blocks basic clean-whiff classification by itself
-  - [ ] Phase 2 live overlay smoke: deploy telemetry build and compare `CE` / `CEU` debug overlay counts against visible attacks before treating Phase 2 as fully closed
+  - [x] Phase 2 live overlay smoke: live All/Outcome overlay checks now show clean simultaneous strike whiffs reaching `CER W`; projectile guard/clash cases remain conservative `CEU R` until Phase 4/6 projectile/contact resolution
 - [ ] Combat event attribution Phase 3: replace ambiguous generic `engine_*` ownership with side-explicit `self_engine_*` and `opp_engine_*` attribution at attack-event creation time, keeping unknown/confidence fields for unsupported mappings
+  - [x] Phase 3 side-explicit export foundation: transition schema v7 adds `self_engine_*` and `opp_engine_*` root fields while keeping generic `engine_*` as a self-side compatibility alias
+  - [x] Phase 3 event-start attribution foundation: self/opponent attack-event starts carry side-local Ryu engine action/sub-action/routine/current-attack/KW/source/lag fields when supported; unsupported characters remain unknown
+  - [x] Phase 3 local validation: `rl_combat_event.c` warning compile, Python analyzer/probe compile, `git diff --check`, and telemetry ARM build passed
+  - [ ] Phase 3 live validation: Ryu-vs-Ryu smoke where self and opponent fireballs/normals both populate side-explicit engine fields without side swaps
 - [ ] Combat event attribution Phase 4: implement projectile event tracking so fireball spawn/hit/block/expire results are attributed to projectile ids instead of owner routine snapshots
 - [ ] Combat event attribution Phase 5: implement throw event tracking so close guard failures can distinguish thrown/tech/whiff/unknown from strike or chip damage
 - [ ] Combat event attribution Phase 6a: implement edge-triggered contact-to-attack/projectile/throw matching with consumed HP/stun deltas, trade handling, confidence, and attribution failure events

@@ -369,6 +369,14 @@ const RLCombatAttackEvent* RLCombatEvent_StartAttack(const RLCombatAttackEventSt
     event->kind_of_waza = start->kind_of_waza;
     event->projectile_like = start->projectile_like;
     event->fast_whiff_fallback = start->fast_whiff_fallback;
+    event->engine_action_id = start->engine_action_id;
+    event->engine_sub_action_id = start->engine_sub_action_id;
+    event->engine_routine_1 = start->engine_routine_1;
+    event->engine_routine_2 = start->engine_routine_2;
+    event->engine_current_attack = start->engine_current_attack;
+    event->engine_lag_frames = start->engine_lag_frames;
+    event->engine_kind_of_waza = start->engine_kind_of_waza;
+    event->engine_label_source = start->engine_label_source;
     event->whiff_eligible = 1;
     event->policy_action_id = start->policy_action_id;
     event->policy_sub_action_id = start->policy_sub_action_id;

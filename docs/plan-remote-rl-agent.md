@@ -2666,6 +2666,7 @@ Tasks:
   - [x] Phase 8A-1 delegated projectile outcome resolution: analyzer now joins `attack.finalize_reason=projectile_claimed` rows to `projectile.parent_attack_event_id` and reports final effective buckets such as `projectile_hit`, `projectile_blocked`, `projectile_expired`, and `projectile_unknown` without changing raw C journal rows.
   - [x] Phase 8A-2 delegated projectile side split: `Delegated Projectile Outcome` now reports `self` / `opponent` owner-side breakdowns for linked projectile results, finalize reasons, and expired clash-vs-clean counts.
   - [x] Phase 8A-3 throw/attribution/punish side splits: analyzer now reports throw rows by `owner_side`, attribution rows by both `source_side` and `target_side`, and punish rows by both `punisher_side` and `punished_side`.
+  - [x] Phase 8A-4 probe/trainer safety hardening: probe server combat-event split now uses raw byte schema-key detection instead of per-line JSON parsing, and feature-name sanitization now strips combat event root fields before model metadata can influence DQN features.
 - [ ] Combat event attribution Phase 9: add opt-in trainer use of high-confidence event labels only after move-family validation passes
 - [ ] Evaluate higher control rate after latency p95/p99 is stable
 - [ ] Review derived movement/action-phase candidates from the Human-Fighter Observer Gap Review before changing the observation schema

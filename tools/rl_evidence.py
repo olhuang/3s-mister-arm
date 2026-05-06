@@ -51,6 +51,93 @@ EVIDENCE_ROOT_KEYS = frozenset(
     }
 )
 
+COMBAT_EVENT_ROOT_KEYS = frozenset(
+    {
+        "actual_guard_state",
+        "actual_guard_state_code",
+        "child_projectile_event_id",
+        "combat_event_schema_version",
+        "confidence",
+        "confidence_code",
+        "current_attack",
+        "decision_id",
+        "defense_result",
+        "defense_result_code",
+        "edge_type",
+        "edge_type_code",
+        "end_decision_id",
+        "end_frame",
+        "engine_action_id",
+        "engine_current_attack",
+        "engine_label_source",
+        "engine_sub_action_id",
+        "episode_id",
+        "event_id",
+        "event_kind",
+        "failure_reason",
+        "failure_reason_code",
+        "finalize_reason",
+        "finalize_reason_code",
+        "frame_id",
+        "kind_of_waza",
+        "last_rel_x",
+        "last_rel_y",
+        "last_time_to_self",
+        "last_vel_x",
+        "owner_side",
+        "parent_attack_event_id",
+        "path",
+        "path_code",
+        "policy_action_id",
+        "policy_action_step",
+        "policy_sub_action_id",
+        "projectile_like",
+        "punished_attack_event_id",
+        "punished_side",
+        "punisher_side",
+        "reason",
+        "reason_code",
+        "result",
+        "result_code",
+        "round_num",
+        "run_id",
+        "saw_opposing_projectile",
+        "saw_opposing_throw",
+        "saw_target_caught",
+        "saw_throw_escape",
+        "side",
+        "source_event_id",
+        "source_family",
+        "source_family_code",
+        "source_side",
+        "spawn_rel_x",
+        "spawn_rel_y",
+        "spawn_time_to_self",
+        "spawn_vel_x",
+        "start_decision_id",
+        "start_frame",
+        "status",
+        "status_code",
+        "target_airborne",
+        "target_attack_state_active",
+        "target_block_reaction",
+        "target_guard",
+        "target_hp_delta",
+        "target_parry_started",
+        "target_policy_action_id",
+        "target_policy_action_step",
+        "target_policy_sub_action_id",
+        "target_routine_1",
+        "target_routine_2",
+        "target_side",
+        "target_state",
+        "target_state_code",
+        "target_stun_delta",
+        "target_throw_caught",
+        "whiff_eligible",
+    }
+)
+
 
 @dataclass(frozen=True)
 class EvidenceDecodeResult:
@@ -83,7 +170,12 @@ class EvidenceDecodeError(ValueError):
 
 def is_forbidden_feature_name(name: object) -> bool:
     text = str(name)
-    return text in EVIDENCE_ROOT_KEYS or text.startswith("evidence_") or text.startswith("ep_overlay_")
+    return (
+        text in EVIDENCE_ROOT_KEYS
+        or text in COMBAT_EVENT_ROOT_KEYS
+        or text.startswith("evidence_")
+        or text.startswith("ep_overlay_")
+    )
 
 
 def sanitize_feature_names(names: object) -> tuple[tuple[str, ...], tuple[str, ...]]:

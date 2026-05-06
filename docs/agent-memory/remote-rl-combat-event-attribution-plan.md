@@ -2343,6 +2343,15 @@ Work:
   and `target_side`, and punish rows by both `punisher_side` and
   `punished_side`. The paired views are intentional because attribution and
   punish rows describe two-sided relationships, not a single actor-only count.
+- Probe log splitting should classify combat event rows with a raw
+  `"combat_event_schema_version"` byte check before writing logs. Do not parse
+  every transition row as JSON merely to split files; malformed combat event
+  rows should stay in the combat event log path instead of being misfiled as
+  transition rows.
+- Trainer metadata sanitization must reject combat event root fields in
+  addition to Phase 0+1 evidence fields. Combat event journal rows remain
+  analysis/debug data until an explicit Phase 9 learner adoption gate promotes
+  selected high-confidence labels.
 - add fight replay summaries:
   - timeline
   - per-side damage sources

@@ -2,6 +2,49 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-06: Combat Event Phase 8A-4 Probe/Trainer Safety Hardening
+
+Milestone:
+- Combat event attribution Phase 8A-4
+
+Files changed:
+- `tools/rl_probe_server.py`
+- `tools/rl_evidence.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/agent-memory/remote-rl-combat-event-attribution-plan.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Address peer-review P0 findings before Phase 9: avoid probe-side per-line
+  JSON parsing for combat event splitting, and prevent combat event journal
+  fields from leaking into DQN feature metadata.
+
+Implementation notes:
+- `TransitionBatchServer._is_combat_event_line()` now checks for the raw
+  `"combat_event_schema_version"` byte key instead of `json.loads()` on every
+  uploaded transition/event line. This keeps malformed combat event rows on the
+  combat-event log path and avoids unnecessary parse work for ordinary
+  transition rows.
+- Added `COMBAT_EVENT_ROOT_KEYS` to `tools/rl_evidence.py` and extended
+  `is_forbidden_feature_name()` so event identity, side, result, source,
+  confidence, target-context, projectile, throw, and punish journal fields are
+  stripped from model `feature_names` metadata.
+- Existing DQN feature names were checked against the expanded denylist and are
+  unaffected.
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py tools/rl_evidence.py tools/train_dqn_learner.py` passed.
+- Probe split smoke passed: ordinary transition rows are not classified as
+  combat events, valid combat event rows are classified as events, and
+  `_append_payload()` routes malformed rows containing
+  `"combat_event_schema_version"` to the event log rather than the transition
+  log.
+- Feature sanitizer smoke passed: current `DQN_FEATURE_NAMES` are preserved,
+  while `event_id`, `defense_result`, `source_side`, `target_side`,
+  `parent_attack_event_id`, `evidence_flags_lo`, and
+  `ep_overlay_attack_active_count` are stripped.
+- `git diff --check` passed.
+
 ## 2026-05-06: Combat Event Phase 8A-3 Throw/Attribution/Punish Side Splits
 
 Milestone:

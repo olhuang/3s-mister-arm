@@ -693,7 +693,7 @@ def sanitized_dqn_feature_names(value: object, context: str) -> tuple[str, ...]:
         if key not in _warned_stripped_feature_sets:
             _warned_stripped_feature_sets.add(key)
             print(
-                f"WARNING: {context}: stripped combat evidence feature names: {','.join(stripped)}",
+                f"WARNING: {context}: stripped combat evidence/event feature names: {','.join(stripped)}",
                 file=sys.stderr,
             )
     return feature_names
@@ -2349,14 +2349,7 @@ class TransitionBatchServer(threading.Thread):
 
     @staticmethod
     def _is_combat_event_line(line: bytes) -> bool:
-        stripped = line.strip()
-        if not stripped:
-            return False
-        try:
-            row = json.loads(stripped.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            return False
-        return isinstance(row, dict) and row.get("combat_event_schema_version") is not None
+        return b'"combat_event_schema_version"' in line
 
     @staticmethod
     def _write_lines(path: str, lines: list[bytes]) -> None:

@@ -174,6 +174,42 @@ static bool RLCombatEvent_HasThrowCandidateForSide(u64 run_id,
     return false;
 }
 
+static bool RLCombatEvent_TryMarkThrowContactMatchForSide(u64 run_id,
+                                                          u32 episode_id,
+                                                          RLCombatEventSide side,
+                                                          u32 frame_id) {
+    RLCombatThrowEventRing* ring = RLCombatEvent_ThrowRingForSide(side);
+    RLCombatThrowEvent* best = NULL;
+
+    if (ring == NULL || run_id == 0 || episode_id == 0) {
+        return false;
+    }
+
+    for (u32 i = 0; i < RL_COMBAT_THROW_EVENT_RING_CAP; i++) {
+        RLCombatThrowEvent* event = &ring->events[i];
+        if (event->run_id != run_id || event->episode_id != episode_id || event->owner_side != side ||
+            event->contact_match_recorded) {
+            continue;
+        }
+        if (event->status == RL_COMBAT_THROW_EVENT_ACTIVE) {
+            best = event;
+            break;
+        }
+        if (event->status == RL_COMBAT_THROW_EVENT_FINALIZED && event->end_frame == frame_id &&
+            event->result != RL_COMBAT_THROW_RESULT_WHIFF) {
+            best = event;
+            break;
+        }
+    }
+
+    if (best == NULL) {
+        return false;
+    }
+
+    best->contact_match_recorded = 1;
+    return true;
+}
+
 static u32 RLCombatEvent_CountActiveThrows(const RLCombatThrowEventRing* ring) {
     u32 count = 0;
 
@@ -1458,6 +1494,12 @@ bool RLCombatEvent_RecordContactMatch(const RLCombatContactMatchUpdate* update) 
     if (projectile_candidate) {
         source = RL_COMBAT_CONTACT_MATCH_SOURCE_PROJECTILE;
     } else if (throw_candidate) {
+        if (!RLCombatEvent_TryMarkThrowContactMatchForSide(update->run_id,
+                                                          update->episode_id,
+                                                          update->source_side,
+                                                          update->frame_id)) {
+            return false;
+        }
         source = RL_COMBAT_CONTACT_MATCH_SOURCE_THROW;
     } else if (attack_candidate) {
         source = RL_COMBAT_CONTACT_MATCH_SOURCE_ATTACK;

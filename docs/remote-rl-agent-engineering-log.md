@@ -67,6 +67,13 @@ Refinement after first live CEM pass:
   evidence. Finalized same-frame projectile events also remain projectile
   candidates so clashes/parries do not fall back to the projectile parent
   attack.
+- Second live report showed ordinary fireballs were clean (`CEM P+1`), but
+  projectile supers and occasional projectile clashes still leaked `CEM A+1`
+  from raw parent attack routine state; throw success also still often produced
+  `CEM T+2`. Fix: CEM attack candidates now come only from the combat attack
+  ring, not raw `routine/current_attack` state. Throw events now remember whether
+  they already produced a contact match, so the caught edge and delayed
+  HP/stun/damage from the same throw do not both increment `CEM T`.
 
 ## 2026-05-05: Combat Event Phase 5C/5D Throw Live Refinement Prep
 

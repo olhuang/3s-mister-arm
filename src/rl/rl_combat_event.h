@@ -339,6 +339,7 @@ typedef struct RLCombatThrowEvent {
     u8 saw_target_damage_state;
     u8 saw_target_hp_delta;
     u8 saw_target_stun_delta;
+    u8 contact_match_recorded;
 } RLCombatThrowEvent;
 
 typedef struct RLCombatContactMatchUpdate {

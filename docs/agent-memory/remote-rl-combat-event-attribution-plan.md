@@ -1914,6 +1914,13 @@ Phase 6a-0 implementation slice:
   remains owned by `CP` / `CPR`; throw wins over generic attack when caught or
   throw-active evidence is present; attack is the fallback for active strike
   evidence.
+- CEM attack candidates must come from the combat attack ring, not raw
+  `routine/current_attack` state. Raw attack state is too broad for projectile
+  supers, projectile clashes, and parent fireball routines, where it can leak
+  false `CEM A` after the projectile event is already the true source.
+- Throw contact matching is one-shot per throw event. The first caught/contact
+  edge marks the throw event as already matched, so delayed HP/stun/damage
+  evidence from the same throw does not create a second `CEM T`.
 - This slice does not mutate HP/stun deltas, does not write event ids into the
   transition row, does not emit the future event journal, and does not affect
   reward/trainer features. It is an observability step for live validation.

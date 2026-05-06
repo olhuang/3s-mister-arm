@@ -2716,10 +2716,7 @@ static void RLSession_FillCombatContactMatchUpdate(RLCombatContactMatchUpdate* u
         update->target_hp_delta = (u8)(opp_hp_delta > 0);
         update->target_stun_delta = (u8)(obs->delta_opp_stun > 0);
         update->target_throw_caught = obs->opp_throw_caught_started;
-        update->attack_candidate =
-            (u8)(obs->self_routine_attack_state || obs->self_current_attack != 0 ||
-                 obs->self_attack_started || obs->self_attack_code_changed ||
-                 obs->self_attack_counter_started || obs->self_attack_routine_started);
+        update->attack_candidate = 0;
         update->projectile_candidate =
             (u8)(obs->projectile_active && obs->projectile_owner == RL_OBS_PROJECTILE_OWNER_SELF);
         update->throw_candidate =
@@ -2732,10 +2729,7 @@ static void RLSession_FillCombatContactMatchUpdate(RLCombatContactMatchUpdate* u
         update->target_hp_delta = (u8)(self_hp_delta > 0);
         update->target_stun_delta = (u8)(obs->delta_self_stun > 0);
         update->target_throw_caught = obs->self_throw_caught_started;
-        update->attack_candidate =
-            (u8)(obs->opp_routine_attack_state || obs->opp_current_attack != 0 ||
-                 obs->opp_attack_started || obs->opp_attack_code_changed ||
-                 obs->opp_attack_counter_started || obs->opp_attack_routine_started);
+        update->attack_candidate = 0;
         update->projectile_candidate =
             (u8)(obs->projectile_active && obs->projectile_owner == RL_OBS_PROJECTILE_OWNER_OPPONENT);
         update->throw_candidate =

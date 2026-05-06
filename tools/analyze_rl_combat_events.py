@@ -12,6 +12,61 @@ from typing import Any
 
 
 SUPPORTED_SCHEMA = 1
+RL_POLICY_ACTION_STAND_NORMAL = 6
+RL_POLICY_ACTION_COMMAND_NORMAL = 7
+RL_POLICY_ACTION_THROW = 8
+RL_POLICY_ACTION_CROUCH_NORMAL = 15
+RL_POLICY_ACTION_AIR_NORMAL = 16
+RL_POLICY_ACTION_RYU_SHINKUU_HADOUKEN = 1220
+RL_POLICY_ACTION_RYU_DENJIN_HADOUKEN = 1221
+RL_POLICY_ACTION_RYU_SHIN_SHORYUKEN = 1222
+RL_POLICY_ACTION_RYU_SHORYUKEN = 1228
+RL_POLICY_ACTION_RYU_FIREBALL = 1229
+RL_POLICY_ACTION_RYU_TATSU = 1230
+RL_POLICY_ACTION_RYU_JOUDAN = 1231
+RL_POLICY_ACTION_RYU_AIR_TATSU = 1246
+
+PUNCH_SUB_ACTIONS = {1, 2, 3}
+KICK_SUB_ACTIONS = {4, 5, 6}
+BUTTON_NAME_BY_SUB_ACTION = {
+    1: "lp",
+    2: "mp",
+    3: "hp",
+    4: "lk",
+    5: "mk",
+    6: "hk",
+}
+STRENGTH_TAG_BY_SUB_ACTION = {
+    1: "light",
+    2: "medium",
+    3: "heavy",
+    4: "light",
+    5: "medium",
+    6: "heavy",
+}
+SUPER_ACTION_IDS = {
+    RL_POLICY_ACTION_RYU_SHINKUU_HADOUKEN,
+    RL_POLICY_ACTION_RYU_DENJIN_HADOUKEN,
+    RL_POLICY_ACTION_RYU_SHIN_SHORYUKEN,
+}
+PROJECTILE_ACTION_IDS = {
+    RL_POLICY_ACTION_RYU_FIREBALL,
+    RL_POLICY_ACTION_RYU_SHINKUU_HADOUKEN,
+    RL_POLICY_ACTION_RYU_DENJIN_HADOUKEN,
+}
+SPECIAL_ACTION_IDS = {
+    RL_POLICY_ACTION_RYU_FIREBALL,
+    RL_POLICY_ACTION_RYU_SHORYUKEN,
+    RL_POLICY_ACTION_RYU_TATSU,
+    RL_POLICY_ACTION_RYU_JOUDAN,
+    RL_POLICY_ACTION_RYU_AIR_TATSU,
+}
+NORMAL_ACTION_IDS = {
+    RL_POLICY_ACTION_STAND_NORMAL,
+    RL_POLICY_ACTION_COMMAND_NORMAL,
+    RL_POLICY_ACTION_CROUCH_NORMAL,
+    RL_POLICY_ACTION_AIR_NORMAL,
+}
 
 
 def read_ndjson(path: Path) -> tuple[list[dict[str, Any]], list[str]]:
@@ -107,6 +162,102 @@ def as_int(value: object) -> int:
     if isinstance(value, int):
         return value
     return 0
+
+
+def opposite_side(side: str) -> str:
+    if side == "self":
+        return "opponent"
+    if side == "opponent":
+        return "self"
+    return "unknown"
+
+
+def button_name(sub_action_id: int) -> str:
+    return BUTTON_NAME_BY_SUB_ACTION.get(sub_action_id, f"sub{sub_action_id}")
+
+
+def action_name(action_id: int, sub_action_id: int, event_kind: str) -> str:
+    button = button_name(sub_action_id)
+    if event_kind == "throw" or action_id == RL_POLICY_ACTION_THROW:
+        return "throw"
+    if action_id == RL_POLICY_ACTION_STAND_NORMAL:
+        return f"stand-{button}"
+    if action_id == RL_POLICY_ACTION_COMMAND_NORMAL:
+        if sub_action_id == 3:
+            return "forward-hp"
+        return f"command-{button}"
+    if action_id == RL_POLICY_ACTION_CROUCH_NORMAL:
+        return f"crouch-{button}"
+    if action_id == RL_POLICY_ACTION_AIR_NORMAL:
+        return f"air-{button}"
+    if action_id == RL_POLICY_ACTION_RYU_FIREBALL:
+        return f"fireball-{button}"
+    if action_id == RL_POLICY_ACTION_RYU_SHORYUKEN:
+        return f"shoryuken-{button}"
+    if action_id == RL_POLICY_ACTION_RYU_TATSU:
+        return f"tatsu-{button}"
+    if action_id == RL_POLICY_ACTION_RYU_JOUDAN:
+        return f"joudan-{button}"
+    if action_id == RL_POLICY_ACTION_RYU_AIR_TATSU:
+        return f"air-tatsu-{button}"
+    if action_id == RL_POLICY_ACTION_RYU_SHINKUU_HADOUKEN:
+        return "shinkuu-hadouken"
+    if action_id == RL_POLICY_ACTION_RYU_DENJIN_HADOUKEN:
+        return "denjin-hadouken"
+    if action_id == RL_POLICY_ACTION_RYU_SHIN_SHORYUKEN:
+        return "shin-shoryuken"
+    if action_id == 0:
+        return f"unknown-{event_kind}"
+    return f"action-{action_id}/{sub_action_id}"
+
+
+def action_tags(action_id: int, sub_action_id: int, event_kind: str) -> list[str]:
+    tags: set[str] = {event_kind}
+    if event_kind == "throw" or action_id == RL_POLICY_ACTION_THROW:
+        tags.update({"throw", "ground"})
+        return sorted(tags)
+
+    button = BUTTON_NAME_BY_SUB_ACTION.get(sub_action_id)
+    if button is not None:
+        tags.add(button)
+        tags.add(STRENGTH_TAG_BY_SUB_ACTION[sub_action_id])
+        if sub_action_id in PUNCH_SUB_ACTIONS:
+            tags.add("punch")
+        elif sub_action_id in KICK_SUB_ACTIONS:
+            tags.add("kick")
+
+    if event_kind == "projectile" or action_id in PROJECTILE_ACTION_IDS:
+        tags.add("projectile")
+    if action_id in SUPER_ACTION_IDS:
+        tags.update({"super", "special_or_super"})
+    if action_id in SPECIAL_ACTION_IDS:
+        tags.update({"special", "special_or_super"})
+    if action_id in NORMAL_ACTION_IDS:
+        tags.add("normal")
+
+    if action_id == RL_POLICY_ACTION_STAND_NORMAL:
+        tags.update({"ground", "stand"})
+    elif action_id == RL_POLICY_ACTION_COMMAND_NORMAL:
+        tags.update({"ground", "stand", "command_normal"})
+    elif action_id == RL_POLICY_ACTION_CROUCH_NORMAL:
+        tags.update({"ground", "crouch"})
+    elif action_id in (RL_POLICY_ACTION_AIR_NORMAL, RL_POLICY_ACTION_RYU_AIR_TATSU):
+        tags.add("air")
+    elif action_id != 0:
+        tags.add("ground")
+
+    return sorted(tags)
+
+
+def source_action_meta(row: dict[str, Any], event_kind: str) -> tuple[int, int]:
+    if event_kind == "throw":
+        return RL_POLICY_ACTION_THROW, as_int(row.get("kind_of_waza"))
+    action_id = as_int(row.get("engine_action_id"))
+    sub_action_id = as_int(row.get("engine_sub_action_id"))
+    if action_id == 0:
+        action_id = as_int(row.get("policy_action_id"))
+        sub_action_id = as_int(row.get("policy_sub_action_id"))
+    return action_id, sub_action_id
 
 
 def projectile_result_bucket(projectile: dict[str, Any]) -> str:
@@ -267,9 +418,9 @@ def attribution_unknown_reconciliation_record(
         "run_id": row.get("run_id"),
         "event_id": row.get("event_id"),
         "episode_id": row.get("episode_id"),
+        "source_event_id": row.get("source_event_id"),
         "source_side": row.get("source_side"),
         "target_side": row.get("target_side"),
-        "source_event_id": row.get("source_event_id"),
         "unknown_bucket": attribution_unknown_bucket(row, events_by_id),
         "reconciliation_status": status,
         "final_result": final_result,
@@ -333,6 +484,7 @@ def effective_attribution_record(
         "run_id": row.get("run_id"),
         "event_id": row.get("event_id"),
         "episode_id": row.get("episode_id"),
+        "source_event_id": row.get("source_event_id"),
         "source_side": row.get("source_side"),
         "target_side": row.get("target_side"),
         "source_family": row.get("source_family"),
@@ -366,6 +518,144 @@ def summarize_effective_attribution_side_records(
             ),
         }
     return summary
+
+
+def new_move_stat() -> dict[str, int]:
+    return {
+        "uses": 0,
+        "hit": 0,
+        "blocked": 0,
+        "whiff": 0,
+        "parry": 0,
+        "clash": 0,
+        "interrupted": 0,
+        "unknown": 0,
+    }
+
+
+def move_outcome_from_attack(
+    row: dict[str, Any],
+    effective_by_source: dict[tuple[Any, Any], list[dict[str, Any]]],
+) -> dict[str, bool]:
+    effective_results = {
+        str(record.get("effective_defense_result"))
+        for record in effective_by_source.get(event_lookup_key(row), [])
+    }
+    result = str(row.get("result", "unknown"))
+    return {
+        "hit": bool(effective_results & {"hit", "thrown"}),
+        "blocked": bool(effective_results & {"blocked", "blocked_chip"}),
+        "whiff": result == "whiff" and not bool(effective_results & {"hit", "blocked", "blocked_chip", "thrown"}),
+        "parry": "parry" in effective_results,
+        "clash": "evaded" in effective_results,
+        "interrupted": result == "interrupted",
+        "unknown": result == "unknown" and not bool(effective_results - {"unknown"}),
+    }
+
+
+def move_outcome_from_projectile(row: dict[str, Any]) -> dict[str, bool]:
+    result = str(row.get("result", "unknown"))
+    saw_opposing_projectile = as_int(row.get("saw_opposing_projectile")) > 0
+    return {
+        "hit": result == "hit",
+        "blocked": result == "blocked",
+        "whiff": result == "expired" and not saw_opposing_projectile,
+        "parry": False,
+        "clash": result == "expired" and saw_opposing_projectile,
+        "interrupted": False,
+        "unknown": result == "unknown",
+    }
+
+
+def move_outcome_from_throw(row: dict[str, Any]) -> dict[str, bool]:
+    result = str(row.get("result", "unknown"))
+    reason = str(row.get("finalize_reason", "unknown"))
+    return {
+        "hit": result == "success",
+        "blocked": False,
+        "whiff": result == "whiff",
+        "parry": False,
+        "clash": reason == "tech_escape",
+        "interrupted": False,
+        "unknown": result == "unknown" and reason != "tech_escape",
+    }
+
+
+def source_move_record(
+    row: dict[str, Any],
+    event_kind: str,
+    effective_by_source: dict[tuple[Any, Any], list[dict[str, Any]]],
+) -> dict[str, Any]:
+    side = str(row.get("side") if event_kind == "attack" else row.get("owner_side", "unknown"))
+    action_id, sub_action_id = source_action_meta(row, event_kind)
+    if event_kind == "attack":
+        outcome = move_outcome_from_attack(row, effective_by_source)
+    elif event_kind == "projectile":
+        outcome = move_outcome_from_projectile(row)
+    else:
+        outcome = move_outcome_from_throw(row)
+    return {
+        "event_id": row.get("event_id"),
+        "episode_id": row.get("episode_id"),
+        "event_kind": event_kind,
+        "side": side,
+        "target_side": opposite_side(side),
+        "move_name": action_name(action_id, sub_action_id, event_kind),
+        "action_id": action_id,
+        "sub_action_id": sub_action_id,
+        "tags": action_tags(action_id, sub_action_id, event_kind),
+        "outcome": outcome,
+    }
+
+
+def add_move_stat(stats: dict[str, int], outcome: dict[str, bool]) -> None:
+    stats["uses"] += 1
+    for key in ("hit", "blocked", "whiff", "parry", "clash", "interrupted", "unknown"):
+        if outcome.get(key):
+            stats[key] += 1
+
+
+def finalize_move_stat(stats: dict[str, int]) -> dict[str, Any]:
+    uses = stats["uses"]
+    finalized: dict[str, Any] = dict(stats)
+    for key in ("hit", "blocked", "whiff", "parry", "clash", "interrupted", "unknown"):
+        finalized[f"{key}_rate"] = round(stats[key] / uses, 4) if uses else 0.0
+    return finalized
+
+
+def summarize_move_records_for_side(records: list[dict[str, Any]]) -> dict[str, Any]:
+    by_move: dict[str, dict[str, int]] = collections.defaultdict(new_move_stat)
+    by_tag: dict[str, dict[str, int]] = collections.defaultdict(new_move_stat)
+    for record in records:
+        outcome = record["outcome"]
+        add_move_stat(by_move[str(record["move_name"])], outcome)
+        for tag in record["tags"]:
+            add_move_stat(by_tag[str(tag)], outcome)
+
+    return {
+        "rows": len(records),
+        "by_move": {
+            key: finalize_move_stat(value)
+            for key, value in sorted(by_move.items())
+        },
+        "by_tag": {
+            key: finalize_move_stat(value)
+            for key, value in sorted(by_tag.items())
+        },
+    }
+
+
+def summarize_move_records(records: list[dict[str, Any]], side_field: str) -> dict[str, dict[str, Any]]:
+    summary: dict[str, dict[str, Any]] = {}
+    sides = sorted({str(record.get(side_field, "unknown")) for record in records}, key=side_sort_key)
+    for side in sides:
+        side_records = [record for record in records if str(record.get(side_field, "unknown")) == side]
+        summary[side] = summarize_move_records_for_side(side_records)
+    return summary
+
+
+def sorted_stat_items(stats: dict[str, dict[str, Any]]) -> list[tuple[str, dict[str, Any]]]:
+    return sorted(stats.items(), key=lambda item: (-as_int(item[1].get("uses")), item[0]))
 
 
 def is_true_attack_unknown_bucket(bucket: str) -> bool:
@@ -527,6 +817,25 @@ def make_summary(event_rows: list[dict[str, Any]], transition_rows: list[dict[st
         effective_attribution_record(row, attribution_reconciliation_by_event)
         for row in attribution_rows
     ]
+    effective_attributions_by_source: dict[tuple[Any, Any], list[dict[str, Any]]] = collections.defaultdict(list)
+    for record in effective_attribution_records:
+        effective_attributions_by_source[(record.get("run_id"), record.get("source_event_id"))].append(record)
+    source_move_records: list[dict[str, Any]] = []
+    for row in attacks:
+        action_id, _ = source_action_meta(row, "attack")
+        if str(row.get("finalize_reason")) == "projectile_claimed":
+            continue
+        if action_id == RL_POLICY_ACTION_THROW:
+            continue
+        source_move_records.append(source_move_record(row, "attack", effective_attributions_by_source))
+    source_move_records.extend(
+        source_move_record(row, "projectile", effective_attributions_by_source)
+        for row in projectile_rows
+    )
+    source_move_records.extend(
+        source_move_record(row, "throw", effective_attributions_by_source)
+        for row in throw_rows
+    )
     attribution_unknown_examples: list[dict[str, Any]] = []
     for row in attribution_unknown_rows[:12]:
         source = events_by_id.get(source_lookup_key(row), {})
@@ -857,6 +1166,11 @@ def make_summary(event_rows: list[dict[str, Any]], transition_rows: list[dict[st
             "punish_refs": len(punish_rows),
             "missing_punished_attack_refs": len(missing_punished_refs),
         },
+        "move_stats": {
+            "rows": len(source_move_records),
+            "offense_by_side": summarize_move_records(source_move_records, "side"),
+            "defense_by_side": summarize_move_records(source_move_records, "target_side"),
+        },
         "transition": transition_summary,
     }
 
@@ -942,6 +1256,42 @@ def print_derived_attribution_summary(summary: dict[str, Any]) -> None:
     )
     print_side_summary("derived_by_source_side", summary["by_source_side"])
     print_side_summary("derived_by_target_side", summary["by_target_side"])
+
+
+def print_single_move_stat(name: str, stats: dict[str, Any]) -> None:
+    print(
+        f"      {name}: uses={stats['uses']} "
+        f"hit={stats['hit']}({stats['hit_rate']:.2%}) "
+        f"blocked={stats['blocked']}({stats['blocked_rate']:.2%}) "
+        f"whiff={stats['whiff']}({stats['whiff_rate']:.2%}) "
+        f"parry={stats['parry']} clash={stats['clash']} "
+        f"interrupted={stats['interrupted']} unknown={stats['unknown']}"
+    )
+
+
+def print_move_stats_group(title: str, summary: dict[str, dict[str, Any]], limit: int) -> None:
+    if not summary:
+        return
+    print(title)
+    for side, section in sorted(summary.items(), key=lambda item: side_sort_key(item[0])):
+        print(f"  {side}: rows={section['rows']}")
+        print("    by_tag")
+        for name, stats in sorted_stat_items(section["by_tag"])[:limit]:
+            print_single_move_stat(name, stats)
+        print("    by_move")
+        for name, stats in sorted_stat_items(section["by_move"])[:limit]:
+            print_single_move_stat(name, stats)
+
+
+def print_move_stats_summary(summary: dict[str, Any], examples: int) -> None:
+    if not summary or summary["rows"] == 0:
+        return
+    limit = max(12, examples)
+    print("Move Stats")
+    print(f"  rows={summary['rows']}")
+    print_move_stats_group("  offense_by_side", summary["offense_by_side"], limit)
+    print_move_stats_group("  defense_by_side", summary["defense_by_side"], limit)
+    print()
 
 
 def print_text_report(summary: dict[str, Any], examples: int) -> None:
@@ -1046,6 +1396,8 @@ def print_text_report(summary: dict[str, Any], examples: int) -> None:
             print_side_summary("by_punisher_side", section["by_punisher_side"])
             print_side_summary("by_punished_side", section["by_punished_side"])
         print()
+
+    print_move_stats_summary(summary["move_stats"], examples)
 
     refs = summary["refs"]
     print("References")

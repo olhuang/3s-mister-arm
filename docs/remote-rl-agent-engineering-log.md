@@ -2,6 +2,47 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-06: Combat Event Phase 8A-8 Move Offense/Defense Stats
+
+Milestone:
+- Combat event attribution Phase 8A-8
+
+Files changed:
+- `tools/analyze_rl_combat_events.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/agent-memory/remote-rl-combat-event-attribution-plan.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Give the analyzer a per-side offense/defense table for move usage,
+  hit/block/whiff counts, and rates by exact move and broad move tags.
+
+Implementation notes:
+- Added source-move records from non-delegated attack rows, projectile rows,
+  and throw rows. `projectile_claimed` parent attack rows are represented by
+  their projectile rows to avoid counting the same fireball twice.
+- Exact move names are derived from existing `engine_action_id` /
+  `engine_sub_action_id` metadata when available. The tag view intentionally
+  overlaps categories such as `punch`, `kick`, `hp`, `mk`, `projectile`,
+  `special`, `super`, `throw`, `air`, `ground`, `stand`, and `crouch`.
+- Attack source outcomes use the Phase 8A-7 effective attribution view.
+  Projectile and throw source outcomes use their finalized event results.
+- Reports include `offense_by_side` and `defense_by_side`. Defense rows are
+  the same source moves viewed from the opposite side, useful for answering
+  "what did this side get hit by, block, avoid, or see whiff?"
+- Hit/block/whiff rates use source-move `uses` as denominator. Since tags are
+  overlapping, tag totals are not exclusive and should not be summed.
+
+Validation:
+- `python3 -m py_compile tools/analyze_rl_combat_events.py` passed.
+- `python3 tools/analyze_rl_combat_events.py logs/phase7a-event-journal-live-events.ndjson --transition-log logs/phase7a-event-journal-live-transitions.ndjson --json-output /tmp/rl-combat-event-move-stats-summary.json --examples 6` passed.
+- `python3 -m json.tool /tmp/rl-combat-event-move-stats-summary.json` passed.
+- Latest live log produced `208` move-stat source rows: `self=142`,
+  `opponent=66`.
+- Example self offense exact moves: `fireball-hp uses=33 hit=5 blocked=8
+  whiff=2`, `crouch-mk uses=18 hit=8 blocked=4 whiff=5`, and
+  `fireball-mp uses=18 hit=3 blocked=6 whiff=2`.
+
 ## 2026-05-06: Combat Event Phase 8A-7 Derived Attribution Statistics
 
 Milestone:

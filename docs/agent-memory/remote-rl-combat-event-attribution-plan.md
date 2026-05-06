@@ -2378,6 +2378,14 @@ Work:
   `ambiguous`, and unresolved rows stay `unknown`. This view is for reporting
   and analysis only; Phase 9 must still opt in explicitly before any derived
   label can affect rewards or features.
+- Phase 8A-8 adds per-side move offense/defense statistics. The analyzer
+  builds source-move records from non-delegated attack rows, projectile rows,
+  and throw rows, using derived attribution labels where available. It reports
+  both `offense_by_side` and `defense_by_side` grouped by exact move and by
+  overlapping tags such as `punch`, `kick`, individual buttons, `projectile`,
+  `special`, `super`, `throw`, `air`, `ground`, `stand`, and `crouch`.
+  Hit/block/whiff rates use source-move `uses` as the denominator; tags are
+  intentionally overlapping and must not be summed as exclusive categories.
 - add fight replay summaries:
   - timeline
   - per-side damage sources

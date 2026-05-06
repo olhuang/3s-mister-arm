@@ -27,6 +27,11 @@ Implementation notes:
 - A later opposite-side high-confidence attribution event with a real source id
   and defense result hit/thrown consumes that window and increments punish
   counters for the punisher side.
+- Live refinement: a DP/large-special whiff punish can happen before the
+  target attack event finalizes. If the defender still has a recent active
+  non-projectile attack with no strong HP/stun/damage evidence against its own
+  target, a later high-confidence opposite-side hit/throw can consume that
+  active attack directly as a punish candidate.
 - Outcome overlay adds `CPN R/W/I` and `CPNX A/P/T` for punish candidate total,
   punished-attack reason, and punisher source family.
 - This does not handle all unsafe recovery cases yet, especially projectile
@@ -38,6 +43,10 @@ Validation:
 - `cc -std=c11 -Wall -Wextra -Isrc -Iinclude -c src/rl/rl_combat_event.c -o /tmp/rl_combat_event_phase6c0_punish.o` passed.
 - `tools/mister/build-game.sh --flavor telemetry` passed, rebuilding
   `rl_combat_event.c`, `rl_observation.c`, and `rl_session.c`.
+- Active-attack punish refinement validation passed:
+  `git diff --check`,
+  `cc -std=c11 -Wall -Wextra -Isrc -Iinclude -c src/rl/rl_combat_event.c -o /tmp/rl_combat_event_phase6c0_active_punish.o`,
+  and `tools/mister/build-game.sh --flavor telemetry`.
 
 ## 2026-05-06: Combat Event Phase 6b-1 Defense Context Snapshots
 

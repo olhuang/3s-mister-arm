@@ -43,6 +43,8 @@ static RLCombatThrowEventRing opponent_throw_ring;
 static RLCombatAttributionEventRing attribution_ring;
 static RLCombatPunishableAttackCandidate self_punishable_attack;
 static RLCombatPunishableAttackCandidate opponent_punishable_attack;
+static u64 self_last_punished_attack_event_id;
+static u64 opponent_last_punished_attack_event_id;
 static RLCombatEventStats combat_event_stats;
 
 static bool RLCombatEvent_IsCleanBasicWhiff(const RLCombatAttackEvent* event);
@@ -103,6 +105,18 @@ static RLCombatPunishableAttackCandidate* RLCombatEvent_PunishableAttackForSide(
         return &self_punishable_attack;
     case RL_COMBAT_EVENT_SIDE_OPPONENT:
         return &opponent_punishable_attack;
+    case RL_COMBAT_EVENT_SIDE_NONE:
+    default:
+        return NULL;
+    }
+}
+
+static u64* RLCombatEvent_LastPunishedAttackIdForSide(RLCombatEventSide side) {
+    switch (side) {
+    case RL_COMBAT_EVENT_SIDE_SELF:
+        return &self_last_punished_attack_event_id;
+    case RL_COMBAT_EVENT_SIDE_OPPONENT:
+        return &opponent_last_punished_attack_event_id;
     case RL_COMBAT_EVENT_SIDE_NONE:
     default:
         return NULL;
@@ -957,8 +971,103 @@ static void RLCombatEvent_IncrementPunishSourceCounter(RLCombatEventSide punishe
     }
 }
 
+static void RLCombatEvent_IncrementPunishCounters(RLCombatEventSide punisher_side,
+                                                  RLCombatPunishReason reason,
+                                                  RLCombatContactMatchSource source_family) {
+    RLCombatEvent_IncrementSideCounter(punisher_side,
+                                       &combat_event_stats.punish_candidate_self_count,
+                                       &combat_event_stats.punish_candidate_opponent_count);
+    if (reason == RL_COMBAT_PUNISH_REASON_WHIFF) {
+        RLCombatEvent_IncrementSideCounter(punisher_side,
+                                           &combat_event_stats.punish_whiff_self_count,
+                                           &combat_event_stats.punish_whiff_opponent_count);
+    } else if (reason == RL_COMBAT_PUNISH_REASON_INTERRUPTED) {
+        RLCombatEvent_IncrementSideCounter(punisher_side,
+                                           &combat_event_stats.punish_interrupted_self_count,
+                                           &combat_event_stats.punish_interrupted_opponent_count);
+    }
+    RLCombatEvent_IncrementPunishSourceCounter(punisher_side, source_family);
+}
+
+static bool RLCombatEvent_AttackHasStrongTargetDamageEvidence(const RLCombatAttackEvent* attack) {
+    return attack != NULL &&
+           (attack->saw_target_damage_state || attack->saw_target_hp_delta || attack->saw_target_stun_delta);
+}
+
+static const RLCombatAttackEvent* RLCombatEvent_FindActivePunishableAttackForSide(u64 run_id,
+                                                                                  u32 episode_id,
+                                                                                  RLCombatEventSide side,
+                                                                                  u32 frame_id) {
+    const RLCombatAttackEventRing* ring = RLCombatEvent_ConstRingForSide(side);
+    const RLCombatAttackEvent* best = NULL;
+    u32 best_age = ~0u;
+
+    if (ring == NULL) {
+        return NULL;
+    }
+
+    for (u32 i = 0; i < RL_COMBAT_ATTACK_EVENT_RING_CAP; i++) {
+        const RLCombatAttackEvent* attack = &ring->events[i];
+        u32 age = 0;
+        if (attack->status != RL_COMBAT_ATTACK_EVENT_ACTIVE || attack->run_id != run_id ||
+            attack->episode_id != episode_id || attack->side != side || attack->projectile_like ||
+            attack->saw_projectile || RLCombatEvent_AttackHasStrongTargetDamageEvidence(attack)) {
+            continue;
+        }
+        age = RLCombatEvent_FrameAge(frame_id, attack->start_frame);
+        if (age <= RL_COMBAT_ATTACK_MAX_PENDING_FRAMES && age < best_age) {
+            best = attack;
+            best_age = age;
+        }
+    }
+
+    return best;
+}
+
+static RLCombatPunishReason RLCombatEvent_ActivePunishReason(const RLCombatAttackEvent* attack,
+                                                             const RLCombatAttributionEvent* event) {
+    const u32 age =
+        (attack != NULL && event != NULL) ? RLCombatEvent_FrameAge(event->frame_id, attack->start_frame) : 0;
+
+    if (attack != NULL && attack->whiff_eligible && age >= RL_COMBAT_ATTACK_MIN_WHIFF_FRAMES) {
+        return RL_COMBAT_PUNISH_REASON_WHIFF;
+    }
+    return RL_COMBAT_PUNISH_REASON_INTERRUPTED;
+}
+
+static bool RLCombatEvent_TryRecordActivePunishCandidate(const RLCombatAttributionEvent* event) {
+    const RLCombatAttackEvent* attack = NULL;
+    u64* last_punished_id = NULL;
+    RLCombatPunishReason reason = RL_COMBAT_PUNISH_REASON_NONE;
+
+    if (event == NULL) {
+        return false;
+    }
+
+    attack = RLCombatEvent_FindActivePunishableAttackForSide(event->run_id,
+                                                            event->episode_id,
+                                                            event->target_side,
+                                                            event->frame_id);
+    if (attack == NULL || event->source_side != RLCombatEvent_OppositeSide(attack->side)) {
+        return false;
+    }
+
+    last_punished_id = RLCombatEvent_LastPunishedAttackIdForSide(attack->side);
+    if (last_punished_id != NULL && *last_punished_id == attack->event_id) {
+        return false;
+    }
+
+    reason = RLCombatEvent_ActivePunishReason(attack, event);
+    RLCombatEvent_IncrementPunishCounters(event->source_side, reason, event->source_family);
+    if (last_punished_id != NULL) {
+        *last_punished_id = attack->event_id;
+    }
+    return true;
+}
+
 static void RLCombatEvent_TryRecordPunishCandidate(const RLCombatAttributionEvent* event) {
     RLCombatPunishableAttackCandidate* candidate = NULL;
+    u64* last_punished_id = NULL;
     u32 age = 0;
 
     if (!RLCombatEvent_AttributionCanPunish(event)) {
@@ -970,28 +1079,26 @@ static void RLCombatEvent_TryRecordPunishCandidate(const RLCombatAttributionEven
         candidate->episode_id != event->episode_id || candidate->side != event->target_side ||
         event->source_side != RLCombatEvent_OppositeSide(candidate->side) ||
         event->frame_id < candidate->end_frame) {
+        RLCombatEvent_TryRecordActivePunishCandidate(event);
         return;
     }
 
     age = RLCombatEvent_FrameAge(event->frame_id, candidate->end_frame);
     if (age > RL_COMBAT_PUNISH_CANDIDATE_WINDOW_FRAMES) {
         candidate->valid = false;
+        RLCombatEvent_TryRecordActivePunishCandidate(event);
         return;
     }
 
-    RLCombatEvent_IncrementSideCounter(event->source_side,
-                                       &combat_event_stats.punish_candidate_self_count,
-                                       &combat_event_stats.punish_candidate_opponent_count);
-    if (candidate->reason == RL_COMBAT_PUNISH_REASON_WHIFF) {
-        RLCombatEvent_IncrementSideCounter(event->source_side,
-                                           &combat_event_stats.punish_whiff_self_count,
-                                           &combat_event_stats.punish_whiff_opponent_count);
-    } else if (candidate->reason == RL_COMBAT_PUNISH_REASON_INTERRUPTED) {
-        RLCombatEvent_IncrementSideCounter(event->source_side,
-                                           &combat_event_stats.punish_interrupted_self_count,
-                                           &combat_event_stats.punish_interrupted_opponent_count);
+    last_punished_id = RLCombatEvent_LastPunishedAttackIdForSide(candidate->side);
+    if (last_punished_id != NULL && *last_punished_id == candidate->event_id) {
+        candidate->valid = false;
+        return;
     }
-    RLCombatEvent_IncrementPunishSourceCounter(event->source_side, event->source_family);
+    RLCombatEvent_IncrementPunishCounters(event->source_side, candidate->reason, event->source_family);
+    if (last_punished_id != NULL) {
+        *last_punished_id = candidate->event_id;
+    }
     candidate->valid = false;
 }
 
@@ -1391,6 +1498,8 @@ static void RLCombatEvent_ClearRings(void) {
     memset(&attribution_ring, 0, sizeof(attribution_ring));
     memset(&self_punishable_attack, 0, sizeof(self_punishable_attack));
     memset(&opponent_punishable_attack, 0, sizeof(opponent_punishable_attack));
+    self_last_punished_attack_event_id = RL_COMBAT_EVENT_ID_NONE;
+    opponent_last_punished_attack_event_id = RL_COMBAT_EVENT_ID_NONE;
     RLCombatEvent_RefreshActiveStats();
 }
 

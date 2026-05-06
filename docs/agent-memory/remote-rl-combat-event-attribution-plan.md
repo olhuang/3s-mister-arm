@@ -2126,6 +2126,12 @@ Phase 6c-0 implementation slice:
   source/target sides, and a short frame window after the punished attack
   finalized. Projectile recovery / fireball-safe-vs-unsafe nuance and richer
   unsafe-frame reasoning remain for later Phase 6c slices.
+- Live refinement: Shoryuken/large-special whiff-punish can land before the
+  target attack event has finalized as whiff/interrupted. In that case, Phase
+  6c-0 may also consume a recent active non-projectile target attack as a
+  punish candidate when the target attack has no strong HP/stun/damage evidence
+  against its own target and the incoming attribution is high-confidence
+  hit/throw. This keeps DP-whiff punish visible without waiting for timeout.
 - No transition schema, reward, replay, trainer, or event-journal export changes.
 
 ### Phase 7: Transition Schema v4 And Event Journal Export

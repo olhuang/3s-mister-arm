@@ -2715,9 +2715,7 @@ static void RLSession_FillCombatContactMatchUpdate(RLCombatContactMatchUpdate* u
         update->target_entered_damage_state = obs->opp_entered_damage_state;
         update->target_hp_delta = (u8)(opp_hp_delta > 0);
         update->target_stun_delta = (u8)(obs->delta_opp_stun > 0);
-        update->target_block_reaction =
-            (u8)(obs->opp_contact_reaction_state && RLSession_IsGuardReactionRoutine2(obs->opp_routine[2]));
-        update->target_throw_caught = (u8)(obs->opp_throw_caught || obs->opp_throw_caught_started);
+        update->target_throw_caught = obs->opp_throw_caught_started;
         update->attack_candidate =
             (u8)(obs->self_routine_attack_state || obs->self_current_attack != 0 ||
                  obs->self_attack_started || obs->self_attack_code_changed ||
@@ -2733,9 +2731,7 @@ static void RLSession_FillCombatContactMatchUpdate(RLCombatContactMatchUpdate* u
         update->target_entered_damage_state = obs->self_entered_damage_state;
         update->target_hp_delta = (u8)(self_hp_delta > 0);
         update->target_stun_delta = (u8)(obs->delta_self_stun > 0);
-        update->target_block_reaction =
-            (u8)(obs->self_contact_reaction_state && RLSession_IsGuardReactionRoutine2(obs->self_routine[2]));
-        update->target_throw_caught = (u8)(obs->self_throw_caught || obs->self_throw_caught_started);
+        update->target_throw_caught = obs->self_throw_caught_started;
         update->attack_candidate =
             (u8)(obs->opp_routine_attack_state || obs->opp_current_attack != 0 ||
                  obs->opp_attack_started || obs->opp_attack_code_changed ||

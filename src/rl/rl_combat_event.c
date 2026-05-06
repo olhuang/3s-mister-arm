@@ -257,7 +257,7 @@ static bool RLCombatEvent_ContactMatchHasTargetEdge(const RLCombatContactMatchUp
     const bool strong_edge =
         update != NULL &&
         (update->target_entered_damage_state || update->target_hp_delta || update->target_stun_delta ||
-         update->target_block_reaction || update->target_throw_caught);
+         update->target_throw_caught);
     const bool contact_edge =
         update != NULL && (update->target_entered_hit_stop || update->target_entered_contact_state);
 

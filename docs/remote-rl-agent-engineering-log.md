@@ -59,12 +59,14 @@ Refinement after first live CEM pass:
   candidate. SF3 often puts both participants into hit-stop/contact-related
   states, so the attacker's own hit-stop looked like an unattributed incoming
   edge for the other source side.
-- Fix: HP/stun/damage, guard block-reaction, and throw-caught evidence remain
-  strong target edges and can become `U` if no source candidate exists. Plain
-  hit-stop/contact-state evidence is counted only when that source side already
-  has attack/projectile/throw evidence. Finalized same-frame projectile events
-  also remain projectile candidates so clashes/parries do not fall back to the
-  projectile parent attack.
+- Fix: HP/stun/damage and throw-caught rising edges remain strong target edges
+  and can become `U` if no source candidate exists. Guard block reaction is
+  treated as a sustained state, not a strong edge; block contact is counted
+  through entered-contact evidence. Plain hit-stop/contact-state evidence is
+  counted only when that source side already has attack/projectile/throw
+  evidence. Finalized same-frame projectile events also remain projectile
+  candidates so clashes/parries do not fall back to the projectile parent
+  attack.
 
 ## 2026-05-05: Combat Event Phase 5C/5D Throw Live Refinement Prep
 

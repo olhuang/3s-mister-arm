@@ -580,6 +580,14 @@ static void RLCombatEvent_ResetEpisodeStats(void) {
     combat_event_stats.defense_evaded_opponent_count = 0;
     combat_event_stats.defense_unknown_self_count = 0;
     combat_event_stats.defense_unknown_opponent_count = 0;
+    combat_event_stats.defense_context_guard_self_count = 0;
+    combat_event_stats.defense_context_guard_opponent_count = 0;
+    combat_event_stats.defense_context_block_reaction_self_count = 0;
+    combat_event_stats.defense_context_block_reaction_opponent_count = 0;
+    combat_event_stats.defense_context_parry_self_count = 0;
+    combat_event_stats.defense_context_parry_opponent_count = 0;
+    combat_event_stats.defense_context_throw_caught_self_count = 0;
+    combat_event_stats.defense_context_throw_caught_opponent_count = 0;
     combat_event_stats.episode_flush_count = 0;
     combat_event_stats.episode_switch_flush_count = 0;
 }
@@ -788,6 +796,54 @@ static void RLCombatEvent_IncrementDefenseResultCounter(RLCombatEventSide target
     }
 }
 
+static RLCombatDefenseTargetState RLCombatEvent_DeriveDefenseTargetState(const RLCombatContactMatchUpdate* update) {
+    if (update == NULL) {
+        return RL_COMBAT_DEFENSE_TARGET_STATE_UNKNOWN;
+    }
+    if (update->target_throw_caught) {
+        return RL_COMBAT_DEFENSE_TARGET_STATE_THROW_CAUGHT;
+    }
+    if (update->target_block_reaction) {
+        return RL_COMBAT_DEFENSE_TARGET_STATE_BLOCKSTUN;
+    }
+    if (update->target_entered_damage_state || update->target_hp_delta || update->target_stun_delta) {
+        return RL_COMBAT_DEFENSE_TARGET_STATE_HITSTUN;
+    }
+    if (update->target_airborne) {
+        return RL_COMBAT_DEFENSE_TARGET_STATE_AIR;
+    }
+    if (update->target_attack_state_active) {
+        return RL_COMBAT_DEFENSE_TARGET_STATE_ATTACKING;
+    }
+    return RL_COMBAT_DEFENSE_TARGET_STATE_NEUTRAL;
+}
+
+static void RLCombatEvent_IncrementDefenseContextCounters(const RLCombatAttributionEvent* event) {
+    if (event == NULL) {
+        return;
+    }
+    if (event->target_guard) {
+        RLCombatEvent_IncrementSideCounter(event->target_side,
+                                           &combat_event_stats.defense_context_guard_self_count,
+                                           &combat_event_stats.defense_context_guard_opponent_count);
+    }
+    if (event->target_block_reaction) {
+        RLCombatEvent_IncrementSideCounter(event->target_side,
+                                           &combat_event_stats.defense_context_block_reaction_self_count,
+                                           &combat_event_stats.defense_context_block_reaction_opponent_count);
+    }
+    if (event->target_parry_started) {
+        RLCombatEvent_IncrementSideCounter(event->target_side,
+                                           &combat_event_stats.defense_context_parry_self_count,
+                                           &combat_event_stats.defense_context_parry_opponent_count);
+    }
+    if (event->target_throw_caught) {
+        RLCombatEvent_IncrementSideCounter(event->target_side,
+                                           &combat_event_stats.defense_context_throw_caught_self_count,
+                                           &combat_event_stats.defense_context_throw_caught_opponent_count);
+    }
+}
+
 static void RLCombatEvent_RecordAttributionEvent(const RLCombatContactMatchUpdate* update,
                                                  RLCombatContactMatchSource source,
                                                  u64 source_event_id,
@@ -823,11 +879,31 @@ static void RLCombatEvent_RecordAttributionEvent(const RLCombatContactMatchUpdat
     defense_result =
         RLCombatEvent_DeriveDefenseResult(update, source, edge_type, failure_reason, projectile_event);
     event->defense_result = defense_result;
+    event->actual_guard_state_at_contact = update->target_guard_state;
+    event->target_state = RLCombatEvent_DeriveDefenseTargetState(update);
+    event->target_policy_action_id = update->target_policy_action_id;
+    event->target_policy_sub_action_id = update->target_policy_sub_action_id;
+    event->target_policy_action_step = update->target_policy_action_step;
+    event->target_routine_1 = update->target_routine_1;
+    event->target_routine_2 = update->target_routine_2;
+    event->target_guard = update->target_guard;
+    event->target_block_reaction = update->target_block_reaction;
+    event->target_parry_started = update->target_parry_started;
+    event->target_throw_caught = update->target_throw_caught;
+    event->target_airborne = update->target_airborne;
+    event->target_attack_state_active = update->target_attack_state_active;
+    event->target_contact_reaction_state = update->target_contact_reaction_state;
+    event->target_entered_hit_stop = update->target_entered_hit_stop;
+    event->target_entered_contact_state = update->target_entered_contact_state;
+    event->target_entered_damage_state = update->target_entered_damage_state;
+    event->target_hp_delta = update->target_hp_delta;
+    event->target_stun_delta = update->target_stun_delta;
 
     attribution_ring.cursor = (attribution_ring.cursor + 1u) % RL_COMBAT_ATTRIBUTION_EVENT_RING_CAP;
     combat_event_stats.attribution_recorded_count++;
     RLCombatEvent_IncrementAttributionEdgeCounter(edge_type);
     RLCombatEvent_IncrementDefenseResultCounter(event->target_side, defense_result);
+    RLCombatEvent_IncrementDefenseContextCounters(event);
     if (failure_reason != RL_COMBAT_ATTRIBUTION_FAILURE_NONE) {
         combat_event_stats.attribution_failure_count++;
     }

@@ -2,6 +2,48 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-06: Combat Event Phase 6b-1 Defense Context Snapshots
+
+Milestone:
+- Combat event attribution Phase 6b-1
+
+Files changed:
+- `src/rl/rl_combat_event.h`
+- `src/rl/rl_combat_event.c`
+- `src/rl/rl_session.h`
+- `src/rl/rl_session.c`
+- `src/rl/rl_observation.c`
+- `docs/plan-remote-rl-agent.md`
+- `docs/agent-memory/remote-rl-combat-event-attribution-plan.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Preserve the defense context behind each internal attribution event so the
+  future event journal can export `defense_result` with intent, actual guard
+  state, target state, and raw evidence instead of relying only on overlay
+  aggregate counters.
+
+Implementation notes:
+- Added `RLCombatDefenseGuardState` and `RLCombatDefenseTargetState`.
+- `RLCombatAttributionEvent` now stores agent-side target policy intent when
+  the defender is self, actual guard state, derived target state, routines, and
+  raw target evidence bits for guard, block reaction, parry, throw-caught,
+  airborne, attack-state, contact reaction, hit-stop, contact-state,
+  damage-state, HP delta, and stun delta.
+- Outcome overlay adds `CDC G/BR/PA/TC` side-split context counters to show raw
+  guard, block-reaction, parry, and throw-caught evidence behind `CDR`.
+- This remains debug/internal only: no transition schema bump, no reward,
+  replay, trainer, or event-journal export change.
+
+Validation:
+- `git diff --check` passed.
+- `cc -std=c11 -Wall -Wextra -Isrc -Iinclude -c src/rl/rl_combat_event.c -o /tmp/rl_combat_event_phase6b1_context.o` passed.
+- A bare host compile of `src/rl/rl_session.c` is not valid because it requires
+  generated `port/build_config.h`; the canonical MiSTer telemetry build below
+  covered `rl_session.c`.
+- `tools/mister/build-game.sh --flavor telemetry` passed, rebuilding
+  `rl_combat_event.c`, `rl_observation.c`, and `rl_session.c`.
+
 ## 2026-05-06: Combat Event Phase 6b-0 Defense Result Counters
 
 Milestone:

@@ -171,6 +171,14 @@ typedef struct RLRemoteDebugState {
     u32 combat_defense_evaded_opp_count;
     u32 combat_defense_unknown_self_count;
     u32 combat_defense_unknown_opp_count;
+    u32 combat_defense_context_guard_self_count;
+    u32 combat_defense_context_guard_opp_count;
+    u32 combat_defense_context_block_reaction_self_count;
+    u32 combat_defense_context_block_reaction_opp_count;
+    u32 combat_defense_context_parry_self_count;
+    u32 combat_defense_context_parry_opp_count;
+    u32 combat_defense_context_throw_caught_self_count;
+    u32 combat_defense_context_throw_caught_opp_count;
     u32 combat_lifetime_attack_started_count;
     u32 combat_lifetime_attack_finalized_count;
     u32 combat_lifetime_attack_whiff_count;

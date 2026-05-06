@@ -170,6 +170,24 @@ typedef enum RLCombatDefenseResult {
     RL_COMBAT_DEFENSE_RESULT_UNKNOWN = 7,
 } RLCombatDefenseResult;
 
+typedef enum RLCombatDefenseGuardState {
+    RL_COMBAT_DEFENSE_GUARD_STATE_UNKNOWN = 0,
+    RL_COMBAT_DEFENSE_GUARD_STATE_NONE = 1,
+    RL_COMBAT_DEFENSE_GUARD_STATE_STAND = 2,
+    RL_COMBAT_DEFENSE_GUARD_STATE_CROUCH = 3,
+    RL_COMBAT_DEFENSE_GUARD_STATE_AIR = 4,
+} RLCombatDefenseGuardState;
+
+typedef enum RLCombatDefenseTargetState {
+    RL_COMBAT_DEFENSE_TARGET_STATE_UNKNOWN = 0,
+    RL_COMBAT_DEFENSE_TARGET_STATE_NEUTRAL = 1,
+    RL_COMBAT_DEFENSE_TARGET_STATE_BLOCKSTUN = 2,
+    RL_COMBAT_DEFENSE_TARGET_STATE_HITSTUN = 3,
+    RL_COMBAT_DEFENSE_TARGET_STATE_AIR = 4,
+    RL_COMBAT_DEFENSE_TARGET_STATE_ATTACKING = 5,
+    RL_COMBAT_DEFENSE_TARGET_STATE_THROW_CAUGHT = 6,
+} RLCombatDefenseTargetState;
+
 typedef struct RLCombatAttackEventStart {
     u64 run_id;
     u32 episode_id;
@@ -387,6 +405,12 @@ typedef struct RLCombatContactMatchUpdate {
     u32 decision_id;
     u32 frame_id;
     RLCombatEventSide source_side;
+    u16 target_policy_action_id;
+    u16 target_policy_sub_action_id;
+    u16 target_policy_action_step;
+    u16 target_routine_1;
+    u16 target_routine_2;
+    RLCombatDefenseGuardState target_guard_state;
     u8 target_entered_hit_stop;
     u8 target_entered_contact_state;
     u8 target_entered_damage_state;
@@ -396,6 +420,9 @@ typedef struct RLCombatContactMatchUpdate {
     u8 target_block_reaction;
     u8 target_parry_started;
     u8 target_throw_caught;
+    u8 target_airborne;
+    u8 target_attack_state_active;
+    u8 target_contact_reaction_state;
     u8 attack_candidate;
     u8 projectile_candidate;
     u8 throw_candidate;
@@ -415,6 +442,25 @@ typedef struct RLCombatAttributionEvent {
     RLCombatAttributionConfidence confidence;
     RLCombatAttributionFailureReason failure_reason;
     RLCombatDefenseResult defense_result;
+    RLCombatDefenseGuardState actual_guard_state_at_contact;
+    RLCombatDefenseTargetState target_state;
+    u16 target_policy_action_id;
+    u16 target_policy_sub_action_id;
+    u16 target_policy_action_step;
+    u16 target_routine_1;
+    u16 target_routine_2;
+    u8 target_guard;
+    u8 target_block_reaction;
+    u8 target_parry_started;
+    u8 target_throw_caught;
+    u8 target_airborne;
+    u8 target_attack_state_active;
+    u8 target_contact_reaction_state;
+    u8 target_entered_hit_stop;
+    u8 target_entered_contact_state;
+    u8 target_entered_damage_state;
+    u8 target_hp_delta;
+    u8 target_stun_delta;
 } RLCombatAttributionEvent;
 
 typedef struct RLCombatEventStats {
@@ -545,6 +591,14 @@ typedef struct RLCombatEventStats {
     u32 defense_evaded_opponent_count;
     u32 defense_unknown_self_count;
     u32 defense_unknown_opponent_count;
+    u32 defense_context_guard_self_count;
+    u32 defense_context_guard_opponent_count;
+    u32 defense_context_block_reaction_self_count;
+    u32 defense_context_block_reaction_opponent_count;
+    u32 defense_context_parry_self_count;
+    u32 defense_context_parry_opponent_count;
+    u32 defense_context_throw_caught_self_count;
+    u32 defense_context_throw_caught_opponent_count;
     u32 episode_flush_count;
     u32 episode_switch_flush_count;
     u32 lifetime_attack_started_count;

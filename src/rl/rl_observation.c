@@ -938,6 +938,18 @@ void RLObservation_FormatDebugOverlay(char* out, size_t out_size, const char* se
                             (unsigned long)remote->combat_defense_evaded_opp_count,
                             (unsigned long)remote->combat_defense_unknown_self_count,
                             (unsigned long)remote->combat_defense_unknown_opp_count);
+        append_overlay_line(out,
+                            out_size,
+                            &used,
+                            "CDC G%lu/%lu BR%lu/%lu PA%lu/%lu TC%lu/%lu",
+                            (unsigned long)remote->combat_defense_context_guard_self_count,
+                            (unsigned long)remote->combat_defense_context_guard_opp_count,
+                            (unsigned long)remote->combat_defense_context_block_reaction_self_count,
+                            (unsigned long)remote->combat_defense_context_block_reaction_opp_count,
+                            (unsigned long)remote->combat_defense_context_parry_self_count,
+                            (unsigned long)remote->combat_defense_context_parry_opp_count,
+                            (unsigned long)remote->combat_defense_context_throw_caught_self_count,
+                            (unsigned long)remote->combat_defense_context_throw_caught_opp_count);
     }
 
     if (show_all || view == RL_DEBUG_OVERLAY_VIEW_INPUT) {

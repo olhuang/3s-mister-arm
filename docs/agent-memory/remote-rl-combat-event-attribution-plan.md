@@ -2063,6 +2063,26 @@ Phase 6b-0 implementation slice:
   contact, target state, wakeup context, block_possible, confidence, and failure
   reasons.
 
+Phase 6b-1 implementation slice:
+
+- Promote the live-validated defense result classification into a richer
+  internal attribution-event contract. Each attribution event now snapshots the
+  target-side defense context needed by the future event journal:
+  - `target_policy_action_id`, `target_policy_sub_action_id`, and
+    `target_policy_action_step` for agent-side defense intent when the target is
+    self; opponent target intent remains unknown for now.
+  - `actual_guard_state_at_contact` as stand/crouch/air/none/unknown.
+  - `target_state` as neutral/blockstun/hitstun/air/attacking/throw-caught or
+    unknown.
+  - raw target evidence bits: guard, block reaction, parry started,
+    throw-caught, airborne, attack-state, contact-reaction, hit-stop,
+    contact-state, damage-state, HP delta, and stun delta.
+- Outcome overlay adds `CDC Gself/opp BRself/opp PAself/opp TCself/opp` so live
+  tests can see the raw defense-context evidence behind `CDR`:
+  guard active, block reaction, parry edge, and throw-caught edge.
+- This remains debug/internal only: no transition schema bump, no reward
+  changes, no replay/trainer feature adoption, and no event-journal export yet.
+
 ### Phase 6c: Punish Detection
 
 Files:

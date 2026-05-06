@@ -767,6 +767,15 @@ static void RLSession_UpdateCombatEventDebugStats(void) {
     remote_debug.combat_defense_evaded_opp_count = stats->defense_evaded_opponent_count;
     remote_debug.combat_defense_unknown_self_count = stats->defense_unknown_self_count;
     remote_debug.combat_defense_unknown_opp_count = stats->defense_unknown_opponent_count;
+    remote_debug.combat_defense_context_guard_self_count = stats->defense_context_guard_self_count;
+    remote_debug.combat_defense_context_guard_opp_count = stats->defense_context_guard_opponent_count;
+    remote_debug.combat_defense_context_block_reaction_self_count = stats->defense_context_block_reaction_self_count;
+    remote_debug.combat_defense_context_block_reaction_opp_count =
+        stats->defense_context_block_reaction_opponent_count;
+    remote_debug.combat_defense_context_parry_self_count = stats->defense_context_parry_self_count;
+    remote_debug.combat_defense_context_parry_opp_count = stats->defense_context_parry_opponent_count;
+    remote_debug.combat_defense_context_throw_caught_self_count = stats->defense_context_throw_caught_self_count;
+    remote_debug.combat_defense_context_throw_caught_opp_count = stats->defense_context_throw_caught_opponent_count;
     remote_debug.combat_lifetime_attack_started_count = stats->lifetime_attack_started_count;
     remote_debug.combat_lifetime_attack_finalized_count = stats->lifetime_attack_finalized_count;
     remote_debug.combat_lifetime_attack_whiff_count = stats->lifetime_attack_whiff_count;
@@ -925,20 +934,71 @@ static bool RLSession_MoveIntentIsCrouch(u8 move_intent) {
     return move_intent == RL_MOVE_DOWN || move_intent == RL_MOVE_DOWN_BACK || move_intent == RL_MOVE_DOWN_FORWARD;
 }
 
-static bool RLSession_ObservationIsStandGuardCandidate(const RLObservationV1* obs) {
-    if (obs == NULL || !obs->valid || obs->self_routine[1] != 0) {
+static bool RLSession_RoutineIsStandGuardCandidate(u16 routine_1, u16 routine_2) {
+    if (routine_1 != 0) {
         return false;
     }
-    return obs->self_routine[2] == 27 || obs->self_routine[2] == 28 || obs->self_routine[2] == 31 ||
-           obs->self_routine[2] == 32 || obs->self_routine[2] == 33;
+    return routine_2 == 27 || routine_2 == 28 || routine_2 == 31 || routine_2 == 32 || routine_2 == 33;
+}
+
+static bool RLSession_RoutineIsCrouchGuardCandidate(u16 routine_1, u16 routine_2) {
+    if (routine_1 != 0) {
+        return false;
+    }
+    return routine_2 == 29 || routine_2 == 31 || routine_2 == 32 || routine_2 == 33;
+}
+
+static bool RLSession_ObservationIsStandGuardCandidate(const RLObservationV1* obs) {
+    return obs != NULL && obs->valid && RLSession_RoutineIsStandGuardCandidate(obs->self_routine[1], obs->self_routine[2]);
 }
 
 static bool RLSession_ObservationIsCrouchGuardCandidate(const RLObservationV1* obs) {
-    if (obs == NULL || !obs->valid || obs->self_routine[1] != 0) {
-        return false;
+    return obs != NULL && obs->valid && RLSession_RoutineIsCrouchGuardCandidate(obs->self_routine[1], obs->self_routine[2]);
+}
+
+static RLCombatDefenseGuardState RLSession_DefenseGuardStateForSide(const RLObservationV1* obs,
+                                                                    RLCombatEventSide side) {
+    u16 routine_1 = 0;
+    u16 routine_2 = 0;
+    bool airborne = false;
+    bool guard_flag = false;
+    bool stand_guard = false;
+    bool crouch_guard = false;
+
+    if (obs == NULL || !obs->valid) {
+        return RL_COMBAT_DEFENSE_GUARD_STATE_UNKNOWN;
     }
-    return obs->self_routine[2] == 29 || obs->self_routine[2] == 31 || obs->self_routine[2] == 32 ||
-           obs->self_routine[2] == 33;
+
+    if (side == RL_COMBAT_EVENT_SIDE_SELF) {
+        routine_1 = obs->self_routine[1];
+        routine_2 = obs->self_routine[2];
+        airborne = obs->self_airborne != 0;
+        guard_flag = obs->self_guard_flag != 0;
+    } else if (side == RL_COMBAT_EVENT_SIDE_OPPONENT) {
+        routine_1 = obs->opp_routine[1];
+        routine_2 = obs->opp_routine[2];
+        airborne = obs->opp_airborne != 0;
+        guard_flag = obs->opp_guard_flag != 0;
+    } else {
+        return RL_COMBAT_DEFENSE_GUARD_STATE_UNKNOWN;
+    }
+
+    if (airborne) {
+        return RL_COMBAT_DEFENSE_GUARD_STATE_AIR;
+    }
+
+    stand_guard = RLSession_RoutineIsStandGuardCandidate(routine_1, routine_2);
+    crouch_guard = RLSession_RoutineIsCrouchGuardCandidate(routine_1, routine_2);
+    if (stand_guard && !crouch_guard) {
+        return RL_COMBAT_DEFENSE_GUARD_STATE_STAND;
+    }
+    if (crouch_guard && !stand_guard) {
+        return RL_COMBAT_DEFENSE_GUARD_STATE_CROUCH;
+    }
+    if (stand_guard || crouch_guard || guard_flag) {
+        return RL_COMBAT_DEFENSE_GUARD_STATE_UNKNOWN;
+    }
+    return RL_COMBAT_DEFENSE_GUARD_STATE_NONE;
 }
 
 static void RLSession_DeriveDemoPolicyMeta(u8 move_intent,
@@ -2735,6 +2795,9 @@ static void RLSession_FillCombatContactMatchUpdate(RLCombatContactMatchUpdate* u
     update->source_side = source_side;
 
     if (source_side == RL_COMBAT_EVENT_SIDE_SELF) {
+        update->target_routine_1 = obs->opp_routine[1];
+        update->target_routine_2 = obs->opp_routine[2];
+        update->target_guard_state = RLSession_DefenseGuardStateForSide(obs, RL_COMBAT_EVENT_SIDE_OPPONENT);
         update->target_entered_hit_stop = obs->opp_entered_hit_stop;
         update->target_entered_contact_state = obs->opp_entered_contact_state;
         update->target_entered_damage_state = obs->opp_entered_damage_state;
@@ -2745,12 +2808,21 @@ static void RLSession_FillCombatContactMatchUpdate(RLCombatContactMatchUpdate* u
             (u8)(obs->opp_contact_reaction_state && RLSession_IsGuardReactionRoutine2(obs->opp_routine[2]));
         update->target_parry_started = obs->opp_parry_started;
         update->target_throw_caught = obs->opp_throw_caught_started;
+        update->target_airborne = obs->opp_airborne;
+        update->target_attack_state_active = obs->opp_routine_attack_state;
+        update->target_contact_reaction_state = obs->opp_contact_reaction_state;
         update->attack_candidate = 0;
         update->projectile_candidate = obs->self_projectile_active;
         update->throw_candidate =
             (u8)(obs->self_throw_active || obs->self_throw_started || obs->opp_throw_caught ||
                  obs->opp_throw_caught_started);
     } else if (source_side == RL_COMBAT_EVENT_SIDE_OPPONENT) {
+        update->target_policy_action_id = entry->policy_executed_action_id;
+        update->target_policy_sub_action_id = entry->policy_executed_sub_action_id;
+        update->target_policy_action_step = entry->policy_executed_action_step;
+        update->target_routine_1 = obs->self_routine[1];
+        update->target_routine_2 = obs->self_routine[2];
+        update->target_guard_state = RLSession_DefenseGuardStateForSide(obs, RL_COMBAT_EVENT_SIDE_SELF);
         update->target_entered_hit_stop = obs->self_entered_hit_stop;
         update->target_entered_contact_state = obs->self_entered_contact_state;
         update->target_entered_damage_state = obs->self_entered_damage_state;
@@ -2761,6 +2833,9 @@ static void RLSession_FillCombatContactMatchUpdate(RLCombatContactMatchUpdate* u
             (u8)(obs->self_contact_reaction_state && RLSession_IsGuardReactionRoutine2(obs->self_routine[2]));
         update->target_parry_started = obs->self_parry_started;
         update->target_throw_caught = obs->self_throw_caught_started;
+        update->target_airborne = obs->self_airborne;
+        update->target_attack_state_active = obs->self_routine_attack_state;
+        update->target_contact_reaction_state = obs->self_contact_reaction_state;
         update->attack_candidate = 0;
         update->projectile_candidate = obs->opp_projectile_active;
         update->throw_candidate =

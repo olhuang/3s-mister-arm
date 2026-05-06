@@ -2150,6 +2150,11 @@ Phase 6c-1 implementation slice:
     `CPNR FW`.
   - These are still debug categories; they are not yet formal punish event
     types, reward labels, or trainer features.
+- Live refinement: finalized-window punish matching is intentionally short
+  (`RL_COMBAT_PUNISH_CANDIDATE_WINDOW_FRAMES = 12`) because live testing showed
+  a longer 45-frame window counted neutral hits after the whiffed move had
+  fully recovered. Longer unsafe/recovery punish labels require action-specific
+  recovery windows in a later Phase 6c slice.
 
 ### Phase 7: Transition Schema v4 And Event Journal Export
 

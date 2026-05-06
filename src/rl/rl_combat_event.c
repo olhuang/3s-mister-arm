@@ -33,7 +33,7 @@ typedef struct RLCombatPunishableAttackCandidate {
     RLCombatPunishReason reason;
 } RLCombatPunishableAttackCandidate;
 
-#define RL_COMBAT_PUNISH_CANDIDATE_WINDOW_FRAMES 45u
+#define RL_COMBAT_PUNISH_CANDIDATE_WINDOW_FRAMES 12u
 
 static RLCombatAttackEventRing self_attack_ring;
 static RLCombatAttackEventRing opponent_attack_ring;

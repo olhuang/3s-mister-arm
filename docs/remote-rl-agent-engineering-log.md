@@ -27,6 +27,10 @@ Implementation notes:
 - Added path+reason counters for finalized whiff/interrupted and active
   whiff/interrupted candidates.
 - Outcome overlay adds `CPNC F/A` and `CPNR FW/FI/AW/AI`.
+- Live refinement: shortened finalized-window matching from 45 frames to 12
+  frames after delayed neutral hits still appeared as `CPN R/W`. Immediate DP
+  whiff punish remains covered by active-attack fallback; longer recovery
+  punish labels need action-specific unsafe windows in a later Phase 6c slice.
 - This remains debug-only. It does not change transition schema, reward,
   replay, trainer features, or event-journal export.
 
@@ -35,6 +39,10 @@ Validation:
 - `cc -std=c11 -Wall -Wextra -Isrc -Iinclude -c src/rl/rl_combat_event.c -o /tmp/rl_combat_event_phase6c1_path_split.o` passed.
 - `tools/mister/build-game.sh --flavor telemetry` passed, rebuilding
   `rl_combat_event.c`, `rl_observation.c`, and `rl_session.c`.
+- Finalized-window refinement validation passed:
+  `git diff --check`,
+  `cc -std=c11 -Wall -Wextra -Isrc -Iinclude -c src/rl/rl_combat_event.c -o /tmp/rl_combat_event_phase6c1_window.o`,
+  and `tools/mister/build-game.sh --flavor telemetry`.
 
 ## 2026-05-06: Combat Event Phase 6c-0 Punish Candidate Counters
 

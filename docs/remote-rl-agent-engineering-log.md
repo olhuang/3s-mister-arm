@@ -39,6 +39,8 @@ Validation:
 - `python3 -m py_compile tools/rl_probe_server.py tools/analyze_rl_transitions.py` passed.
 - `tools/mister/build-game.sh --flavor telemetry` passed, rebuilding
   `rl_combat_event.c`, `rl_observation.c`, and `rl_session.c`.
+- Live smoke passed: whiffs and jumped/evaded fireballs left `CEM` / `CEA`
+  unchanged; broader live testing showed no obvious `CEA` / `CEM` mismatch.
 
 ## 2026-05-06: Combat Event Phase 6a-0 Contact-Match Instrumentation
 

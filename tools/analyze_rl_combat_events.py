@@ -53,6 +53,14 @@ def combat_event_key(row: dict[str, Any]) -> tuple[Any, Any, Any, Any]:
     return row.get("run_id"), row.get("episode_id"), row.get("event_kind"), row.get("event_id")
 
 
+def side_sort_key(side: str) -> tuple[int, str]:
+    if side == "self":
+        return 0, side
+    if side == "opponent":
+        return 1, side
+    return 2, side
+
+
 def attack_bucket(row: dict[str, Any]) -> str:
     result = str(row.get("result", "unknown"))
     reason = str(row.get("finalize_reason", "unknown"))
@@ -184,6 +192,34 @@ def make_summary(event_rows: list[dict[str, Any]], transition_rows: list[dict[st
         for attack, projectile in delegated_projectile_links
         if str(projectile.get("result")) == "unknown"
     ]
+    delegated_by_owner: dict[str, dict[str, Any]] = {}
+    delegated_owners = sorted(
+        {str(projectile.get("owner_side")) for projectile in delegated_projectiles},
+        key=side_sort_key,
+    )
+    for owner in delegated_owners:
+        owner_links = [
+            (attack, projectile)
+            for attack, projectile in delegated_projectile_links
+            if str(projectile.get("owner_side")) == owner
+        ]
+        owner_projectiles = [projectile for _, projectile in owner_links]
+        owner_expired = [
+            projectile for projectile in owner_projectiles if str(projectile.get("result")) == "expired"
+        ]
+        delegated_by_owner[owner] = {
+            "linked_projectiles": len(owner_links),
+            "result_counts": dict(collections.Counter(str(row.get("result")) for row in owner_projectiles)),
+            "finalize_reason_counts": dict(
+                collections.Counter(str(row.get("finalize_reason")) for row in owner_projectiles)
+            ),
+            "expired_saw_opposing_projectile": sum(
+                int(row.get("saw_opposing_projectile") or 0) for row in owner_expired
+            ),
+            "expired_no_opposing_projectile": sum(
+                1 for row in owner_expired if not int(row.get("saw_opposing_projectile") or 0)
+            ),
+        }
 
     source_ref_rows = [
         row
@@ -332,6 +368,7 @@ def make_summary(event_rows: list[dict[str, Any]], transition_rows: list[dict[st
                 "expired_no_opposing_projectile": sum(
                     1 for row in delegated_expired if not int(row.get("saw_opposing_projectile") or 0)
                 ),
+                "by_owner": delegated_by_owner,
                 "unknown_examples": [
                     {
                         "attack_event_id": attack.get("event_id"),
@@ -444,6 +481,18 @@ def print_text_report(summary: dict[str, Any], examples: int) -> None:
         f"  expired_saw_opposing_projectile={delegated['expired_saw_opposing_projectile']} "
         f"expired_no_opposing_projectile={delegated['expired_no_opposing_projectile']}"
     )
+    if delegated["by_owner"]:
+        print("  by_owner")
+        for owner, section in sorted(delegated["by_owner"].items(), key=lambda item: side_sort_key(item[0])):
+            print(
+                f"    {owner}: linked_projectiles={section['linked_projectiles']} "
+                f"result={format_counter(collections.Counter(section['result_counts']))}"
+            )
+            print(
+                f"      finalize_reason={format_counter(collections.Counter(section['finalize_reason_counts']))} "
+                f"expired_saw_opposing_projectile={section['expired_saw_opposing_projectile']} "
+                f"expired_no_opposing_projectile={section['expired_no_opposing_projectile']}"
+            )
     for row in delegated["unknown_examples"][:examples]:
         print(
             "    projectile_unknown_example "

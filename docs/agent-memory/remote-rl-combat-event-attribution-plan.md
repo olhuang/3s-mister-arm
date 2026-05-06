@@ -2334,6 +2334,10 @@ Work:
   `projectile_blocked`, `projectile_expired`, or `projectile_unknown`.
   The report must also keep a raw lifecycle bucket so source ownership remains
   visible and projectile outcomes are not double-counted as direct attack hits.
+- Delegated projectile reports must show both aggregate and owner-side split
+  results (`self` / `opponent`) so live validation can tell whether the agent's
+  fireballs and the opponent's fireballs are producing different hit, block,
+  expire, or unknown distributions.
 - add fight replay summaries:
   - timeline
   - per-side damage sources

@@ -2,6 +2,36 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-06: Combat Event Phase 8A-2 Delegated Projectile Side Split
+
+Milestone:
+- Combat event attribution Phase 8A-2
+
+Files changed:
+- `tools/analyze_rl_combat_events.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/agent-memory/remote-rl-combat-event-attribution-plan.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Split delegated projectile outcome summaries by `self` / `opponent` owner
+  side, while retaining the aggregate totals.
+
+Implementation notes:
+- Added `by_owner` to the analyzer's `attack.delegated_projectile` summary.
+- The text report now prints per-owner linked projectile count, result counts,
+  finalize reason counts, and expired `saw_opposing_projectile` vs clean fly-out
+  counts.
+- This remains a report-only change. C journal rows, transition schema, rewards,
+  replay, and trainer features are unchanged.
+
+Validation:
+- `python3 -m py_compile tools/analyze_rl_combat_events.py` passed.
+- `python3 tools/analyze_rl_combat_events.py logs/phase7a-event-journal-live-events.ndjson --transition-log logs/phase7a-event-journal-live-transitions.ndjson --examples 2` passed and reported delegated projectile owner splits: `self` linked `34` with `blocked=17`, `hit=9`, `expired=7`, `unknown=1`; `opponent` linked `10` with `hit=5`, `expired=3`, `blocked=2`.
+- `python3 tools/analyze_rl_combat_events.py logs/phase7a-event-journal-live-events.ndjson --transition-log logs/phase7a-event-journal-live-transitions.ndjson --json-output /tmp/rl-combat-event-summary.json --examples 1` passed.
+- `python3 -m json.tool /tmp/rl-combat-event-summary.json >/tmp/rl-combat-event-summary.pretty.json` passed.
+- `git diff --check` passed.
+
 ## 2026-05-06: Combat Event Phase 8A-1 Delegated Projectile Resolution
 
 Milestone:

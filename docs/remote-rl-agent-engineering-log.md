@@ -2,6 +2,40 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-06: Combat Event Phase 6c-1 Punish Candidate Path Split
+
+Milestone:
+- Combat event attribution Phase 6c-1
+
+Files changed:
+- `src/rl/rl_combat_event.h`
+- `src/rl/rl_combat_event.c`
+- `src/rl/rl_session.h`
+- `src/rl/rl_session.c`
+- `src/rl/rl_observation.c`
+- `docs/plan-remote-rl-agent.md`
+- `docs/agent-memory/remote-rl-combat-event-attribution-plan.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Keep live-validated punish candidates observable while separating
+  finalized-window punish candidates from active-attack fallback candidates.
+
+Implementation notes:
+- Added side-split counters for punish candidate path:
+  finalized-window vs active-attack fallback.
+- Added path+reason counters for finalized whiff/interrupted and active
+  whiff/interrupted candidates.
+- Outcome overlay adds `CPNC F/A` and `CPNR FW/FI/AW/AI`.
+- This remains debug-only. It does not change transition schema, reward,
+  replay, trainer features, or event-journal export.
+
+Validation:
+- `git diff --check` passed.
+- `cc -std=c11 -Wall -Wextra -Isrc -Iinclude -c src/rl/rl_combat_event.c -o /tmp/rl_combat_event_phase6c1_path_split.o` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed, rebuilding
+  `rl_combat_event.c`, `rl_observation.c`, and `rl_session.c`.
+
 ## 2026-05-06: Combat Event Phase 6c-0 Punish Candidate Counters
 
 Milestone:

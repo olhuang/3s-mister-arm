@@ -970,6 +970,26 @@ void RLObservation_FormatDebugOverlay(char* out, size_t out_size, const char* se
                             (unsigned long)remote->combat_punish_source_projectile_opp_count,
                             (unsigned long)remote->combat_punish_source_throw_self_count,
                             (unsigned long)remote->combat_punish_source_throw_opp_count);
+        append_overlay_line(out,
+                            out_size,
+                            &used,
+                            "CPNC F%lu/%lu A%lu/%lu",
+                            (unsigned long)remote->combat_punish_finalized_candidate_self_count,
+                            (unsigned long)remote->combat_punish_finalized_candidate_opp_count,
+                            (unsigned long)remote->combat_punish_active_candidate_self_count,
+                            (unsigned long)remote->combat_punish_active_candidate_opp_count);
+        append_overlay_line(out,
+                            out_size,
+                            &used,
+                            "CPNR FW%lu/%lu FI%lu/%lu AW%lu/%lu AI%lu/%lu",
+                            (unsigned long)remote->combat_punish_finalized_whiff_self_count,
+                            (unsigned long)remote->combat_punish_finalized_whiff_opp_count,
+                            (unsigned long)remote->combat_punish_finalized_interrupted_self_count,
+                            (unsigned long)remote->combat_punish_finalized_interrupted_opp_count,
+                            (unsigned long)remote->combat_punish_active_whiff_self_count,
+                            (unsigned long)remote->combat_punish_active_whiff_opp_count,
+                            (unsigned long)remote->combat_punish_active_interrupted_self_count,
+                            (unsigned long)remote->combat_punish_active_interrupted_opp_count);
     }
 
     if (show_all || view == RL_DEBUG_OVERLAY_VIEW_INPUT) {

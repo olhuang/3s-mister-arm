@@ -641,6 +641,18 @@ static void RLCombatEvent_ResetEpisodeStats(void) {
     combat_event_stats.punish_source_projectile_opponent_count = 0;
     combat_event_stats.punish_source_throw_self_count = 0;
     combat_event_stats.punish_source_throw_opponent_count = 0;
+    combat_event_stats.punish_finalized_candidate_self_count = 0;
+    combat_event_stats.punish_finalized_candidate_opponent_count = 0;
+    combat_event_stats.punish_active_candidate_self_count = 0;
+    combat_event_stats.punish_active_candidate_opponent_count = 0;
+    combat_event_stats.punish_finalized_whiff_self_count = 0;
+    combat_event_stats.punish_finalized_whiff_opponent_count = 0;
+    combat_event_stats.punish_finalized_interrupted_self_count = 0;
+    combat_event_stats.punish_finalized_interrupted_opponent_count = 0;
+    combat_event_stats.punish_active_whiff_self_count = 0;
+    combat_event_stats.punish_active_whiff_opponent_count = 0;
+    combat_event_stats.punish_active_interrupted_self_count = 0;
+    combat_event_stats.punish_active_interrupted_opponent_count = 0;
     combat_event_stats.episode_flush_count = 0;
     combat_event_stats.episode_switch_flush_count = 0;
 }
@@ -973,18 +985,46 @@ static void RLCombatEvent_IncrementPunishSourceCounter(RLCombatEventSide punishe
 
 static void RLCombatEvent_IncrementPunishCounters(RLCombatEventSide punisher_side,
                                                   RLCombatPunishReason reason,
-                                                  RLCombatContactMatchSource source_family) {
+                                                  RLCombatContactMatchSource source_family,
+                                                  bool active_fallback) {
     RLCombatEvent_IncrementSideCounter(punisher_side,
                                        &combat_event_stats.punish_candidate_self_count,
                                        &combat_event_stats.punish_candidate_opponent_count);
+    if (active_fallback) {
+        RLCombatEvent_IncrementSideCounter(punisher_side,
+                                           &combat_event_stats.punish_active_candidate_self_count,
+                                           &combat_event_stats.punish_active_candidate_opponent_count);
+    } else {
+        RLCombatEvent_IncrementSideCounter(punisher_side,
+                                           &combat_event_stats.punish_finalized_candidate_self_count,
+                                           &combat_event_stats.punish_finalized_candidate_opponent_count);
+    }
     if (reason == RL_COMBAT_PUNISH_REASON_WHIFF) {
         RLCombatEvent_IncrementSideCounter(punisher_side,
                                            &combat_event_stats.punish_whiff_self_count,
                                            &combat_event_stats.punish_whiff_opponent_count);
+        if (active_fallback) {
+            RLCombatEvent_IncrementSideCounter(punisher_side,
+                                               &combat_event_stats.punish_active_whiff_self_count,
+                                               &combat_event_stats.punish_active_whiff_opponent_count);
+        } else {
+            RLCombatEvent_IncrementSideCounter(punisher_side,
+                                               &combat_event_stats.punish_finalized_whiff_self_count,
+                                               &combat_event_stats.punish_finalized_whiff_opponent_count);
+        }
     } else if (reason == RL_COMBAT_PUNISH_REASON_INTERRUPTED) {
         RLCombatEvent_IncrementSideCounter(punisher_side,
                                            &combat_event_stats.punish_interrupted_self_count,
                                            &combat_event_stats.punish_interrupted_opponent_count);
+        if (active_fallback) {
+            RLCombatEvent_IncrementSideCounter(punisher_side,
+                                               &combat_event_stats.punish_active_interrupted_self_count,
+                                               &combat_event_stats.punish_active_interrupted_opponent_count);
+        } else {
+            RLCombatEvent_IncrementSideCounter(punisher_side,
+                                               &combat_event_stats.punish_finalized_interrupted_self_count,
+                                               &combat_event_stats.punish_finalized_interrupted_opponent_count);
+        }
     }
     RLCombatEvent_IncrementPunishSourceCounter(punisher_side, source_family);
 }
@@ -1058,7 +1098,7 @@ static bool RLCombatEvent_TryRecordActivePunishCandidate(const RLCombatAttributi
     }
 
     reason = RLCombatEvent_ActivePunishReason(attack, event);
-    RLCombatEvent_IncrementPunishCounters(event->source_side, reason, event->source_family);
+    RLCombatEvent_IncrementPunishCounters(event->source_side, reason, event->source_family, true);
     if (last_punished_id != NULL) {
         *last_punished_id = attack->event_id;
     }
@@ -1095,7 +1135,7 @@ static void RLCombatEvent_TryRecordPunishCandidate(const RLCombatAttributionEven
         candidate->valid = false;
         return;
     }
-    RLCombatEvent_IncrementPunishCounters(event->source_side, candidate->reason, event->source_family);
+    RLCombatEvent_IncrementPunishCounters(event->source_side, candidate->reason, event->source_family, false);
     if (last_punished_id != NULL) {
         *last_punished_id = candidate->event_id;
     }

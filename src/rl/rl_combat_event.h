@@ -617,6 +617,18 @@ typedef struct RLCombatEventStats {
     u32 punish_source_projectile_opponent_count;
     u32 punish_source_throw_self_count;
     u32 punish_source_throw_opponent_count;
+    u32 punish_finalized_candidate_self_count;
+    u32 punish_finalized_candidate_opponent_count;
+    u32 punish_active_candidate_self_count;
+    u32 punish_active_candidate_opponent_count;
+    u32 punish_finalized_whiff_self_count;
+    u32 punish_finalized_whiff_opponent_count;
+    u32 punish_finalized_interrupted_self_count;
+    u32 punish_finalized_interrupted_opponent_count;
+    u32 punish_active_whiff_self_count;
+    u32 punish_active_whiff_opponent_count;
+    u32 punish_active_interrupted_self_count;
+    u32 punish_active_interrupted_opponent_count;
     u32 episode_flush_count;
     u32 episode_switch_flush_count;
     u32 lifetime_attack_started_count;

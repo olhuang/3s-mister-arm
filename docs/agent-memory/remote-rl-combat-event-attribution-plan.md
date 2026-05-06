@@ -2134,6 +2134,23 @@ Phase 6c-0 implementation slice:
   hit/throw. This keeps DP-whiff punish visible without waiting for timeout.
 - No transition schema, reward, replay, trainer, or event-journal export changes.
 
+Phase 6c-1 implementation slice:
+
+- Keep the existing `CPN` / `CPNX` totals, but add debug splits so active
+  fallback punish candidates cannot be confused with finalized attack-result
+  punish candidates:
+  - `CPNC Fself/opp Aself/opp`: candidate path, finalized-window vs active
+    attack fallback.
+  - `CPNR FWself/opp FIself/opp AWself/opp AIself/opp`: path plus reason,
+    finalized whiff, finalized interrupted, active whiff, active interrupted.
+- Live interpretation:
+  - DP/large-special whiff punished before attack finalization should usually
+    appear under `CPNC A` and either `CPNR AW` or `CPNR AI`.
+  - True post-finalization whiff punish should appear under `CPNC F` and
+    `CPNR FW`.
+  - These are still debug categories; they are not yet formal punish event
+    types, reward labels, or trainer features.
+
 ### Phase 7: Transition Schema v4 And Event Journal Export
 
 Files:

@@ -191,6 +191,18 @@ typedef struct RLRemoteDebugState {
     u32 combat_punish_source_projectile_opp_count;
     u32 combat_punish_source_throw_self_count;
     u32 combat_punish_source_throw_opp_count;
+    u32 combat_punish_finalized_candidate_self_count;
+    u32 combat_punish_finalized_candidate_opp_count;
+    u32 combat_punish_active_candidate_self_count;
+    u32 combat_punish_active_candidate_opp_count;
+    u32 combat_punish_finalized_whiff_self_count;
+    u32 combat_punish_finalized_whiff_opp_count;
+    u32 combat_punish_finalized_interrupted_self_count;
+    u32 combat_punish_finalized_interrupted_opp_count;
+    u32 combat_punish_active_whiff_self_count;
+    u32 combat_punish_active_whiff_opp_count;
+    u32 combat_punish_active_interrupted_self_count;
+    u32 combat_punish_active_interrupted_opp_count;
     u32 combat_lifetime_attack_started_count;
     u32 combat_lifetime_attack_finalized_count;
     u32 combat_lifetime_attack_whiff_count;

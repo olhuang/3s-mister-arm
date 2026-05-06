@@ -2377,16 +2377,6 @@ static void RLSession_UpdateCombatAttackEvents(RLDecisionLedgerEntry* entry,
     RLCombatEvent_UpdateActiveAttacks(&update);
 }
 
-static RLCombatEventSide RLSession_ProjectileOwnerToCombatSide(u8 projectile_owner) {
-    if (projectile_owner == RL_OBS_PROJECTILE_OWNER_SELF) {
-        return RL_COMBAT_EVENT_SIDE_SELF;
-    }
-    if (projectile_owner == RL_OBS_PROJECTILE_OWNER_OPPONENT) {
-        return RL_COMBAT_EVENT_SIDE_OPPONENT;
-    }
-    return RL_COMBAT_EVENT_SIDE_NONE;
-}
-
 static u8 RLSession_IsGuardReactionRoutine2(u16 routine_2) {
     return (u8)(routine_2 == 5u || routine_2 == 6u);
 }
@@ -2397,8 +2387,8 @@ static void RLSession_FillCombatProjectileUpdate(RLCombatProjectileEventUpdate* 
                                                  RLCombatEventSide owner_side,
                                                  s16 self_hp_delta,
                                                  s16 opp_hp_delta) {
-    const RLCombatEventSide active_owner =
-        obs != NULL ? RLSession_ProjectileOwnerToCombatSide(obs->projectile_owner) : RL_COMBAT_EVENT_SIDE_NONE;
+    u8 projectile_active_for_side = 0;
+    u8 opposing_projectile_active = 0;
 
     if (update == NULL || entry == NULL || obs == NULL) {
         return;
@@ -2410,14 +2400,15 @@ static void RLSession_FillCombatProjectileUpdate(RLCombatProjectileEventUpdate* 
     update->decision_id = entry->decision_id;
     update->frame_id = remote_debug.frame_id;
     update->owner_side = owner_side;
-    update->any_projectile_active = (u8)(obs->projectile_active != 0);
-    update->projectile_active_for_side = (u8)(obs->projectile_active && active_owner == owner_side);
-    update->projectile_rel_x = obs->projectile_rel_x;
-    update->projectile_rel_y = obs->projectile_rel_y;
-    update->projectile_vel_x = obs->projectile_vel_x;
-    update->projectile_time_to_self = obs->projectile_time_to_self;
+    update->any_projectile_active = (u8)(obs->self_projectile_active || obs->opp_projectile_active);
 
     if (owner_side == RL_COMBAT_EVENT_SIDE_SELF) {
+        projectile_active_for_side = obs->self_projectile_active;
+        opposing_projectile_active = obs->opp_projectile_active;
+        update->projectile_rel_x = obs->self_projectile_rel_x;
+        update->projectile_rel_y = obs->self_projectile_rel_y;
+        update->projectile_vel_x = obs->self_projectile_vel_x;
+        update->projectile_time_to_self = obs->self_projectile_time_to_self;
         update->target_guard = obs->opp_guard_flag;
         update->target_block_reaction =
             (u8)(obs->opp_contact_reaction_state && RLSession_IsGuardReactionRoutine2(obs->opp_routine[2]));
@@ -2427,6 +2418,12 @@ static void RLSession_FillCombatProjectileUpdate(RLCombatProjectileEventUpdate* 
         update->target_hp_delta = (u8)(opp_hp_delta > 0);
         update->target_stun_delta = (u8)(obs->delta_opp_stun > 0);
     } else if (owner_side == RL_COMBAT_EVENT_SIDE_OPPONENT) {
+        projectile_active_for_side = obs->opp_projectile_active;
+        opposing_projectile_active = obs->self_projectile_active;
+        update->projectile_rel_x = obs->opp_projectile_rel_x;
+        update->projectile_rel_y = obs->opp_projectile_rel_y;
+        update->projectile_vel_x = obs->opp_projectile_vel_x;
+        update->projectile_time_to_self = obs->opp_projectile_time_to_self;
         update->target_guard = obs->self_guard_flag;
         update->target_block_reaction =
             (u8)(obs->self_contact_reaction_state && RLSession_IsGuardReactionRoutine2(obs->self_routine[2]));
@@ -2436,6 +2433,8 @@ static void RLSession_FillCombatProjectileUpdate(RLCombatProjectileEventUpdate* 
         update->target_hp_delta = (u8)(self_hp_delta > 0);
         update->target_stun_delta = (u8)(obs->delta_self_stun > 0);
     }
+    update->projectile_active_for_side = projectile_active_for_side;
+    update->opposing_projectile_active = opposing_projectile_active;
     update->target_contact_or_damage =
         (u8)(update->target_entered_hit_stop || update->target_entered_damage_state ||
              update->target_hp_delta || update->target_stun_delta);
@@ -2720,8 +2719,7 @@ static void RLSession_FillCombatContactMatchUpdate(RLCombatContactMatchUpdate* u
         update->target_parry_started = obs->opp_parry_started;
         update->target_throw_caught = obs->opp_throw_caught_started;
         update->attack_candidate = 0;
-        update->projectile_candidate =
-            (u8)(obs->projectile_active && obs->projectile_owner == RL_OBS_PROJECTILE_OWNER_SELF);
+        update->projectile_candidate = obs->self_projectile_active;
         update->throw_candidate =
             (u8)(obs->self_throw_active || obs->self_throw_started || obs->opp_throw_caught ||
                  obs->opp_throw_caught_started);
@@ -2736,8 +2734,7 @@ static void RLSession_FillCombatContactMatchUpdate(RLCombatContactMatchUpdate* u
         update->target_parry_started = obs->self_parry_started;
         update->target_throw_caught = obs->self_throw_caught_started;
         update->attack_candidate = 0;
-        update->projectile_candidate =
-            (u8)(obs->projectile_active && obs->projectile_owner == RL_OBS_PROJECTILE_OWNER_OPPONENT);
+        update->projectile_candidate = obs->opp_projectile_active;
         update->throw_candidate =
             (u8)(obs->opp_throw_active || obs->opp_throw_started || obs->self_throw_caught ||
                  obs->self_throw_caught_started);

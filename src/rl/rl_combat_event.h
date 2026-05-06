@@ -226,6 +226,7 @@ typedef struct RLCombatProjectileEventUpdate {
     RLCombatEventSide owner_side;
     u8 any_projectile_active;
     u8 projectile_active_for_side;
+    u8 opposing_projectile_active;
     s16 projectile_rel_x;
     s16 projectile_rel_y;
     s16 projectile_vel_x;
@@ -265,6 +266,7 @@ typedef struct RLCombatProjectileEvent {
     u16 engine_sub_action_id;
     u8 engine_label_source;
     u8 missing_frames;
+    u8 saw_opposing_projectile;
     u8 saw_target_guard;
     u8 saw_target_block_reaction;
     u8 saw_target_contact_or_damage;

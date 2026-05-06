@@ -99,6 +99,13 @@ Refinement after first live CEM pass:
   on either player. Fix: CEM now treats same-frame mutual projectile expiration
   (`CPR X` / `DISAPPEARED`) as a projectile clash edge. Single-projectile
   expiration still remains `CPR X` only and does not produce CEM.
+- Follow-up live report showed a clash with `CPR X +0/+1` and `CEM P +0/+0`,
+  meaning only the opponent projectile side was tracked/finalized. The single
+  selected projectile observation was too lossy for simultaneous fireballs. Fix:
+  observation now keeps self/opponent projectile-active snapshots separately,
+  projectile events remember whether an opposing projectile was active during
+  their lifetime, and `CPR X` / `DISAPPEARED` with that opposing-projectile
+  evidence becomes a CEM projectile clash edge even if only one side finalized.
 
 ## 2026-05-05: Combat Event Phase 5C/5D Throw Live Refinement Prep
 

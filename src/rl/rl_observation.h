@@ -63,6 +63,16 @@ typedef struct RLObservationV1 {
     s16 projectile_rel_y;
     s16 projectile_vel_x;
     s16 projectile_time_to_self;
+    u8 self_projectile_active;
+    s16 self_projectile_rel_x;
+    s16 self_projectile_rel_y;
+    s16 self_projectile_vel_x;
+    s16 self_projectile_time_to_self;
+    u8 opp_projectile_active;
+    s16 opp_projectile_rel_x;
+    s16 opp_projectile_rel_y;
+    s16 opp_projectile_vel_x;
+    s16 opp_projectile_time_to_self;
     u8 self_airborne_started;
     u8 opp_airborne_started;
     u8 self_attack_started;

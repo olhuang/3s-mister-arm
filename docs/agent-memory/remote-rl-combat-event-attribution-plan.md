@@ -1920,11 +1920,13 @@ Phase 6a-0 implementation slice:
   edge, or the parry success routine (`R1=0`, `R2=31/32/33/34`) rising edge,
   and allows it to produce `CEM P` for projectile candidates.
 - Projectile-vs-projectile clash is a projectile match edge even without a
-  character target edge. Phase 6a-0 treats same-frame mutual projectile
-  disappearance finalized as `CPR X` / `DISAPPEARED` as a clash edge, so both
-  projectile source sides can produce `CEM P`. A single projectile naturally
-  flying out or disappearing alone remains `CPR X` only and does not produce
-  CEM.
+  character target edge. Phase 6a-0 tracks self/opponent projectile activity
+  separately, records whether each projectile saw an opposing projectile during
+  its lifetime, and treats `CPR X` / `DISAPPEARED` plus opposing-projectile
+  evidence as a clash edge. If both projectile sides are tracked, both source
+  sides can produce `CEM P`; if only one projectile side is finalized, that
+  finalized side can still produce `CEM P`. A single projectile naturally flying
+  out or disappearing alone remains `CPR X` only and does not produce CEM.
 - Source-family priority is projectile -> throw -> attack -> unknown. Projectile
   wins over the projectile parent attack so fireball hit/block/expire behavior
   remains owned by `CP` / `CPR`; throw wins over generic attack when caught or

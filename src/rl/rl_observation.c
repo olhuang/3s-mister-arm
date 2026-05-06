@@ -362,6 +362,8 @@ static void projectile_selection_consider(RLProjectileSelection* selection,
 
 static void derive_projectile_fields(RLObservationV1* obs, s16 self, s16 opp) {
     RLProjectileSelection selection;
+    RLProjectileSelection self_selection;
+    RLProjectileSelection opp_selection;
     s32 self_x;
     s32 self_y;
 
@@ -370,6 +372,8 @@ static void derive_projectile_fields(RLObservationV1* obs, s16 self, s16 opp) {
     }
 
     projectile_selection_init(&selection);
+    projectile_selection_init(&self_selection);
+    projectile_selection_init(&opp_selection);
     self_x = plw[self].wu.xyz[0].disp.pos;
     self_y = plw[self].wu.xyz[1].disp.pos;
 
@@ -386,6 +390,11 @@ static void derive_projectile_fields(RLObservationV1* obs, s16 self, s16 opp) {
                 continue;
             }
             projectile_selection_consider(&selection, projectile, self, self_x, self_y, obs->self_facing_sign);
+            if (projectile->master_id == self) {
+                projectile_selection_consider(&self_selection, projectile, self, self_x, self_y, obs->self_facing_sign);
+            } else if (projectile->master_id == opp) {
+                projectile_selection_consider(&opp_selection, projectile, self, self_x, self_y, obs->self_facing_sign);
+            }
         }
     }
 
@@ -395,6 +404,16 @@ static void derive_projectile_fields(RLObservationV1* obs, s16 self, s16 opp) {
     obs->projectile_rel_y = selection.rel_y;
     obs->projectile_vel_x = selection.vel_x;
     obs->projectile_time_to_self = selection.time_to_self;
+    obs->self_projectile_active = self_selection.found ? 1u : 0u;
+    obs->self_projectile_rel_x = self_selection.rel_x;
+    obs->self_projectile_rel_y = self_selection.rel_y;
+    obs->self_projectile_vel_x = self_selection.vel_x;
+    obs->self_projectile_time_to_self = self_selection.time_to_self;
+    obs->opp_projectile_active = opp_selection.found ? 1u : 0u;
+    obs->opp_projectile_rel_x = opp_selection.rel_x;
+    obs->opp_projectile_rel_y = opp_selection.rel_y;
+    obs->opp_projectile_vel_x = opp_selection.vel_x;
+    obs->opp_projectile_time_to_self = opp_selection.time_to_self;
 }
 
 static void maybe_capture_round_start_hp() {

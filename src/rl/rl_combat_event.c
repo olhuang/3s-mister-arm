@@ -148,11 +148,12 @@ static bool RLCombatEvent_HasProjectileCandidateForSide(u64 run_id,
     return false;
 }
 
-static bool RLCombatEvent_HasMutualProjectileExpireEdge(u64 run_id,
+static bool RLCombatEvent_HasProjectileClashEdgeForSide(u64 run_id,
                                                         u32 episode_id,
                                                         RLCombatEventSide side,
                                                         u32 frame_id) {
     bool side_expired = false;
+    bool side_saw_opposing_projectile = false;
     bool opposing_expired = false;
 
     if (run_id == 0 || episode_id == 0 || side == RL_COMBAT_EVENT_SIDE_NONE) {
@@ -169,12 +170,13 @@ static bool RLCombatEvent_HasMutualProjectileExpireEdge(u64 run_id,
         }
         if (event->owner_side == side) {
             side_expired = true;
+            side_saw_opposing_projectile |= (event->saw_opposing_projectile != 0);
         } else if (event->owner_side != RL_COMBAT_EVENT_SIDE_NONE) {
             opposing_expired = true;
         }
     }
 
-    return side_expired && opposing_expired;
+    return side_expired && (side_saw_opposing_projectile || opposing_expired);
 }
 
 static bool RLCombatEvent_HasThrowCandidateForSide(u64 run_id,
@@ -1343,6 +1345,7 @@ static void RLCombatEvent_AccumulateProjectileEvidence(RLCombatProjectileEvent* 
 
     event->saw_target_guard |= (u8)(update->target_guard != 0 && strong_contact);
     event->saw_target_block_reaction |= (u8)(update->target_block_reaction != 0);
+    event->saw_opposing_projectile |= (u8)(update->opposing_projectile_active != 0);
     event->saw_target_contact_or_damage |= (u8)(update->target_contact_or_damage != 0);
     event->saw_target_hit_stop |= (u8)(update->target_entered_hit_stop != 0);
     event->saw_target_contact_state |= (u8)(update->target_entered_contact_state != 0);
@@ -1524,7 +1527,7 @@ bool RLCombatEvent_RecordContactMatch(const RLCombatContactMatchUpdate* update) 
                                                      update->episode_id,
                                                      update->source_side,
                                                      update->frame_id));
-    projectile_clash_edge = RLCombatEvent_HasMutualProjectileExpireEdge(update->run_id,
+    projectile_clash_edge = RLCombatEvent_HasProjectileClashEdgeForSide(update->run_id,
                                                                         update->episode_id,
                                                                         update->source_side,
                                                                         update->frame_id);

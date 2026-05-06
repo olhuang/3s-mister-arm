@@ -85,6 +85,8 @@ typedef struct RLObservationV1 {
     u8 opp_entered_contact_state;
     u8 self_entered_damage_state;
     u8 opp_entered_damage_state;
+    u8 self_parry_started;
+    u8 opp_parry_started;
     u8 self_throw_active;
     u8 opp_throw_active;
     u8 self_throw_caught;

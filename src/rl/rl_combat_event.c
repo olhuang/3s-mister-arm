@@ -297,7 +297,7 @@ static bool RLCombatEvent_ContactMatchHasTargetEdge(const RLCombatContactMatchUp
     const bool strong_edge =
         update != NULL &&
         (update->target_entered_damage_state || update->target_hp_delta || update->target_stun_delta ||
-         update->target_throw_caught);
+         update->target_parry_started || update->target_throw_caught);
     const bool contact_edge =
         update != NULL && (update->target_entered_hit_stop || update->target_entered_contact_state);
 
@@ -308,7 +308,7 @@ static bool RLCombatEvent_ContactMatchHasTargetEdge(const RLCombatContactMatchUp
         return false;
     }
     if (projectile_candidate && !throw_candidate && !attack_candidate) {
-        return update->target_block_reaction != 0;
+        return update->target_block_reaction != 0 || update->target_parry_started != 0;
     }
     return projectile_candidate || throw_candidate || attack_candidate;
 }

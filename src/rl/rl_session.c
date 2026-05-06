@@ -2717,6 +2717,7 @@ static void RLSession_FillCombatContactMatchUpdate(RLCombatContactMatchUpdate* u
         update->target_stun_delta = (u8)(obs->delta_opp_stun > 0);
         update->target_block_reaction =
             (u8)(obs->opp_contact_reaction_state && RLSession_IsGuardReactionRoutine2(obs->opp_routine[2]));
+        update->target_parry_started = obs->opp_parry_started;
         update->target_throw_caught = obs->opp_throw_caught_started;
         update->attack_candidate = 0;
         update->projectile_candidate =
@@ -2732,6 +2733,7 @@ static void RLSession_FillCombatContactMatchUpdate(RLCombatContactMatchUpdate* u
         update->target_stun_delta = (u8)(obs->delta_self_stun > 0);
         update->target_block_reaction =
             (u8)(obs->self_contact_reaction_state && RLSession_IsGuardReactionRoutine2(obs->self_routine[2]));
+        update->target_parry_started = obs->self_parry_started;
         update->target_throw_caught = obs->self_throw_caught_started;
         update->attack_candidate = 0;
         update->projectile_candidate =

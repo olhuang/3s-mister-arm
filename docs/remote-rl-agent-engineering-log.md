@@ -83,6 +83,11 @@ Refinement after first live CEM pass:
   produce `CEM P +0/+2`. Fix: projectile-only soft contact no longer counts
   unless the target is in a block-reaction routine; projectile hits should wait
   for HP/stun/damage evidence, avoiding a separate early hit-stop/contact count.
+- Fifth live report showed parrying an opponent fireball sometimes produced
+  `CEM P +0/+0`. Fix: observation now records self/opponent parry-success
+  rising edges from `paring_ctr_vs[Play_Type][side]`; projectile CEM treats that
+  edge as a valid projectile target edge even without HP/stun/damage or block
+  reaction.
 
 ## 2026-05-05: Combat Event Phase 5C/5D Throw Live Refinement Prep
 

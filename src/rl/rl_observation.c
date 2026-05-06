@@ -30,6 +30,7 @@ static u8 prev_frame_caution[2];
 static u8 prev_frame_airborne[2];
 static u8 prev_frame_hit_stop[2];
 static u8 prev_frame_contact_state[2];
+static u8 prev_frame_parry_count[2];
 static u8 prev_frame_throw_active[2];
 static u8 prev_frame_throw_caught[2];
 static u8 prev_frame_throw_escape[2];
@@ -516,6 +517,8 @@ void RLObservation_OnFrameEnd() {
         const s16 opp_stun_delta = clamp_s16_delta((s32)debug.opp_stun - (s32)prev_frame_stun[opp]);
         const u8 self_contact_state = (u8)((obs.self_guard_flag != 0) || obs.self_hit_stop);
         const u8 opp_contact_state = (u8)((obs.opp_guard_flag != 0) || obs.opp_hit_stop);
+        const u8 self_parry_count = paring_ctr_vs[Play_Type][self];
+        const u8 opp_parry_count = paring_ctr_vs[Play_Type][opp];
 
         obs.delta_self_hp = self_hp_delta;
         obs.delta_opp_hp = opp_hp_delta;
@@ -551,6 +554,8 @@ void RLObservation_OnFrameEnd() {
         obs.opp_entered_contact_state = (u8)(!prev_frame_contact_state[opp] && opp_contact_state);
         obs.self_entered_damage_state = (u8)(self_hp_delta > 0 || self_stun_delta > 0);
         obs.opp_entered_damage_state = (u8)(opp_hp_delta > 0 || opp_stun_delta > 0);
+        obs.self_parry_started = (u8)(self_parry_count != 0 && self_parry_count != prev_frame_parry_count[self]);
+        obs.opp_parry_started = (u8)(opp_parry_count != 0 && opp_parry_count != prev_frame_parry_count[opp]);
         prev_frame_contact_state[self] = self_contact_state;
         prev_frame_contact_state[opp] = opp_contact_state;
     } else {
@@ -591,6 +596,8 @@ void RLObservation_OnFrameEnd() {
     prev_frame_stun[opp] = debug.opp_stun;
     prev_frame_hit_stop[self] = obs.self_hit_stop;
     prev_frame_hit_stop[opp] = obs.opp_hit_stop;
+    prev_frame_parry_count[self] = paring_ctr_vs[Play_Type][self];
+    prev_frame_parry_count[opp] = paring_ctr_vs[Play_Type][opp];
     prev_frame_throw_active[self] = obs.self_throw_active;
     prev_frame_throw_active[opp] = obs.opp_throw_active;
     prev_frame_throw_caught[self] = obs.self_throw_caught;

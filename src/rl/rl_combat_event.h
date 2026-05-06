@@ -125,6 +125,14 @@ typedef enum RLCombatThrowFinalizeReason {
     RL_COMBAT_THROW_FINALIZE_TECH_ESCAPE = 6,
 } RLCombatThrowFinalizeReason;
 
+typedef enum RLCombatContactMatchSource {
+    RL_COMBAT_CONTACT_MATCH_SOURCE_NONE = 0,
+    RL_COMBAT_CONTACT_MATCH_SOURCE_ATTACK = 1,
+    RL_COMBAT_CONTACT_MATCH_SOURCE_PROJECTILE = 2,
+    RL_COMBAT_CONTACT_MATCH_SOURCE_THROW = 3,
+    RL_COMBAT_CONTACT_MATCH_SOURCE_UNKNOWN = 4,
+} RLCombatContactMatchSource;
+
 typedef struct RLCombatAttackEventStart {
     u64 run_id;
     u32 episode_id;
@@ -333,6 +341,22 @@ typedef struct RLCombatThrowEvent {
     u8 saw_target_stun_delta;
 } RLCombatThrowEvent;
 
+typedef struct RLCombatContactMatchUpdate {
+    u64 run_id;
+    u32 episode_id;
+    u32 decision_id;
+    u32 frame_id;
+    RLCombatEventSide source_side;
+    u8 target_entered_hit_stop;
+    u8 target_entered_contact_state;
+    u8 target_entered_damage_state;
+    u8 target_hp_delta;
+    u8 target_stun_delta;
+    u8 attack_candidate;
+    u8 projectile_candidate;
+    u8 throw_candidate;
+} RLCombatContactMatchUpdate;
+
 typedef struct RLCombatEventStats {
     u64 run_id;
     u32 episode_id;
@@ -426,6 +450,15 @@ typedef struct RLCombatEventStats {
     u32 throw_dropped_start_opponent_count;
     u32 throw_active_self_count;
     u32 throw_active_opponent_count;
+    u32 contact_match_total_count;
+    u32 contact_match_attack_self_count;
+    u32 contact_match_attack_opponent_count;
+    u32 contact_match_projectile_self_count;
+    u32 contact_match_projectile_opponent_count;
+    u32 contact_match_throw_self_count;
+    u32 contact_match_throw_opponent_count;
+    u32 contact_match_unknown_self_count;
+    u32 contact_match_unknown_opponent_count;
     u32 episode_flush_count;
     u32 episode_switch_flush_count;
     u32 lifetime_attack_started_count;
@@ -473,6 +506,7 @@ u32 RLCombatEvent_UpdateActiveAttacks(const RLCombatAttackEventUpdate* update);
 u32 RLCombatEvent_UpdateProjectiles(const RLCombatProjectileEventUpdate* update);
 const RLCombatThrowEvent* RLCombatEvent_StartThrow(const RLCombatThrowEventStart* start);
 u32 RLCombatEvent_UpdateThrows(const RLCombatThrowEventUpdate* update);
+bool RLCombatEvent_RecordContactMatch(const RLCombatContactMatchUpdate* update);
 bool RLCombatEvent_HasActiveThrowForSide(u64 run_id, u32 episode_id, RLCombatEventSide side);
 bool RLCombatEvent_HasRecentNonWhiffThrowForSide(u64 run_id,
                                                  u32 episode_id,

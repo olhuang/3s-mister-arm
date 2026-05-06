@@ -1891,6 +1891,38 @@ Done when:
 - each meaningful HP/stun/contact edge has either an attributed source event or
   an explicit attribution failure event
 
+Phase 6a-0 implementation slice:
+
+- Add debug-only contact-match instrumentation before full event-id
+  consumption. This first slice records one source family per meaningful
+  target edge and exposes it only through the Outcome overlay as
+  `CEM Aself/opp Pself/opp Tself/opp Uself/opp`.
+- A meaningful edge is any per-frame entered hit-stop, entered contact state,
+  entered damage state, HP delta, or stun delta on the target side. The edge is
+  counted once for the source side in that frame.
+- Source-family priority is projectile -> throw -> attack -> unknown. Projectile
+  wins over the projectile parent attack so fireball hit/block/expire behavior
+  remains owned by `CP` / `CPR`; throw wins over generic attack when caught or
+  throw-active evidence is present; attack is the fallback for active strike
+  evidence.
+- This slice does not mutate HP/stun deltas, does not write event ids into the
+  transition row, does not emit the future event journal, and does not affect
+  reward/trainer features. It is an observability step for live validation.
+- Full Phase 6a remains open until the matcher records event-id attribution,
+  consumes HP/stun/contact deltas exactly once, handles trades with explicit
+  confidence, and emits attribution-failure events for unresolved edges.
+
+Phase 6a-0 live validation focus:
+
+- normal hit/block/contact should increment `CEM A` for the side that caused
+  the target edge
+- projectile hit/block/clash/parry contact should increment `CEM P`, not the
+  projectile parent attack
+- throw success/contact should increment `CEM T`
+- simultaneous trades may increment both sides in the same visual exchange
+- `CEM U` should stay low; any repeatable high `U` case becomes the next Phase
+  6a matcher gap
+
 ### Phase 6b: Defense Result Emission
 
 Files:

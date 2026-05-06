@@ -2,6 +2,53 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-06: Combat Event Phase 6a-0 Contact-Match Instrumentation
+
+Milestone:
+- Combat event attribution Phase 6a-0
+
+Files changed:
+- `src/rl/rl_combat_event.h`
+- `src/rl/rl_combat_event.c`
+- `src/rl/rl_session.h`
+- `src/rl/rl_session.c`
+- `src/rl/rl_observation.c`
+- `docs/plan-remote-rl-agent.md`
+- `docs/agent-memory/remote-rl-combat-event-attribution-plan.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Start Phase 6a with a conservative observability layer before full event-id
+  attribution: every meaningful target HP/stun/contact edge is classified into
+  one source family so live testing can reveal whether attack, projectile,
+  throw, or unknown matching is stable.
+
+Implementation notes:
+- Added `RLCombatContactMatchUpdate` and `RLCombatEvent_RecordContactMatch()`.
+  The matcher records one debug-only source family per target edge with priority
+  projectile -> throw -> attack -> unknown.
+- Added per-episode `contact_match_*` stats and mirrored them through
+  `RLRemoteDebugState`.
+- Added Outcome overlay line `CEM Aself/opp Pself/opp Tself/opp Uself/opp`.
+- The slice intentionally does not mutate HP/stun deltas, does not change the
+  transition schema, does not emit event journal rows, and does not touch reward
+  or trainer features. Full consumed-delta attribution, confidence, and
+  attribution-failure events remain open in Phase 6a.
+
+Validation:
+- `git diff --check` passed.
+- `python3 -m py_compile tools/rl_probe_server.py tools/analyze_rl_transitions.py` passed.
+- `cc -std=c11 -Wall -Wextra -Isrc -Iinclude -c src/rl/rl_combat_event.c -o /tmp/rl_combat_event_phase6a.o` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed, rebuilding
+  `rl_combat_event.c`, `rl_observation.c`, and `rl_session.c`.
+
+Follow-up:
+- Live validate `CEM`: normals should mostly increment `A`, fireballs should
+  increment `P`, throws should increment `T`, and repeatable `U` cases become
+  the next matcher gap.
+- Promote from source-family counters to event-id consumption only after the
+  live CEM distribution is stable across hit/block/projectile/throw/trade cases.
+
 ## 2026-05-05: Combat Event Phase 5C/5D Throw Live Refinement Prep
 
 Update after live retest:

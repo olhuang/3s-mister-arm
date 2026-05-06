@@ -352,6 +352,8 @@ typedef struct RLCombatContactMatchUpdate {
     u8 target_entered_damage_state;
     u8 target_hp_delta;
     u8 target_stun_delta;
+    u8 target_block_reaction;
+    u8 target_throw_caught;
     u8 attack_candidate;
     u8 projectile_candidate;
     u8 throw_candidate;

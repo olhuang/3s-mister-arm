@@ -1900,6 +1900,12 @@ Phase 6a-0 implementation slice:
 - A meaningful edge is any per-frame entered hit-stop, entered contact state,
   entered damage state, HP delta, or stun delta on the target side. The edge is
   counted once for the source side in that frame.
+- Refinement from live validation: HP delta, stun delta, damage state, guard
+  block reaction, and throw-caught evidence are strong target edges. Plain
+  hit-stop/contact-state evidence is only counted when the candidate source
+  side already has attack/projectile/throw evidence. This prevents the
+  attacker's own hit-stop, side swaps, and projectile-contact splash from
+  creating reverse-side `CEM U` noise.
 - Source-family priority is projectile -> throw -> attack -> unknown. Projectile
   wins over the projectile parent attack so fireball hit/block/expire behavior
   remains owned by `CP` / `CPR`; throw wins over generic attack when caught or

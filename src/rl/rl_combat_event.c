@@ -139,8 +139,7 @@ static bool RLCombatEvent_HasProjectileCandidateForSide(u64 run_id,
         if (event->status == RL_COMBAT_PROJECTILE_EVENT_ACTIVE) {
             return true;
         }
-        if (event->status == RL_COMBAT_PROJECTILE_EVENT_FINALIZED && event->end_frame == frame_id &&
-            event->result != RL_COMBAT_PROJECTILE_RESULT_EXPIRED) {
+        if (event->status == RL_COMBAT_PROJECTILE_EVENT_FINALIZED && event->end_frame == frame_id) {
             return true;
         }
     }
@@ -254,10 +253,15 @@ static void RLCombatEvent_IncrementSideCounter(RLCombatEventSide side, u32* self
     }
 }
 
-static bool RLCombatEvent_ContactMatchHasTargetEdge(const RLCombatContactMatchUpdate* update) {
-    return update != NULL &&
-           (update->target_entered_hit_stop || update->target_entered_contact_state ||
-            update->target_entered_damage_state || update->target_hp_delta || update->target_stun_delta);
+static bool RLCombatEvent_ContactMatchHasTargetEdge(const RLCombatContactMatchUpdate* update, bool has_candidate) {
+    const bool strong_edge =
+        update != NULL &&
+        (update->target_entered_damage_state || update->target_hp_delta || update->target_stun_delta ||
+         update->target_block_reaction || update->target_throw_caught);
+    const bool contact_edge =
+        update != NULL && (update->target_entered_hit_stop || update->target_entered_contact_state);
+
+    return strong_edge || (contact_edge && has_candidate);
 }
 
 static void RLCombatEvent_IncrementContactMatchCounter(RLCombatEventSide side,
@@ -1423,7 +1427,7 @@ bool RLCombatEvent_RecordContactMatch(const RLCombatContactMatchUpdate* update) 
     RLCombatContactMatchSource source = RL_COMBAT_CONTACT_MATCH_SOURCE_UNKNOWN;
 
     if (update == NULL || update->run_id == 0 || update->episode_id == 0 ||
-        update->source_side == RL_COMBAT_EVENT_SIDE_NONE || !RLCombatEvent_ContactMatchHasTargetEdge(update)) {
+        update->source_side == RL_COMBAT_EVENT_SIDE_NONE) {
         return false;
     }
 
@@ -1445,6 +1449,11 @@ bool RLCombatEvent_RecordContactMatch(const RLCombatContactMatchUpdate* update) 
     attack_candidate =
         (update->attack_candidate ||
          RLCombatEvent_HasAttackCandidateForSide(update->run_id, update->episode_id, update->source_side));
+
+    if (!RLCombatEvent_ContactMatchHasTargetEdge(update,
+                                                 projectile_candidate || throw_candidate || attack_candidate)) {
+        return false;
+    }
 
     if (projectile_candidate) {
         source = RL_COMBAT_CONTACT_MATCH_SOURCE_PROJECTILE;

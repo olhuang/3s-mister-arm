@@ -49,6 +49,23 @@ Follow-up:
 - Promote from source-family counters to event-id consumption only after the
   live CEM distribution is stable across hit/block/projectile/throw/trade cases.
 
+Refinement after first live CEM pass:
+- User live report showed correct source-family counters accompanied by
+  reverse-side `CEM U` noise: attacks and fireballs produced `A`/`P` on the
+  source side but also `U` on the target's opposite source side; throw success
+  produced `T` plus reverse `U`; side swaps could create `U`.
+- Root cause: the first matcher treated plain entered hit-stop/contact-state as
+  meaningful even when the source side had no attack/projectile/throw
+  candidate. SF3 often puts both participants into hit-stop/contact-related
+  states, so the attacker's own hit-stop looked like an unattributed incoming
+  edge for the other source side.
+- Fix: HP/stun/damage, guard block-reaction, and throw-caught evidence remain
+  strong target edges and can become `U` if no source candidate exists. Plain
+  hit-stop/contact-state evidence is counted only when that source side already
+  has attack/projectile/throw evidence. Finalized same-frame projectile events
+  also remain projectile candidates so clashes/parries do not fall back to the
+  projectile parent attack.
+
 ## 2026-05-05: Combat Event Phase 5C/5D Throw Live Refinement Prep
 
 Update after live retest:

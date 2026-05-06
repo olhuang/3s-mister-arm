@@ -2,6 +2,42 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-06: Combat Event Phase 8A-1 Delegated Projectile Resolution
+
+Milestone:
+- Combat event attribution Phase 8A-1
+
+Files changed:
+- `tools/analyze_rl_combat_events.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/agent-memory/remote-rl-combat-event-attribution-plan.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Make analyzer output answer whether `projectile_claimed` attack rows
+  ultimately hit, were blocked, expired, or stayed unknown.
+
+Implementation notes:
+- C-side journal rows remain unchanged: parent attacks still record
+  `result=unknown` and `finalize_reason=projectile_claimed`.
+- The analyzer now builds a `(run_id, episode_id, parent_attack_event_id)` join
+  from projectile rows and resolves attack `effective_bucket` values to
+  `projectile_hit`, `projectile_blocked`, `projectile_expired`, or
+  `projectile_unknown` when exactly one projectile child is found.
+- The report keeps `raw_lifecycle_bucket` so the original
+  `delegated_to_projectile` ownership transfer remains visible and cannot be
+  confused with direct attack hit/block results.
+- Added a `Delegated Projectile Outcome` section with linked/missing/multi-link
+  counts, projectile result/finalize/owner counts, expired clash-vs-clean
+  breakdown, and examples for projectile unknown or missing links.
+
+Validation:
+- `python3 -m py_compile tools/analyze_rl_combat_events.py` passed.
+- `python3 tools/analyze_rl_combat_events.py logs/phase7a-event-journal-live-events.ndjson --transition-log logs/phase7a-event-journal-live-transitions.ndjson --examples 3` passed and reported `44` delegated attacks, `44` linked projectiles, `0` missing links, `0` multi-links, and delegated projectile results `blocked=19`, `hit=14`, `expired=10`, `unknown=1`.
+- `python3 tools/analyze_rl_combat_events.py logs/phase7a-event-journal-live-events.ndjson --transition-log logs/phase7a-event-journal-live-transitions.ndjson --json-output /tmp/rl-combat-event-summary.json --examples 1` passed.
+- `python3 -m json.tool /tmp/rl-combat-event-summary.json >/tmp/rl-combat-event-summary.pretty.json` passed.
+- `git diff --check` passed.
+
 ## 2026-05-06: Combat Event Phase 8A Journal Analyzer
 
 Milestone:

@@ -2663,6 +2663,7 @@ Tasks:
   - [x] Phase 7A-2 ordered complete journal snapshots: finalized/recorded combat events are copied into a per-episode journal buffer before small live rings can overwrite them, and `RLCombatEvent_EmitJournal()` emits rows sorted by run-wide `event_id` instead of ring slot order.
 - [ ] Combat event attribution Phase 8: upgrade analyzers to report attack success/failure, defense failures by incoming action/range/result, projectile lifecycle, throws, punishes, and unknown attribution reasons from event fields
   - [x] Phase 8A combat event journal analyzer: added `tools/analyze_rl_combat_events.py` to summarize schema/kind/episode health, chronological `event_id` integrity, duplicate keys, attack effective buckets, projectile lifecycle, defense results, punish paths, source-reference integrity, and optional transition-log joins/projectile counter checks.
+  - [x] Phase 8A-1 delegated projectile outcome resolution: analyzer now joins `attack.finalize_reason=projectile_claimed` rows to `projectile.parent_attack_event_id` and reports final effective buckets such as `projectile_hit`, `projectile_blocked`, `projectile_expired`, and `projectile_unknown` without changing raw C journal rows.
 - [ ] Combat event attribution Phase 9: add opt-in trainer use of high-confidence event labels only after move-family validation passes
 - [ ] Evaluate higher control rate after latency p95/p99 is stable
 - [ ] Review derived movement/action-phase candidates from the Human-Fighter Observer Gap Review before changing the observation schema

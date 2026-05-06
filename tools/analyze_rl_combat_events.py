@@ -77,6 +77,28 @@ def attack_bucket(row: dict[str, Any]) -> str:
     return result
 
 
+def projectile_result_bucket(projectile: dict[str, Any]) -> str:
+    result = str(projectile.get("result", "unknown"))
+    return f"projectile_{result}"
+
+
+def resolved_attack_bucket(
+    row: dict[str, Any],
+    projectiles_by_parent: dict[tuple[Any, Any, Any], list[dict[str, Any]]],
+) -> str:
+    bucket = attack_bucket(row)
+    if bucket != "delegated_to_projectile":
+        return bucket
+
+    key = (row.get("run_id"), row.get("episode_id"), row.get("event_id"))
+    projectiles = projectiles_by_parent.get(key, [])
+    if not projectiles:
+        return "projectile_missing"
+    if len(projectiles) > 1:
+        return "projectile_multi"
+    return projectile_result_bucket(projectiles[0])
+
+
 def is_true_attack_unknown_bucket(bucket: str) -> bool:
     return bucket in {
         "rollover_unknown",
@@ -124,8 +146,44 @@ def make_summary(event_rows: list[dict[str, Any]], transition_rows: list[dict[st
         by_kind[str(row.get("event_kind"))].append(row)
 
     attacks = by_kind.get("attack", [])
-    attack_bucket_counts: collections.Counter[str] = collections.Counter(attack_bucket(row) for row in attacks)
+    projectile_rows = by_kind.get("projectile", [])
+    projectiles_by_parent: dict[tuple[Any, Any, Any], list[dict[str, Any]]] = collections.defaultdict(list)
+    for row in projectile_rows:
+        parent_attack_event_id = row.get("parent_attack_event_id")
+        if parent_attack_event_id in (None, 0):
+            continue
+        key = (row.get("run_id"), row.get("episode_id"), parent_attack_event_id)
+        projectiles_by_parent[key].append(row)
+
+    raw_attack_bucket_counts: collections.Counter[str] = collections.Counter(attack_bucket(row) for row in attacks)
+    attack_bucket_counts: collections.Counter[str] = collections.Counter(
+        resolved_attack_bucket(row, projectiles_by_parent) for row in attacks
+    )
     true_attack_unknown_rows = [row for row in attacks if is_true_attack_unknown_bucket(attack_bucket(row))]
+    delegated_attacks = [row for row in attacks if attack_bucket(row) == "delegated_to_projectile"]
+    delegated_projectile_links: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    delegated_missing: list[dict[str, Any]] = []
+    delegated_multi: list[tuple[dict[str, Any], list[dict[str, Any]]]] = []
+    for row in delegated_attacks:
+        key = (row.get("run_id"), row.get("episode_id"), row.get("event_id"))
+        linked_projectiles = projectiles_by_parent.get(key, [])
+        if not linked_projectiles:
+            delegated_missing.append(row)
+        elif len(linked_projectiles) > 1:
+            delegated_multi.append((row, linked_projectiles))
+            delegated_projectile_links.extend((row, projectile) for projectile in linked_projectiles)
+        else:
+            delegated_projectile_links.append((row, linked_projectiles[0]))
+
+    delegated_projectiles = [projectile for _, projectile in delegated_projectile_links]
+    delegated_expired = [
+        projectile for projectile in delegated_projectiles if str(projectile.get("result")) == "expired"
+    ]
+    delegated_unknown = [
+        (attack, projectile)
+        for attack, projectile in delegated_projectile_links
+        if str(projectile.get("result")) == "unknown"
+    ]
 
     source_ref_rows = [
         row
@@ -163,10 +221,10 @@ def make_summary(event_rows: list[dict[str, Any]], transition_rows: list[dict[st
             transition_episode_last[row_episode(row)] = row
         projectile_event_counts: dict[str, dict[str, int]] = {}
         for episode, last in sorted(transition_episode_last.items(), key=lambda item: str(item[0])):
-            projectile_rows = [
+            episode_projectile_rows = [
                 row for row in by_kind.get("projectile", []) if row_episode(row) == episode
             ]
-            event_result_counts = collections.Counter(str(row.get("result")) for row in projectile_rows)
+            event_result_counts = collections.Counter(str(row.get("result")) for row in episode_projectile_rows)
             counter_result_counts = {
                 "hit": int(last.get("combat_projectile_hit_self_count") or 0)
                 + int(last.get("combat_projectile_hit_opp_count") or 0),
@@ -178,7 +236,7 @@ def make_summary(event_rows: list[dict[str, Any]], transition_rows: list[dict[st
                 + int(last.get("combat_projectile_unknown_opp_count") or 0),
             }
             projectile_event_counts[str(episode)] = {
-                "event_rows": len(projectile_rows),
+                "event_rows": len(episode_projectile_rows),
                 "counter_started": int(last.get("combat_projectile_started_self_count") or 0)
                 + int(last.get("combat_projectile_started_opp_count") or 0),
                 "event_hit": event_result_counts.get("hit", 0),
@@ -241,6 +299,7 @@ def make_summary(event_rows: list[dict[str, Any]], transition_rows: list[dict[st
             "rows": len(attacks),
             "result_counts": dict(collections.Counter(str(row.get("result")) for row in attacks)),
             "finalize_reason_counts": dict(collections.Counter(str(row.get("finalize_reason")) for row in attacks)),
+            "raw_lifecycle_bucket_counts": dict(raw_attack_bucket_counts),
             "effective_bucket_counts": dict(attack_bucket_counts),
             "true_unknown_rows": len(true_attack_unknown_rows),
             "true_unknown_examples": [
@@ -257,13 +316,54 @@ def make_summary(event_rows: list[dict[str, Any]], transition_rows: list[dict[st
                 }
                 for row in true_attack_unknown_rows[:12]
             ],
+            "delegated_projectile": {
+                "delegated_attacks": len(delegated_attacks),
+                "linked_projectiles": len(delegated_projectile_links),
+                "missing_projectile_links": len(delegated_missing),
+                "multi_projectile_links": len(delegated_multi),
+                "result_counts": dict(collections.Counter(str(row.get("result")) for row in delegated_projectiles)),
+                "finalize_reason_counts": dict(
+                    collections.Counter(str(row.get("finalize_reason")) for row in delegated_projectiles)
+                ),
+                "owner_counts": dict(collections.Counter(str(row.get("owner_side")) for row in delegated_projectiles)),
+                "expired_saw_opposing_projectile": sum(
+                    int(row.get("saw_opposing_projectile") or 0) for row in delegated_expired
+                ),
+                "expired_no_opposing_projectile": sum(
+                    1 for row in delegated_expired if not int(row.get("saw_opposing_projectile") or 0)
+                ),
+                "unknown_examples": [
+                    {
+                        "attack_event_id": attack.get("event_id"),
+                        "projectile_event_id": projectile.get("event_id"),
+                        "episode_id": attack.get("episode_id"),
+                        "side": attack.get("side"),
+                        "projectile_result": projectile.get("result"),
+                        "projectile_finalize_reason": projectile.get("finalize_reason"),
+                        "attack_start_decision_id": attack.get("start_decision_id"),
+                        "projectile_start_decision_id": projectile.get("start_decision_id"),
+                        "projectile_end_decision_id": projectile.get("end_decision_id"),
+                    }
+                    for attack, projectile in delegated_unknown[:12]
+                ],
+                "missing_examples": [
+                    {
+                        "attack_event_id": row.get("event_id"),
+                        "episode_id": row.get("episode_id"),
+                        "side": row.get("side"),
+                        "start_decision_id": row.get("start_decision_id"),
+                        "end_decision_id": row.get("end_decision_id"),
+                    }
+                    for row in delegated_missing[:12]
+                ],
+            },
         },
         "projectile": {
-            "rows": len(by_kind.get("projectile", [])),
-            "owner_counts": dict(collections.Counter(str(row.get("owner_side")) for row in by_kind.get("projectile", []))),
-            "result_counts": dict(collections.Counter(str(row.get("result")) for row in by_kind.get("projectile", []))),
+            "rows": len(projectile_rows),
+            "owner_counts": dict(collections.Counter(str(row.get("owner_side")) for row in projectile_rows)),
+            "result_counts": dict(collections.Counter(str(row.get("result")) for row in projectile_rows)),
             "finalize_reason_counts": dict(
-                collections.Counter(str(row.get("finalize_reason")) for row in by_kind.get("projectile", []))
+                collections.Counter(str(row.get("finalize_reason")) for row in projectile_rows)
             ),
         },
         "throw": {
@@ -316,6 +416,7 @@ def print_text_report(summary: dict[str, Any], examples: int) -> None:
     print(f"  rows={attack['rows']}")
     print(f"  result={format_counter(collections.Counter(attack['result_counts']))}")
     print(f"  finalize_reason={format_counter(collections.Counter(attack['finalize_reason_counts']))}")
+    print(f"  raw_lifecycle_bucket={format_counter(collections.Counter(attack['raw_lifecycle_bucket_counts']))}")
     print(f"  effective_bucket={format_counter(collections.Counter(attack['effective_bucket_counts']))}")
     print(f"  true_unknown_rows={attack['true_unknown_rows']}")
     for row in attack["true_unknown_examples"][:examples]:
@@ -325,6 +426,39 @@ def print_text_report(summary: dict[str, Any], examples: int) -> None:
             f"bucket={row['bucket']} reason={row['finalize_reason']} "
             f"start={row['start_decision_id']} end={row['end_decision_id']} "
             f"projectile_like={row['projectile_like']}"
+        )
+    print()
+
+    delegated = attack["delegated_projectile"]
+    print("Delegated Projectile Outcome")
+    print(
+        f"  delegated_attacks={delegated['delegated_attacks']} "
+        f"linked_projectiles={delegated['linked_projectiles']} "
+        f"missing_links={delegated['missing_projectile_links']} "
+        f"multi_links={delegated['multi_projectile_links']}"
+    )
+    print(f"  result={format_counter(collections.Counter(delegated['result_counts']))}")
+    print(f"  finalize_reason={format_counter(collections.Counter(delegated['finalize_reason_counts']))}")
+    print(f"  owner={format_counter(collections.Counter(delegated['owner_counts']))}")
+    print(
+        f"  expired_saw_opposing_projectile={delegated['expired_saw_opposing_projectile']} "
+        f"expired_no_opposing_projectile={delegated['expired_no_opposing_projectile']}"
+    )
+    for row in delegated["unknown_examples"][:examples]:
+        print(
+            "    projectile_unknown_example "
+            f"attack_event_id={row['attack_event_id']} projectile_event_id={row['projectile_event_id']} "
+            f"ep={row['episode_id']} side={row['side']} "
+            f"reason={row['projectile_finalize_reason']} "
+            f"attack_start={row['attack_start_decision_id']} "
+            f"projectile_start={row['projectile_start_decision_id']} "
+            f"projectile_end={row['projectile_end_decision_id']}"
+        )
+    for row in delegated["missing_examples"][:examples]:
+        print(
+            "    missing_projectile_example "
+            f"attack_event_id={row['attack_event_id']} ep={row['episode_id']} side={row['side']} "
+            f"start={row['start_decision_id']} end={row['end_decision_id']}"
         )
     print()
 

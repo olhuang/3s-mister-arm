@@ -2327,6 +2327,13 @@ Work:
   `projectile_claimed` becomes `delegated_to_projectile`, `episode_flush`
   becomes `round_boundary_unknown`, and remaining rollover/timeout unknowns are
   counted as true unknown candidates for later lifecycle fixes.
+- Phase 8A-1 resolves delegated projectile outcomes in the analyzer, not in C.
+  Raw attack rows still say `result=unknown` / `finalize_reason=projectile_claimed`,
+  but the report joins `projectile.parent_attack_event_id` back to the parent
+  attack and changes the main effective bucket to `projectile_hit`,
+  `projectile_blocked`, `projectile_expired`, or `projectile_unknown`.
+  The report must also keep a raw lifecycle bucket so source ownership remains
+  visible and projectile outcomes are not double-counted as direct attack hits.
 - add fight replay summaries:
   - timeline
   - per-side damage sources

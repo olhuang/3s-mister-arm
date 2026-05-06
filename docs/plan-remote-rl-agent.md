@@ -2668,6 +2668,7 @@ Tasks:
   - [x] Phase 8A-3 throw/attribution/punish side splits: analyzer now reports throw rows by `owner_side`, attribution rows by both `source_side` and `target_side`, and punish rows by both `punisher_side` and `punished_side`.
   - [x] Phase 8A-4 probe/trainer safety hardening: probe server combat-event split now uses raw byte schema-key detection instead of per-line JSON parsing, and feature-name sanitization now strips combat event root fields before model metadata can influence DQN features.
   - [x] Phase 8A-5 defense unknown sub-buckets: analyzer now breaks `defense_result=unknown` attribution rows into source lifecycle and target-evidence buckets, with source/target side splits and examples before any Phase 9 reward adoption.
+  - [x] Phase 8A-6 defense unknown reconciliation: analyzer now reconciles each `defense_result=unknown` attribution row against same `(run_id, episode_id, source_event_id, target_side)` resolved attribution rows, reports resolved/ambiguous/unresolved final-result candidates, and confirms unknown/resolved event rows can join matching transition rows by decision id.
 - [ ] Combat event attribution Phase 9: add opt-in trainer use of high-confidence event labels only after move-family validation passes
 - [ ] Evaluate higher control rate after latency p95/p99 is stable
 - [ ] Review derived movement/action-phase candidates from the Human-Fighter Observer Gap Review before changing the observation schema

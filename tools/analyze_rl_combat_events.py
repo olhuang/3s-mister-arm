@@ -61,6 +61,14 @@ def source_lookup_key(row: dict[str, Any]) -> tuple[Any, Any]:
     return row.get("run_id"), row.get("source_event_id")
 
 
+def attribution_source_target_key(row: dict[str, Any]) -> tuple[Any, Any, Any, Any]:
+    return row.get("run_id"), row.get("episode_id"), row.get("source_event_id"), row.get("target_side")
+
+
+def transition_lookup_key(row: dict[str, Any], decision_field: str = "decision_id") -> tuple[Any, Any, Any]:
+    return row.get("run_id"), row.get("episode_id"), row.get(decision_field)
+
+
 def side_sort_key(side: str) -> tuple[int, str]:
     if side == "self":
         return 0, side
@@ -210,6 +218,96 @@ def summarize_attribution_unknown_side_rows(
     return summary
 
 
+def attribution_unknown_reconciliation_record(
+    row: dict[str, Any],
+    events_by_id: dict[tuple[Any, Any], dict[str, Any]],
+    resolved_by_source_target: dict[tuple[Any, Any, Any, Any], list[dict[str, Any]]],
+    transition_by_decision: dict[tuple[Any, Any, Any], dict[str, Any]] | None,
+) -> dict[str, Any]:
+    resolved_rows = sorted(
+        resolved_by_source_target.get(attribution_source_target_key(row), []),
+        key=lambda item: (as_int(item.get("event_id")), as_int(item.get("decision_id"))),
+    )
+    resolved_results = sorted({str(item.get("defense_result")) for item in resolved_rows})
+    if not resolved_rows:
+        status = "unresolved_no_same_source_target_result"
+        final_result = "unresolved"
+    elif len(resolved_results) == 1:
+        status = "resolved_same_source_target"
+        final_result = resolved_results[0]
+    else:
+        status = "ambiguous_same_source_target"
+        final_result = "/".join(resolved_results)
+
+    unknown_transition = None
+    resolved_transitions: list[dict[str, Any]] = []
+    if transition_by_decision is not None:
+        unknown_transition = transition_by_decision.get(transition_lookup_key(row))
+        resolved_transitions = [
+            transition
+            for transition in (
+                transition_by_decision.get(transition_lookup_key(item))
+                for item in resolved_rows[:8]
+            )
+            if transition is not None
+        ]
+        if unknown_transition is None:
+            transition_join_status = "unknown_event_missing_transition"
+        elif not resolved_rows:
+            transition_join_status = "unknown_joined_no_resolved_event"
+        elif len(resolved_transitions) == len(resolved_rows[:8]):
+            transition_join_status = "unknown_and_resolved_events_joined"
+        else:
+            transition_join_status = "unknown_joined_resolved_partial_transition"
+    else:
+        transition_join_status = "transition_log_absent"
+
+    source = events_by_id.get(source_lookup_key(row), {})
+    return {
+        "event_id": row.get("event_id"),
+        "episode_id": row.get("episode_id"),
+        "source_side": row.get("source_side"),
+        "target_side": row.get("target_side"),
+        "source_event_id": row.get("source_event_id"),
+        "unknown_bucket": attribution_unknown_bucket(row, events_by_id),
+        "reconciliation_status": status,
+        "final_result": final_result,
+        "edge_type": row.get("edge_type"),
+        "target_state": row.get("target_state"),
+        "source_kind": source.get("event_kind"),
+        "source_result": source.get("result"),
+        "source_finalize_reason": source.get("finalize_reason"),
+        "transition_join_status": transition_join_status,
+        "transition_decision_id": unknown_transition.get("decision_id") if unknown_transition else None,
+        "transition_obs_frame": unknown_transition.get("obs_frame") if unknown_transition else None,
+        "resolved_event_ids": [item.get("event_id") for item in resolved_rows[:8]],
+        "resolved_results": [item.get("defense_result") for item in resolved_rows[:8]],
+        "resolved_edge_types": [item.get("edge_type") for item in resolved_rows[:8]],
+        "resolved_transition_decision_ids": [item.get("decision_id") for item in resolved_transitions],
+        "resolved_transition_obs_frames": [item.get("obs_frame") for item in resolved_transitions],
+    }
+
+
+def summarize_reconciliation_side_records(
+    records: list[dict[str, Any]],
+    side_field: str,
+) -> dict[str, dict[str, Any]]:
+    summary: dict[str, dict[str, Any]] = {}
+    sides = sorted({str(record.get(side_field, "unknown")) for record in records}, key=side_sort_key)
+    for side in sides:
+        side_records = [record for record in records if str(record.get(side_field, "unknown")) == side]
+        summary[side] = {
+            "rows": len(side_records),
+            "status_counts": dict(collections.Counter(str(record.get("reconciliation_status")) for record in side_records)),
+            "transition_join_counts": dict(
+                collections.Counter(str(record.get("transition_join_status")) for record in side_records)
+            ),
+            "final_result_counts": dict(collections.Counter(str(record.get("final_result")) for record in side_records)),
+            "unknown_bucket_counts": dict(collections.Counter(str(record.get("unknown_bucket")) for record in side_records)),
+        }
+    return summary
+
+
 def is_true_attack_unknown_bucket(bucket: str) -> bool:
     return bucket in {
         "rollover_unknown",
@@ -256,6 +354,13 @@ def make_summary(event_rows: list[dict[str, Any]], transition_rows: list[dict[st
     for row in event_rows:
         by_kind[str(row.get("event_kind"))].append(row)
     events_by_id = {event_lookup_key(row): row for row in event_rows}
+    transition_by_decision: dict[tuple[Any, Any, Any], dict[str, Any]] | None = None
+    if transition_rows:
+        transition_by_decision = {
+            transition_lookup_key(row): row
+            for row in transition_rows
+            if row.get("decision_id") is not None
+        }
 
     attacks = by_kind.get("attack", [])
     projectile_rows = by_kind.get("projectile", [])
@@ -339,6 +444,20 @@ def make_summary(event_rows: list[dict[str, Any]], transition_rows: list[dict[st
     attribution_rows = by_kind.get("attribution", [])
     attribution_unknown_rows = [
         row for row in attribution_rows if str(row.get("defense_result")) == "unknown"
+    ]
+    resolved_attributions_by_source_target: dict[tuple[Any, Any, Any, Any], list[dict[str, Any]]] = collections.defaultdict(list)
+    for row in attribution_rows:
+        if str(row.get("defense_result")) == "unknown":
+            continue
+        resolved_attributions_by_source_target[attribution_source_target_key(row)].append(row)
+    attribution_unknown_reconciliation_records = [
+        attribution_unknown_reconciliation_record(
+            row,
+            events_by_id,
+            resolved_attributions_by_source_target,
+            transition_by_decision,
+        )
+        for row in attribution_unknown_rows
     ]
     attribution_unknown_examples: list[dict[str, Any]] = []
     for row in attribution_unknown_rows[:12]:
@@ -563,6 +682,35 @@ def make_summary(event_rows: list[dict[str, Any]], transition_rows: list[dict[st
                     attribution_unknown_rows, "target_side", events_by_id
                 ),
                 "examples": attribution_unknown_examples,
+                "reconciliation": {
+                    "rows": len(attribution_unknown_reconciliation_records),
+                    "status_counts": dict(
+                        collections.Counter(
+                            str(record.get("reconciliation_status"))
+                            for record in attribution_unknown_reconciliation_records
+                        )
+                    ),
+                    "transition_join_counts": dict(
+                        collections.Counter(
+                            str(record.get("transition_join_status"))
+                            for record in attribution_unknown_reconciliation_records
+                        )
+                    ),
+                    "final_result_counts": dict(
+                        collections.Counter(
+                            str(record.get("final_result"))
+                            for record in attribution_unknown_reconciliation_records
+                            if str(record.get("reconciliation_status")) != "unresolved_no_same_source_target_result"
+                        )
+                    ),
+                    "by_source_side": summarize_reconciliation_side_records(
+                        attribution_unknown_reconciliation_records, "source_side"
+                    ),
+                    "by_target_side": summarize_reconciliation_side_records(
+                        attribution_unknown_reconciliation_records, "target_side"
+                    ),
+                    "examples": attribution_unknown_reconciliation_records[:12],
+                },
             },
             "by_source_side": summarize_side_rows(
                 attribution_rows,
@@ -624,6 +772,28 @@ def print_attribution_unknown_summary(summary: dict[str, Any], examples: int) ->
     print(f"    source_family_counts={format_counter(collections.Counter(summary['source_family_counts']))}")
     print_side_summary("defense_unknown_by_source_side", summary["by_source_side"])
     print_side_summary("defense_unknown_by_target_side", summary["by_target_side"])
+    reconciliation = summary["reconciliation"]
+    print("  defense_unknown_reconciliation")
+    print(f"    rows={reconciliation['rows']}")
+    print(f"    status_counts={format_counter(collections.Counter(reconciliation['status_counts']))}")
+    print(f"    transition_join_counts={format_counter(collections.Counter(reconciliation['transition_join_counts']))}")
+    print(f"    final_result_counts={format_counter(collections.Counter(reconciliation['final_result_counts']))}")
+    print_side_summary("reconciliation_by_source_side", reconciliation["by_source_side"])
+    print_side_summary("reconciliation_by_target_side", reconciliation["by_target_side"])
+    for row in reconciliation["examples"][:examples]:
+        print(
+            "    reconciliation_example "
+            f"event_id={row['event_id']} ep={row['episode_id']} "
+            f"source={row['source_side']} target={row['target_side']} "
+            f"status={row['reconciliation_status']} final={row['final_result']} "
+            f"unknown_bucket={row['unknown_bucket']} source_event_id={row['source_event_id']} "
+            f"transition={row['transition_join_status']} "
+            f"unknown_decision={row['transition_decision_id']} unknown_obs={row['transition_obs_frame']} "
+            f"resolved_event_ids={row['resolved_event_ids']} "
+            f"resolved_results={row['resolved_results']} "
+            f"resolved_edges={row['resolved_edge_types']} "
+            f"resolved_decisions={row['resolved_transition_decision_ids']}"
+        )
     for row in summary["examples"][:examples]:
         print(
             "    defense_unknown_example "

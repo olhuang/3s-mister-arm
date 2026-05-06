@@ -2359,6 +2359,17 @@ Work:
   target/evidence buckets for future logs (`unknown_hitstop_no_damage`,
   `unknown_contact_no_damage`, `unknown_target_air`,
   `unknown_target_attacking`, and related evidence-conflict buckets).
+- Phase 8A-6 adds analyzer-derived reconciliation for
+  `defense_result=unknown` attribution rows. The analyzer must not overwrite
+  raw C journal labels; instead it groups rows by
+  `(run_id, episode_id, source_event_id, target_side)`, looks for later or
+  sibling resolved attribution rows from the same source against the same
+  target, and reports `resolved_same_source_target`,
+  `ambiguous_same_source_target`, or `unresolved_no_same_source_target_result`.
+  When a transition log is provided, each unknown row and each resolved
+  candidate must also be joined back to transition rows by decision id so the
+  report can distinguish resolved labels with full transition anchors from
+  event-only inference.
 - add fight replay summaries:
   - timeline
   - per-side damage sources

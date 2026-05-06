@@ -2,6 +2,46 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-06: Combat Event Phase 8A-6 Defense Unknown Reconciliation
+
+Milestone:
+- Combat event attribution Phase 8A-6
+
+Files changed:
+- `tools/analyze_rl_combat_events.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/agent-memory/remote-rl-combat-event-attribution-plan.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Use the matching event journal plus transition log to account for each
+  `defense_result=unknown` attribution row and identify cases where a later or
+  sibling attribution row from the same source/target already records the final
+  outcome.
+
+Implementation notes:
+- Added analyzer-side same-source/target reconciliation keyed by
+  `(run_id, episode_id, source_event_id, target_side)`.
+- Reconciliation is report-only: it emits `resolved_same_source_target`,
+  `ambiguous_same_source_target`, or `unresolved_no_same_source_target_result`
+  plus final-result candidates and examples. Raw C event rows, transition
+  schema, rewards, replay, and trainer features are unchanged.
+- When `--transition-log` is supplied, each unknown row and each resolved
+  candidate are joined back to transition rows by decision id. The report now
+  prints `transition_join_counts` so event-only inference is visible.
+
+Validation:
+- `python3 -m py_compile tools/analyze_rl_combat_events.py` passed.
+- `python3 tools/analyze_rl_combat_events.py logs/phase7a-event-journal-live-events.ndjson --transition-log logs/phase7a-event-journal-live-transitions.ndjson --json-output /tmp/rl-combat-event-summary.json --examples 2` passed.
+- `python3 -m json.tool /tmp/rl-combat-event-summary.json` passed.
+- Latest live log result: `94` defense-unknown rows, `38` resolved by same
+  source/target, `56` unresolved, and `0` ambiguous. Resolved final results are
+  `hit=29`, `blocked=5`, and `parry=4`.
+- Transition reconciliation was complete for this log: `56`
+  `unknown_joined_no_resolved_event` and `38`
+  `unknown_and_resolved_events_joined`; no unknown attribution row was missing
+  its own transition anchor.
+
 ## 2026-05-06: Combat Event Phase 8A-5 Defense Unknown Sub-Buckets
 
 Milestone:

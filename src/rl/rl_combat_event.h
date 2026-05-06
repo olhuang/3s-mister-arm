@@ -47,6 +47,7 @@
 #define RL_COMBAT_PROJECTILE_MAX_PENDING_FRAMES 240u
 #define RL_COMBAT_PROJECTILE_MISSING_FINALIZE_FRAMES 2u
 #define RL_COMBAT_THROW_MIN_WHIFF_FRAMES 8u
+#define RL_COMBAT_THROW_SUCCESS_CONFIRM_FRAMES 2u
 #define RL_COMBAT_THROW_MAX_PENDING_FRAMES 45u
 
 typedef enum RLCombatEventSide {
@@ -472,6 +473,7 @@ u32 RLCombatEvent_UpdateActiveAttacks(const RLCombatAttackEventUpdate* update);
 u32 RLCombatEvent_UpdateProjectiles(const RLCombatProjectileEventUpdate* update);
 const RLCombatThrowEvent* RLCombatEvent_StartThrow(const RLCombatThrowEventStart* start);
 u32 RLCombatEvent_UpdateThrows(const RLCombatThrowEventUpdate* update);
+bool RLCombatEvent_HasActiveThrowForSide(u64 run_id, u32 episode_id, RLCombatEventSide side);
 const RLCombatAttackEvent* RLCombatEvent_FindAttack(u64 event_id);
 const RLCombatProjectileEvent* RLCombatEvent_FindProjectile(u64 event_id);
 const RLCombatThrowEvent* RLCombatEvent_FindThrow(u64 event_id);

@@ -1792,10 +1792,17 @@ Phase 5C implementation contract:
   triggers. Live testing showed held LP+LK plus direction changes can produce
   repeated policy/input rows without a new engine throw attempt, inflating
   `CT S/F`, `CTR W`, and `CTR U`.
+- Same-side active throw events suppress duplicate starts. Start checks run
+  after active throw updates, so a finished whiff can finalize before the next
+  fast throw attempt is considered, but an already-active throw cannot be
+  restarted by a later `tsukami_f` or engine-routine edge from the same attempt.
 - `CTR T` success is emitted only when the target-side caught state/edge is
   observed (`opp_throw_caught*` for self owner, `self_throw_caught*` for
   opponent owner) and there is no simultaneous/escape evidence that makes the
-  interaction contested.
+  interaction contested. Success waits a short confirm window
+  (`RL_COMBAT_THROW_SUCCESS_CONFIRM_FRAMES`) unless clear damage/stun evidence
+  already confirms the throw; this gives tech/escape evidence a chance to win
+  before `CTR T` is emitted.
 - `CTR W` whiff is emitted only when owner throw-active ends after the minimum
   whiff window with no target caught evidence, no target contact/damage
   evidence, no HP/stun delta, no actor interruption, and no opposing

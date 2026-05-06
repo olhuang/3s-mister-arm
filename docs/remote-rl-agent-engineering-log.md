@@ -12,6 +12,16 @@ Update after live retest:
 - Fix: policy/input `throw` now remains metadata only. Throw event starts come
   from raw throw-active edges or engine throw-routine edges/attribution, so held
   input rows do not create repeated events without a fresh engine attempt.
+- Second live retest showed single successful throws and mutual throw attempts
+  could still report `CT S/F +2`; when that happened one duplicate event often
+  finalized as `CTR U`. Root cause: the same attempt could first start from an
+  engine routine edge, then start again from a later `tsukami_f`/engine edge
+  before the first event finalized.
+- Fix: active throw events are updated before new throw starts are considered,
+  and same-side active throw events now suppress duplicate starts. Throw success
+  also waits a short confirm window unless damage/stun evidence is already
+  present, so mutual throw/escape evidence can finalize as `CTR U` before
+  `CTR T` is emitted.
 
 Milestone:
 - Milestone 6: Combat event attribution Phase 5C/5D
@@ -41,10 +51,14 @@ Implementation notes:
   are metadata only and are not standalone start triggers.
 - Each ledger row starts at most one throw event per side, preventing repeated
   starts from the same decision span.
+- Same-side active throw events suppress duplicate starts across decision rows.
+  Throw start checks now run after active throw updates so a previous whiff can
+  finalize before a new rapid throw is considered.
 - Throw finalization treats opposing throw evidence and throw-escape routines
   as contested. Contested caught evidence without real damage/stun evidence is
   finalized as `CTR U`, not `CTR T`; clean non-contested forward/back throw
-  success still uses target caught evidence and remains `CTR T`.
+  success still uses target caught evidence and remains `CTR T` after the short
+  success confirm window.
 
 Validation:
 - `git diff --check` passed.
@@ -60,6 +74,12 @@ Validation:
   `rl_session.c` after the held-input fix. The telemetry ARM package was
   created successfully. The build still emits the existing third-party minizip
   `mktemp` linker warning.
+- After the active-throw duplicate/start-order fix, `git diff --check`,
+  `python3 -m py_compile tools/rl_probe_server.py tools/analyze_rl_transitions.py`,
+  `cc -std=c11 -Wall -Wextra -Isrc -Iinclude -c src/rl/rl_combat_event.c -o /tmp/rl_combat_event_throw_refine3.o`,
+  and `tools/mister/build-game.sh --flavor telemetry` passed. The telemetry
+  build rebuilt `rl_combat_event.c` and `rl_session.c` and still emits the same
+  third-party minizip `mktemp` linker warning.
 
 Follow-up:
 - Phase 5D live validation should re-check close forward throw, back throw,

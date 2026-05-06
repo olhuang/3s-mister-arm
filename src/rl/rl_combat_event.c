@@ -121,6 +121,24 @@ static u32 RLCombatEvent_CountActiveThrows(const RLCombatThrowEventRing* ring) {
     return count;
 }
 
+bool RLCombatEvent_HasActiveThrowForSide(u64 run_id, u32 episode_id, RLCombatEventSide side) {
+    const RLCombatThrowEventRing* ring = RLCombatEvent_ConstThrowRingForSide(side);
+
+    if (ring == NULL || run_id == 0 || episode_id == 0) {
+        return false;
+    }
+
+    for (u32 i = 0; i < RL_COMBAT_THROW_EVENT_RING_CAP; i++) {
+        const RLCombatThrowEvent* event = &ring->events[i];
+        if (event->status == RL_COMBAT_THROW_EVENT_ACTIVE && event->run_id == run_id &&
+            event->episode_id == episode_id && event->owner_side == side) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 static void RLCombatEvent_RefreshActiveStats(void) {
     combat_event_stats.attack_active_self_count = RLCombatEvent_CountActive(&self_attack_ring);
     combat_event_stats.attack_active_opponent_count = RLCombatEvent_CountActive(&opponent_attack_ring);
@@ -1186,7 +1204,8 @@ static bool RLCombatEvent_TryFinalizeThrow(RLCombatThrowEvent* event, const RLCo
                                                update->decision_id);
     }
 
-    if (event->saw_target_caught || event->saw_target_caught_started) {
+    if ((event->saw_target_caught || event->saw_target_caught_started) &&
+        (age >= RL_COMBAT_THROW_SUCCESS_CONFIRM_FRAMES || RLCombatEvent_ThrowHasSuccessDamageEvidence(event))) {
         return RLCombatEvent_FinalizeThrowSlot(event,
                                                RL_COMBAT_THROW_RESULT_SUCCESS,
                                                RL_COMBAT_THROW_FINALIZE_TARGET_CAUGHT,

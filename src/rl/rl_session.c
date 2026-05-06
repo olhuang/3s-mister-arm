@@ -2530,6 +2530,9 @@ static bool RLSession_ObservationThrowStartedForSide(const RLDecisionLedgerEntry
     if (entry == NULL || obs == NULL || RLSession_ThrowAttemptAlreadyStartedForSide(entry, side)) {
         return false;
     }
+    if (RLCombatEvent_HasActiveThrowForSide(entry->run_id, entry->episode_id, side)) {
+        return false;
+    }
 
     switch (side) {
     case RL_COMBAT_EVENT_SIDE_SELF:
@@ -2685,8 +2688,6 @@ static void RLSession_AccumulateAttackSignals(RLDecisionLedgerEntry* entry, cons
     RLSession_MaybeAttributeEngineActionForSide(entry, obs, RL_COMBAT_EVENT_SIDE_OPPONENT);
     RLSession_MaybeStartCombatAttackEvent(entry, obs, RL_COMBAT_EVENT_SIDE_SELF);
     RLSession_MaybeStartCombatAttackEvent(entry, obs, RL_COMBAT_EVENT_SIDE_OPPONENT);
-    RLSession_MaybeStartCombatThrowEvent(entry, obs, RL_COMBAT_EVENT_SIDE_SELF);
-    RLSession_MaybeStartCombatThrowEvent(entry, obs, RL_COMBAT_EVENT_SIDE_OPPONENT);
 }
 
 static void RLSession_AccumulateCombatSpan(RLDecisionLedgerEntry* entry,
@@ -2717,6 +2718,8 @@ static void RLSession_AccumulateCombatSpan(RLDecisionLedgerEntry* entry,
     entry->opp_throw_caught_seen |= obs->opp_throw_caught;
     RLSession_UpdateCombatProjectileEvents(entry, obs, self_hp_delta, opp_hp_delta);
     RLSession_UpdateCombatThrowEvents(entry, obs, self_hp_delta, opp_hp_delta);
+    RLSession_MaybeStartCombatThrowEvent(entry, obs, RL_COMBAT_EVENT_SIDE_SELF);
+    RLSession_MaybeStartCombatThrowEvent(entry, obs, RL_COMBAT_EVENT_SIDE_OPPONENT);
     RLSession_UpdateCombatAttackEvents(entry, obs, self_hp_delta, opp_hp_delta);
     RLSession_MaybeAttributeEngineActionForSide(entry, obs, RL_COMBAT_EVENT_SIDE_SELF);
     RLSession_MaybeAttributeEngineActionForSide(entry, obs, RL_COMBAT_EVENT_SIDE_OPPONENT);

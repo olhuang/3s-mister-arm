@@ -2051,8 +2051,13 @@ Phase 6b-0 implementation slice:
   - `CDRX Eself/opp`: evaded/negated contact, currently projectile clash
   - `CDRX Uself/opp`: unknown defense result
 - Blocked projectile chip is intentionally interpreted here rather than in
-  Phase 6a: a projectile `HP` attribution edge plus target guard/block context
-  or a blocked projectile source result becomes `CDR C`, not `CDR H`.
+  Phase 6a: a projectile `HP` attribution edge plus explicit block context or
+  a blocked projectile source result becomes `CDR C`, not `CDR H`. A raw
+  `target_guard` flag is not enough to classify chip for ordinary attacks,
+  because live testing showed it can be present on clean hits; for projectile
+  chip fallback it is only accepted when the event is projectile-sourced, HP
+  changed, no stun/damage-state evidence appeared, and the projectile event
+  observed target guard.
 - Phase 6b-0 is still aggregate observability. Full Phase 6b remains open until
   defense result events include intended defense action, actual guard state at
   contact, target state, wakeup context, block_possible, confidence, and failure

@@ -699,7 +699,7 @@ static void RLCombatEvent_IncrementAttributionEdgeCounter(RLCombatAttributionEdg
 static bool RLCombatEvent_ProjectileEvidenceIsBlocked(const RLCombatProjectileEvent* projectile_event) {
     return projectile_event != NULL &&
            (projectile_event->result == RL_COMBAT_PROJECTILE_RESULT_BLOCKED ||
-            projectile_event->saw_target_guard || projectile_event->saw_target_block_reaction);
+            projectile_event->saw_target_block_reaction);
 }
 
 static RLCombatDefenseResult
@@ -708,9 +708,14 @@ RLCombatEvent_DeriveDefenseResult(const RLCombatContactMatchUpdate* update,
                                   RLCombatAttributionEdgeType edge_type,
                                   RLCombatAttributionFailureReason failure_reason,
                                   const RLCombatProjectileEvent* projectile_event) {
-    const bool blocked_context =
-        update != NULL && (update->target_guard || update->target_block_reaction ||
-                           RLCombatEvent_ProjectileEvidenceIsBlocked(projectile_event));
+    const bool explicit_block_context =
+        update != NULL &&
+        (update->target_block_reaction || RLCombatEvent_ProjectileEvidenceIsBlocked(projectile_event));
+    const bool guarded_projectile_chip_context =
+        update != NULL && source == RL_COMBAT_CONTACT_MATCH_SOURCE_PROJECTILE && update->target_guard &&
+        update->target_hp_delta && !update->target_stun_delta && !update->target_entered_damage_state &&
+        projectile_event != NULL && projectile_event->saw_target_guard;
+    const bool blocked_chip_context = explicit_block_context || guarded_projectile_chip_context;
 
     if (failure_reason != RL_COMBAT_ATTRIBUTION_FAILURE_NONE ||
         source == RL_COMBAT_CONTACT_MATCH_SOURCE_UNKNOWN ||
@@ -729,11 +734,12 @@ RLCombatEvent_DeriveDefenseResult(const RLCombatContactMatchUpdate* update,
     }
     if (update != NULL && (update->target_hp_delta || update->target_stun_delta ||
                            update->target_entered_damage_state)) {
-        return blocked_context ? RL_COMBAT_DEFENSE_RESULT_BLOCKED_CHIP : RL_COMBAT_DEFENSE_RESULT_HIT;
+        return blocked_chip_context ? RL_COMBAT_DEFENSE_RESULT_BLOCKED_CHIP
+                                    : RL_COMBAT_DEFENSE_RESULT_HIT;
     }
     if (edge_type == RL_COMBAT_ATTRIBUTION_EDGE_BLOCK_REACTION ||
-        (blocked_context && (edge_type == RL_COMBAT_ATTRIBUTION_EDGE_CONTACT_STATE ||
-                             edge_type == RL_COMBAT_ATTRIBUTION_EDGE_HIT_STOP))) {
+        (explicit_block_context && (edge_type == RL_COMBAT_ATTRIBUTION_EDGE_CONTACT_STATE ||
+                                    edge_type == RL_COMBAT_ATTRIBUTION_EDGE_HIT_STOP))) {
         return RL_COMBAT_DEFENSE_RESULT_BLOCKED;
     }
     return RL_COMBAT_DEFENSE_RESULT_UNKNOWN;

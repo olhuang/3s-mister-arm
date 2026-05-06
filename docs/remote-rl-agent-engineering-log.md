@@ -38,6 +38,17 @@ Validation:
 - `tools/mister/build-game.sh --flavor telemetry` passed, rebuilding
   `rl_combat_event.c`, `rl_observation.c`, and `rl_session.c`.
 
+Live retest note:
+- Initial live validation showed ordinary attack hit and fireball hit both
+  incrementing `CDR C` instead of `CDR H`. The root cause was that
+  `target_guard` was included in the generic blocked-chip context; guard can be
+  true on clean-hit contact frames. The correction keeps explicit block
+  reaction/projectile-block evidence for chip and limits raw guard fallback to
+  projectile HP-only chip cases with no stun/damage-state evidence.
+- Correction validation passed: `git diff --check`,
+  `cc -std=c11 -Wall -Wextra -Isrc -Iinclude -c src/rl/rl_combat_event.c -o /tmp/rl_combat_event_phase6b0_cdr_fix.o`,
+  and `tools/mister/build-game.sh --flavor telemetry`.
+
 ## 2026-05-06: Combat Event Phase 6a-1B Edge Coverage Counters
 
 Milestone:

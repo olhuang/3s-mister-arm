@@ -2,6 +2,45 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-06: Combat Event Phase 8A Journal Analyzer
+
+Milestone:
+- Combat event attribution Phase 8A
+
+Files changed:
+- `tools/analyze_rl_combat_events.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Add a human-readable analyzer for Phase 7A combat event journal logs before
+  changing C-side result classification rules.
+
+Implementation notes:
+- Added `tools/analyze_rl_combat_events.py`.
+- The analyzer reports schema/kind/episode health, duplicate event keys,
+  chronological `event_id` integrity, source-reference integrity, attack result
+  buckets, projectile lifecycle, throw results, attribution defense results,
+  punish path/reason/source-family splits, and optional transition-log join
+  rates.
+- Attack unknowns are now split into effective buckets:
+  `delegated_to_projectile`, `round_boundary_unknown`, `rollover_unknown`,
+  `timeout_unknown`, `timeout_projectile_like_unknown`, and
+  `true_unknown_other`.
+- The analyzer fails fast on unsupported `combat_event_schema_version` unless
+  `--allow-unsupported-schema` is supplied.
+
+Validation:
+- `python3 -m py_compile tools/analyze_rl_combat_events.py` passed.
+- `python3 tools/analyze_rl_combat_events.py logs/phase7a-event-journal-live-events.ndjson --transition-log logs/phase7a-event-journal-live-transitions.ndjson --examples 3` passed.
+- Live analyzer output on the latest Phase 7A-2 log reported `455` event rows,
+  `0` duplicate rows, monotonic `event_id` `1..455`, projectile counter checks
+  matching both episodes, and `83` true attack-unknown rows after excluding
+  `44` `delegated_to_projectile` rows and `4` `round_boundary_unknown` rows.
+- `python3 tools/analyze_rl_combat_events.py logs/phase7a-event-journal-live-events.ndjson --transition-log logs/phase7a-event-journal-live-transitions.ndjson --json-output /tmp/rl-combat-event-summary.json --examples 1` passed.
+- `python3 -m json.tool /tmp/rl-combat-event-summary.json >/tmp/rl-combat-event-summary.pretty.json` passed.
+- `git diff --check` passed.
+
 ## 2026-05-06: Combat Event Phase 7A-2 Ordered Complete Journal Snapshots
 
 Milestone:

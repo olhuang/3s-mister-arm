@@ -2318,6 +2318,15 @@ Files:
 
 Work:
 
+- Phase 8A starts with `tools/analyze_rl_combat_events.py`, a direct event
+  journal analyzer. It reports schema/kind/episode health, duplicate keys,
+  monotonic `event_id` integrity, source-reference integrity, attack effective
+  buckets, projectile lifecycle, defense results, punish splits, and optional
+  transition-log join/projectile counter checks.
+- Attack unknown rows must be split before changing C-side classification:
+  `projectile_claimed` becomes `delegated_to_projectile`, `episode_flush`
+  becomes `round_boundary_unknown`, and remaining rollover/timeout unknowns are
+  counted as true unknown candidates for later lifecycle fixes.
 - add fight replay summaries:
   - timeline
   - per-side damage sources

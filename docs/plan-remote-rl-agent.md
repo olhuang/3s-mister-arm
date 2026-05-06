@@ -2662,6 +2662,7 @@ Tasks:
   - [x] Phase 7A-1 event journal dedupe: live testing showed repeated terminal/finalize calls could append the same episode event ring hundreds of times; session export now records the last exported run/episode journal and emits each episode journal once.
   - [x] Phase 7A-2 ordered complete journal snapshots: finalized/recorded combat events are copied into a per-episode journal buffer before small live rings can overwrite them, and `RLCombatEvent_EmitJournal()` emits rows sorted by run-wide `event_id` instead of ring slot order.
 - [ ] Combat event attribution Phase 8: upgrade analyzers to report attack success/failure, defense failures by incoming action/range/result, projectile lifecycle, throws, punishes, and unknown attribution reasons from event fields
+  - [x] Phase 8A combat event journal analyzer: added `tools/analyze_rl_combat_events.py` to summarize schema/kind/episode health, chronological `event_id` integrity, duplicate keys, attack effective buckets, projectile lifecycle, defense results, punish paths, source-reference integrity, and optional transition-log joins/projectile counter checks.
 - [ ] Combat event attribution Phase 9: add opt-in trainer use of high-confidence event labels only after move-family validation passes
 - [ ] Evaluate higher control rate after latency p95/p99 is stable
 - [ ] Review derived movement/action-phase candidates from the Human-Fighter Observer Gap Review before changing the observation schema

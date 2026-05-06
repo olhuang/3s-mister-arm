@@ -2338,6 +2338,11 @@ Work:
   results (`self` / `opponent`) so live validation can tell whether the agent's
   fireballs and the opponent's fireballs are producing different hit, block,
   expire, or unknown distributions.
+- Throw, attribution, and punish reports must keep aggregate totals and add
+  side-split views: throws by `owner_side`, attribution by both `source_side`
+  and `target_side`, and punish rows by both `punisher_side` and
+  `punished_side`. The paired views are intentional because attribution and
+  punish rows describe two-sided relationships, not a single actor-only count.
 - add fight replay summaries:
   - timeline
   - per-side damage sources

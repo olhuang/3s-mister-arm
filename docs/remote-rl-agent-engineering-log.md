@@ -2,6 +2,37 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-06: Combat Event Phase 8A-3 Throw/Attribution/Punish Side Splits
+
+Milestone:
+- Combat event attribution Phase 8A-3
+
+Files changed:
+- `tools/analyze_rl_combat_events.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/agent-memory/remote-rl-combat-event-attribution-plan.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Make the remaining aggregate event sections side-readable for live review.
+
+Implementation notes:
+- Added generic side-row summarization to the analyzer.
+- Throw summaries now include `by_owner_side`.
+- Attribution summaries now include both `by_source_side` and `by_target_side`,
+  because attribution rows describe the attacker/source and the defender/target.
+- Punish summaries now include both `by_punisher_side` and `by_punished_side`.
+- Aggregate totals remain unchanged, and this is still a report-only change:
+  C journal rows, transition schema, rewards, replay, and trainer features are
+  untouched.
+
+Validation:
+- `python3 -m py_compile tools/analyze_rl_combat_events.py` passed.
+- `python3 tools/analyze_rl_combat_events.py logs/phase7a-event-journal-live-events.ndjson --transition-log logs/phase7a-event-journal-live-transitions.ndjson --examples 1` passed and printed side splits for Throw, Attribution, and Punish.
+- `python3 tools/analyze_rl_combat_events.py logs/phase7a-event-journal-live-events.ndjson --transition-log logs/phase7a-event-journal-live-transitions.ndjson --json-output /tmp/rl-combat-event-summary.json --examples 1` passed.
+- `python3 -m json.tool /tmp/rl-combat-event-summary.json >/tmp/rl-combat-event-summary.pretty.json` passed.
+- `git diff --check` passed.
+
 ## 2026-05-06: Combat Event Phase 8A-2 Delegated Projectile Side Split
 
 Milestone:

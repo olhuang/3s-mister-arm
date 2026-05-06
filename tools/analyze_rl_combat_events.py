@@ -107,6 +107,22 @@ def resolved_attack_bucket(
     return projectile_result_bucket(projectiles[0])
 
 
+def summarize_side_rows(
+    rows: list[dict[str, Any]],
+    side_field: str,
+    counter_fields: list[str],
+) -> dict[str, dict[str, Any]]:
+    summary: dict[str, dict[str, Any]] = {}
+    sides = sorted({str(row.get(side_field, "unknown")) for row in rows}, key=side_sort_key)
+    for side in sides:
+        side_rows = [row for row in rows if str(row.get(side_field, "unknown")) == side]
+        side_summary: dict[str, Any] = {"rows": len(side_rows)}
+        for field in counter_fields:
+            side_summary[f"{field}_counts"] = dict(collections.Counter(str(row.get(field)) for row in side_rows))
+        summary[side] = side_summary
+    return summary
+
+
 def is_true_attack_unknown_bucket(bucket: str) -> bool:
     return bucket in {
         "rollover_unknown",
@@ -231,6 +247,8 @@ def make_summary(event_rows: list[dict[str, Any]], transition_rows: list[dict[st
         row for row in source_ref_rows if row.get("source_event_id") not in event_id_set
     ]
     punish_rows = by_kind.get("punish", [])
+    throw_rows = by_kind.get("throw", [])
+    attribution_rows = by_kind.get("attribution", [])
     missing_punished_refs = [
         row for row in punish_rows if row.get("punished_attack_event_id") not in event_id_set
     ]
@@ -404,25 +422,46 @@ def make_summary(event_rows: list[dict[str, Any]], transition_rows: list[dict[st
             ),
         },
         "throw": {
-            "rows": len(by_kind.get("throw", [])),
-            "result_counts": dict(collections.Counter(str(row.get("result")) for row in by_kind.get("throw", []))),
+            "rows": len(throw_rows),
+            "result_counts": dict(collections.Counter(str(row.get("result")) for row in throw_rows)),
             "finalize_reason_counts": dict(
-                collections.Counter(str(row.get("finalize_reason")) for row in by_kind.get("throw", []))
+                collections.Counter(str(row.get("finalize_reason")) for row in throw_rows)
             ),
+            "by_owner_side": summarize_side_rows(throw_rows, "owner_side", ["result", "finalize_reason"]),
         },
         "attribution": {
-            "rows": len(by_kind.get("attribution", [])),
-            "source_family_counts": dict(collections.Counter(str(row.get("source_family")) for row in by_kind.get("attribution", []))),
-            "edge_type_counts": dict(collections.Counter(str(row.get("edge_type")) for row in by_kind.get("attribution", []))),
-            "confidence_counts": dict(collections.Counter(str(row.get("confidence")) for row in by_kind.get("attribution", []))),
-            "failure_reason_counts": dict(collections.Counter(str(row.get("failure_reason")) for row in by_kind.get("attribution", []))),
-            "defense_result_counts": dict(collections.Counter(str(row.get("defense_result")) for row in by_kind.get("attribution", []))),
+            "rows": len(attribution_rows),
+            "source_family_counts": dict(collections.Counter(str(row.get("source_family")) for row in attribution_rows)),
+            "edge_type_counts": dict(collections.Counter(str(row.get("edge_type")) for row in attribution_rows)),
+            "confidence_counts": dict(collections.Counter(str(row.get("confidence")) for row in attribution_rows)),
+            "failure_reason_counts": dict(collections.Counter(str(row.get("failure_reason")) for row in attribution_rows)),
+            "defense_result_counts": dict(collections.Counter(str(row.get("defense_result")) for row in attribution_rows)),
+            "by_source_side": summarize_side_rows(
+                attribution_rows,
+                "source_side",
+                ["source_family", "edge_type", "confidence", "failure_reason", "defense_result"],
+            ),
+            "by_target_side": summarize_side_rows(
+                attribution_rows,
+                "target_side",
+                ["source_family", "edge_type", "confidence", "failure_reason", "defense_result"],
+            ),
         },
         "punish": {
-            "rows": len(by_kind.get("punish", [])),
-            "source_family_counts": dict(collections.Counter(str(row.get("source_family")) for row in by_kind.get("punish", []))),
-            "reason_counts": dict(collections.Counter(str(row.get("reason")) for row in by_kind.get("punish", []))),
-            "path_counts": dict(collections.Counter(str(row.get("path")) for row in by_kind.get("punish", []))),
+            "rows": len(punish_rows),
+            "source_family_counts": dict(collections.Counter(str(row.get("source_family")) for row in punish_rows)),
+            "reason_counts": dict(collections.Counter(str(row.get("reason")) for row in punish_rows)),
+            "path_counts": dict(collections.Counter(str(row.get("path")) for row in punish_rows)),
+            "by_punisher_side": summarize_side_rows(
+                punish_rows,
+                "punisher_side",
+                ["source_family", "reason", "path"],
+            ),
+            "by_punished_side": summarize_side_rows(
+                punish_rows,
+                "punished_side",
+                ["source_family", "reason", "path"],
+            ),
         },
         "refs": {
             "source_refs": len(source_ref_rows),
@@ -432,6 +471,18 @@ def make_summary(event_rows: list[dict[str, Any]], transition_rows: list[dict[st
         },
         "transition": transition_summary,
     }
+
+
+def print_side_summary(title: str, summary: dict[str, dict[str, Any]]) -> None:
+    if not summary:
+        return
+    print(f"  {title}")
+    for side, section in sorted(summary.items(), key=lambda item: side_sort_key(item[0])):
+        print(f"    {side}: rows={section['rows']}")
+        for key, value in section.items():
+            if key == "rows":
+                continue
+            print(f"      {key}={format_counter(collections.Counter(value))}")
 
 
 def print_text_report(summary: dict[str, Any], examples: int) -> None:
@@ -518,7 +569,17 @@ def print_text_report(summary: dict[str, Any], examples: int) -> None:
         for key, value in section.items():
             if key == "rows":
                 continue
+            if key.startswith("by_"):
+                continue
             print(f"  {key}={format_counter(collections.Counter(value))}")
+        if section_name == "throw":
+            print_side_summary("by_owner_side", section["by_owner_side"])
+        elif section_name == "attribution":
+            print_side_summary("by_source_side", section["by_source_side"])
+            print_side_summary("by_target_side", section["by_target_side"])
+        elif section_name == "punish":
+            print_side_summary("by_punisher_side", section["by_punisher_side"])
+            print_side_summary("by_punished_side", section["by_punished_side"])
         print()
 
     refs = summary["refs"]

@@ -2155,6 +2155,12 @@ Phase 6c-1 implementation slice:
   a longer 45-frame window counted neutral hits after the whiffed move had
   fully recovered. Longer unsafe/recovery punish labels require action-specific
   recovery windows in a later Phase 6c slice.
+- Follow-up live refinement: finalized whiff candidates are temporarily
+  disabled after delayed neutral hits still appeared as `CPN R/W`. Whiff punish
+  coverage now comes from the active-attack fallback path (`CPNC A`, usually
+  `CPNR AW`/`AI`) until action-specific recovery windows can prove that a
+  post-finalization hit is still a punish. Finalized interrupted candidates may
+  still use the short window.
 
 ### Phase 7: Transition Schema v4 And Event Journal Export
 

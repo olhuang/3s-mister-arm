@@ -31,6 +31,10 @@ Implementation notes:
   frames after delayed neutral hits still appeared as `CPN R/W`. Immediate DP
   whiff punish remains covered by active-attack fallback; longer recovery
   punish labels need action-specific unsafe windows in a later Phase 6c slice.
+- Follow-up live refinement: disabled finalized-window whiff candidates after
+  fully recovered DP/large-special neutral hits still counted as `CPN R/W`.
+  Whiff punish is now expected through active fallback (`CPNC A`, usually
+  `CPNR AW`/`AI`) until action-specific recovery windows are available.
 - This remains debug-only. It does not change transition schema, reward,
   replay, trainer features, or event-journal export.
 
@@ -42,6 +46,10 @@ Validation:
 - Finalized-window refinement validation passed:
   `git diff --check`,
   `cc -std=c11 -Wall -Wextra -Isrc -Iinclude -c src/rl/rl_combat_event.c -o /tmp/rl_combat_event_phase6c1_window.o`,
+  and `tools/mister/build-game.sh --flavor telemetry`.
+- Finalized-whiff disable validation passed:
+  `git diff --check`,
+  `cc -std=c11 -Wall -Wextra -Isrc -Iinclude -c src/rl/rl_combat_event.c -o /tmp/rl_combat_event_phase6c1_disable_fw.o`,
   and `tools/mister/build-game.sh --flavor telemetry`.
 
 ## 2026-05-06: Combat Event Phase 6c-0 Punish Candidate Counters

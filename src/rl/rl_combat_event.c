@@ -1124,7 +1124,8 @@ static void RLCombatEvent_TryRecordPunishCandidate(const RLCombatAttributionEven
     }
 
     age = RLCombatEvent_FrameAge(event->frame_id, candidate->end_frame);
-    if (age > RL_COMBAT_PUNISH_CANDIDATE_WINDOW_FRAMES) {
+    if (candidate->reason == RL_COMBAT_PUNISH_REASON_WHIFF ||
+        age > RL_COMBAT_PUNISH_CANDIDATE_WINDOW_FRAMES) {
         candidate->valid = false;
         RLCombatEvent_TryRecordActivePunishCandidate(event);
         return;

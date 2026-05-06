@@ -62,6 +62,8 @@ typedef struct RLRemoteDebugState {
     u32 transition_format_error_count;
     u32 transition_format_truncation_count;
     u32 transition_evidence_fallback_count;
+    u32 combat_event_export_count;
+    u32 combat_event_format_error_count;
     u32 episode_attack_active_count;
     u32 episode_attack_contact_count;
     u32 episode_attack_whiff_count;

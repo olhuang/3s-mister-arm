@@ -4,8 +4,10 @@
 #include "types.h"
 
 #include <stdbool.h>
+#include <stddef.h>
 
 #define RL_COMBAT_EVIDENCE_BITMASK_VERSION 1u
+#define RL_COMBAT_EVENT_JOURNAL_SCHEMA_VERSION 1u
 
 #define RL_COMBAT_EVIDENCE_BIT_REQUESTED_ATTACK_INPUT_STARTED 0u
 #define RL_COMBAT_EVIDENCE_BIT_REQUESTED_ATTACK_BECAME_ACTIVE 1u
@@ -41,6 +43,7 @@
 #define RL_COMBAT_PROJECTILE_EVENT_RING_CAP 16u
 #define RL_COMBAT_THROW_EVENT_RING_CAP 16u
 #define RL_COMBAT_ATTRIBUTION_EVENT_RING_CAP 64u
+#define RL_COMBAT_PUNISH_EVENT_RING_CAP 32u
 #define RL_COMBAT_ATTACK_MIN_WHIFF_FRAMES 12u
 #define RL_COMBAT_ATTACK_FAST_WHIFF_FALLBACK_FRAMES 20u
 #define RL_COMBAT_ATTACK_MAX_PENDING_FRAMES 96u
@@ -193,6 +196,12 @@ typedef enum RLCombatPunishReason {
     RL_COMBAT_PUNISH_REASON_WHIFF = 1,
     RL_COMBAT_PUNISH_REASON_INTERRUPTED = 2,
 } RLCombatPunishReason;
+
+typedef enum RLCombatPunishPath {
+    RL_COMBAT_PUNISH_PATH_NONE = 0,
+    RL_COMBAT_PUNISH_PATH_FINALIZED_WINDOW = 1,
+    RL_COMBAT_PUNISH_PATH_ACTIVE_ATTACK_FALLBACK = 2,
+} RLCombatPunishPath;
 
 typedef struct RLCombatAttackEventStart {
     u64 run_id;
@@ -469,6 +478,21 @@ typedef struct RLCombatAttributionEvent {
     u8 target_stun_delta;
 } RLCombatAttributionEvent;
 
+typedef struct RLCombatPunishEvent {
+    u64 event_id;
+    u64 source_event_id;
+    u64 punished_attack_event_id;
+    u64 run_id;
+    u32 episode_id;
+    u32 decision_id;
+    u32 frame_id;
+    RLCombatEventSide punisher_side;
+    RLCombatEventSide punished_side;
+    RLCombatContactMatchSource source_family;
+    RLCombatPunishReason reason;
+    RLCombatPunishPath path;
+} RLCombatPunishEvent;
+
 typedef struct RLCombatEventStats {
     u64 run_id;
     u32 episode_id;
@@ -656,6 +680,8 @@ typedef struct RLCombatEventStats {
     u32 lifetime_episode_switch_flush_count;
 } RLCombatEventStats;
 
+typedef bool (*RLCombatEventJournalLineWriter)(const char* line, size_t line_len, void* userdata);
+
 void RLCombatEvent_ResetRun(u64 run_id);
 void RLCombatEvent_BeginEpisode(u64 run_id, u32 episode_id);
 void RLCombatEvent_FlushEpisode(u64 run_id, u32 episode_id, u32 frame_id, u32 decision_id);
@@ -687,5 +713,12 @@ const RLCombatAttackEvent* RLCombatEvent_FindAttack(u64 event_id);
 const RLCombatProjectileEvent* RLCombatEvent_FindProjectile(u64 event_id);
 const RLCombatThrowEvent* RLCombatEvent_FindThrow(u64 event_id);
 const RLCombatEventStats* RLCombatEvent_GetStats(void);
+u32 RLCombatEvent_EmitJournal(u64 run_id,
+                              u32 episode_id,
+                              char* line_buf,
+                              size_t line_buf_size,
+                              RLCombatEventJournalLineWriter writer,
+                              void* userdata,
+                              u32* out_error_count);
 
 #endif

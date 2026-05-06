@@ -2658,6 +2658,7 @@ Tasks:
   - [x] Phase 6c-1 punish candidate path/reason split: Outcome now separates finalized-window vs active-attack fallback punish candidates with `CPNC F/A` and `CPNR FW/FI/AW/AI`, documenting live limitations before formal punish event export.
   - [x] Phase 6c-2 frozen debug overlay contract: documented the live-validated Outcome overlay contract for `CE`/`CER`, `CP`/`CPR`, `CT`/`CTR`, `CEM`/`CEA`/`CEAE`/`CEAX`, `CDR`/`CDRX`/`CDC`, and `CPN`/`CPNX`/`CPNC`/`CPNR`, including conservative limitations before Phase 7 event-journal export.
 - [ ] Combat event attribution Phase 7: roll out transition schema v4 compact summaries plus `combat_event_schema_version=1` event journal export inside the same transition batch/envelope
+  - [x] Phase 7A event journal export skeleton: added the `rl-agent-export-combat-events` config/CLI/OSD gate, emits `combat_event_schema_version=1` attack/projectile/throw/attribution/punish journal rows in the same TCP transition batch envelope, and splits them into a separate `--combat-event-log` file in the Python probe without changing reward, replay, trainer features, or transition row shape.
 - [ ] Combat event attribution Phase 8: upgrade analyzers to report attack success/failure, defense failures by incoming action/range/result, projectile lifecycle, throws, punishes, and unknown attribution reasons from event fields
 - [ ] Combat event attribution Phase 9: add opt-in trainer use of high-confidence event labels only after move-family validation passes
 - [ ] Evaluate higher control rate after latency p95/p99 is stable

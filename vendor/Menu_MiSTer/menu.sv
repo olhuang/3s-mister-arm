@@ -303,6 +303,7 @@ localparam CONF_STR = {
 	"P2O[52:50],RL Debug View,Off,All,Net,Input,Fight,Outcome;",
 	"P2O[54:53],RL Control (Restart),Remote,Human Demo,CPU Demo;",
 	"P2O[55],RL Evidence Log (Restart),Off,On;",
+	"P2O[56],RL Event Log (Restart),Off,On;",
 	"-;",
 	"T[21],Reset to Default;",
 	"T[22],Restart;",
@@ -313,7 +314,7 @@ localparam CONF_STR = {
 };
 
 wire forced_scandoubler;
-wire [49:0] status;
+wire [56:0] status;
 
 hps_io #(.CONF_STR(CONF_STR), .CONF_STR_BRAM(1)) hps_io
 (

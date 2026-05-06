@@ -1,5 +1,8 @@
 #include "rl/rl_combat_event.h"
 
+#include <inttypes.h>
+#include <stdarg.h>
+#include <stdio.h>
 #include <string.h>
 
 typedef struct RLCombatAttackEventRing {
@@ -22,6 +25,11 @@ typedef struct RLCombatAttributionEventRing {
     u32 cursor;
 } RLCombatAttributionEventRing;
 
+typedef struct RLCombatPunishEventRing {
+    RLCombatPunishEvent events[RL_COMBAT_PUNISH_EVENT_RING_CAP];
+    u32 cursor;
+} RLCombatPunishEventRing;
+
 typedef struct RLCombatPunishableAttackCandidate {
     bool valid;
     u64 event_id;
@@ -41,6 +49,7 @@ static RLCombatProjectileEventRing projectile_ring;
 static RLCombatThrowEventRing self_throw_ring;
 static RLCombatThrowEventRing opponent_throw_ring;
 static RLCombatAttributionEventRing attribution_ring;
+static RLCombatPunishEventRing punish_ring;
 static RLCombatPunishableAttackCandidate self_punishable_attack;
 static RLCombatPunishableAttackCandidate opponent_punishable_attack;
 static u64 self_last_punished_attack_event_id;
@@ -983,6 +992,37 @@ static void RLCombatEvent_IncrementPunishSourceCounter(RLCombatEventSide punishe
     }
 }
 
+static void RLCombatEvent_RecordPunishEvent(const RLCombatAttributionEvent* attribution,
+                                            u64 punished_attack_event_id,
+                                            RLCombatEventSide punished_side,
+                                            RLCombatPunishReason reason,
+                                            RLCombatPunishPath path) {
+    RLCombatPunishEvent* event = NULL;
+
+    if (attribution == NULL || attribution->run_id == 0 || attribution->episode_id == 0 ||
+        punished_attack_event_id == RL_COMBAT_EVENT_ID_NONE || reason == RL_COMBAT_PUNISH_REASON_NONE ||
+        path == RL_COMBAT_PUNISH_PATH_NONE) {
+        return;
+    }
+
+    event = &punish_ring.events[punish_ring.cursor];
+    memset(event, 0, sizeof(*event));
+    event->event_id = RLCombatEvent_AllocateEventId();
+    event->source_event_id = attribution->source_event_id;
+    event->punished_attack_event_id = punished_attack_event_id;
+    event->run_id = attribution->run_id;
+    event->episode_id = attribution->episode_id;
+    event->decision_id = attribution->decision_id;
+    event->frame_id = attribution->frame_id;
+    event->punisher_side = attribution->source_side;
+    event->punished_side = punished_side;
+    event->source_family = attribution->source_family;
+    event->reason = reason;
+    event->path = path;
+
+    punish_ring.cursor = (punish_ring.cursor + 1u) % RL_COMBAT_PUNISH_EVENT_RING_CAP;
+}
+
 static void RLCombatEvent_IncrementPunishCounters(RLCombatEventSide punisher_side,
                                                   RLCombatPunishReason reason,
                                                   RLCombatContactMatchSource source_family,
@@ -1098,6 +1138,11 @@ static bool RLCombatEvent_TryRecordActivePunishCandidate(const RLCombatAttributi
     }
 
     reason = RLCombatEvent_ActivePunishReason(attack, event);
+    RLCombatEvent_RecordPunishEvent(event,
+                                    attack->event_id,
+                                    attack->side,
+                                    reason,
+                                    RL_COMBAT_PUNISH_PATH_ACTIVE_ATTACK_FALLBACK);
     RLCombatEvent_IncrementPunishCounters(event->source_side, reason, event->source_family, true);
     if (last_punished_id != NULL) {
         *last_punished_id = attack->event_id;
@@ -1136,6 +1181,11 @@ static void RLCombatEvent_TryRecordPunishCandidate(const RLCombatAttributionEven
         candidate->valid = false;
         return;
     }
+    RLCombatEvent_RecordPunishEvent(event,
+                                    candidate->event_id,
+                                    candidate->side,
+                                    candidate->reason,
+                                    RL_COMBAT_PUNISH_PATH_FINALIZED_WINDOW);
     RLCombatEvent_IncrementPunishCounters(event->source_side, candidate->reason, event->source_family, false);
     if (last_punished_id != NULL) {
         *last_punished_id = candidate->event_id;
@@ -1537,6 +1587,7 @@ static void RLCombatEvent_ClearRings(void) {
     memset(&self_throw_ring, 0, sizeof(self_throw_ring));
     memset(&opponent_throw_ring, 0, sizeof(opponent_throw_ring));
     memset(&attribution_ring, 0, sizeof(attribution_ring));
+    memset(&punish_ring, 0, sizeof(punish_ring));
     memset(&self_punishable_attack, 0, sizeof(self_punishable_attack));
     memset(&opponent_punishable_attack, 0, sizeof(opponent_punishable_attack));
     self_last_punished_attack_event_id = RL_COMBAT_EVENT_ID_NONE;
@@ -2308,6 +2359,683 @@ const RLCombatThrowEvent* RLCombatEvent_FindThrow(u64 event_id) {
     }
 
     return NULL;
+}
+
+static const char* RLCombatEvent_SideText(RLCombatEventSide side) {
+    switch (side) {
+    case RL_COMBAT_EVENT_SIDE_SELF:
+        return "self";
+    case RL_COMBAT_EVENT_SIDE_OPPONENT:
+        return "opponent";
+    case RL_COMBAT_EVENT_SIDE_NONE:
+    default:
+        return "none";
+    }
+}
+
+static const char* RLCombatEvent_AttackStatusText(RLCombatAttackEventStatus status) {
+    switch (status) {
+    case RL_COMBAT_ATTACK_EVENT_ACTIVE:
+        return "active";
+    case RL_COMBAT_ATTACK_EVENT_FINALIZED:
+        return "finalized";
+    case RL_COMBAT_ATTACK_EVENT_EMPTY:
+    default:
+        return "empty";
+    }
+}
+
+static const char* RLCombatEvent_AttackResultText(RLCombatAttackEventResult result) {
+    switch (result) {
+    case RL_COMBAT_ATTACK_RESULT_WHIFF:
+        return "whiff";
+    case RL_COMBAT_ATTACK_RESULT_INTERRUPTED:
+        return "interrupted";
+    case RL_COMBAT_ATTACK_RESULT_UNKNOWN:
+        return "unknown";
+    case RL_COMBAT_ATTACK_RESULT_PENDING:
+    default:
+        return "pending";
+    }
+}
+
+static const char* RLCombatEvent_AttackFinalizeReasonText(RLCombatAttackFinalizeReason reason) {
+    switch (reason) {
+    case RL_COMBAT_ATTACK_FINALIZE_EXPLICIT:
+        return "explicit";
+    case RL_COMBAT_ATTACK_FINALIZE_EPISODE_FLUSH:
+        return "episode_flush";
+    case RL_COMBAT_ATTACK_FINALIZE_SUPERSEDED_BY_NEW_START:
+        return "superseded_by_new_start";
+    case RL_COMBAT_ATTACK_FINALIZE_BASIC_WHIFF_WINDOW:
+        return "basic_whiff_window";
+    case RL_COMBAT_ATTACK_FINALIZE_BASIC_INTERRUPTED:
+        return "basic_interrupted";
+    case RL_COMBAT_ATTACK_FINALIZE_BASIC_UNKNOWN_TIMEOUT:
+        return "basic_unknown_timeout";
+    case RL_COMBAT_ATTACK_FINALIZE_PROJECTILE_CLAIMED:
+        return "projectile_claimed";
+    case RL_COMBAT_ATTACK_FINALIZE_NONE:
+    default:
+        return "none";
+    }
+}
+
+static const char* RLCombatEvent_ProjectileStatusText(RLCombatProjectileEventStatus status) {
+    switch (status) {
+    case RL_COMBAT_PROJECTILE_EVENT_ACTIVE:
+        return "active";
+    case RL_COMBAT_PROJECTILE_EVENT_FINALIZED:
+        return "finalized";
+    case RL_COMBAT_PROJECTILE_EVENT_EMPTY:
+    default:
+        return "empty";
+    }
+}
+
+static const char* RLCombatEvent_ProjectileResultText(RLCombatProjectileResult result) {
+    switch (result) {
+    case RL_COMBAT_PROJECTILE_RESULT_HIT:
+        return "hit";
+    case RL_COMBAT_PROJECTILE_RESULT_BLOCKED:
+        return "blocked";
+    case RL_COMBAT_PROJECTILE_RESULT_EXPIRED:
+        return "expired";
+    case RL_COMBAT_PROJECTILE_RESULT_UNKNOWN:
+        return "unknown";
+    case RL_COMBAT_PROJECTILE_RESULT_PENDING:
+    default:
+        return "pending";
+    }
+}
+
+static const char* RLCombatEvent_ProjectileFinalizeReasonText(RLCombatProjectileFinalizeReason reason) {
+    switch (reason) {
+    case RL_COMBAT_PROJECTILE_FINALIZE_EPISODE_FLUSH:
+        return "episode_flush";
+    case RL_COMBAT_PROJECTILE_FINALIZE_DISAPPEARED:
+        return "disappeared";
+    case RL_COMBAT_PROJECTILE_FINALIZE_CONTACT:
+        return "contact";
+    case RL_COMBAT_PROJECTILE_FINALIZE_TIMEOUT:
+        return "timeout";
+    case RL_COMBAT_PROJECTILE_FINALIZE_NONE:
+    default:
+        return "none";
+    }
+}
+
+static const char* RLCombatEvent_ThrowStatusText(RLCombatThrowEventStatus status) {
+    switch (status) {
+    case RL_COMBAT_THROW_EVENT_ACTIVE:
+        return "active";
+    case RL_COMBAT_THROW_EVENT_FINALIZED:
+        return "finalized";
+    case RL_COMBAT_THROW_EVENT_EMPTY:
+    default:
+        return "empty";
+    }
+}
+
+static const char* RLCombatEvent_ThrowResultText(RLCombatThrowResult result) {
+    switch (result) {
+    case RL_COMBAT_THROW_RESULT_SUCCESS:
+        return "success";
+    case RL_COMBAT_THROW_RESULT_WHIFF:
+        return "whiff";
+    case RL_COMBAT_THROW_RESULT_UNKNOWN:
+        return "unknown";
+    case RL_COMBAT_THROW_RESULT_PENDING:
+    default:
+        return "pending";
+    }
+}
+
+static const char* RLCombatEvent_ThrowFinalizeReasonText(RLCombatThrowFinalizeReason reason) {
+    switch (reason) {
+    case RL_COMBAT_THROW_FINALIZE_EPISODE_FLUSH:
+        return "episode_flush";
+    case RL_COMBAT_THROW_FINALIZE_SUPERSEDED_BY_NEW_START:
+        return "superseded_by_new_start";
+    case RL_COMBAT_THROW_FINALIZE_TARGET_CAUGHT:
+        return "target_caught";
+    case RL_COMBAT_THROW_FINALIZE_WHIFF_WINDOW:
+        return "whiff_window";
+    case RL_COMBAT_THROW_FINALIZE_UNKNOWN_TIMEOUT:
+        return "unknown_timeout";
+    case RL_COMBAT_THROW_FINALIZE_TECH_ESCAPE:
+        return "tech_escape";
+    case RL_COMBAT_THROW_FINALIZE_NONE:
+    default:
+        return "none";
+    }
+}
+
+static const char* RLCombatEvent_SourceFamilyText(RLCombatContactMatchSource source) {
+    switch (source) {
+    case RL_COMBAT_CONTACT_MATCH_SOURCE_ATTACK:
+        return "attack";
+    case RL_COMBAT_CONTACT_MATCH_SOURCE_PROJECTILE:
+        return "projectile";
+    case RL_COMBAT_CONTACT_MATCH_SOURCE_THROW:
+        return "throw";
+    case RL_COMBAT_CONTACT_MATCH_SOURCE_UNKNOWN:
+        return "unknown";
+    case RL_COMBAT_CONTACT_MATCH_SOURCE_NONE:
+    default:
+        return "none";
+    }
+}
+
+static const char* RLCombatEvent_AttributionEdgeText(RLCombatAttributionEdgeType edge_type) {
+    switch (edge_type) {
+    case RL_COMBAT_ATTRIBUTION_EDGE_HIT_STOP:
+        return "hit_stop";
+    case RL_COMBAT_ATTRIBUTION_EDGE_CONTACT_STATE:
+        return "contact_state";
+    case RL_COMBAT_ATTRIBUTION_EDGE_DAMAGE_STATE:
+        return "damage_state";
+    case RL_COMBAT_ATTRIBUTION_EDGE_HP_DELTA:
+        return "hp_delta";
+    case RL_COMBAT_ATTRIBUTION_EDGE_STUN_DELTA:
+        return "stun_delta";
+    case RL_COMBAT_ATTRIBUTION_EDGE_BLOCK_REACTION:
+        return "block_reaction";
+    case RL_COMBAT_ATTRIBUTION_EDGE_PARRY:
+        return "parry";
+    case RL_COMBAT_ATTRIBUTION_EDGE_THROW_CAUGHT:
+        return "throw_caught";
+    case RL_COMBAT_ATTRIBUTION_EDGE_PROJECTILE_CLASH:
+        return "projectile_clash";
+    case RL_COMBAT_ATTRIBUTION_EDGE_NONE:
+    default:
+        return "none";
+    }
+}
+
+static const char* RLCombatEvent_ConfidenceText(RLCombatAttributionConfidence confidence) {
+    switch (confidence) {
+    case RL_COMBAT_ATTRIBUTION_CONFIDENCE_LOW:
+        return "low";
+    case RL_COMBAT_ATTRIBUTION_CONFIDENCE_MEDIUM:
+        return "medium";
+    case RL_COMBAT_ATTRIBUTION_CONFIDENCE_HIGH:
+        return "high";
+    case RL_COMBAT_ATTRIBUTION_CONFIDENCE_NONE:
+    default:
+        return "none";
+    }
+}
+
+static const char* RLCombatEvent_AttributionFailureText(RLCombatAttributionFailureReason reason) {
+    switch (reason) {
+    case RL_COMBAT_ATTRIBUTION_FAILURE_NO_SOURCE_CANDIDATE:
+        return "no_source_candidate";
+    case RL_COMBAT_ATTRIBUTION_FAILURE_NONE:
+    default:
+        return "none";
+    }
+}
+
+static const char* RLCombatEvent_DefenseResultText(RLCombatDefenseResult result) {
+    switch (result) {
+    case RL_COMBAT_DEFENSE_RESULT_HIT:
+        return "hit";
+    case RL_COMBAT_DEFENSE_RESULT_BLOCKED:
+        return "blocked";
+    case RL_COMBAT_DEFENSE_RESULT_BLOCKED_CHIP:
+        return "blocked_chip";
+    case RL_COMBAT_DEFENSE_RESULT_PARRY:
+        return "parry";
+    case RL_COMBAT_DEFENSE_RESULT_THROWN:
+        return "thrown";
+    case RL_COMBAT_DEFENSE_RESULT_EVADED:
+        return "evaded";
+    case RL_COMBAT_DEFENSE_RESULT_UNKNOWN:
+        return "unknown";
+    case RL_COMBAT_DEFENSE_RESULT_NONE:
+    default:
+        return "none";
+    }
+}
+
+static const char* RLCombatEvent_GuardStateText(RLCombatDefenseGuardState guard_state) {
+    switch (guard_state) {
+    case RL_COMBAT_DEFENSE_GUARD_STATE_NONE:
+        return "none";
+    case RL_COMBAT_DEFENSE_GUARD_STATE_STAND:
+        return "stand";
+    case RL_COMBAT_DEFENSE_GUARD_STATE_CROUCH:
+        return "crouch";
+    case RL_COMBAT_DEFENSE_GUARD_STATE_AIR:
+        return "air";
+    case RL_COMBAT_DEFENSE_GUARD_STATE_UNKNOWN:
+    default:
+        return "unknown";
+    }
+}
+
+static const char* RLCombatEvent_TargetStateText(RLCombatDefenseTargetState target_state) {
+    switch (target_state) {
+    case RL_COMBAT_DEFENSE_TARGET_STATE_NEUTRAL:
+        return "neutral";
+    case RL_COMBAT_DEFENSE_TARGET_STATE_BLOCKSTUN:
+        return "blockstun";
+    case RL_COMBAT_DEFENSE_TARGET_STATE_HITSTUN:
+        return "hitstun";
+    case RL_COMBAT_DEFENSE_TARGET_STATE_AIR:
+        return "air";
+    case RL_COMBAT_DEFENSE_TARGET_STATE_ATTACKING:
+        return "attacking";
+    case RL_COMBAT_DEFENSE_TARGET_STATE_THROW_CAUGHT:
+        return "throw_caught";
+    case RL_COMBAT_DEFENSE_TARGET_STATE_UNKNOWN:
+    default:
+        return "unknown";
+    }
+}
+
+static const char* RLCombatEvent_PunishReasonText(RLCombatPunishReason reason) {
+    switch (reason) {
+    case RL_COMBAT_PUNISH_REASON_WHIFF:
+        return "whiff";
+    case RL_COMBAT_PUNISH_REASON_INTERRUPTED:
+        return "interrupted";
+    case RL_COMBAT_PUNISH_REASON_NONE:
+    default:
+        return "none";
+    }
+}
+
+static const char* RLCombatEvent_PunishPathText(RLCombatPunishPath path) {
+    switch (path) {
+    case RL_COMBAT_PUNISH_PATH_FINALIZED_WINDOW:
+        return "finalized_window";
+    case RL_COMBAT_PUNISH_PATH_ACTIVE_ATTACK_FALLBACK:
+        return "active_attack_fallback";
+    case RL_COMBAT_PUNISH_PATH_NONE:
+    default:
+        return "none";
+    }
+}
+
+static bool RLCombatEvent_WriteJournalLine(char* line_buf,
+                                           size_t line_buf_size,
+                                           RLCombatEventJournalLineWriter writer,
+                                           void* userdata,
+                                           u32* emitted,
+                                           u32* errors,
+                                           const char* fmt,
+                                           ...) {
+    va_list args;
+    int written = 0;
+    size_t line_len = 0;
+
+    if (line_buf == NULL || line_buf_size == 0 || writer == NULL || fmt == NULL) {
+        if (errors != NULL) {
+            (*errors)++;
+        }
+        return false;
+    }
+
+    va_start(args, fmt);
+    written = vsnprintf(line_buf, line_buf_size, fmt, args);
+    va_end(args);
+    if (written < 0 || (size_t)written >= line_buf_size) {
+        line_buf[0] = '\0';
+        if (errors != NULL) {
+            (*errors)++;
+        }
+        return true;
+    }
+
+    line_len = (size_t)written;
+    if (!writer(line_buf, line_len, userdata)) {
+        if (errors != NULL) {
+            (*errors)++;
+        }
+        return false;
+    }
+    if (emitted != NULL) {
+        (*emitted)++;
+    }
+    return true;
+}
+
+static bool RLCombatEvent_EmitAttackJournalLine(const RLCombatAttackEvent* event,
+                                                char* line_buf,
+                                                size_t line_buf_size,
+                                                RLCombatEventJournalLineWriter writer,
+                                                void* userdata,
+                                                u32* emitted,
+                                                u32* errors) {
+    if (event == NULL || event->status == RL_COMBAT_ATTACK_EVENT_EMPTY) {
+        return true;
+    }
+    return RLCombatEvent_WriteJournalLine(
+        line_buf,
+        line_buf_size,
+        writer,
+        userdata,
+        emitted,
+        errors,
+        "{\"combat_event_schema_version\":%u,\"event_kind\":\"attack\",\"event_id\":%" PRIu64
+        ",\"run_id\":%" PRIu64 ",\"episode_id\":%u,\"side\":\"%s\","
+        "\"status\":\"%s\",\"status_code\":%u,\"result\":\"%s\",\"result_code\":%u,"
+        "\"finalize_reason\":\"%s\",\"finalize_reason_code\":%u,"
+        "\"start_decision_id\":%u,\"start_frame\":%u,\"end_decision_id\":%u,\"end_frame\":%u,"
+        "\"projectile_like\":%u,\"whiff_eligible\":%u,"
+        "\"engine_action_id\":%u,\"engine_sub_action_id\":%u,\"engine_current_attack\":%u,"
+        "\"engine_label_source\":%u,\"policy_action_id\":%u,\"policy_sub_action_id\":%u,"
+        "\"policy_action_step\":%u}\n",
+        RL_COMBAT_EVENT_JOURNAL_SCHEMA_VERSION,
+        (uint64_t)event->event_id,
+        (uint64_t)event->run_id,
+        event->episode_id,
+        RLCombatEvent_SideText(event->side),
+        RLCombatEvent_AttackStatusText(event->status),
+        (unsigned int)event->status,
+        RLCombatEvent_AttackResultText(event->result),
+        (unsigned int)event->result,
+        RLCombatEvent_AttackFinalizeReasonText(event->finalize_reason),
+        (unsigned int)event->finalize_reason,
+        event->start_decision_id,
+        event->start_frame,
+        event->end_decision_id,
+        event->end_frame,
+        event->projectile_like,
+        event->whiff_eligible,
+        event->engine_action_id,
+        event->engine_sub_action_id,
+        event->engine_current_attack,
+        event->engine_label_source,
+        event->policy_action_id,
+        event->policy_sub_action_id,
+        event->policy_action_step);
+}
+
+static bool RLCombatEvent_EmitProjectileJournalLine(const RLCombatProjectileEvent* event,
+                                                    char* line_buf,
+                                                    size_t line_buf_size,
+                                                    RLCombatEventJournalLineWriter writer,
+                                                    void* userdata,
+                                                    u32* emitted,
+                                                    u32* errors) {
+    if (event == NULL || event->status == RL_COMBAT_PROJECTILE_EVENT_EMPTY) {
+        return true;
+    }
+    return RLCombatEvent_WriteJournalLine(
+        line_buf,
+        line_buf_size,
+        writer,
+        userdata,
+        emitted,
+        errors,
+        "{\"combat_event_schema_version\":%u,\"event_kind\":\"projectile\",\"event_id\":%" PRIu64
+        ",\"parent_attack_event_id\":%" PRIu64 ",\"run_id\":%" PRIu64
+        ",\"episode_id\":%u,\"owner_side\":\"%s\","
+        "\"status\":\"%s\",\"status_code\":%u,\"result\":\"%s\",\"result_code\":%u,"
+        "\"finalize_reason\":\"%s\",\"finalize_reason_code\":%u,"
+        "\"start_decision_id\":%u,\"start_frame\":%u,\"end_decision_id\":%u,\"end_frame\":%u,"
+        "\"spawn_rel_x\":%d,\"spawn_rel_y\":%d,\"spawn_vel_x\":%d,\"spawn_time_to_self\":%d,"
+        "\"last_rel_x\":%d,\"last_rel_y\":%d,\"last_vel_x\":%d,\"last_time_to_self\":%d,"
+        "\"engine_action_id\":%u,\"engine_sub_action_id\":%u,\"engine_label_source\":%u,"
+        "\"saw_opposing_projectile\":%u}\n",
+        RL_COMBAT_EVENT_JOURNAL_SCHEMA_VERSION,
+        (uint64_t)event->event_id,
+        (uint64_t)event->parent_attack_event_id,
+        (uint64_t)event->run_id,
+        event->episode_id,
+        RLCombatEvent_SideText(event->owner_side),
+        RLCombatEvent_ProjectileStatusText(event->status),
+        (unsigned int)event->status,
+        RLCombatEvent_ProjectileResultText(event->result),
+        (unsigned int)event->result,
+        RLCombatEvent_ProjectileFinalizeReasonText(event->finalize_reason),
+        (unsigned int)event->finalize_reason,
+        event->start_decision_id,
+        event->start_frame,
+        event->end_decision_id,
+        event->end_frame,
+        event->spawn_rel_x,
+        event->spawn_rel_y,
+        event->spawn_vel_x,
+        event->spawn_time_to_self,
+        event->last_rel_x,
+        event->last_rel_y,
+        event->last_vel_x,
+        event->last_time_to_self,
+        event->engine_action_id,
+        event->engine_sub_action_id,
+        event->engine_label_source,
+        event->saw_opposing_projectile);
+}
+
+static bool RLCombatEvent_EmitThrowJournalLine(const RLCombatThrowEvent* event,
+                                               char* line_buf,
+                                               size_t line_buf_size,
+                                               RLCombatEventJournalLineWriter writer,
+                                               void* userdata,
+                                               u32* emitted,
+                                               u32* errors) {
+    if (event == NULL || event->status == RL_COMBAT_THROW_EVENT_EMPTY) {
+        return true;
+    }
+    return RLCombatEvent_WriteJournalLine(
+        line_buf,
+        line_buf_size,
+        writer,
+        userdata,
+        emitted,
+        errors,
+        "{\"combat_event_schema_version\":%u,\"event_kind\":\"throw\",\"event_id\":%" PRIu64
+        ",\"run_id\":%" PRIu64 ",\"episode_id\":%u,\"owner_side\":\"%s\","
+        "\"status\":\"%s\",\"status_code\":%u,\"result\":\"%s\",\"result_code\":%u,"
+        "\"finalize_reason\":\"%s\",\"finalize_reason_code\":%u,"
+        "\"start_decision_id\":%u,\"start_frame\":%u,\"end_decision_id\":%u,\"end_frame\":%u,"
+        "\"current_attack\":%u,\"kind_of_waza\":%u,"
+        "\"saw_opposing_throw\":%u,\"saw_throw_escape\":%u,\"saw_target_caught\":%u}\n",
+        RL_COMBAT_EVENT_JOURNAL_SCHEMA_VERSION,
+        (uint64_t)event->event_id,
+        (uint64_t)event->run_id,
+        event->episode_id,
+        RLCombatEvent_SideText(event->owner_side),
+        RLCombatEvent_ThrowStatusText(event->status),
+        (unsigned int)event->status,
+        RLCombatEvent_ThrowResultText(event->result),
+        (unsigned int)event->result,
+        RLCombatEvent_ThrowFinalizeReasonText(event->finalize_reason),
+        (unsigned int)event->finalize_reason,
+        event->start_decision_id,
+        event->start_frame,
+        event->end_decision_id,
+        event->end_frame,
+        event->current_attack,
+        event->kind_of_waza,
+        event->saw_opposing_throw,
+        event->saw_throw_escape,
+        event->saw_target_caught);
+}
+
+static bool RLCombatEvent_EmitAttributionJournalLine(const RLCombatAttributionEvent* event,
+                                                     char* line_buf,
+                                                     size_t line_buf_size,
+                                                     RLCombatEventJournalLineWriter writer,
+                                                     void* userdata,
+                                                     u32* emitted,
+                                                     u32* errors) {
+    if (event == NULL || event->event_id == RL_COMBAT_EVENT_ID_NONE) {
+        return true;
+    }
+    return RLCombatEvent_WriteJournalLine(
+        line_buf,
+        line_buf_size,
+        writer,
+        userdata,
+        emitted,
+        errors,
+        "{\"combat_event_schema_version\":%u,\"event_kind\":\"attribution\",\"event_id\":%" PRIu64
+        ",\"source_event_id\":%" PRIu64 ",\"run_id\":%" PRIu64
+        ",\"episode_id\":%u,\"decision_id\":%u,\"frame_id\":%u,"
+        "\"source_side\":\"%s\",\"target_side\":\"%s\","
+        "\"source_family\":\"%s\",\"source_family_code\":%u,"
+        "\"edge_type\":\"%s\",\"edge_type_code\":%u,"
+        "\"confidence\":\"%s\",\"confidence_code\":%u,"
+        "\"failure_reason\":\"%s\",\"failure_reason_code\":%u,"
+        "\"defense_result\":\"%s\",\"defense_result_code\":%u,"
+        "\"actual_guard_state\":\"%s\",\"actual_guard_state_code\":%u,"
+        "\"target_state\":\"%s\",\"target_state_code\":%u,"
+        "\"target_policy_action_id\":%u,\"target_policy_sub_action_id\":%u,"
+        "\"target_policy_action_step\":%u,\"target_routine_1\":%u,\"target_routine_2\":%u,"
+        "\"target_guard\":%u,\"target_block_reaction\":%u,\"target_parry_started\":%u,"
+        "\"target_throw_caught\":%u,\"target_airborne\":%u,\"target_attack_state_active\":%u,"
+        "\"target_hp_delta\":%u,\"target_stun_delta\":%u}\n",
+        RL_COMBAT_EVENT_JOURNAL_SCHEMA_VERSION,
+        (uint64_t)event->event_id,
+        (uint64_t)event->source_event_id,
+        (uint64_t)event->run_id,
+        event->episode_id,
+        event->decision_id,
+        event->frame_id,
+        RLCombatEvent_SideText(event->source_side),
+        RLCombatEvent_SideText(event->target_side),
+        RLCombatEvent_SourceFamilyText(event->source_family),
+        (unsigned int)event->source_family,
+        RLCombatEvent_AttributionEdgeText(event->edge_type),
+        (unsigned int)event->edge_type,
+        RLCombatEvent_ConfidenceText(event->confidence),
+        (unsigned int)event->confidence,
+        RLCombatEvent_AttributionFailureText(event->failure_reason),
+        (unsigned int)event->failure_reason,
+        RLCombatEvent_DefenseResultText(event->defense_result),
+        (unsigned int)event->defense_result,
+        RLCombatEvent_GuardStateText(event->actual_guard_state_at_contact),
+        (unsigned int)event->actual_guard_state_at_contact,
+        RLCombatEvent_TargetStateText(event->target_state),
+        (unsigned int)event->target_state,
+        event->target_policy_action_id,
+        event->target_policy_sub_action_id,
+        event->target_policy_action_step,
+        event->target_routine_1,
+        event->target_routine_2,
+        event->target_guard,
+        event->target_block_reaction,
+        event->target_parry_started,
+        event->target_throw_caught,
+        event->target_airborne,
+        event->target_attack_state_active,
+        event->target_hp_delta,
+        event->target_stun_delta);
+}
+
+static bool RLCombatEvent_EmitPunishJournalLine(const RLCombatPunishEvent* event,
+                                                char* line_buf,
+                                                size_t line_buf_size,
+                                                RLCombatEventJournalLineWriter writer,
+                                                void* userdata,
+                                                u32* emitted,
+                                                u32* errors) {
+    if (event == NULL || event->event_id == RL_COMBAT_EVENT_ID_NONE) {
+        return true;
+    }
+    return RLCombatEvent_WriteJournalLine(
+        line_buf,
+        line_buf_size,
+        writer,
+        userdata,
+        emitted,
+        errors,
+        "{\"combat_event_schema_version\":%u,\"event_kind\":\"punish\",\"event_id\":%" PRIu64
+        ",\"source_event_id\":%" PRIu64 ",\"punished_attack_event_id\":%" PRIu64
+        ",\"run_id\":%" PRIu64 ",\"episode_id\":%u,\"decision_id\":%u,\"frame_id\":%u,"
+        "\"punisher_side\":\"%s\",\"punished_side\":\"%s\","
+        "\"source_family\":\"%s\",\"source_family_code\":%u,"
+        "\"reason\":\"%s\",\"reason_code\":%u,\"path\":\"%s\",\"path_code\":%u}\n",
+        RL_COMBAT_EVENT_JOURNAL_SCHEMA_VERSION,
+        (uint64_t)event->event_id,
+        (uint64_t)event->source_event_id,
+        (uint64_t)event->punished_attack_event_id,
+        (uint64_t)event->run_id,
+        event->episode_id,
+        event->decision_id,
+        event->frame_id,
+        RLCombatEvent_SideText(event->punisher_side),
+        RLCombatEvent_SideText(event->punished_side),
+        RLCombatEvent_SourceFamilyText(event->source_family),
+        (unsigned int)event->source_family,
+        RLCombatEvent_PunishReasonText(event->reason),
+        (unsigned int)event->reason,
+        RLCombatEvent_PunishPathText(event->path),
+        (unsigned int)event->path);
+}
+
+u32 RLCombatEvent_EmitJournal(u64 run_id,
+                              u32 episode_id,
+                              char* line_buf,
+                              size_t line_buf_size,
+                              RLCombatEventJournalLineWriter writer,
+                              void* userdata,
+                              u32* out_error_count) {
+    const RLCombatAttackEventRing* attack_rings[] = { &self_attack_ring, &opponent_attack_ring };
+    const RLCombatThrowEventRing* throw_rings[] = { &self_throw_ring, &opponent_throw_ring };
+    u32 emitted = 0;
+    u32 errors = 0;
+
+    if (out_error_count != NULL) {
+        *out_error_count = 0;
+    }
+    if (run_id == 0 || episode_id == 0 || line_buf == NULL || line_buf_size == 0 || writer == NULL) {
+        if (out_error_count != NULL) {
+            *out_error_count = 1;
+        }
+        return 0;
+    }
+
+    for (u32 r = 0; r < 2u; r++) {
+        for (u32 i = 0; i < RL_COMBAT_ATTACK_EVENT_RING_CAP; i++) {
+            const RLCombatAttackEvent* event = &attack_rings[r]->events[i];
+            if (event->run_id == run_id && event->episode_id == episode_id &&
+                !RLCombatEvent_EmitAttackJournalLine(event, line_buf, line_buf_size, writer, userdata, &emitted, &errors)) {
+                goto done;
+            }
+        }
+    }
+    for (u32 i = 0; i < RL_COMBAT_PROJECTILE_EVENT_RING_CAP; i++) {
+        const RLCombatProjectileEvent* event = &projectile_ring.events[i];
+        if (event->run_id == run_id && event->episode_id == episode_id &&
+            !RLCombatEvent_EmitProjectileJournalLine(event, line_buf, line_buf_size, writer, userdata, &emitted, &errors)) {
+            goto done;
+        }
+    }
+    for (u32 r = 0; r < 2u; r++) {
+        for (u32 i = 0; i < RL_COMBAT_THROW_EVENT_RING_CAP; i++) {
+            const RLCombatThrowEvent* event = &throw_rings[r]->events[i];
+            if (event->run_id == run_id && event->episode_id == episode_id &&
+                !RLCombatEvent_EmitThrowJournalLine(event, line_buf, line_buf_size, writer, userdata, &emitted, &errors)) {
+                goto done;
+            }
+        }
+    }
+    for (u32 i = 0; i < RL_COMBAT_ATTRIBUTION_EVENT_RING_CAP; i++) {
+        const RLCombatAttributionEvent* event = &attribution_ring.events[i];
+        if (event->run_id == run_id && event->episode_id == episode_id &&
+            !RLCombatEvent_EmitAttributionJournalLine(event, line_buf, line_buf_size, writer, userdata, &emitted, &errors)) {
+            goto done;
+        }
+    }
+    for (u32 i = 0; i < RL_COMBAT_PUNISH_EVENT_RING_CAP; i++) {
+        const RLCombatPunishEvent* event = &punish_ring.events[i];
+        if (event->run_id == run_id && event->episode_id == episode_id &&
+            !RLCombatEvent_EmitPunishJournalLine(event, line_buf, line_buf_size, writer, userdata, &emitted, &errors)) {
+            goto done;
+        }
+    }
+
+done:
+    if (out_error_count != NULL) {
+        *out_error_count = errors;
+    }
+    return emitted;
 }
 
 const RLCombatEventStats* RLCombatEvent_GetStats(void) {

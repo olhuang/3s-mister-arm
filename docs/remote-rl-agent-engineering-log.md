@@ -2,6 +2,59 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-06: Combat Event Phase 7A Event Journal Export Skeleton
+
+Milestone:
+- Combat event attribution Phase 7A
+
+Files changed:
+- `src/rl/rl_combat_event.h`
+- `src/rl/rl_combat_event.c`
+- `src/rl/rl_session.h`
+- `src/rl/rl_session.c`
+- `src/configuration.h`
+- `src/args.c`
+- `src/main.c`
+- `src/port/config/config.h`
+- `tools/rl_probe_server.py`
+- `vendor/Menu_MiSTer/menu.sv`
+- `vendor/Main_MiSTer/thirdsarm_wrapper.cpp`
+- `docs/config.md`
+- `docs/agent-memory/remote-rl-combat-event-attribution-plan.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Start Phase 7 by exporting formal combat event journal rows while keeping
+  transition rows learner-safe and unchanged.
+
+Implementation notes:
+- Added `rl-agent-export-combat-events`, `--rl-export-combat-events`, and the
+  MiSTer OSD `RL Event Log (Restart)` gate. Default remains off.
+- Added `combat_event_schema_version=1` NDJSON rows for attack, projectile,
+  throw, attribution/defense context, and punish events.
+- Event rows are appended to the same TCP transition batch payload as
+  transition rows, so disk logs can be joined from one envelope by
+  `run_id`/`episode_id`/`decision_id`/`frame_id`/`event_id`.
+- `tools/rl_probe_server.py` now splits batch payload lines: transition rows go
+  to `--transition-log`, and combat event rows go to `--combat-event-log`.
+  If no event log is supplied, event rows are dropped instead of polluting the
+  transition log.
+- This does not change reward, inference, action scheduling, replay, trainer
+  features, or transition row shape.
+
+Validation:
+- `cc -std=c11 -Wall -Wextra -Isrc -Iinclude -c src/rl/rl_combat_event.c -o /tmp/rl_combat_event_phase7a.o` passed.
+- `python3 -m py_compile tools/rl_probe_server.py` passed.
+- Synthetic mixed-payload split smoke passed: one transition row stayed in
+  `transitions.ndjson`, one `combat_event_schema_version=1` row went to
+  `events.ndjson`.
+- `git diff --check` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed.
+- `tools/mister-wrapper/build-hps.sh` passed, producing
+  `build/mister-wrapper-hps/MiSTer_3S-ARM`; existing upstream wrapper unused
+  warnings remain unrelated.
+
 ## 2026-05-06: Combat Event Phase 6c-2 Frozen Debug Overlay Contract
 
 Milestone:

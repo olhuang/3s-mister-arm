@@ -2329,11 +2329,12 @@ class TransitionPuller(threading.Thread):
 
 
 class TransitionBatchServer(threading.Thread):
-    def __init__(self, host: str, port: int, transition_log: str) -> None:
+    def __init__(self, host: str, port: int, transition_log: str, combat_event_log: str | None = None) -> None:
         super().__init__(daemon=True)
         self._host = host
         self._port = port
         self._transition_log = transition_log
+        self._combat_event_log = combat_event_log
         self._write_lock = threading.Lock()
 
     @staticmethod
@@ -2346,10 +2347,48 @@ class TransitionBatchServer(threading.Thread):
             payload.extend(chunk)
         return bytes(payload)
 
-    def _append_payload(self, payload: bytes) -> None:
+    @staticmethod
+    def _is_combat_event_line(line: bytes) -> bool:
+        stripped = line.strip()
+        if not stripped:
+            return False
+        try:
+            row = json.loads(stripped.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return False
+        return isinstance(row, dict) and row.get("combat_event_schema_version") is not None
+
+    @staticmethod
+    def _write_lines(path: str, lines: list[bytes]) -> None:
+        if not lines:
+            return
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        with open(path, "ab") as stream:
+            for line in lines:
+                stream.write(line)
+
+    def _append_payload(self, payload: bytes) -> tuple[int, int, int]:
+        transition_lines: list[bytes] = []
+        combat_event_lines: list[bytes] = []
+        dropped_combat_events = 0
+
+        for line in payload.splitlines(keepends=True):
+            if not line.strip():
+                continue
+            if self._is_combat_event_line(line):
+                if self._combat_event_log:
+                    combat_event_lines.append(line)
+                else:
+                    dropped_combat_events += 1
+            else:
+                transition_lines.append(line)
+
         os.makedirs(os.path.dirname(self._transition_log) or ".", exist_ok=True)
-        with self._write_lock, open(self._transition_log, "ab") as stream:
-            stream.write(payload)
+        with self._write_lock:
+            self._write_lines(self._transition_log, transition_lines)
+            if self._combat_event_log:
+                self._write_lines(self._combat_event_log, combat_event_lines)
+        return len(transition_lines), len(combat_event_lines), dropped_combat_events
 
     def run(self) -> None:
         server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -2379,11 +2418,13 @@ class TransitionBatchServer(threading.Thread):
                     payload = self._recv_exact(conn, payload_len)
                     if len(payload) != payload_len:
                         continue
-                    self._append_payload(payload)
+                    transition_rows, combat_event_rows, dropped_combat_events = self._append_payload(payload)
                     ack = TRANSITION_BATCH_ACK.pack(MAGIC, PROTOCOL_VERSION, 7, nonce, run_id, episode_id, 0)
                     conn.sendall(ack)
                     print(
-                        f"TRANSITIONS batch run={run_id} ep={episode_id} rows={row_count} bytes={payload_len} from={addr[0]}:{addr[1]}",
+                        f"TRANSITIONS batch run={run_id} ep={episode_id} rows={transition_rows}/{row_count} "
+                        f"combat_events={combat_event_rows} dropped_combat_events={dropped_combat_events} "
+                        f"bytes={payload_len} from={addr[0]}:{addr[1]}",
                         flush=True,
                     )
                 except OSError:
@@ -3223,6 +3264,7 @@ def serve(
     model_version: int,
     policy_repeat_delay_ms: int,
     transition_log: str | None,
+    combat_event_log: str | None,
     learner_stats_interval_sec: float,
     learner_tail_from_start: bool,
     replay_capacity: int,
@@ -3275,7 +3317,7 @@ def serve(
             transition_pull_local_source,
         ).start()
     if transition_log and transition_server_port > 0:
-        TransitionBatchServer(host, transition_server_port, transition_log).start()
+        TransitionBatchServer(host, transition_server_port, transition_log, combat_event_log).start()
     if transition_log:
         LearnerLogTailer(
             transition_log,
@@ -3548,6 +3590,14 @@ def main() -> None:
         "--transition-log",
         default=None,
         help="Optional local rl-transitions.ndjson path for background learner/log-reader stats",
+    )
+    parser.add_argument(
+        "--combat-event-log",
+        default=None,
+        help=(
+            "Optional local combat-events.ndjson path. When transition batch uploads contain "
+            "combat_event_schema_version rows, they are split here instead of entering --transition-log."
+        ),
     )
     parser.add_argument(
         "--learner-stats-interval-sec",
@@ -3919,6 +3969,8 @@ def main() -> None:
     transition_log = args.transition_log
     if transition_log is None and (args.transition_pull_remote_path or args.transition_pull_local_source):
         transition_log = "/tmp/rl-transitions-pulled.ndjson"
+    if args.combat_event_log and transition_log is None:
+        raise SystemExit("--combat-event-log requires --transition-log so both files come from the same batch envelope")
     transition_server_port = args.transition_port
     if transition_server_port is None and transition_log is not None and args.action_port is not None:
         transition_server_port = args.action_port + 1
@@ -4035,6 +4087,7 @@ def main() -> None:
         args.model_version,
         args.policy_repeat_delay_ms,
         transition_log,
+        args.combat_event_log,
         args.learner_stats_interval_sec,
         args.learner_tail_from_start,
         args.replay_capacity,

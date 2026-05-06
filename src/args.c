@@ -101,6 +101,12 @@ static void load_remote_rl_agent_config(Configuration* configuration) {
                               (SDL_strcmp(value, "on") == 0 || SDL_strcmp(value, "true") == 0 ||
                                SDL_strcmp(value, "1") == 0);
     }
+    if (Config_HasExplicitKey(CFG_KEY_RL_AGENT_EXPORT_COMBAT_EVENTS)) {
+        const char* value = Config_GetString(CFG_KEY_RL_AGENT_EXPORT_COMBAT_EVENTS);
+        rl->export_combat_events = value != NULL &&
+                                   (SDL_strcmp(value, "on") == 0 || SDL_strcmp(value, "true") == 0 ||
+                                    SDL_strcmp(value, "1") == 0);
+    }
 }
 
 static bool is_valid_port(int port) {
@@ -374,6 +380,13 @@ void read_args(int argc, const char* argv[], Configuration* configuration) {
                     "rl-export-evidence",
                     &configuration->remote_rl_agent.export_evidence,
                     "Emit Phase 0+1 compact combat evidence fields in transition rows.",
+                    NULL,
+                    0,
+                    0),
+        OPT_BOOLEAN(0,
+                    "rl-export-combat-events",
+                    &configuration->remote_rl_agent.export_combat_events,
+                    "Emit formal combat event journal rows in transition batch uploads.",
                     NULL,
                     0,
                     0),

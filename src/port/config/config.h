@@ -64,6 +64,7 @@
 #define CFG_KEY_RL_AGENT_DECISION_INTERVAL "rl-agent-decision-interval"
 #define CFG_KEY_RL_AGENT_ACTION_HOLD "rl-agent-action-hold"
 #define CFG_KEY_RL_AGENT_EXPORT_EVIDENCE "rl-agent-export-evidence"
+#define CFG_KEY_RL_AGENT_EXPORT_COMBAT_EVENTS "rl-agent-export-combat-events"
 
 /// Initialize config system
 void Config_Init();

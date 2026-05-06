@@ -341,6 +341,7 @@ static char* transition_batch_payload;
 static size_t transition_batch_payload_len;
 static size_t transition_batch_payload_cap;
 static u32 transition_batch_row_count;
+static u32 transition_batch_event_row_count;
 static bool hp_damage_baseline_valid;
 static s16 last_self_damage_total;
 static s16 last_opp_damage_total;
@@ -1724,6 +1725,7 @@ static void RLSession_ResetTransitionBatch() {
     transition_batch_payload_len = 0;
     transition_batch_payload_cap = 0;
     transition_batch_row_count = 0;
+    transition_batch_event_row_count = 0;
     transition_batch_episode_id = UINT32_MAX;
 }
 
@@ -2110,6 +2112,59 @@ static void RLSession_AppendTransitionBatchLine(const RLDecisionLedgerEntry* ent
     transition_batch_row_count++;
 }
 
+typedef struct RLSessionCombatEventBatchAppendContext {
+    u32 episode_id;
+    u32 row_count;
+} RLSessionCombatEventBatchAppendContext;
+
+static bool RLSession_AppendCombatEventBatchLine(const char* line, size_t line_len, void* userdata) {
+    RLSessionCombatEventBatchAppendContext* context = (RLSessionCombatEventBatchAppendContext*)userdata;
+
+    if (context == NULL || line == NULL || line_len == 0) {
+        return false;
+    }
+    if (transition_batch_episode_id == UINT32_MAX) {
+        transition_batch_episode_id = context->episode_id;
+    }
+    if (transition_batch_episode_id != context->episode_id) {
+        return false;
+    }
+    if (!RLSession_EnsureTransitionBatchCapacity(line_len)) {
+        return false;
+    }
+    SDL_memcpy(transition_batch_payload + transition_batch_payload_len, line, line_len);
+    transition_batch_payload_len += line_len;
+    transition_batch_event_row_count++;
+    context->row_count++;
+    return true;
+}
+
+static void RLSession_AppendCombatEventJournal(u32 episode_id) {
+    RLSessionCombatEventBatchAppendContext context;
+    u32 format_errors = 0;
+    u32 emitted = 0;
+
+    if (!configuration.remote_rl_agent.export_combat_events) {
+        return;
+    }
+    if (transition_format_buffer == NULL || transition_format_buffer_cap == 0) {
+        remote_debug.combat_event_format_error_count++;
+        return;
+    }
+
+    memset(&context, 0, sizeof(context));
+    context.episode_id = episode_id;
+    emitted = RLCombatEvent_EmitJournal(remote_debug.run_id,
+                                        episode_id,
+                                        transition_format_buffer,
+                                        transition_format_buffer_cap,
+                                        RLSession_AppendCombatEventBatchLine,
+                                        &context,
+                                        &format_errors);
+    remote_debug.combat_event_export_count += emitted;
+    remote_debug.combat_event_format_error_count += format_errors;
+}
+
 static void RLSession_FinalizeLedgerEntry(RLDecisionLedgerEntry* entry, bool done, u8 terminal_reason) {
     char* line = transition_format_buffer;
     size_t line_size = transition_format_buffer_cap;
@@ -2214,6 +2269,7 @@ static void RLSession_FinalizeEpisodeLedger(u32 episode_id) {
         }
         RLSession_FinalizeLedgerEntry(&decision_ledger[i], true, 2);
     }
+    RLSession_AppendCombatEventJournal(episode_id);
     if (transition_batch_episode_id == episode_id && transition_batch_payload != NULL && transition_batch_payload_len > 0) {
         RLNet_QueueTransitionBatch(remote_debug.run_id,
                                    episode_id,

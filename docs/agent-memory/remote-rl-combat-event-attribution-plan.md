@@ -2269,15 +2269,27 @@ Files:
 
 Work:
 
-- bump transition schema to v4
-- export compact summary fields
-- export combat event journal rows in the same transition batch/envelope,
-  not as a separate C-side stream
-- keep schema v3 reader behavior explicit in Python
+- Phase 7A starts with a conservative journal skeleton and does not bump the
+  learner transition schema or add learner features.
+- Add `rl-agent-export-combat-events` / `--rl-export-combat-events` / OSD
+  `RL Event Log (Restart)` as the formal event-output gate.
+- Export `combat_event_schema_version=1` journal rows for existing
+  attack/projectile/throw/attribution/defense-context/punish debug state.
+- Send event rows in the same transition batch/envelope, not as a separate
+  C-side stream.
+- Persist disk logs as two files on the Python side:
+  - transition NDJSON stays learner/replay safe
+  - combat event NDJSON receives only `combat_event_schema_version` rows
+- The same TCP batch envelope is the source of truth for joining the two files
+  by `run_id`, `episode_id`, `decision_id`, `frame_id`, and `event_id`.
+- Keep schema v3+/v9 reader behavior explicit in Python; unknown event rows
+  must never enter trainer feature builders.
 
 Validation:
 
 - schema smoke with remote probe
+- event-off smoke: transition batch rows remain transition-only
+- event-on smoke: one batch can produce both transition and combat event files
 - Python parser rejects unsupported schema versions clearly
 - every event row in the envelope belongs to the same run/episode or an
   explicitly declared boundary event

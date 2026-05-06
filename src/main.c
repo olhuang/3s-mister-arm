@@ -100,6 +100,7 @@ Configuration configuration = {
             .decision_interval_frames = 4,
             .action_hold_frames = 4,
             .export_evidence = false,
+            .export_combat_events = false,
         },
 };
 
@@ -244,6 +245,12 @@ static void apply_remote_rl_config_file_values() {
         rl->export_evidence = value != NULL &&
                               (SDL_strcmp(value, "on") == 0 || SDL_strcmp(value, "true") == 0 ||
                                SDL_strcmp(value, "1") == 0);
+    }
+    if (Config_HasExplicitKey(CFG_KEY_RL_AGENT_EXPORT_COMBAT_EVENTS)) {
+        const char* value = Config_GetString(CFG_KEY_RL_AGENT_EXPORT_COMBAT_EVENTS);
+        rl->export_combat_events = value != NULL &&
+                                   (SDL_strcmp(value, "on") == 0 || SDL_strcmp(value, "true") == 0 ||
+                                    SDL_strcmp(value, "1") == 0);
     }
 }
 

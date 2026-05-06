@@ -38,6 +38,7 @@ typedef struct RemoteRLAgentConfiguration {
     int decision_interval_frames;
     int action_hold_frames;
     bool export_evidence;
+    bool export_combat_events;
 } RemoteRLAgentConfiguration;
 
 #if ENABLE_PERF_TELEMETRY

@@ -322,6 +322,34 @@ Notes:
 - Changes take effect on the next wrapper `Restart`; they do not hot-switch the
   currently running match.
 
+### `rl-agent-export-combat-events`
+
+Controls formal combat event journal export in the remote RL transition batch
+upload.
+
+Possible values:
+- `off`
+- `on`
+
+Default:
+- `off`
+
+Notes:
+- This key is primarily written by the MiSTer OSD menu entry `RL Event Log
+  (Restart)`.
+- `off` keeps transition batch uploads as transition-only learner-safe NDJSON.
+- `on` appends `combat_event_schema_version = 1` journal rows for attack,
+  projectile, throw, attribution, defense context, and punish events into the
+  same TCP batch envelope as the transition rows.
+- The Python probe server splits that same envelope into two disk files when
+  `--transition-log` and `--combat-event-log` are both supplied. Transition
+  rows stay in the transition log; combat event rows stay in the combat event
+  log.
+- Combat event export does not change reward, inference, action scheduling,
+  replay, trainer features, or transition row shape.
+- Changes take effect on the next wrapper `Restart`; they do not hot-switch the
+  currently running match.
+
 ### `rl-agent-remote-ip`
 
 Remote learner/probe host used by the Milestone 2 UDP RL probe.

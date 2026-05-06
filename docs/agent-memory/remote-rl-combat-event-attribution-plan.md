@@ -2108,6 +2108,26 @@ Done when:
 - punish events explain unsafe-action damage without falsely punishing neutral
   damage or unavoidable combo damage
 
+Phase 6c-0 implementation slice:
+
+- Add debug-only punish candidate counters before creating formal punish event
+  journal rows.
+- When an attack event finalizes as whiff or interrupted, keep a short
+  side-local punishable candidate window. The first later opposite-side
+  high-confidence attribution event that lands on that target and has defense
+  result hit or thrown consumes the candidate.
+- Outcome overlay adds:
+  - `CPN Rself/opp Wself/opp Iself/opp`: punish candidates recorded by
+    punisher side, split by whiff/interrupted punished-attack reason.
+  - `CPNX Aself/opp Pself/opp Tself/opp`: punisher source family as
+    attack/projectile/throw.
+- This remains deliberately conservative: it requires high-confidence
+  HP/stun/damage or throw-caught attribution, a real source event id, opposite
+  source/target sides, and a short frame window after the punished attack
+  finalized. Projectile recovery / fireball-safe-vs-unsafe nuance and richer
+  unsafe-frame reasoning remain for later Phase 6c slices.
+- No transition schema, reward, replay, trainer, or event-journal export changes.
+
 ### Phase 7: Transition Schema v4 And Event Journal Export
 
 Files:

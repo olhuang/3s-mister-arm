@@ -22,12 +22,27 @@ typedef struct RLCombatAttributionEventRing {
     u32 cursor;
 } RLCombatAttributionEventRing;
 
+typedef struct RLCombatPunishableAttackCandidate {
+    bool valid;
+    u64 event_id;
+    u64 run_id;
+    u32 episode_id;
+    u32 end_frame;
+    u32 end_decision_id;
+    RLCombatEventSide side;
+    RLCombatPunishReason reason;
+} RLCombatPunishableAttackCandidate;
+
+#define RL_COMBAT_PUNISH_CANDIDATE_WINDOW_FRAMES 45u
+
 static RLCombatAttackEventRing self_attack_ring;
 static RLCombatAttackEventRing opponent_attack_ring;
 static RLCombatProjectileEventRing projectile_ring;
 static RLCombatThrowEventRing self_throw_ring;
 static RLCombatThrowEventRing opponent_throw_ring;
 static RLCombatAttributionEventRing attribution_ring;
+static RLCombatPunishableAttackCandidate self_punishable_attack;
+static RLCombatPunishableAttackCandidate opponent_punishable_attack;
 static RLCombatEventStats combat_event_stats;
 
 static bool RLCombatEvent_IsCleanBasicWhiff(const RLCombatAttackEvent* event);
@@ -76,6 +91,18 @@ static const RLCombatThrowEventRing* RLCombatEvent_ConstThrowRingForSide(RLComba
         return &self_throw_ring;
     case RL_COMBAT_EVENT_SIDE_OPPONENT:
         return &opponent_throw_ring;
+    case RL_COMBAT_EVENT_SIDE_NONE:
+    default:
+        return NULL;
+    }
+}
+
+static RLCombatPunishableAttackCandidate* RLCombatEvent_PunishableAttackForSide(RLCombatEventSide side) {
+    switch (side) {
+    case RL_COMBAT_EVENT_SIDE_SELF:
+        return &self_punishable_attack;
+    case RL_COMBAT_EVENT_SIDE_OPPONENT:
+        return &opponent_punishable_attack;
     case RL_COMBAT_EVENT_SIDE_NONE:
     default:
         return NULL;
@@ -588,6 +615,18 @@ static void RLCombatEvent_ResetEpisodeStats(void) {
     combat_event_stats.defense_context_parry_opponent_count = 0;
     combat_event_stats.defense_context_throw_caught_self_count = 0;
     combat_event_stats.defense_context_throw_caught_opponent_count = 0;
+    combat_event_stats.punish_candidate_self_count = 0;
+    combat_event_stats.punish_candidate_opponent_count = 0;
+    combat_event_stats.punish_whiff_self_count = 0;
+    combat_event_stats.punish_whiff_opponent_count = 0;
+    combat_event_stats.punish_interrupted_self_count = 0;
+    combat_event_stats.punish_interrupted_opponent_count = 0;
+    combat_event_stats.punish_source_attack_self_count = 0;
+    combat_event_stats.punish_source_attack_opponent_count = 0;
+    combat_event_stats.punish_source_projectile_self_count = 0;
+    combat_event_stats.punish_source_projectile_opponent_count = 0;
+    combat_event_stats.punish_source_throw_self_count = 0;
+    combat_event_stats.punish_source_throw_opponent_count = 0;
     combat_event_stats.episode_flush_count = 0;
     combat_event_stats.episode_switch_flush_count = 0;
 }
@@ -844,6 +883,118 @@ static void RLCombatEvent_IncrementDefenseContextCounters(const RLCombatAttribut
     }
 }
 
+static RLCombatPunishReason RLCombatEvent_PunishReasonForAttackResult(RLCombatAttackEventResult result) {
+    switch (result) {
+    case RL_COMBAT_ATTACK_RESULT_WHIFF:
+        return RL_COMBAT_PUNISH_REASON_WHIFF;
+    case RL_COMBAT_ATTACK_RESULT_INTERRUPTED:
+        return RL_COMBAT_PUNISH_REASON_INTERRUPTED;
+    case RL_COMBAT_ATTACK_RESULT_PENDING:
+    case RL_COMBAT_ATTACK_RESULT_UNKNOWN:
+    default:
+        return RL_COMBAT_PUNISH_REASON_NONE;
+    }
+}
+
+static void RLCombatEvent_RememberPunishableAttack(const RLCombatAttackEvent* attack) {
+    RLCombatPunishableAttackCandidate* candidate = NULL;
+    RLCombatPunishReason reason = RL_COMBAT_PUNISH_REASON_NONE;
+
+    if (attack == NULL || attack->status != RL_COMBAT_ATTACK_EVENT_FINALIZED) {
+        return;
+    }
+    reason = RLCombatEvent_PunishReasonForAttackResult(attack->result);
+    if (reason == RL_COMBAT_PUNISH_REASON_NONE) {
+        return;
+    }
+    candidate = RLCombatEvent_PunishableAttackForSide(attack->side);
+    if (candidate == NULL) {
+        return;
+    }
+
+    memset(candidate, 0, sizeof(*candidate));
+    candidate->valid = true;
+    candidate->event_id = attack->event_id;
+    candidate->run_id = attack->run_id;
+    candidate->episode_id = attack->episode_id;
+    candidate->end_frame = attack->end_frame;
+    candidate->end_decision_id = attack->end_decision_id;
+    candidate->side = attack->side;
+    candidate->reason = reason;
+}
+
+static bool RLCombatEvent_AttributionCanPunish(const RLCombatAttributionEvent* event) {
+    if (event == NULL || event->failure_reason != RL_COMBAT_ATTRIBUTION_FAILURE_NONE ||
+        event->confidence != RL_COMBAT_ATTRIBUTION_CONFIDENCE_HIGH || event->source_event_id == RL_COMBAT_EVENT_ID_NONE) {
+        return false;
+    }
+    return event->defense_result == RL_COMBAT_DEFENSE_RESULT_HIT ||
+           event->defense_result == RL_COMBAT_DEFENSE_RESULT_THROWN;
+}
+
+static void RLCombatEvent_IncrementPunishSourceCounter(RLCombatEventSide punisher_side,
+                                                       RLCombatContactMatchSource source_family) {
+    switch (source_family) {
+    case RL_COMBAT_CONTACT_MATCH_SOURCE_ATTACK:
+        RLCombatEvent_IncrementSideCounter(punisher_side,
+                                           &combat_event_stats.punish_source_attack_self_count,
+                                           &combat_event_stats.punish_source_attack_opponent_count);
+        break;
+    case RL_COMBAT_CONTACT_MATCH_SOURCE_PROJECTILE:
+        RLCombatEvent_IncrementSideCounter(punisher_side,
+                                           &combat_event_stats.punish_source_projectile_self_count,
+                                           &combat_event_stats.punish_source_projectile_opponent_count);
+        break;
+    case RL_COMBAT_CONTACT_MATCH_SOURCE_THROW:
+        RLCombatEvent_IncrementSideCounter(punisher_side,
+                                           &combat_event_stats.punish_source_throw_self_count,
+                                           &combat_event_stats.punish_source_throw_opponent_count);
+        break;
+    case RL_COMBAT_CONTACT_MATCH_SOURCE_NONE:
+    case RL_COMBAT_CONTACT_MATCH_SOURCE_UNKNOWN:
+    default:
+        break;
+    }
+}
+
+static void RLCombatEvent_TryRecordPunishCandidate(const RLCombatAttributionEvent* event) {
+    RLCombatPunishableAttackCandidate* candidate = NULL;
+    u32 age = 0;
+
+    if (!RLCombatEvent_AttributionCanPunish(event)) {
+        return;
+    }
+
+    candidate = RLCombatEvent_PunishableAttackForSide(event->target_side);
+    if (candidate == NULL || !candidate->valid || candidate->run_id != event->run_id ||
+        candidate->episode_id != event->episode_id || candidate->side != event->target_side ||
+        event->source_side != RLCombatEvent_OppositeSide(candidate->side) ||
+        event->frame_id < candidate->end_frame) {
+        return;
+    }
+
+    age = RLCombatEvent_FrameAge(event->frame_id, candidate->end_frame);
+    if (age > RL_COMBAT_PUNISH_CANDIDATE_WINDOW_FRAMES) {
+        candidate->valid = false;
+        return;
+    }
+
+    RLCombatEvent_IncrementSideCounter(event->source_side,
+                                       &combat_event_stats.punish_candidate_self_count,
+                                       &combat_event_stats.punish_candidate_opponent_count);
+    if (candidate->reason == RL_COMBAT_PUNISH_REASON_WHIFF) {
+        RLCombatEvent_IncrementSideCounter(event->source_side,
+                                           &combat_event_stats.punish_whiff_self_count,
+                                           &combat_event_stats.punish_whiff_opponent_count);
+    } else if (candidate->reason == RL_COMBAT_PUNISH_REASON_INTERRUPTED) {
+        RLCombatEvent_IncrementSideCounter(event->source_side,
+                                           &combat_event_stats.punish_interrupted_self_count,
+                                           &combat_event_stats.punish_interrupted_opponent_count);
+    }
+    RLCombatEvent_IncrementPunishSourceCounter(event->source_side, event->source_family);
+    candidate->valid = false;
+}
+
 static void RLCombatEvent_RecordAttributionEvent(const RLCombatContactMatchUpdate* update,
                                                  RLCombatContactMatchSource source,
                                                  u64 source_event_id,
@@ -904,6 +1055,7 @@ static void RLCombatEvent_RecordAttributionEvent(const RLCombatContactMatchUpdat
     RLCombatEvent_IncrementAttributionEdgeCounter(edge_type);
     RLCombatEvent_IncrementDefenseResultCounter(event->target_side, defense_result);
     RLCombatEvent_IncrementDefenseContextCounters(event);
+    RLCombatEvent_TryRecordPunishCandidate(event);
     if (failure_reason != RL_COMBAT_ATTRIBUTION_FAILURE_NONE) {
         combat_event_stats.attribution_failure_count++;
     }
@@ -983,6 +1135,7 @@ static bool RLCombatEvent_FinalizeSlot(RLCombatAttackEvent* event,
                                            &combat_event_stats.attack_unknown_timeout_opponent_count);
         RLCombatEvent_RecordTimeoutUnknownCauses(event);
     }
+    RLCombatEvent_RememberPunishableAttack(event);
     RLCombatEvent_RefreshActiveStats();
     return true;
 }
@@ -1236,6 +1389,8 @@ static void RLCombatEvent_ClearRings(void) {
     memset(&self_throw_ring, 0, sizeof(self_throw_ring));
     memset(&opponent_throw_ring, 0, sizeof(opponent_throw_ring));
     memset(&attribution_ring, 0, sizeof(attribution_ring));
+    memset(&self_punishable_attack, 0, sizeof(self_punishable_attack));
+    memset(&opponent_punishable_attack, 0, sizeof(opponent_punishable_attack));
     RLCombatEvent_RefreshActiveStats();
 }
 

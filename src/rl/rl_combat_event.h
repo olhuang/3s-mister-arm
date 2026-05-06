@@ -188,6 +188,12 @@ typedef enum RLCombatDefenseTargetState {
     RL_COMBAT_DEFENSE_TARGET_STATE_THROW_CAUGHT = 6,
 } RLCombatDefenseTargetState;
 
+typedef enum RLCombatPunishReason {
+    RL_COMBAT_PUNISH_REASON_NONE = 0,
+    RL_COMBAT_PUNISH_REASON_WHIFF = 1,
+    RL_COMBAT_PUNISH_REASON_INTERRUPTED = 2,
+} RLCombatPunishReason;
+
 typedef struct RLCombatAttackEventStart {
     u64 run_id;
     u32 episode_id;
@@ -599,6 +605,18 @@ typedef struct RLCombatEventStats {
     u32 defense_context_parry_opponent_count;
     u32 defense_context_throw_caught_self_count;
     u32 defense_context_throw_caught_opponent_count;
+    u32 punish_candidate_self_count;
+    u32 punish_candidate_opponent_count;
+    u32 punish_whiff_self_count;
+    u32 punish_whiff_opponent_count;
+    u32 punish_interrupted_self_count;
+    u32 punish_interrupted_opponent_count;
+    u32 punish_source_attack_self_count;
+    u32 punish_source_attack_opponent_count;
+    u32 punish_source_projectile_self_count;
+    u32 punish_source_projectile_opponent_count;
+    u32 punish_source_throw_self_count;
+    u32 punish_source_throw_opponent_count;
     u32 episode_flush_count;
     u32 episode_switch_flush_count;
     u32 lifetime_attack_started_count;

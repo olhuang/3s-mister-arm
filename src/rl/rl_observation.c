@@ -950,6 +950,26 @@ void RLObservation_FormatDebugOverlay(char* out, size_t out_size, const char* se
                             (unsigned long)remote->combat_defense_context_parry_opp_count,
                             (unsigned long)remote->combat_defense_context_throw_caught_self_count,
                             (unsigned long)remote->combat_defense_context_throw_caught_opp_count);
+        append_overlay_line(out,
+                            out_size,
+                            &used,
+                            "CPN R%lu/%lu W%lu/%lu I%lu/%lu",
+                            (unsigned long)remote->combat_punish_candidate_self_count,
+                            (unsigned long)remote->combat_punish_candidate_opp_count,
+                            (unsigned long)remote->combat_punish_whiff_self_count,
+                            (unsigned long)remote->combat_punish_whiff_opp_count,
+                            (unsigned long)remote->combat_punish_interrupted_self_count,
+                            (unsigned long)remote->combat_punish_interrupted_opp_count);
+        append_overlay_line(out,
+                            out_size,
+                            &used,
+                            "CPNX A%lu/%lu P%lu/%lu T%lu/%lu",
+                            (unsigned long)remote->combat_punish_source_attack_self_count,
+                            (unsigned long)remote->combat_punish_source_attack_opp_count,
+                            (unsigned long)remote->combat_punish_source_projectile_self_count,
+                            (unsigned long)remote->combat_punish_source_projectile_opp_count,
+                            (unsigned long)remote->combat_punish_source_throw_self_count,
+                            (unsigned long)remote->combat_punish_source_throw_opp_count);
     }
 
     if (show_all || view == RL_DEBUG_OVERLAY_VIEW_INPUT) {

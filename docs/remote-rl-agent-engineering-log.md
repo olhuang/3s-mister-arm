@@ -2,6 +2,44 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-06: Combat Event Phase 6a-1A Attribution Ring Skeleton
+
+Milestone:
+- Combat event attribution Phase 6a-1A
+
+Files changed:
+- `src/rl/rl_combat_event.h`
+- `src/rl/rl_combat_event.c`
+- `src/rl/rl_session.h`
+- `src/rl/rl_session.c`
+- `src/rl/rl_observation.c`
+- `docs/plan-remote-rl-agent.md`
+- `docs/agent-memory/remote-rl-combat-event-attribution-plan.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Promote the live-validated `CEM` source-family classifier into a debug-only
+  attribution ring so future event-journal export has a concrete internal
+  record format before any schema, reward, replay, or trainer adoption.
+
+Implementation notes:
+- Added `RLCombatAttributionEvent` and a fixed-size 64-entry attribution ring.
+- Every successful CEM classification writes one attribution event with source
+  family, source event id when available, target side, edge type, confidence,
+  and failure reason.
+- Unknown CEM classifications now create attribution records with
+  `no_source_candidate` instead of being only aggregate counters.
+- Outcome overlay adds `CEA R/F/O` for attribution records, failure records,
+  and ring overwrites. The attribution ring is not serialized into transition
+  rows yet.
+
+Validation:
+- `git diff --check` passed.
+- `cc -std=c11 -Wall -Wextra -Isrc -Iinclude -c src/rl/rl_combat_event.c -o /tmp/rl_combat_event_phase6a1_attribution.o` passed.
+- `python3 -m py_compile tools/rl_probe_server.py tools/analyze_rl_transitions.py` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed, rebuilding
+  `rl_combat_event.c`, `rl_observation.c`, and `rl_session.c`.
+
 ## 2026-05-06: Combat Event Phase 6a-0 Contact-Match Instrumentation
 
 Milestone:

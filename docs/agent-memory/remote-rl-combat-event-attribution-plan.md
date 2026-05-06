@@ -1960,6 +1960,30 @@ Phase 6a-0 live validation focus:
 - `CEM U` should stay low; any repeatable high `U` case becomes the next Phase
   6a matcher gap
 
+Phase 6a-1A implementation slice:
+
+- Add a debug-only contact attribution ring behind the proven `CEM` classifier.
+  This is an internal skeleton for future event-journal export; it does not
+  change transition schema, reward shaping, trainer features, or Python replay
+  behavior.
+- Each successful CEM classification writes one attribution event containing:
+  attribution event id, source event id when available, run/episode/decision
+  ids, frame id, source side, target side, source family (`A/P/T/U`), edge type,
+  confidence, and failure reason.
+- Edge types are intentionally compact: hit-stop, contact-state, damage-state,
+  HP delta, stun delta, block reaction, parry, throw-caught, and projectile
+  clash. These are enough to validate attribution coverage before full
+  consumed-delta semantics.
+- Confidence is conservative and debug-only: hard evidence such as HP/stun,
+  damage-state, parry, throw-caught, and projectile clash is high confidence;
+  hit-stop/contact/block evidence is medium; unknown-source attribution is low.
+- Unknown CEM entries are no longer just counters: they create attribution
+  events with failure reason `no_source_candidate`. This prepares Phase 6a for
+  explicit attribution-failure events.
+- Outcome overlay adds `CEA R/F/O`: attribution records, failure records, and
+  attribution ring overwrites. This validates that the ring is tracking CEM
+  without exposing the ring in transition rows yet.
+
 ### Phase 6b: Defense Result Emission
 
 Files:

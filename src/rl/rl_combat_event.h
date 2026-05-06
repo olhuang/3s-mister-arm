@@ -40,6 +40,7 @@
 #define RL_COMBAT_ATTACK_EVENT_RING_CAP 32u
 #define RL_COMBAT_PROJECTILE_EVENT_RING_CAP 16u
 #define RL_COMBAT_THROW_EVENT_RING_CAP 16u
+#define RL_COMBAT_ATTRIBUTION_EVENT_RING_CAP 64u
 #define RL_COMBAT_ATTACK_MIN_WHIFF_FRAMES 12u
 #define RL_COMBAT_ATTACK_FAST_WHIFF_FALLBACK_FRAMES 20u
 #define RL_COMBAT_ATTACK_MAX_PENDING_FRAMES 96u
@@ -132,6 +133,31 @@ typedef enum RLCombatContactMatchSource {
     RL_COMBAT_CONTACT_MATCH_SOURCE_THROW = 3,
     RL_COMBAT_CONTACT_MATCH_SOURCE_UNKNOWN = 4,
 } RLCombatContactMatchSource;
+
+typedef enum RLCombatAttributionEdgeType {
+    RL_COMBAT_ATTRIBUTION_EDGE_NONE = 0,
+    RL_COMBAT_ATTRIBUTION_EDGE_HIT_STOP = 1,
+    RL_COMBAT_ATTRIBUTION_EDGE_CONTACT_STATE = 2,
+    RL_COMBAT_ATTRIBUTION_EDGE_DAMAGE_STATE = 3,
+    RL_COMBAT_ATTRIBUTION_EDGE_HP_DELTA = 4,
+    RL_COMBAT_ATTRIBUTION_EDGE_STUN_DELTA = 5,
+    RL_COMBAT_ATTRIBUTION_EDGE_BLOCK_REACTION = 6,
+    RL_COMBAT_ATTRIBUTION_EDGE_PARRY = 7,
+    RL_COMBAT_ATTRIBUTION_EDGE_THROW_CAUGHT = 8,
+    RL_COMBAT_ATTRIBUTION_EDGE_PROJECTILE_CLASH = 9,
+} RLCombatAttributionEdgeType;
+
+typedef enum RLCombatAttributionConfidence {
+    RL_COMBAT_ATTRIBUTION_CONFIDENCE_NONE = 0,
+    RL_COMBAT_ATTRIBUTION_CONFIDENCE_LOW = 1,
+    RL_COMBAT_ATTRIBUTION_CONFIDENCE_MEDIUM = 2,
+    RL_COMBAT_ATTRIBUTION_CONFIDENCE_HIGH = 3,
+} RLCombatAttributionConfidence;
+
+typedef enum RLCombatAttributionFailureReason {
+    RL_COMBAT_ATTRIBUTION_FAILURE_NONE = 0,
+    RL_COMBAT_ATTRIBUTION_FAILURE_NO_SOURCE_CANDIDATE = 1,
+} RLCombatAttributionFailureReason;
 
 typedef struct RLCombatAttackEventStart {
     u64 run_id;
@@ -363,6 +389,21 @@ typedef struct RLCombatContactMatchUpdate {
     u8 throw_candidate;
 } RLCombatContactMatchUpdate;
 
+typedef struct RLCombatAttributionEvent {
+    u64 event_id;
+    u64 source_event_id;
+    u64 run_id;
+    u32 episode_id;
+    u32 decision_id;
+    u32 frame_id;
+    RLCombatEventSide source_side;
+    RLCombatEventSide target_side;
+    RLCombatContactMatchSource source_family;
+    RLCombatAttributionEdgeType edge_type;
+    RLCombatAttributionConfidence confidence;
+    RLCombatAttributionFailureReason failure_reason;
+} RLCombatAttributionEvent;
+
 typedef struct RLCombatEventStats {
     u64 run_id;
     u32 episode_id;
@@ -465,6 +506,9 @@ typedef struct RLCombatEventStats {
     u32 contact_match_throw_opponent_count;
     u32 contact_match_unknown_self_count;
     u32 contact_match_unknown_opponent_count;
+    u32 attribution_recorded_count;
+    u32 attribution_failure_count;
+    u32 attribution_ring_overwrite_count;
     u32 episode_flush_count;
     u32 episode_switch_flush_count;
     u32 lifetime_attack_started_count;

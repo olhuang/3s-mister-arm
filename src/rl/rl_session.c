@@ -741,6 +741,9 @@ static void RLSession_UpdateCombatEventDebugStats(void) {
     remote_debug.combat_contact_match_throw_opp_count = stats->contact_match_throw_opponent_count;
     remote_debug.combat_contact_match_unknown_self_count = stats->contact_match_unknown_self_count;
     remote_debug.combat_contact_match_unknown_opp_count = stats->contact_match_unknown_opponent_count;
+    remote_debug.combat_attribution_recorded_count = stats->attribution_recorded_count;
+    remote_debug.combat_attribution_failure_count = stats->attribution_failure_count;
+    remote_debug.combat_attribution_ring_overwrite_count = stats->attribution_ring_overwrite_count;
     remote_debug.combat_lifetime_attack_started_count = stats->lifetime_attack_started_count;
     remote_debug.combat_lifetime_attack_finalized_count = stats->lifetime_attack_finalized_count;
     remote_debug.combat_lifetime_attack_whiff_count = stats->lifetime_attack_whiff_count;

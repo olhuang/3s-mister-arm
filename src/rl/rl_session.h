@@ -145,6 +145,9 @@ typedef struct RLRemoteDebugState {
     u32 combat_contact_match_throw_opp_count;
     u32 combat_contact_match_unknown_self_count;
     u32 combat_contact_match_unknown_opp_count;
+    u32 combat_attribution_recorded_count;
+    u32 combat_attribution_failure_count;
+    u32 combat_attribution_ring_overwrite_count;
     u32 combat_lifetime_attack_started_count;
     u32 combat_lifetime_attack_finalized_count;
     u32 combat_lifetime_attack_whiff_count;

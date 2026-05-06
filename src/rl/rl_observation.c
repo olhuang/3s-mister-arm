@@ -900,6 +900,13 @@ void RLObservation_FormatDebugOverlay(char* out, size_t out_size, const char* se
         append_overlay_line(out,
                             out_size,
                             &used,
+                            "CEA R%lu F%lu O%lu",
+                            (unsigned long)remote->combat_attribution_recorded_count,
+                            (unsigned long)remote->combat_attribution_failure_count,
+                            (unsigned long)remote->combat_attribution_ring_overwrite_count);
+        append_overlay_line(out,
+                            out_size,
+                            &used,
                             "CEU F%lu/%lu R%lu/%lu D%lu/%lu",
                             (unsigned long)remote->combat_attack_unknown_flush_self_count,
                             (unsigned long)remote->combat_attack_unknown_flush_opp_count,

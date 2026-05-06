@@ -566,6 +566,20 @@ static void RLCombatEvent_ResetEpisodeStats(void) {
     combat_event_stats.attribution_edge_parry_count = 0;
     combat_event_stats.attribution_edge_throw_caught_count = 0;
     combat_event_stats.attribution_edge_projectile_clash_count = 0;
+    combat_event_stats.defense_hit_self_count = 0;
+    combat_event_stats.defense_hit_opponent_count = 0;
+    combat_event_stats.defense_blocked_self_count = 0;
+    combat_event_stats.defense_blocked_opponent_count = 0;
+    combat_event_stats.defense_blocked_chip_self_count = 0;
+    combat_event_stats.defense_blocked_chip_opponent_count = 0;
+    combat_event_stats.defense_parry_self_count = 0;
+    combat_event_stats.defense_parry_opponent_count = 0;
+    combat_event_stats.defense_thrown_self_count = 0;
+    combat_event_stats.defense_thrown_opponent_count = 0;
+    combat_event_stats.defense_evaded_self_count = 0;
+    combat_event_stats.defense_evaded_opponent_count = 0;
+    combat_event_stats.defense_unknown_self_count = 0;
+    combat_event_stats.defense_unknown_opponent_count = 0;
     combat_event_stats.episode_flush_count = 0;
     combat_event_stats.episode_switch_flush_count = 0;
 }
@@ -682,12 +696,100 @@ static void RLCombatEvent_IncrementAttributionEdgeCounter(RLCombatAttributionEdg
     }
 }
 
+static bool RLCombatEvent_ProjectileEvidenceIsBlocked(const RLCombatProjectileEvent* projectile_event) {
+    return projectile_event != NULL &&
+           (projectile_event->result == RL_COMBAT_PROJECTILE_RESULT_BLOCKED ||
+            projectile_event->saw_target_guard || projectile_event->saw_target_block_reaction);
+}
+
+static RLCombatDefenseResult
+RLCombatEvent_DeriveDefenseResult(const RLCombatContactMatchUpdate* update,
+                                  RLCombatContactMatchSource source,
+                                  RLCombatAttributionEdgeType edge_type,
+                                  RLCombatAttributionFailureReason failure_reason,
+                                  const RLCombatProjectileEvent* projectile_event) {
+    const bool blocked_context =
+        update != NULL && (update->target_guard || update->target_block_reaction ||
+                           RLCombatEvent_ProjectileEvidenceIsBlocked(projectile_event));
+
+    if (failure_reason != RL_COMBAT_ATTRIBUTION_FAILURE_NONE ||
+        source == RL_COMBAT_CONTACT_MATCH_SOURCE_UNKNOWN ||
+        source == RL_COMBAT_CONTACT_MATCH_SOURCE_NONE) {
+        return RL_COMBAT_DEFENSE_RESULT_UNKNOWN;
+    }
+    if (edge_type == RL_COMBAT_ATTRIBUTION_EDGE_PROJECTILE_CLASH) {
+        return RL_COMBAT_DEFENSE_RESULT_EVADED;
+    }
+    if (edge_type == RL_COMBAT_ATTRIBUTION_EDGE_PARRY) {
+        return RL_COMBAT_DEFENSE_RESULT_PARRY;
+    }
+    if (source == RL_COMBAT_CONTACT_MATCH_SOURCE_THROW ||
+        edge_type == RL_COMBAT_ATTRIBUTION_EDGE_THROW_CAUGHT) {
+        return RL_COMBAT_DEFENSE_RESULT_THROWN;
+    }
+    if (update != NULL && (update->target_hp_delta || update->target_stun_delta ||
+                           update->target_entered_damage_state)) {
+        return blocked_context ? RL_COMBAT_DEFENSE_RESULT_BLOCKED_CHIP : RL_COMBAT_DEFENSE_RESULT_HIT;
+    }
+    if (edge_type == RL_COMBAT_ATTRIBUTION_EDGE_BLOCK_REACTION ||
+        (blocked_context && (edge_type == RL_COMBAT_ATTRIBUTION_EDGE_CONTACT_STATE ||
+                             edge_type == RL_COMBAT_ATTRIBUTION_EDGE_HIT_STOP))) {
+        return RL_COMBAT_DEFENSE_RESULT_BLOCKED;
+    }
+    return RL_COMBAT_DEFENSE_RESULT_UNKNOWN;
+}
+
+static void RLCombatEvent_IncrementDefenseResultCounter(RLCombatEventSide target_side,
+                                                        RLCombatDefenseResult result) {
+    switch (result) {
+    case RL_COMBAT_DEFENSE_RESULT_HIT:
+        RLCombatEvent_IncrementSideCounter(target_side,
+                                           &combat_event_stats.defense_hit_self_count,
+                                           &combat_event_stats.defense_hit_opponent_count);
+        break;
+    case RL_COMBAT_DEFENSE_RESULT_BLOCKED:
+        RLCombatEvent_IncrementSideCounter(target_side,
+                                           &combat_event_stats.defense_blocked_self_count,
+                                           &combat_event_stats.defense_blocked_opponent_count);
+        break;
+    case RL_COMBAT_DEFENSE_RESULT_BLOCKED_CHIP:
+        RLCombatEvent_IncrementSideCounter(target_side,
+                                           &combat_event_stats.defense_blocked_chip_self_count,
+                                           &combat_event_stats.defense_blocked_chip_opponent_count);
+        break;
+    case RL_COMBAT_DEFENSE_RESULT_PARRY:
+        RLCombatEvent_IncrementSideCounter(target_side,
+                                           &combat_event_stats.defense_parry_self_count,
+                                           &combat_event_stats.defense_parry_opponent_count);
+        break;
+    case RL_COMBAT_DEFENSE_RESULT_THROWN:
+        RLCombatEvent_IncrementSideCounter(target_side,
+                                           &combat_event_stats.defense_thrown_self_count,
+                                           &combat_event_stats.defense_thrown_opponent_count);
+        break;
+    case RL_COMBAT_DEFENSE_RESULT_EVADED:
+        RLCombatEvent_IncrementSideCounter(target_side,
+                                           &combat_event_stats.defense_evaded_self_count,
+                                           &combat_event_stats.defense_evaded_opponent_count);
+        break;
+    case RL_COMBAT_DEFENSE_RESULT_UNKNOWN:
+    case RL_COMBAT_DEFENSE_RESULT_NONE:
+    default:
+        RLCombatEvent_IncrementSideCounter(target_side,
+                                           &combat_event_stats.defense_unknown_self_count,
+                                           &combat_event_stats.defense_unknown_opponent_count);
+        break;
+    }
+}
+
 static void RLCombatEvent_RecordAttributionEvent(const RLCombatContactMatchUpdate* update,
                                                  RLCombatContactMatchSource source,
                                                  u64 source_event_id,
                                                  RLCombatAttributionEdgeType edge_type,
-                                                 RLCombatAttributionFailureReason failure_reason) {
+                                                 RLCombatAttributionFailureReason failure_reason,
+                                                 const RLCombatProjectileEvent* projectile_event) {
     RLCombatAttributionEvent* event = NULL;
+    RLCombatDefenseResult defense_result = RL_COMBAT_DEFENSE_RESULT_NONE;
 
     if (update == NULL || update->run_id == 0 || update->episode_id == 0 ||
         update->source_side == RL_COMBAT_EVENT_SIDE_NONE) {
@@ -712,10 +814,14 @@ static void RLCombatEvent_RecordAttributionEvent(const RLCombatContactMatchUpdat
     event->edge_type = edge_type;
     event->failure_reason = failure_reason;
     event->confidence = RLCombatEvent_DeriveAttributionConfidence(source, edge_type, failure_reason);
+    defense_result =
+        RLCombatEvent_DeriveDefenseResult(update, source, edge_type, failure_reason, projectile_event);
+    event->defense_result = defense_result;
 
     attribution_ring.cursor = (attribution_ring.cursor + 1u) % RL_COMBAT_ATTRIBUTION_EVENT_RING_CAP;
     combat_event_stats.attribution_recorded_count++;
     RLCombatEvent_IncrementAttributionEdgeCounter(edge_type);
+    RLCombatEvent_IncrementDefenseResultCounter(event->target_side, defense_result);
     if (failure_reason != RL_COMBAT_ATTRIBUTION_FAILURE_NONE) {
         combat_event_stats.attribution_failure_count++;
     }
@@ -1746,7 +1852,7 @@ bool RLCombatEvent_RecordContactMatch(const RLCombatContactMatchUpdate* update) 
     }
 
     RLCombatEvent_IncrementContactMatchCounter(update->source_side, source);
-    RLCombatEvent_RecordAttributionEvent(update, source, source_event_id, edge_type, failure_reason);
+    RLCombatEvent_RecordAttributionEvent(update, source, source_event_id, edge_type, failure_reason, projectile_event);
     return true;
 }
 

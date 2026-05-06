@@ -2,6 +2,42 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-06: Combat Event Phase 6b-0 Defense Result Counters
+
+Milestone:
+- Combat event attribution Phase 6b-0
+
+Files changed:
+- `src/rl/rl_combat_event.h`
+- `src/rl/rl_combat_event.c`
+- `src/rl/rl_session.h`
+- `src/rl/rl_session.c`
+- `src/rl/rl_observation.c`
+- `docs/plan-remote-rl-agent.md`
+- `docs/agent-memory/remote-rl-combat-event-attribution-plan.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Start defense result emission as debug counters derived from the attribution
+  ring, so live testing can distinguish clean hit, block, blocked chip, parry,
+  throw, evaded/negated contact, and unknown before event-journal export.
+
+Implementation notes:
+- Added `RLCombatDefenseResult` and target-side split stats for hit, blocked,
+  blocked chip, parry, thrown, evaded, and unknown.
+- Attribution events now store a debug-only defense result.
+- `CDR H/B/C/P` and `CDRX T/E/U` Outcome lines expose defense result counters.
+- Blocked projectile chip is detected from HP/stun/damage attribution plus
+  target guard/block context or a blocked projectile source result, so blocked
+  fireball chip should become `CDR C` rather than `CDR H`.
+
+Validation:
+- `git diff --check` passed.
+- `cc -std=c11 -Wall -Wextra -Isrc -Iinclude -c src/rl/rl_combat_event.c -o /tmp/rl_combat_event_phase6b0_cdr.o` passed.
+- `python3 -m py_compile tools/rl_probe_server.py tools/analyze_rl_transitions.py` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed, rebuilding
+  `rl_combat_event.c`, `rl_observation.c`, and `rl_session.c`.
+
 ## 2026-05-06: Combat Event Phase 6a-1B Edge Coverage Counters
 
 Milestone:

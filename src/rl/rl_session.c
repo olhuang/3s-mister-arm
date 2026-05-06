@@ -753,6 +753,20 @@ static void RLSession_UpdateCombatEventDebugStats(void) {
     remote_debug.combat_attribution_edge_parry_count = stats->attribution_edge_parry_count;
     remote_debug.combat_attribution_edge_throw_caught_count = stats->attribution_edge_throw_caught_count;
     remote_debug.combat_attribution_edge_projectile_clash_count = stats->attribution_edge_projectile_clash_count;
+    remote_debug.combat_defense_hit_self_count = stats->defense_hit_self_count;
+    remote_debug.combat_defense_hit_opp_count = stats->defense_hit_opponent_count;
+    remote_debug.combat_defense_blocked_self_count = stats->defense_blocked_self_count;
+    remote_debug.combat_defense_blocked_opp_count = stats->defense_blocked_opponent_count;
+    remote_debug.combat_defense_blocked_chip_self_count = stats->defense_blocked_chip_self_count;
+    remote_debug.combat_defense_blocked_chip_opp_count = stats->defense_blocked_chip_opponent_count;
+    remote_debug.combat_defense_parry_self_count = stats->defense_parry_self_count;
+    remote_debug.combat_defense_parry_opp_count = stats->defense_parry_opponent_count;
+    remote_debug.combat_defense_thrown_self_count = stats->defense_thrown_self_count;
+    remote_debug.combat_defense_thrown_opp_count = stats->defense_thrown_opponent_count;
+    remote_debug.combat_defense_evaded_self_count = stats->defense_evaded_self_count;
+    remote_debug.combat_defense_evaded_opp_count = stats->defense_evaded_opponent_count;
+    remote_debug.combat_defense_unknown_self_count = stats->defense_unknown_self_count;
+    remote_debug.combat_defense_unknown_opp_count = stats->defense_unknown_opponent_count;
     remote_debug.combat_lifetime_attack_started_count = stats->lifetime_attack_started_count;
     remote_debug.combat_lifetime_attack_finalized_count = stats->lifetime_attack_finalized_count;
     remote_debug.combat_lifetime_attack_whiff_count = stats->lifetime_attack_whiff_count;
@@ -2726,6 +2740,7 @@ static void RLSession_FillCombatContactMatchUpdate(RLCombatContactMatchUpdate* u
         update->target_entered_damage_state = obs->opp_entered_damage_state;
         update->target_hp_delta = (u8)(opp_hp_delta > 0);
         update->target_stun_delta = (u8)(obs->delta_opp_stun > 0);
+        update->target_guard = obs->opp_guard_flag;
         update->target_block_reaction =
             (u8)(obs->opp_contact_reaction_state && RLSession_IsGuardReactionRoutine2(obs->opp_routine[2]));
         update->target_parry_started = obs->opp_parry_started;
@@ -2741,6 +2756,7 @@ static void RLSession_FillCombatContactMatchUpdate(RLCombatContactMatchUpdate* u
         update->target_entered_damage_state = obs->self_entered_damage_state;
         update->target_hp_delta = (u8)(self_hp_delta > 0);
         update->target_stun_delta = (u8)(obs->delta_self_stun > 0);
+        update->target_guard = obs->self_guard_flag;
         update->target_block_reaction =
             (u8)(obs->self_contact_reaction_state && RLSession_IsGuardReactionRoutine2(obs->self_routine[2]));
         update->target_parry_started = obs->self_parry_started;

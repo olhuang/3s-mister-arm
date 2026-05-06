@@ -2036,6 +2036,28 @@ Done when:
 - defense failures can distinguish hit, chip, throw, late guard,
   wrong-height guard, recovery/impossible state, and unknown
 
+Phase 6b-0 implementation slice:
+
+- Add debug-only defense result counters derived from the Phase 6a attribution
+  ring. This slice does not change transition schema, rewards, replay, trainer
+  features, or event-journal export.
+- Outcome overlay adds target-side split `CDR` / `CDRX` counters:
+  - `CDR Hself/opp`: clean hit / damage without guard or parry context
+  - `CDR Bself/opp`: blocked contact without HP chip
+  - `CDR Cself/opp`: blocked chip, meaning HP/stun/damage with guard or
+    projectile-block context
+  - `CDR Pself/opp`: parry
+  - `CDRX Tself/opp`: thrown
+  - `CDRX Eself/opp`: evaded/negated contact, currently projectile clash
+  - `CDRX Uself/opp`: unknown defense result
+- Blocked projectile chip is intentionally interpreted here rather than in
+  Phase 6a: a projectile `HP` attribution edge plus target guard/block context
+  or a blocked projectile source result becomes `CDR C`, not `CDR H`.
+- Phase 6b-0 is still aggregate observability. Full Phase 6b remains open until
+  defense result events include intended defense action, actual guard state at
+  contact, target state, wakeup context, block_possible, confidence, and failure
+  reasons.
+
 ### Phase 6c: Punish Detection
 
 Files:

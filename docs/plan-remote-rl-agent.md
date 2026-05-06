@@ -2651,6 +2651,7 @@ Tasks:
   - [x] Phase 6a-1B attribution edge coverage: Outcome now shows `CEAE HP/ST/DM/BL` and `CEAX PA/TH/CL/HS/CT` counters, and the Outcome view is narrowed to combat-event lifecycle/attribution lines only for live testing.
   - [x] Phase 6a-1B blocked projectile note: live blocked fireball reached `CEM P +1` / `CEA R +1` with `CEAE HP +1` and `BL +0`; this is accepted as chip HP attribution, with blocked-chip semantics deferred to Phase 6b defense result context.
 - [ ] Combat event attribution Phase 6b: implement defense result emission with intended action, actual guard state at contact, target_state, wakeup context, block_possible, confidence, and failure reasons
+  - [x] Phase 6b-0 defense result debug counters: attribution events now derive target-side `CDR H/B/C/P` and `CDRX T/E/U` counters for clean hit, block, blocked chip, parry, thrown, evaded/negated, and unknown without changing transition schema, rewards, replay, trainer features, or event-journal export.
 - [ ] Combat event attribution Phase 6c: implement punish detection after finalized unsafe/whiff/interrupted attack events with high-confidence gating
 - [ ] Combat event attribution Phase 7: roll out transition schema v4 compact summaries plus `combat_event_schema_version=1` event journal export inside the same transition batch/envelope
 - [ ] Combat event attribution Phase 8: upgrade analyzers to report attack success/failure, defense failures by incoming action/range/result, projectile lifecycle, throws, punishes, and unknown attribution reasons from event fields

@@ -916,6 +916,28 @@ void RLObservation_FormatDebugOverlay(char* out, size_t out_size, const char* se
                             (unsigned long)remote->combat_attribution_edge_projectile_clash_count,
                             (unsigned long)remote->combat_attribution_edge_hit_stop_count,
                             (unsigned long)remote->combat_attribution_edge_contact_state_count);
+        append_overlay_line(out,
+                            out_size,
+                            &used,
+                            "CDR H%lu/%lu B%lu/%lu C%lu/%lu P%lu/%lu",
+                            (unsigned long)remote->combat_defense_hit_self_count,
+                            (unsigned long)remote->combat_defense_hit_opp_count,
+                            (unsigned long)remote->combat_defense_blocked_self_count,
+                            (unsigned long)remote->combat_defense_blocked_opp_count,
+                            (unsigned long)remote->combat_defense_blocked_chip_self_count,
+                            (unsigned long)remote->combat_defense_blocked_chip_opp_count,
+                            (unsigned long)remote->combat_defense_parry_self_count,
+                            (unsigned long)remote->combat_defense_parry_opp_count);
+        append_overlay_line(out,
+                            out_size,
+                            &used,
+                            "CDRX T%lu/%lu E%lu/%lu U%lu/%lu",
+                            (unsigned long)remote->combat_defense_thrown_self_count,
+                            (unsigned long)remote->combat_defense_thrown_opp_count,
+                            (unsigned long)remote->combat_defense_evaded_self_count,
+                            (unsigned long)remote->combat_defense_evaded_opp_count,
+                            (unsigned long)remote->combat_defense_unknown_self_count,
+                            (unsigned long)remote->combat_defense_unknown_opp_count);
     }
 
     if (show_all || view == RL_DEBUG_OVERLAY_VIEW_INPUT) {

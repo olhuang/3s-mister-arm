@@ -159,6 +159,17 @@ typedef enum RLCombatAttributionFailureReason {
     RL_COMBAT_ATTRIBUTION_FAILURE_NO_SOURCE_CANDIDATE = 1,
 } RLCombatAttributionFailureReason;
 
+typedef enum RLCombatDefenseResult {
+    RL_COMBAT_DEFENSE_RESULT_NONE = 0,
+    RL_COMBAT_DEFENSE_RESULT_HIT = 1,
+    RL_COMBAT_DEFENSE_RESULT_BLOCKED = 2,
+    RL_COMBAT_DEFENSE_RESULT_BLOCKED_CHIP = 3,
+    RL_COMBAT_DEFENSE_RESULT_PARRY = 4,
+    RL_COMBAT_DEFENSE_RESULT_THROWN = 5,
+    RL_COMBAT_DEFENSE_RESULT_EVADED = 6,
+    RL_COMBAT_DEFENSE_RESULT_UNKNOWN = 7,
+} RLCombatDefenseResult;
+
 typedef struct RLCombatAttackEventStart {
     u64 run_id;
     u32 episode_id;
@@ -381,6 +392,7 @@ typedef struct RLCombatContactMatchUpdate {
     u8 target_entered_damage_state;
     u8 target_hp_delta;
     u8 target_stun_delta;
+    u8 target_guard;
     u8 target_block_reaction;
     u8 target_parry_started;
     u8 target_throw_caught;
@@ -402,6 +414,7 @@ typedef struct RLCombatAttributionEvent {
     RLCombatAttributionEdgeType edge_type;
     RLCombatAttributionConfidence confidence;
     RLCombatAttributionFailureReason failure_reason;
+    RLCombatDefenseResult defense_result;
 } RLCombatAttributionEvent;
 
 typedef struct RLCombatEventStats {
@@ -518,6 +531,20 @@ typedef struct RLCombatEventStats {
     u32 attribution_edge_parry_count;
     u32 attribution_edge_throw_caught_count;
     u32 attribution_edge_projectile_clash_count;
+    u32 defense_hit_self_count;
+    u32 defense_hit_opponent_count;
+    u32 defense_blocked_self_count;
+    u32 defense_blocked_opponent_count;
+    u32 defense_blocked_chip_self_count;
+    u32 defense_blocked_chip_opponent_count;
+    u32 defense_parry_self_count;
+    u32 defense_parry_opponent_count;
+    u32 defense_thrown_self_count;
+    u32 defense_thrown_opponent_count;
+    u32 defense_evaded_self_count;
+    u32 defense_evaded_opponent_count;
+    u32 defense_unknown_self_count;
+    u32 defense_unknown_opponent_count;
     u32 episode_flush_count;
     u32 episode_switch_flush_count;
     u32 lifetime_attack_started_count;

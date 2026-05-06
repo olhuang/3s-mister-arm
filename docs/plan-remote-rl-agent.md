@@ -2660,6 +2660,7 @@ Tasks:
 - [ ] Combat event attribution Phase 7: roll out transition schema v4 compact summaries plus `combat_event_schema_version=1` event journal export inside the same transition batch/envelope
   - [x] Phase 7A event journal export skeleton: added the `rl-agent-export-combat-events` config/CLI/OSD gate, emits `combat_event_schema_version=1` attack/projectile/throw/attribution/punish journal rows in the same TCP transition batch envelope, and splits them into a separate `--combat-event-log` file in the Python probe without changing reward, replay, trainer features, or transition row shape.
   - [x] Phase 7A-1 event journal dedupe: live testing showed repeated terminal/finalize calls could append the same episode event ring hundreds of times; session export now records the last exported run/episode journal and emits each episode journal once.
+  - [x] Phase 7A-2 ordered complete journal snapshots: finalized/recorded combat events are copied into a per-episode journal buffer before small live rings can overwrite them, and `RLCombatEvent_EmitJournal()` emits rows sorted by run-wide `event_id` instead of ring slot order.
 - [ ] Combat event attribution Phase 8: upgrade analyzers to report attack success/failure, defense failures by incoming action/range/result, projectile lifecycle, throws, punishes, and unknown attribution reasons from event fields
 - [ ] Combat event attribution Phase 9: add opt-in trainer use of high-confidence event labels only after move-family validation passes
 - [ ] Evaluate higher control rate after latency p95/p99 is stable

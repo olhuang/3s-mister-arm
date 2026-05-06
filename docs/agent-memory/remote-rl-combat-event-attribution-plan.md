@@ -2275,6 +2275,12 @@ Work:
   `RL Event Log (Restart)` as the formal event-output gate.
 - Export `combat_event_schema_version=1` journal rows for existing
   attack/projectile/throw/attribution/defense-context/punish debug state.
+- Finalized/recorded event rows must be copied into a per-episode journal
+  buffer at event finalization/record time, before the smaller live tracking
+  rings can overwrite them.
+- `RLCombatEvent_EmitJournal()` emits journal snapshots sorted by run-wide
+  `event_id`; file row order is therefore chronological by event creation
+  instead of attack/projectile/throw/attribution/punish ring order.
 - Send event rows in the same transition batch/envelope, not as a separate
   C-side stream.
 - Persist disk logs as two files on the Python side:
@@ -2290,6 +2296,9 @@ Validation:
 - schema smoke with remote probe
 - event-off smoke: transition batch rows remain transition-only
 - event-on smoke: one batch can produce both transition and combat event files
+- event completeness smoke: emit more finalized events than a live ring cap and
+  verify the journal still contains every event exactly once in ascending
+  `event_id` order
 - Python parser rejects unsupported schema versions clearly
 - every event row in the envelope belongs to the same run/episode or an
   explicitly declared boundary event

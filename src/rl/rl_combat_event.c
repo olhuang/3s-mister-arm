@@ -30,6 +30,29 @@ typedef struct RLCombatPunishEventRing {
     u32 cursor;
 } RLCombatPunishEventRing;
 
+typedef enum RLCombatJournalEventKind {
+    RL_COMBAT_JOURNAL_EVENT_NONE = 0,
+    RL_COMBAT_JOURNAL_EVENT_ATTACK = 1,
+    RL_COMBAT_JOURNAL_EVENT_PROJECTILE = 2,
+    RL_COMBAT_JOURNAL_EVENT_THROW = 3,
+    RL_COMBAT_JOURNAL_EVENT_ATTRIBUTION = 4,
+    RL_COMBAT_JOURNAL_EVENT_PUNISH = 5,
+} RLCombatJournalEventKind;
+
+typedef struct RLCombatJournalEntry {
+    RLCombatJournalEventKind kind;
+    u64 event_id;
+    u64 run_id;
+    u32 episode_id;
+    union {
+        RLCombatAttackEvent attack;
+        RLCombatProjectileEvent projectile;
+        RLCombatThrowEvent throw_event;
+        RLCombatAttributionEvent attribution;
+        RLCombatPunishEvent punish;
+    } event;
+} RLCombatJournalEntry;
+
 typedef struct RLCombatPunishableAttackCandidate {
     bool valid;
     u64 event_id;
@@ -42,6 +65,7 @@ typedef struct RLCombatPunishableAttackCandidate {
 } RLCombatPunishableAttackCandidate;
 
 #define RL_COMBAT_PUNISH_CANDIDATE_WINDOW_FRAMES 12u
+#define RL_COMBAT_EVENT_JOURNAL_ENTRY_CAP 2048u
 
 static RLCombatAttackEventRing self_attack_ring;
 static RLCombatAttackEventRing opponent_attack_ring;
@@ -50,6 +74,8 @@ static RLCombatThrowEventRing self_throw_ring;
 static RLCombatThrowEventRing opponent_throw_ring;
 static RLCombatAttributionEventRing attribution_ring;
 static RLCombatPunishEventRing punish_ring;
+static RLCombatJournalEntry journal_entries[RL_COMBAT_EVENT_JOURNAL_ENTRY_CAP];
+static u32 journal_entry_count;
 static RLCombatPunishableAttackCandidate self_punishable_attack;
 static RLCombatPunishableAttackCandidate opponent_punishable_attack;
 static u64 self_last_punished_attack_event_id;
@@ -607,6 +633,8 @@ static void RLCombatEvent_ResetEpisodeStats(void) {
     combat_event_stats.attribution_recorded_count = 0;
     combat_event_stats.attribution_failure_count = 0;
     combat_event_stats.attribution_ring_overwrite_count = 0;
+    combat_event_stats.event_journal_entry_count = 0;
+    combat_event_stats.event_journal_overflow_count = 0;
     combat_event_stats.attribution_edge_hit_stop_count = 0;
     combat_event_stats.attribution_edge_contact_state_count = 0;
     combat_event_stats.attribution_edge_damage_state_count = 0;
@@ -679,6 +707,115 @@ static u64 RLCombatEvent_AllocateEventId(void) {
     }
 
     return event_id;
+}
+
+static void RLCombatEvent_ClearJournal(void) {
+    memset(journal_entries, 0, sizeof(journal_entries));
+    journal_entry_count = 0;
+    combat_event_stats.event_journal_entry_count = 0;
+}
+
+static RLCombatJournalEntry* RLCombatEvent_AppendJournalEntry(RLCombatJournalEventKind kind,
+                                                              u64 event_id,
+                                                              u64 run_id,
+                                                              u32 episode_id) {
+    RLCombatJournalEntry* entry = NULL;
+
+    if (kind == RL_COMBAT_JOURNAL_EVENT_NONE || event_id == RL_COMBAT_EVENT_ID_NONE ||
+        run_id == 0 || episode_id == 0) {
+        return NULL;
+    }
+    if (journal_entry_count >= RL_COMBAT_EVENT_JOURNAL_ENTRY_CAP) {
+        combat_event_stats.event_journal_overflow_count++;
+        return NULL;
+    }
+
+    entry = &journal_entries[journal_entry_count++];
+    memset(entry, 0, sizeof(*entry));
+    entry->kind = kind;
+    entry->event_id = event_id;
+    entry->run_id = run_id;
+    entry->episode_id = episode_id;
+    combat_event_stats.event_journal_entry_count = journal_entry_count;
+    return entry;
+}
+
+static void RLCombatEvent_JournalAttack(const RLCombatAttackEvent* event) {
+    RLCombatJournalEntry* entry = NULL;
+
+    if (event == NULL || event->event_id == RL_COMBAT_EVENT_ID_NONE ||
+        event->status == RL_COMBAT_ATTACK_EVENT_EMPTY) {
+        return;
+    }
+    entry = RLCombatEvent_AppendJournalEntry(RL_COMBAT_JOURNAL_EVENT_ATTACK,
+                                             event->event_id,
+                                             event->run_id,
+                                             event->episode_id);
+    if (entry != NULL) {
+        entry->event.attack = *event;
+    }
+}
+
+static void RLCombatEvent_JournalProjectile(const RLCombatProjectileEvent* event) {
+    RLCombatJournalEntry* entry = NULL;
+
+    if (event == NULL || event->event_id == RL_COMBAT_EVENT_ID_NONE ||
+        event->status == RL_COMBAT_PROJECTILE_EVENT_EMPTY) {
+        return;
+    }
+    entry = RLCombatEvent_AppendJournalEntry(RL_COMBAT_JOURNAL_EVENT_PROJECTILE,
+                                             event->event_id,
+                                             event->run_id,
+                                             event->episode_id);
+    if (entry != NULL) {
+        entry->event.projectile = *event;
+    }
+}
+
+static void RLCombatEvent_JournalThrow(const RLCombatThrowEvent* event) {
+    RLCombatJournalEntry* entry = NULL;
+
+    if (event == NULL || event->event_id == RL_COMBAT_EVENT_ID_NONE ||
+        event->status == RL_COMBAT_THROW_EVENT_EMPTY) {
+        return;
+    }
+    entry = RLCombatEvent_AppendJournalEntry(RL_COMBAT_JOURNAL_EVENT_THROW,
+                                             event->event_id,
+                                             event->run_id,
+                                             event->episode_id);
+    if (entry != NULL) {
+        entry->event.throw_event = *event;
+    }
+}
+
+static void RLCombatEvent_JournalAttribution(const RLCombatAttributionEvent* event) {
+    RLCombatJournalEntry* entry = NULL;
+
+    if (event == NULL || event->event_id == RL_COMBAT_EVENT_ID_NONE) {
+        return;
+    }
+    entry = RLCombatEvent_AppendJournalEntry(RL_COMBAT_JOURNAL_EVENT_ATTRIBUTION,
+                                             event->event_id,
+                                             event->run_id,
+                                             event->episode_id);
+    if (entry != NULL) {
+        entry->event.attribution = *event;
+    }
+}
+
+static void RLCombatEvent_JournalPunish(const RLCombatPunishEvent* event) {
+    RLCombatJournalEntry* entry = NULL;
+
+    if (event == NULL || event->event_id == RL_COMBAT_EVENT_ID_NONE) {
+        return;
+    }
+    entry = RLCombatEvent_AppendJournalEntry(RL_COMBAT_JOURNAL_EVENT_PUNISH,
+                                             event->event_id,
+                                             event->run_id,
+                                             event->episode_id);
+    if (entry != NULL) {
+        entry->event.punish = *event;
+    }
 }
 
 static RLCombatAttributionEdgeType
@@ -1020,6 +1157,7 @@ static void RLCombatEvent_RecordPunishEvent(const RLCombatAttributionEvent* attr
     event->reason = reason;
     event->path = path;
 
+    RLCombatEvent_JournalPunish(event);
     punish_ring.cursor = (punish_ring.cursor + 1u) % RL_COMBAT_PUNISH_EVENT_RING_CAP;
 }
 
@@ -1257,6 +1395,7 @@ static void RLCombatEvent_RecordAttributionEvent(const RLCombatContactMatchUpdat
     if (failure_reason != RL_COMBAT_ATTRIBUTION_FAILURE_NONE) {
         combat_event_stats.attribution_failure_count++;
     }
+    RLCombatEvent_JournalAttribution(event);
 }
 
 static RLCombatAttackEvent* RLCombatEvent_FindReusableSlot(RLCombatAttackEventRing* ring) {
@@ -1334,6 +1473,7 @@ static bool RLCombatEvent_FinalizeSlot(RLCombatAttackEvent* event,
         RLCombatEvent_RecordTimeoutUnknownCauses(event);
     }
     RLCombatEvent_RememberPunishableAttack(event);
+    RLCombatEvent_JournalAttack(event);
     RLCombatEvent_RefreshActiveStats();
     return true;
 }
@@ -1459,6 +1599,7 @@ static bool RLCombatEvent_FinalizeProjectileSlot(RLCombatProjectileEvent* event,
     }
 
     RLCombatEvent_RefreshActiveStats();
+    RLCombatEvent_JournalProjectile(event);
     return true;
 }
 
@@ -1541,6 +1682,7 @@ static bool RLCombatEvent_FinalizeThrowSlot(RLCombatThrowEvent* event,
     }
 
     RLCombatEvent_RefreshActiveStats();
+    RLCombatEvent_JournalThrow(event);
     return true;
 }
 
@@ -1588,6 +1730,7 @@ static void RLCombatEvent_ClearRings(void) {
     memset(&opponent_throw_ring, 0, sizeof(opponent_throw_ring));
     memset(&attribution_ring, 0, sizeof(attribution_ring));
     memset(&punish_ring, 0, sizeof(punish_ring));
+    RLCombatEvent_ClearJournal();
     memset(&self_punishable_attack, 0, sizeof(self_punishable_attack));
     memset(&opponent_punishable_attack, 0, sizeof(opponent_punishable_attack));
     self_last_punished_attack_event_id = RL_COMBAT_EVENT_ID_NONE;
@@ -2976,8 +3119,9 @@ u32 RLCombatEvent_EmitJournal(u64 run_id,
                               RLCombatEventJournalLineWriter writer,
                               void* userdata,
                               u32* out_error_count) {
-    const RLCombatAttackEventRing* attack_rings[] = { &self_attack_ring, &opponent_attack_ring };
-    const RLCombatThrowEventRing* throw_rings[] = { &self_throw_ring, &opponent_throw_ring };
+    u64 last_event_id = 0;
+    u32 matching = 0;
+    u32 processed = 0;
     u32 emitted = 0;
     u32 errors = 0;
 
@@ -2991,44 +3135,95 @@ u32 RLCombatEvent_EmitJournal(u64 run_id,
         return 0;
     }
 
-    for (u32 r = 0; r < 2u; r++) {
-        for (u32 i = 0; i < RL_COMBAT_ATTACK_EVENT_RING_CAP; i++) {
-            const RLCombatAttackEvent* event = &attack_rings[r]->events[i];
-            if (event->run_id == run_id && event->episode_id == episode_id &&
-                !RLCombatEvent_EmitAttackJournalLine(event, line_buf, line_buf_size, writer, userdata, &emitted, &errors)) {
-                goto done;
+    for (u32 i = 0; i < journal_entry_count; i++) {
+        const RLCombatJournalEntry* entry = &journal_entries[i];
+        if (entry->run_id == run_id && entry->episode_id == episode_id &&
+            entry->kind != RL_COMBAT_JOURNAL_EVENT_NONE) {
+            matching++;
+        }
+    }
+
+    while (processed < matching) {
+        const RLCombatJournalEntry* best = NULL;
+
+        for (u32 i = 0; i < journal_entry_count; i++) {
+            const RLCombatJournalEntry* entry = &journal_entries[i];
+            if (entry->run_id != run_id || entry->episode_id != episode_id ||
+                entry->kind == RL_COMBAT_JOURNAL_EVENT_NONE || entry->event_id <= last_event_id) {
+                continue;
+            }
+            if (best == NULL || entry->event_id < best->event_id) {
+                best = entry;
             }
         }
-    }
-    for (u32 i = 0; i < RL_COMBAT_PROJECTILE_EVENT_RING_CAP; i++) {
-        const RLCombatProjectileEvent* event = &projectile_ring.events[i];
-        if (event->run_id == run_id && event->episode_id == episode_id &&
-            !RLCombatEvent_EmitProjectileJournalLine(event, line_buf, line_buf_size, writer, userdata, &emitted, &errors)) {
-            goto done;
+
+        if (best == NULL) {
+            break;
         }
-    }
-    for (u32 r = 0; r < 2u; r++) {
-        for (u32 i = 0; i < RL_COMBAT_THROW_EVENT_RING_CAP; i++) {
-            const RLCombatThrowEvent* event = &throw_rings[r]->events[i];
-            if (event->run_id == run_id && event->episode_id == episode_id &&
-                !RLCombatEvent_EmitThrowJournalLine(event, line_buf, line_buf_size, writer, userdata, &emitted, &errors)) {
+
+        switch (best->kind) {
+        case RL_COMBAT_JOURNAL_EVENT_ATTACK:
+            if (!RLCombatEvent_EmitAttackJournalLine(&best->event.attack,
+                                                     line_buf,
+                                                     line_buf_size,
+                                                     writer,
+                                                     userdata,
+                                                     &emitted,
+                                                     &errors)) {
                 goto done;
             }
+            break;
+        case RL_COMBAT_JOURNAL_EVENT_PROJECTILE:
+            if (!RLCombatEvent_EmitProjectileJournalLine(&best->event.projectile,
+                                                         line_buf,
+                                                         line_buf_size,
+                                                         writer,
+                                                         userdata,
+                                                         &emitted,
+                                                         &errors)) {
+                goto done;
+            }
+            break;
+        case RL_COMBAT_JOURNAL_EVENT_THROW:
+            if (!RLCombatEvent_EmitThrowJournalLine(&best->event.throw_event,
+                                                    line_buf,
+                                                    line_buf_size,
+                                                    writer,
+                                                    userdata,
+                                                    &emitted,
+                                                    &errors)) {
+                goto done;
+            }
+            break;
+        case RL_COMBAT_JOURNAL_EVENT_ATTRIBUTION:
+            if (!RLCombatEvent_EmitAttributionJournalLine(&best->event.attribution,
+                                                          line_buf,
+                                                          line_buf_size,
+                                                          writer,
+                                                          userdata,
+                                                          &emitted,
+                                                          &errors)) {
+                goto done;
+            }
+            break;
+        case RL_COMBAT_JOURNAL_EVENT_PUNISH:
+            if (!RLCombatEvent_EmitPunishJournalLine(&best->event.punish,
+                                                     line_buf,
+                                                     line_buf_size,
+                                                     writer,
+                                                     userdata,
+                                                     &emitted,
+                                                     &errors)) {
+                goto done;
+            }
+            break;
+        case RL_COMBAT_JOURNAL_EVENT_NONE:
+        default:
+            break;
         }
-    }
-    for (u32 i = 0; i < RL_COMBAT_ATTRIBUTION_EVENT_RING_CAP; i++) {
-        const RLCombatAttributionEvent* event = &attribution_ring.events[i];
-        if (event->run_id == run_id && event->episode_id == episode_id &&
-            !RLCombatEvent_EmitAttributionJournalLine(event, line_buf, line_buf_size, writer, userdata, &emitted, &errors)) {
-            goto done;
-        }
-    }
-    for (u32 i = 0; i < RL_COMBAT_PUNISH_EVENT_RING_CAP; i++) {
-        const RLCombatPunishEvent* event = &punish_ring.events[i];
-        if (event->run_id == run_id && event->episode_id == episode_id &&
-            !RLCombatEvent_EmitPunishJournalLine(event, line_buf, line_buf_size, writer, userdata, &emitted, &errors)) {
-            goto done;
-        }
+
+        last_event_id = best->event_id;
+        processed++;
     }
 
 done:

@@ -2,6 +2,49 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-06: Combat Event Phase 7A-2 Ordered Complete Journal Snapshots
+
+Milestone:
+- Combat event attribution Phase 7A-2
+
+Files changed:
+- `src/rl/rl_combat_event.h`
+- `src/rl/rl_combat_event.c`
+- `docs/agent-memory/remote-rl-combat-event-attribution-plan.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Make combat event journal rows complete across a whole episode and emit them
+  in chronological `event_id` order.
+
+Live finding:
+- The post-dedupe live log was cleanly split and duplicate-free, but still used
+  the small live tracking rings as the episode-end export source.
+- The event file had `303` unique rows, while transition counters showed more
+  projectile events than the `16` projectile rows preserved per episode; the
+  attribution journal also landed exactly on its `64`-entry ring cap.
+- This showed that episode-end ring dumps lose older events once rings wrap.
+
+Implementation notes:
+- Added a per-episode journal snapshot buffer. Attack, projectile, and throw
+  rows are copied when finalized; attribution and punish rows are copied when
+  recorded.
+- `RLCombatEvent_EmitJournal()` now emits from the journal snapshot buffer
+  sorted by run-wide `event_id`, rather than by ring kind/slot order.
+- The live rings remain the active gameplay/attribution working sets; the
+  journal buffer is export-only and does not feed reward, inference, replay, or
+  trainer features.
+
+Validation:
+- `cc -std=c11 -Wall -Wextra -Isrc -Iinclude -c src/rl/rl_combat_event.c -o /tmp/rl_combat_event_phase7a2.o` passed.
+- `/tmp/rl_journal_smoke` passed: 40 finalized attack events exceeded the
+  32-entry attack ring cap, and `RLCombatEvent_EmitJournal()` still emitted all
+  40 rows once in ascending `event_id` order with zero format errors.
+- `git diff --check` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed; existing upstream
+  `mktemp` linker warning remains unrelated.
+
 ## 2026-05-06: Combat Event Phase 7A-1 Event Journal Dedupe
 
 Milestone:

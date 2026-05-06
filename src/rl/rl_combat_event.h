@@ -598,6 +598,8 @@ typedef struct RLCombatEventStats {
     u32 attribution_recorded_count;
     u32 attribution_failure_count;
     u32 attribution_ring_overwrite_count;
+    u32 event_journal_entry_count;
+    u32 event_journal_overflow_count;
     u32 attribution_edge_hit_stop_count;
     u32 attribution_edge_contact_state_count;
     u32 attribution_edge_damage_state_count;

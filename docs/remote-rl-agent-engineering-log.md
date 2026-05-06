@@ -2,6 +2,45 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-06: Combat Event Phase 8A-7 Derived Attribution Statistics
+
+Milestone:
+- Combat event attribution Phase 8A-7
+
+Files changed:
+- `tools/analyze_rl_combat_events.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/agent-memory/remote-rl-combat-event-attribution-plan.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Add a second attribution summary that uses analyzer-derived reconciliation
+  results while preserving the raw C journal labels for auditability.
+
+Implementation notes:
+- Added `effective_defense_result` records inside the analyzer. Raw
+  non-unknown attribution rows keep their original `defense_result`.
+- Unknown rows are promoted only when same-source/target reconciliation is
+  `resolved_same_source_target`; ambiguous rows become `ambiguous`, and
+  unresolved rows remain `unknown`.
+- The text and JSON reports now include `derived`, `derived_by_source_side`,
+  and `derived_by_target_side` sections with effective result counts, source
+  counts, and raw comparison counts.
+- This is still analysis-only. C event rows, transition schema, reward,
+  replay, and trainer feature paths are unchanged.
+
+Validation:
+- `python3 -m py_compile tools/analyze_rl_combat_events.py` passed.
+- `python3 tools/analyze_rl_combat_events.py logs/phase7a-event-journal-live-events.ndjson --transition-log logs/phase7a-event-journal-live-transitions.ndjson --json-output /tmp/rl-combat-event-derived-summary.json --examples 1` passed.
+- `python3 -m json.tool /tmp/rl-combat-event-derived-summary.json` passed.
+- Latest live log raw attribution results remain
+  `unknown=94`, `hit=50`, `blocked_chip=16`, `blocked=11`, `evaded=5`,
+  `parry=2`, and `thrown=1`.
+- Latest live log derived/effective results are
+  `hit=79`, `unknown=56`, `blocked_chip=16`, `blocked=16`, `parry=6`,
+  `evaded=5`, and `thrown=1`. The analyzer promoted `38` unknown rows
+  (`hit=29`, `blocked=5`, `parry=4`) and left `56` unresolved.
+
 ## 2026-05-06: Combat Event Phase 8A-6 Defense Unknown Reconciliation
 
 Milestone:

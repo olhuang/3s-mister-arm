@@ -2370,6 +2370,14 @@ Work:
   candidate must also be joined back to transition rows by decision id so the
   report can distinguish resolved labels with full transition anchors from
   event-only inference.
+- Phase 8A-7 adds a derived/effective attribution view. Raw
+  `defense_result_counts` remain untouched. The analyzer creates
+  `effective_defense_result` as follows: non-unknown raw rows keep their raw
+  result, unknown rows with `resolved_same_source_target` use the reconciled
+  final result, unknown rows with `ambiguous_same_source_target` become
+  `ambiguous`, and unresolved rows stay `unknown`. This view is for reporting
+  and analysis only; Phase 9 must still opt in explicitly before any derived
+  label can affect rewards or features.
 - add fight replay summaries:
   - timeline
   - per-side damage sources

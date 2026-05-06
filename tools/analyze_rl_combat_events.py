@@ -264,6 +264,7 @@ def attribution_unknown_reconciliation_record(
 
     source = events_by_id.get(source_lookup_key(row), {})
     return {
+        "run_id": row.get("run_id"),
         "event_id": row.get("event_id"),
         "episode_id": row.get("episode_id"),
         "source_side": row.get("source_side"),
@@ -304,6 +305,65 @@ def summarize_reconciliation_side_records(
             ),
             "final_result_counts": dict(collections.Counter(str(record.get("final_result")) for record in side_records)),
             "unknown_bucket_counts": dict(collections.Counter(str(record.get("unknown_bucket")) for record in side_records)),
+        }
+    return summary
+
+
+def effective_attribution_record(
+    row: dict[str, Any],
+    reconciliation_by_event: dict[tuple[Any, Any], dict[str, Any]],
+) -> dict[str, Any]:
+    raw_result = str(row.get("defense_result", "unknown"))
+    reconciliation = reconciliation_by_event.get(event_lookup_key(row), {})
+    reconciliation_status = str(reconciliation.get("reconciliation_status", "raw_non_unknown"))
+    if raw_result != "unknown":
+        effective_result = raw_result
+        effective_source = "raw_non_unknown"
+    elif reconciliation_status == "resolved_same_source_target":
+        effective_result = str(reconciliation.get("final_result", "unknown"))
+        effective_source = "derived_from_unknown"
+    elif reconciliation_status == "ambiguous_same_source_target":
+        effective_result = "ambiguous"
+        effective_source = "ambiguous_unknown"
+    else:
+        effective_result = "unknown"
+        effective_source = "unresolved_unknown"
+
+    return {
+        "run_id": row.get("run_id"),
+        "event_id": row.get("event_id"),
+        "episode_id": row.get("episode_id"),
+        "source_side": row.get("source_side"),
+        "target_side": row.get("target_side"),
+        "source_family": row.get("source_family"),
+        "edge_type": row.get("edge_type"),
+        "confidence": row.get("confidence"),
+        "raw_defense_result": raw_result,
+        "effective_defense_result": effective_result,
+        "effective_source": effective_source,
+        "reconciliation_status": reconciliation_status,
+    }
+
+
+def summarize_effective_attribution_side_records(
+    records: list[dict[str, Any]],
+    side_field: str,
+) -> dict[str, dict[str, Any]]:
+    summary: dict[str, dict[str, Any]] = {}
+    sides = sorted({str(record.get(side_field, "unknown")) for record in records}, key=side_sort_key)
+    for side in sides:
+        side_records = [record for record in records if str(record.get(side_field, "unknown")) == side]
+        summary[side] = {
+            "rows": len(side_records),
+            "effective_defense_result_counts": dict(
+                collections.Counter(str(record.get("effective_defense_result")) for record in side_records)
+            ),
+            "effective_source_counts": dict(
+                collections.Counter(str(record.get("effective_source")) for record in side_records)
+            ),
+            "raw_defense_result_counts": dict(
+                collections.Counter(str(record.get("raw_defense_result")) for record in side_records)
+            ),
         }
     return summary
 
@@ -458,6 +518,14 @@ def make_summary(event_rows: list[dict[str, Any]], transition_rows: list[dict[st
             transition_by_decision,
         )
         for row in attribution_unknown_rows
+    ]
+    attribution_reconciliation_by_event = {
+        event_lookup_key(row): row
+        for row in attribution_unknown_reconciliation_records
+    }
+    effective_attribution_records = [
+        effective_attribution_record(row, attribution_reconciliation_by_event)
+        for row in attribution_rows
     ]
     attribution_unknown_examples: list[dict[str, Any]] = []
     for row in attribution_unknown_rows[:12]:
@@ -722,6 +790,50 @@ def make_summary(event_rows: list[dict[str, Any]], transition_rows: list[dict[st
                 "target_side",
                 ["source_family", "edge_type", "confidence", "failure_reason", "defense_result"],
             ),
+            "derived": {
+                "rows": len(effective_attribution_records),
+                "effective_defense_result_counts": dict(
+                    collections.Counter(
+                        str(record.get("effective_defense_result"))
+                        for record in effective_attribution_records
+                    )
+                ),
+                "effective_source_counts": dict(
+                    collections.Counter(
+                        str(record.get("effective_source"))
+                        for record in effective_attribution_records
+                    )
+                ),
+                "raw_defense_result_counts": dict(
+                    collections.Counter(
+                        str(record.get("raw_defense_result"))
+                        for record in effective_attribution_records
+                    )
+                ),
+                "derived_from_unknown_counts": dict(
+                    collections.Counter(
+                        str(record.get("effective_defense_result"))
+                        for record in effective_attribution_records
+                        if str(record.get("effective_source")) == "derived_from_unknown"
+                    )
+                ),
+                "unresolved_unknown_rows": sum(
+                    1
+                    for record in effective_attribution_records
+                    if str(record.get("effective_source")) == "unresolved_unknown"
+                ),
+                "ambiguous_unknown_rows": sum(
+                    1
+                    for record in effective_attribution_records
+                    if str(record.get("effective_source")) == "ambiguous_unknown"
+                ),
+                "by_source_side": summarize_effective_attribution_side_records(
+                    effective_attribution_records, "source_side"
+                ),
+                "by_target_side": summarize_effective_attribution_side_records(
+                    effective_attribution_records, "target_side"
+                ),
+            },
         },
         "punish": {
             "rows": len(punish_rows),
@@ -805,6 +917,31 @@ def print_attribution_unknown_summary(summary: dict[str, Any], examples: int) ->
             f"guard={row['actual_guard_state']} target_attack={row['target_attack_state_active']} "
             f"target_air={row['target_airborne']}"
         )
+
+
+def print_derived_attribution_summary(summary: dict[str, Any]) -> None:
+    if not summary or summary["rows"] == 0:
+        return
+    print("  derived")
+    print(f"    rows={summary['rows']}")
+    print(
+        "    effective_defense_result_counts="
+        f"{format_counter(collections.Counter(summary['effective_defense_result_counts']))}"
+    )
+    print(
+        "    effective_source_counts="
+        f"{format_counter(collections.Counter(summary['effective_source_counts']))}"
+    )
+    print(
+        "    derived_from_unknown_counts="
+        f"{format_counter(collections.Counter(summary['derived_from_unknown_counts']))}"
+    )
+    print(
+        f"    unresolved_unknown_rows={summary['unresolved_unknown_rows']} "
+        f"ambiguous_unknown_rows={summary['ambiguous_unknown_rows']}"
+    )
+    print_side_summary("derived_by_source_side", summary["by_source_side"])
+    print_side_summary("derived_by_target_side", summary["by_target_side"])
 
 
 def print_text_report(summary: dict[str, Any], examples: int) -> None:
@@ -895,6 +1032,8 @@ def print_text_report(summary: dict[str, Any], examples: int) -> None:
                 continue
             if key == "defense_unknown":
                 continue
+            if key == "derived":
+                continue
             print(f"  {key}={format_counter(collections.Counter(value))}")
         if section_name == "throw":
             print_side_summary("by_owner_side", section["by_owner_side"])
@@ -902,6 +1041,7 @@ def print_text_report(summary: dict[str, Any], examples: int) -> None:
             print_attribution_unknown_summary(section["defense_unknown"], examples)
             print_side_summary("by_source_side", section["by_source_side"])
             print_side_summary("by_target_side", section["by_target_side"])
+            print_derived_attribution_summary(section["derived"])
         elif section_name == "punish":
             print_side_summary("by_punisher_side", section["by_punisher_side"])
             print_side_summary("by_punished_side", section["by_punished_side"])

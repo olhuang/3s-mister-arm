@@ -139,6 +139,32 @@ bool RLCombatEvent_HasActiveThrowForSide(u64 run_id, u32 episode_id, RLCombatEve
     return false;
 }
 
+bool RLCombatEvent_HasRecentNonWhiffThrowForSide(u64 run_id,
+                                                 u32 episode_id,
+                                                 RLCombatEventSide side,
+                                                 u32 frame_id,
+                                                 u32 max_age_frames) {
+    const RLCombatThrowEventRing* ring = RLCombatEvent_ConstThrowRingForSide(side);
+
+    if (ring == NULL || run_id == 0 || episode_id == 0) {
+        return false;
+    }
+
+    for (u32 i = 0; i < RL_COMBAT_THROW_EVENT_RING_CAP; i++) {
+        const RLCombatThrowEvent* event = &ring->events[i];
+        if (event->status != RL_COMBAT_THROW_EVENT_FINALIZED || event->run_id != run_id ||
+            event->episode_id != episode_id || event->owner_side != side ||
+            event->result == RL_COMBAT_THROW_RESULT_WHIFF) {
+            continue;
+        }
+        if (RLCombatEvent_FrameAge(frame_id, event->end_frame) <= max_age_frames) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 static void RLCombatEvent_RefreshActiveStats(void) {
     combat_event_stats.attack_active_self_count = RLCombatEvent_CountActive(&self_attack_ring);
     combat_event_stats.attack_active_opponent_count = RLCombatEvent_CountActive(&opponent_attack_ring);
@@ -630,9 +656,7 @@ static u32 RLCombatEvent_FinalizeActiveThrowsForSide(u64 run_id,
             continue;
         }
         if (reason == RL_COMBAT_THROW_FINALIZE_SUPERSEDED_BY_NEW_START &&
-            result == RL_COMBAT_THROW_RESULT_UNKNOWN &&
-            RLCombatEvent_FrameAge(frame_id, event->start_frame) >= RL_COMBAT_THROW_MIN_WHIFF_FRAMES &&
-            RLCombatEvent_IsCleanThrowWhiff(event)) {
+            result == RL_COMBAT_THROW_RESULT_UNKNOWN && RLCombatEvent_IsCleanThrowWhiff(event)) {
             event_result = RL_COMBAT_THROW_RESULT_WHIFF;
             event_reason = RL_COMBAT_THROW_FINALIZE_WHIFF_WINDOW;
         }

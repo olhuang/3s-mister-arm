@@ -305,6 +305,12 @@ typedef struct RLEngineAttribution {
     u8 label_source;
 } RLEngineAttribution;
 
+typedef enum RLThrowStartSource {
+    RL_THROW_START_SOURCE_NONE = 0,
+    RL_THROW_START_SOURCE_RAW_THROW_EDGE = 1,
+    RL_THROW_START_SOURCE_ENGINE_ROUTINE_EDGE = 2,
+} RLThrowStartSource;
+
 static u16 local_fake_action_index;
 static u16 local_fake_action_frame;
 static u8 active_round_num;
@@ -2454,7 +2460,7 @@ static void RLSession_UpdateCombatProjectileEvents(RLDecisionLedgerEntry* entry,
 }
 
 static bool RLSession_IsRyuThrowRoutine(u16 routine_1, u16 routine_2) {
-    return routine_1 == 4 && (routine_2 == 2 || routine_2 == 14);
+    return routine_1 == 4 && routine_2 == 14;
 }
 
 static bool RLSession_ObservationLooksLikeEngineThrowStartForSide(const RLDecisionLedgerEntry* entry,
@@ -2486,20 +2492,6 @@ static bool RLSession_ObservationLooksLikeEngineThrowStartForSide(const RLDecisi
     return character_id == RL_CHARACTER_RYU && edge && RLSession_IsRyuThrowRoutine(routine_1, routine_2);
 }
 
-static bool RLSession_EntryEngineAttributedThrowForSide(const RLDecisionLedgerEntry* entry, RLCombatEventSide side) {
-    if (entry == NULL) {
-        return false;
-    }
-
-    if (side == RL_COMBAT_EVENT_SIDE_SELF) {
-        return entry->self_engine_action_id == RL_POLICY_ACTION_THROW;
-    }
-    if (side == RL_COMBAT_EVENT_SIDE_OPPONENT) {
-        return entry->opp_engine_action_id == RL_POLICY_ACTION_THROW;
-    }
-    return false;
-}
-
 static bool RLSession_ThrowAttemptAlreadyStartedForSide(const RLDecisionLedgerEntry* entry, RLCombatEventSide side) {
     if (entry == NULL) {
         return false;
@@ -2524,26 +2516,33 @@ static void RLSession_MarkThrowAttemptStartedForSide(RLDecisionLedgerEntry* entr
     }
 }
 
-static bool RLSession_ObservationThrowStartedForSide(const RLDecisionLedgerEntry* entry,
-                                                     const RLObservationV1* obs,
-                                                     RLCombatEventSide side) {
+static RLThrowStartSource RLSession_ThrowStartSourceForSide(const RLDecisionLedgerEntry* entry,
+                                                            const RLObservationV1* obs,
+                                                            RLCombatEventSide side) {
     if (entry == NULL || obs == NULL || RLSession_ThrowAttemptAlreadyStartedForSide(entry, side)) {
-        return false;
-    }
-    if (RLCombatEvent_HasActiveThrowForSide(entry->run_id, entry->episode_id, side)) {
-        return false;
+        return RL_THROW_START_SOURCE_NONE;
     }
 
     switch (side) {
     case RL_COMBAT_EVENT_SIDE_SELF:
-        return obs->self_throw_started != 0 || RLSession_EntryEngineAttributedThrowForSide(entry, side) ||
-               RLSession_ObservationLooksLikeEngineThrowStartForSide(entry, obs, side);
+        if (RLSession_ObservationLooksLikeEngineThrowStartForSide(entry, obs, side)) {
+            return RL_THROW_START_SOURCE_ENGINE_ROUTINE_EDGE;
+        }
+        if (obs->self_throw_started != 0) {
+            return RL_THROW_START_SOURCE_RAW_THROW_EDGE;
+        }
+        return RL_THROW_START_SOURCE_NONE;
     case RL_COMBAT_EVENT_SIDE_OPPONENT:
-        return obs->opp_throw_started != 0 || RLSession_EntryEngineAttributedThrowForSide(entry, side) ||
-               RLSession_ObservationLooksLikeEngineThrowStartForSide(entry, obs, side);
+        if (RLSession_ObservationLooksLikeEngineThrowStartForSide(entry, obs, side)) {
+            return RL_THROW_START_SOURCE_ENGINE_ROUTINE_EDGE;
+        }
+        if (obs->opp_throw_started != 0) {
+            return RL_THROW_START_SOURCE_RAW_THROW_EDGE;
+        }
+        return RL_THROW_START_SOURCE_NONE;
     case RL_COMBAT_EVENT_SIDE_NONE:
     default:
-        return false;
+        return RL_THROW_START_SOURCE_NONE;
     }
 }
 
@@ -2580,8 +2579,18 @@ static void RLSession_MaybeStartCombatThrowEvent(RLDecisionLedgerEntry* entry,
                                                  const RLObservationV1* obs,
                                                  RLCombatEventSide owner_side) {
     RLCombatThrowEventStart start;
+    const RLThrowStartSource start_source = RLSession_ThrowStartSourceForSide(entry, obs, owner_side);
 
-    if (entry == NULL || obs == NULL || !RLSession_ObservationThrowStartedForSide(entry, obs, owner_side)) {
+    if (entry == NULL || obs == NULL || start_source == RL_THROW_START_SOURCE_NONE) {
+        return;
+    }
+    if (start_source == RL_THROW_START_SOURCE_RAW_THROW_EDGE &&
+        (RLCombatEvent_HasActiveThrowForSide(entry->run_id, entry->episode_id, owner_side) ||
+         RLCombatEvent_HasRecentNonWhiffThrowForSide(entry->run_id,
+                                                     entry->episode_id,
+                                                     owner_side,
+                                                     remote_debug.frame_id,
+                                                     RL_COMBAT_THROW_MIN_WHIFF_FRAMES))) {
         return;
     }
 
@@ -2614,7 +2623,9 @@ static void RLSession_FillCombatThrowUpdate(RLCombatThrowEventUpdate* update,
     if (owner_side == RL_COMBAT_EVENT_SIDE_SELF) {
         update->owner_throw_active = obs->self_throw_active;
         update->opposing_throw_active = obs->opp_throw_active;
-        update->opposing_throw_started = obs->opp_throw_started;
+        update->opposing_throw_started =
+            (u8)(obs->opp_throw_started ||
+                 RLSession_ObservationLooksLikeEngineThrowStartForSide(entry, obs, RL_COMBAT_EVENT_SIDE_OPPONENT));
         update->throw_escape = (u8)(obs->self_throw_escape_active || obs->opp_throw_escape_active);
         update->throw_escape_started = (u8)(obs->self_throw_escape_started || obs->opp_throw_escape_started);
         update->target_caught = obs->opp_throw_caught;
@@ -2628,7 +2639,9 @@ static void RLSession_FillCombatThrowUpdate(RLCombatThrowEventUpdate* update,
     } else if (owner_side == RL_COMBAT_EVENT_SIDE_OPPONENT) {
         update->owner_throw_active = obs->opp_throw_active;
         update->opposing_throw_active = obs->self_throw_active;
-        update->opposing_throw_started = obs->self_throw_started;
+        update->opposing_throw_started =
+            (u8)(obs->self_throw_started ||
+                 RLSession_ObservationLooksLikeEngineThrowStartForSide(entry, obs, RL_COMBAT_EVENT_SIDE_SELF));
         update->throw_escape = (u8)(obs->self_throw_escape_active || obs->opp_throw_escape_active);
         update->throw_escape_started = (u8)(obs->self_throw_escape_started || obs->opp_throw_escape_started);
         update->target_caught = obs->self_throw_caught;

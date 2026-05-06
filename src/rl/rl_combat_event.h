@@ -474,6 +474,11 @@ u32 RLCombatEvent_UpdateProjectiles(const RLCombatProjectileEventUpdate* update)
 const RLCombatThrowEvent* RLCombatEvent_StartThrow(const RLCombatThrowEventStart* start);
 u32 RLCombatEvent_UpdateThrows(const RLCombatThrowEventUpdate* update);
 bool RLCombatEvent_HasActiveThrowForSide(u64 run_id, u32 episode_id, RLCombatEventSide side);
+bool RLCombatEvent_HasRecentNonWhiffThrowForSide(u64 run_id,
+                                                 u32 episode_id,
+                                                 RLCombatEventSide side,
+                                                 u32 frame_id,
+                                                 u32 max_age_frames);
 const RLCombatAttackEvent* RLCombatEvent_FindAttack(u64 event_id);
 const RLCombatProjectileEvent* RLCombatEvent_FindProjectile(u64 event_id);
 const RLCombatThrowEvent* RLCombatEvent_FindThrow(u64 event_id);

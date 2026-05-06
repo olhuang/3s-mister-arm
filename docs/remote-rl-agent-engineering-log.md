@@ -22,6 +22,17 @@ Update after live retest:
   also waits a short confirm window unless damage/stun evidence is already
   present, so mutual throw/escape evidence can finalize as `CTR U` before
   `CTR T` is emitted.
+- Third live retest still showed `CTR T +1/+2` on mutual throws and occasional
+  duplicate success starts. Root cause: raw `tsukami_f` starts could still fire
+  after a recently finalized engine-start throw result, and opponent contested
+  evidence only used raw throw-active edges, missing simultaneous engine
+  throw-start routines.
+- Fix: throw start sources are now separated. Ryu `R2=14` engine throw-start
+  edges may supersede an active clean throw into `CTR W` for rapid whiff retries;
+  raw `tsukami_f` starts are suppressed while a throw is active and shortly
+  after non-whiff throw results. Opposing engine throw-start edges now count as
+  contested evidence, and `R2=2` completed-throw support is no longer used as a
+  start source.
 
 Milestone:
 - Milestone 6: Combat event attribution Phase 5C/5D
@@ -45,15 +56,19 @@ Implementation notes:
 - Added internal observation evidence for throw escape / nagenuke-style
   routines (`R1=0`, `R2=47/48/49/50`) with rising edges. These fields are not
   exported in transition schema v9 and do not feed reward or learner features.
-- Throw starts now accept Ryu engine throw routine entry/support (`R1=4`,
-  `R2=14` or `R2=2`) on fresh routine/attack edges, raw throw-active edges, or
-  an already-attributed side engine action `throw`. Policy/input `throw` rows
-  are metadata only and are not standalone start triggers.
+- Throw starts now accept Ryu engine throw-start routine edges (`R1=4`,
+  `R2=14`) on fresh routine/attack edges and raw throw-active edges when no
+  active/recent non-whiff result covers the same interaction. Policy/input
+  `throw` rows and already-attributed engine action metadata are not standalone
+  start triggers.
 - Each ledger row starts at most one throw event per side, preventing repeated
   starts from the same decision span.
 - Same-side active throw events suppress duplicate starts across decision rows.
   Throw start checks now run after active throw updates so a previous whiff can
   finalize before a new rapid throw is considered.
+- A fresh engine throw-start edge may supersede a clean active throw into
+  `CTR W`, even if the minimum whiff window has not elapsed. This is the rapid
+  whiff retry path and is intentionally not available to raw `tsukami_f` starts.
 - Throw finalization treats opposing throw evidence and throw-escape routines
   as contested. Contested caught evidence without real damage/stun evidence is
   finalized as `CTR U`, not `CTR T`; clean non-contested forward/back throw
@@ -80,6 +95,12 @@ Validation:
   and `tools/mister/build-game.sh --flavor telemetry` passed. The telemetry
   build rebuilt `rl_combat_event.c` and `rl_session.c` and still emits the same
   third-party minizip `mktemp` linker warning.
+- After the start-source split/recent-result guard, `git diff --check`,
+  `python3 -m py_compile tools/rl_probe_server.py tools/analyze_rl_transitions.py`,
+  `cc -std=c11 -Wall -Wextra -Isrc -Iinclude -c src/rl/rl_combat_event.c -o /tmp/rl_combat_event_throw_refine4.o`,
+  and `tools/mister/build-game.sh --flavor telemetry` passed. The telemetry
+  build rebuilt `rl_combat_event.c` and `rl_session.c`; the existing third-party
+  minizip `mktemp` linker warning remains.
 
 Follow-up:
 - Phase 5D live validation should re-check close forward throw, back throw,

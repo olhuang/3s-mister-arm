@@ -1783,19 +1783,25 @@ Phase 5C implementation contract:
   owner.
 - Phase 5C/5D live refinement widens throw starts to include conservative
   throw-attempt intent:
-  - Ryu engine throw routine entry/support (`R1=4`, `R2=14` startup or `R2=2`
-    completed throw) when a fresh routine/attack edge is observed;
-  - already-attributed side engine action `throw`.
+  - Ryu engine throw-start routine edge (`R1=4`, `R2=14`) when a fresh
+    routine/attack edge is observed;
+  - raw throw-active rising edges (`tsukami_f`) only when no active throw event
+    and no recent non-whiff throw result for that side already covers the same
+    interaction.
   This is required so out-of-range throw attempts create a `CT S` event and can
   later finalize as `CTR W` instead of producing no counter at all.
 - Policy/input `throw` rows are metadata only and must not be standalone start
   triggers. Live testing showed held LP+LK plus direction changes can produce
   repeated policy/input rows without a new engine throw attempt, inflating
   `CT S/F`, `CTR W`, and `CTR U`.
-- Same-side active throw events suppress duplicate starts. Start checks run
-  after active throw updates, so a finished whiff can finalize before the next
-  fast throw attempt is considered, but an already-active throw cannot be
-  restarted by a later `tsukami_f` or engine-routine edge from the same attempt.
+- Same-side raw throw-active starts are suppressed while an active throw event
+  exists and for a short window after non-whiff results, preventing a successful
+  throw from being counted once from engine start and again from `tsukami_f`.
+- Fresh Ryu throw-start routine edges are still allowed to supersede an active
+  clean throw as `CTR W`, which keeps rapid repeated whiff attempts from being
+  swallowed by the previous active event. The supersede-to-whiff path only
+  applies when the active event has no caught/contact/damage/interruption,
+  opposing-throw, or throw-escape evidence.
 - `CTR T` success is emitted only when the target-side caught state/edge is
   observed (`opp_throw_caught*` for self owner, `self_throw_caught*` for
   opponent owner) and there is no simultaneous/escape evidence that makes the

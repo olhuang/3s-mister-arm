@@ -342,6 +342,8 @@ static size_t transition_batch_payload_len;
 static size_t transition_batch_payload_cap;
 static u32 transition_batch_row_count;
 static u32 transition_batch_event_row_count;
+static u64 combat_event_journal_exported_run_id;
+static u32 combat_event_journal_exported_episode_id = UINT32_MAX;
 static bool hp_damage_baseline_valid;
 static s16 last_self_damage_total;
 static s16 last_opp_damage_total;
@@ -2141,10 +2143,18 @@ static bool RLSession_AppendCombatEventBatchLine(const char* line, size_t line_l
 
 static void RLSession_AppendCombatEventJournal(u32 episode_id) {
     RLSessionCombatEventBatchAppendContext context;
+    const u64 run_id = remote_debug.run_id;
     u32 format_errors = 0;
     u32 emitted = 0;
 
     if (!configuration.remote_rl_agent.export_combat_events) {
+        return;
+    }
+    if (run_id == 0 || episode_id == 0) {
+        return;
+    }
+    if (combat_event_journal_exported_run_id == run_id &&
+        combat_event_journal_exported_episode_id == episode_id) {
         return;
     }
     if (transition_format_buffer == NULL || transition_format_buffer_cap == 0) {
@@ -2154,7 +2164,7 @@ static void RLSession_AppendCombatEventJournal(u32 episode_id) {
 
     memset(&context, 0, sizeof(context));
     context.episode_id = episode_id;
-    emitted = RLCombatEvent_EmitJournal(remote_debug.run_id,
+    emitted = RLCombatEvent_EmitJournal(run_id,
                                         episode_id,
                                         transition_format_buffer,
                                         transition_format_buffer_cap,
@@ -2163,6 +2173,10 @@ static void RLSession_AppendCombatEventJournal(u32 episode_id) {
                                         &format_errors);
     remote_debug.combat_event_export_count += emitted;
     remote_debug.combat_event_format_error_count += format_errors;
+    if (format_errors == 0 || emitted > 0) {
+        combat_event_journal_exported_run_id = run_id;
+        combat_event_journal_exported_episode_id = episode_id;
+    }
 }
 
 static void RLSession_FinalizeLedgerEntry(RLDecisionLedgerEntry* entry, bool done, u8 terminal_reason) {

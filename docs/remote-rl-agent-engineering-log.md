@@ -2,6 +2,46 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-06: Combat Event Phase 7A-1 Event Journal Dedupe
+
+Milestone:
+- Combat event attribution Phase 7A-1
+
+Files changed:
+- `src/rl/rl_session.c`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Fix Phase 7A live event journal duplication while keeping the same two-file
+  transition/event log split.
+
+Live finding:
+- `logs/phase7a-event-journal-live-events.ndjson` proved event export and
+  Python split were working: `90138` valid schema-1 event rows were written.
+- Those rows represented only `280` unique `(run_id, episode_id, event_kind,
+  event_id)` keys, meaning repeated terminal/finalize calls were appending the
+  same episode event ring hundreds of times.
+- The matching transition log stayed clean: no combat event rows polluted
+  `logs/phase7a-event-journal-live-transitions.ndjson`, and transition
+  decisions had no duplicate keys.
+
+Implementation notes:
+- Added session-level tracking for the last exported combat-event journal
+  `(run_id, episode_id)`.
+- `RLSession_AppendCombatEventJournal()` now skips repeat emission for the same
+  episode after a successful or partially emitted journal attempt.
+- This leaves transition rows, reward, inference, replay, trainer features, and
+  event schema unchanged.
+
+Validation:
+- `git diff --check` passed.
+- Live-log duplicate audit confirmed the pre-fix issue:
+  `90138` event rows, `280` unique event keys, `89858` duplicate rows, and
+  max duplicate count `407`.
+- `tools/mister/build-game.sh --flavor telemetry` passed; existing upstream
+  `mktemp` linker warning remains unrelated.
+
 ## 2026-05-06: Combat Event Phase 7A Event Journal Export Skeleton
 
 Milestone:

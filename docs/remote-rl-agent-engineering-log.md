@@ -106,6 +106,11 @@ Refinement after first live CEM pass:
   projectile events remember whether an opposing projectile was active during
   their lifetime, and `CPR X` / `DISAPPEARED` with that opposing-projectile
   evidence becomes a CEM projectile clash edge even if only one side finalized.
+- Live retest after side-specific projectile tracking passed the projectile
+  edge cases: fireball clash produced `CPR X +1/+1` and `CEM P +1/+1`; parrying
+  an opponent fireball remained conservative `CPR U +0/+1`; single fireball
+  fly-out stayed `CPR X +1/+0` with `CEM P +0/+0`. This confirms clash CEM is
+  now covered without reintroducing CEM noise for ordinary projectile expiry.
 
 ## 2026-05-05: Combat Event Phase 5C/5D Throw Live Refinement Prep
 

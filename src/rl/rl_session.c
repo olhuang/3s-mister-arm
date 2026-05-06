@@ -744,6 +744,15 @@ static void RLSession_UpdateCombatEventDebugStats(void) {
     remote_debug.combat_attribution_recorded_count = stats->attribution_recorded_count;
     remote_debug.combat_attribution_failure_count = stats->attribution_failure_count;
     remote_debug.combat_attribution_ring_overwrite_count = stats->attribution_ring_overwrite_count;
+    remote_debug.combat_attribution_edge_hit_stop_count = stats->attribution_edge_hit_stop_count;
+    remote_debug.combat_attribution_edge_contact_state_count = stats->attribution_edge_contact_state_count;
+    remote_debug.combat_attribution_edge_damage_state_count = stats->attribution_edge_damage_state_count;
+    remote_debug.combat_attribution_edge_hp_delta_count = stats->attribution_edge_hp_delta_count;
+    remote_debug.combat_attribution_edge_stun_delta_count = stats->attribution_edge_stun_delta_count;
+    remote_debug.combat_attribution_edge_block_reaction_count = stats->attribution_edge_block_reaction_count;
+    remote_debug.combat_attribution_edge_parry_count = stats->attribution_edge_parry_count;
+    remote_debug.combat_attribution_edge_throw_caught_count = stats->attribution_edge_throw_caught_count;
+    remote_debug.combat_attribution_edge_projectile_clash_count = stats->attribution_edge_projectile_clash_count;
     remote_debug.combat_lifetime_attack_started_count = stats->lifetime_attack_started_count;
     remote_debug.combat_lifetime_attack_finalized_count = stats->lifetime_attack_finalized_count;
     remote_debug.combat_lifetime_attack_whiff_count = stats->lifetime_attack_whiff_count;

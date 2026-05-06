@@ -733,20 +733,22 @@ void RLObservation_FormatDebugOverlay(char* out, size_t out_size, const char* se
     size_t used = 0;
     const bool show_all = view == RL_DEBUG_OVERLAY_VIEW_ALL;
 
-    append_overlay_line(out,
-                        out_size,
-                        &used,
-                        "%s HP%d/%d OP%d/%d R%d RW%d-%d M%d-%d",
-                        session_label != NULL ? session_label : "P0",
-                        latest_debug.self_hp,
-                        latest_debug.self_hp_start,
-                        latest_debug.opp_hp,
-                        latest_debug.opp_hp_start,
-                        latest_obs.round_num,
-                        latest_obs.self_match_round_wins,
-                        latest_obs.opp_match_round_wins,
-                        latest_obs.self_round_wins,
-                        latest_obs.opp_round_wins);
+    if (view != RL_DEBUG_OVERLAY_VIEW_OUTCOME) {
+        append_overlay_line(out,
+                            out_size,
+                            &used,
+                            "%s HP%d/%d OP%d/%d R%d RW%d-%d M%d-%d",
+                            session_label != NULL ? session_label : "P0",
+                            latest_debug.self_hp,
+                            latest_debug.self_hp_start,
+                            latest_debug.opp_hp,
+                            latest_debug.opp_hp_start,
+                            latest_obs.round_num,
+                            latest_obs.self_match_round_wins,
+                            latest_obs.opp_match_round_wins,
+                            latest_obs.self_round_wins,
+                            latest_obs.opp_round_wins);
+    }
 
     if (show_all || view == RL_DEBUG_OVERLAY_VIEW_FIGHT) {
         append_overlay_line(out,
@@ -816,13 +818,6 @@ void RLObservation_FormatDebugOverlay(char* out, size_t out_size, const char* se
     }
 
     if (view == RL_DEBUG_OVERLAY_VIEW_OUTCOME) {
-        append_overlay_line(out,
-                            out_size,
-                            &used,
-                            "AH%lu ACC%lu AWC%lu",
-                            (unsigned long)remote->episode_attack_active_count,
-                            (unsigned long)remote->episode_attack_contact_count,
-                            (unsigned long)remote->episode_attack_whiff_count);
         append_overlay_line(out,
                             out_size,
                             &used,
@@ -907,65 +902,20 @@ void RLObservation_FormatDebugOverlay(char* out, size_t out_size, const char* se
         append_overlay_line(out,
                             out_size,
                             &used,
-                            "CEU F%lu/%lu R%lu/%lu D%lu/%lu",
-                            (unsigned long)remote->combat_attack_unknown_flush_self_count,
-                            (unsigned long)remote->combat_attack_unknown_flush_opp_count,
-                            (unsigned long)remote->combat_attack_unknown_rollover_self_count,
-                            (unsigned long)remote->combat_attack_unknown_rollover_opp_count,
-                            (unsigned long)remote->combat_attack_dropped_start_self_count,
-                            (unsigned long)remote->combat_attack_dropped_start_opp_count);
+                            "CEAE HP%lu ST%lu DM%lu BL%lu",
+                            (unsigned long)remote->combat_attribution_edge_hp_delta_count,
+                            (unsigned long)remote->combat_attribution_edge_stun_delta_count,
+                            (unsigned long)remote->combat_attribution_edge_damage_state_count,
+                            (unsigned long)remote->combat_attribution_edge_block_reaction_count);
         append_overlay_line(out,
                             out_size,
                             &used,
-                            "CEUC C%lu/%lu P%lu/%lu T%lu/%lu",
-                            (unsigned long)remote->combat_attack_unknown_timeout_contact_self_count,
-                            (unsigned long)remote->combat_attack_unknown_timeout_contact_opp_count,
-                            (unsigned long)remote->combat_attack_unknown_timeout_projectile_self_count,
-                            (unsigned long)remote->combat_attack_unknown_timeout_projectile_opp_count,
-                            (unsigned long)remote->combat_attack_unknown_timeout_throw_self_count,
-                            (unsigned long)remote->combat_attack_unknown_timeout_throw_opp_count);
-        append_overlay_line(out,
-                            out_size,
-                            &used,
-                            "CEUD EH%lu/%lu EC%lu/%lu ED%lu/%lu",
-                            (unsigned long)remote->combat_attack_unknown_timeout_contact_hit_stop_self_count,
-                            (unsigned long)remote->combat_attack_unknown_timeout_contact_hit_stop_opp_count,
-                            (unsigned long)remote->combat_attack_unknown_timeout_contact_state_self_count,
-                            (unsigned long)remote->combat_attack_unknown_timeout_contact_state_opp_count,
-                            (unsigned long)remote->combat_attack_unknown_timeout_damage_state_self_count,
-                            (unsigned long)remote->combat_attack_unknown_timeout_damage_state_opp_count);
-        append_overlay_line(out,
-                            out_size,
-                            &used,
-                            "CEUH HP%lu/%lu ST%lu/%lu",
-                            (unsigned long)remote->combat_attack_unknown_timeout_hp_delta_self_count,
-                            (unsigned long)remote->combat_attack_unknown_timeout_hp_delta_opp_count,
-                            (unsigned long)remote->combat_attack_unknown_timeout_stun_delta_self_count,
-                            (unsigned long)remote->combat_attack_unknown_timeout_stun_delta_opp_count);
-        append_overlay_line(out,
-                            out_size,
-                            &used,
-                            "CEUL L%lu/%lu N%lu/%lu",
-                            (unsigned long)remote->combat_attack_unknown_timeout_projectile_like_self_count,
-                            (unsigned long)remote->combat_attack_unknown_timeout_projectile_like_opp_count,
-                            (unsigned long)remote->combat_attack_unknown_timeout_not_whiff_self_count,
-                            (unsigned long)remote->combat_attack_unknown_timeout_not_whiff_opp_count);
-        append_overlay_line(out,
-                            out_size,
-                            &used,
-                            "CEL S%lu F%lu W%lu I%lu U%lu",
-                            (unsigned long)remote->combat_lifetime_attack_started_count,
-                            (unsigned long)remote->combat_lifetime_attack_finalized_count,
-                            (unsigned long)remote->combat_lifetime_attack_whiff_count,
-                            (unsigned long)remote->combat_lifetime_attack_interrupted_count,
-                            (unsigned long)remote->combat_lifetime_attack_unknown_timeout_count);
-        append_overlay_line(out,
-                            out_size,
-                            &used,
-                            "CELU F%lu R%lu D%lu",
-                            (unsigned long)remote->combat_lifetime_attack_unknown_flush_count,
-                            (unsigned long)remote->combat_lifetime_attack_unknown_rollover_count,
-                            (unsigned long)remote->combat_lifetime_attack_dropped_start_count);
+                            "CEAX PA%lu TH%lu CL%lu HS%lu CT%lu",
+                            (unsigned long)remote->combat_attribution_edge_parry_count,
+                            (unsigned long)remote->combat_attribution_edge_throw_caught_count,
+                            (unsigned long)remote->combat_attribution_edge_projectile_clash_count,
+                            (unsigned long)remote->combat_attribution_edge_hit_stop_count,
+                            (unsigned long)remote->combat_attribution_edge_contact_state_count);
     }
 
     if (show_all || view == RL_DEBUG_OVERLAY_VIEW_INPUT) {

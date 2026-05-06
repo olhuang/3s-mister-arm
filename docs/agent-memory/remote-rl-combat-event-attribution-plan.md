@@ -1984,6 +1984,28 @@ Phase 6a-1A implementation slice:
   attribution ring overwrites. This validates that the ring is tracking CEM
   without exposing the ring in transition rows yet.
 
+Phase 6a-1B implementation slice:
+
+- Add debug-only attribution edge coverage counters so live validation can see
+  what the attribution ring is recording, not just that it is recording.
+- Outcome overlay adds `CEAE HP/ST/DM/BL` and `CEAX PA/TH/CL/HS/CT`:
+  HP delta, stun delta, damage-state, block-reaction, parry, throw-caught,
+  projectile clash, hit-stop, and contact-state attribution edges.
+- Outcome overlay is intentionally narrowed for Phase 6a testing. It keeps
+  combat-event lifecycle and attribution lines (`CE`, `CER`, `CP`, `CPR`,
+  `CT`, `CTR`, `CEM`, `CEA`, `CEAE`, `CEAX`) and removes unrelated round/HP
+  header text plus older timeout/lifetime diagnostic lines from the Outcome
+  view. Other overlay views are not part of this cleanup.
+- Live expectations:
+  - normal hit: `CEM A`, `CEA R`, and usually `CEAE HP` or `CEAE DM`
+  - normal block: `CEM A`, `CEA R`, and `CEAE BL` or `CEAX CT`
+  - projectile hit/block: `CEM P`, `CEA R`, and HP/DM/BL as appropriate
+  - projectile parry: `CEM P`, `CEA R`, and `CEAX PA`
+  - throw success/contact: `CEM T`, `CEA R`, and `CEAX TH`
+  - projectile clash: `CEM P`, `CEA R`, and `CEAX CL`
+  - whiff, evaded projectile, and single projectile fly-out: no `CEM` / `CEA`
+    edge increment
+
 ### Phase 6b: Defense Result Emission
 
 Files:

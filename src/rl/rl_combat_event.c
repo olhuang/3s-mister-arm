@@ -557,6 +557,15 @@ static void RLCombatEvent_ResetEpisodeStats(void) {
     combat_event_stats.attribution_recorded_count = 0;
     combat_event_stats.attribution_failure_count = 0;
     combat_event_stats.attribution_ring_overwrite_count = 0;
+    combat_event_stats.attribution_edge_hit_stop_count = 0;
+    combat_event_stats.attribution_edge_contact_state_count = 0;
+    combat_event_stats.attribution_edge_damage_state_count = 0;
+    combat_event_stats.attribution_edge_hp_delta_count = 0;
+    combat_event_stats.attribution_edge_stun_delta_count = 0;
+    combat_event_stats.attribution_edge_block_reaction_count = 0;
+    combat_event_stats.attribution_edge_parry_count = 0;
+    combat_event_stats.attribution_edge_throw_caught_count = 0;
+    combat_event_stats.attribution_edge_projectile_clash_count = 0;
     combat_event_stats.episode_flush_count = 0;
     combat_event_stats.episode_switch_flush_count = 0;
 }
@@ -638,6 +647,41 @@ RLCombatEvent_DeriveAttributionConfidence(RLCombatContactMatchSource source,
     }
 }
 
+static void RLCombatEvent_IncrementAttributionEdgeCounter(RLCombatAttributionEdgeType edge_type) {
+    switch (edge_type) {
+    case RL_COMBAT_ATTRIBUTION_EDGE_HIT_STOP:
+        combat_event_stats.attribution_edge_hit_stop_count++;
+        break;
+    case RL_COMBAT_ATTRIBUTION_EDGE_CONTACT_STATE:
+        combat_event_stats.attribution_edge_contact_state_count++;
+        break;
+    case RL_COMBAT_ATTRIBUTION_EDGE_DAMAGE_STATE:
+        combat_event_stats.attribution_edge_damage_state_count++;
+        break;
+    case RL_COMBAT_ATTRIBUTION_EDGE_HP_DELTA:
+        combat_event_stats.attribution_edge_hp_delta_count++;
+        break;
+    case RL_COMBAT_ATTRIBUTION_EDGE_STUN_DELTA:
+        combat_event_stats.attribution_edge_stun_delta_count++;
+        break;
+    case RL_COMBAT_ATTRIBUTION_EDGE_BLOCK_REACTION:
+        combat_event_stats.attribution_edge_block_reaction_count++;
+        break;
+    case RL_COMBAT_ATTRIBUTION_EDGE_PARRY:
+        combat_event_stats.attribution_edge_parry_count++;
+        break;
+    case RL_COMBAT_ATTRIBUTION_EDGE_THROW_CAUGHT:
+        combat_event_stats.attribution_edge_throw_caught_count++;
+        break;
+    case RL_COMBAT_ATTRIBUTION_EDGE_PROJECTILE_CLASH:
+        combat_event_stats.attribution_edge_projectile_clash_count++;
+        break;
+    case RL_COMBAT_ATTRIBUTION_EDGE_NONE:
+    default:
+        break;
+    }
+}
+
 static void RLCombatEvent_RecordAttributionEvent(const RLCombatContactMatchUpdate* update,
                                                  RLCombatContactMatchSource source,
                                                  u64 source_event_id,
@@ -671,6 +715,7 @@ static void RLCombatEvent_RecordAttributionEvent(const RLCombatContactMatchUpdat
 
     attribution_ring.cursor = (attribution_ring.cursor + 1u) % RL_COMBAT_ATTRIBUTION_EVENT_RING_CAP;
     combat_event_stats.attribution_recorded_count++;
+    RLCombatEvent_IncrementAttributionEdgeCounter(edge_type);
     if (failure_reason != RL_COMBAT_ATTRIBUTION_FAILURE_NONE) {
         combat_event_stats.attribution_failure_count++;
     }

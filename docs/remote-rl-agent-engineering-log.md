@@ -2,6 +2,42 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-06: Combat Event Phase 6a-1B Edge Coverage Counters
+
+Milestone:
+- Combat event attribution Phase 6a-1B
+
+Files changed:
+- `src/rl/rl_combat_event.h`
+- `src/rl/rl_combat_event.c`
+- `src/rl/rl_session.h`
+- `src/rl/rl_session.c`
+- `src/rl/rl_observation.c`
+- `docs/plan-remote-rl-agent.md`
+- `docs/agent-memory/remote-rl-combat-event-attribution-plan.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Make the attribution ring observable by edge type before Phase 6b defense
+  result emission, while keeping transition schema, reward, replay, and trainer
+  behavior unchanged.
+
+Implementation notes:
+- Added per-episode attribution edge counters for HP delta, stun delta,
+  damage-state, block-reaction, parry, throw-caught, projectile clash, hit-stop,
+  and contact-state attribution edges.
+- Outcome overlay now shows `CEAE HP/ST/DM/BL` and `CEAX PA/TH/CL/HS/CT`.
+- Cleaned Outcome overlay for this validation pass: it no longer shows the
+  generic HP/round header, `AH/ACC/AWC`, timeout cause lines, or lifetime lines.
+  Outcome now focuses on combat-event lifecycle and attribution counters.
+
+Validation:
+- `git diff --check` passed.
+- `cc -std=c11 -Wall -Wextra -Isrc -Iinclude -c src/rl/rl_combat_event.c -o /tmp/rl_combat_event_phase6a1b_edges.o` passed.
+- `python3 -m py_compile tools/rl_probe_server.py tools/analyze_rl_transitions.py` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed, rebuilding
+  `rl_combat_event.c`, `rl_observation.c`, and `rl_session.c`.
+
 ## 2026-05-06: Combat Event Phase 6a-1A Attribution Ring Skeleton
 
 Milestone:

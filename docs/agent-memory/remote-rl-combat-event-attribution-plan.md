@@ -1916,8 +1916,9 @@ Phase 6a-0 implementation slice:
   damage edge.
 - Successful parry is a projectile target edge even without HP/stun/damage or
   block reaction. Phase 6a-0 detects it from the engine parry success counter
-  (`paring_ctr_vs[Play_Type][side]`) rising edge and allows it to produce
-  `CEM P` for projectile candidates.
+  (`paring_ctr_vs[Play_Type][side]`) rising edge, the parry bonus flag rising
+  edge, or the parry success routine (`R1=0`, `R2=31/32/33/34`) rising edge,
+  and allows it to produce `CEM P` for projectile candidates.
 - Source-family priority is projectile -> throw -> attack -> unknown. Projectile
   wins over the projectile parent attack so fireball hit/block/expire behavior
   remains owned by `CP` / `CPR`; throw wins over generic attack when caught or

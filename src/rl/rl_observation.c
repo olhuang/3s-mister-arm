@@ -31,6 +31,8 @@ static u8 prev_frame_airborne[2];
 static u8 prev_frame_hit_stop[2];
 static u8 prev_frame_contact_state[2];
 static u8 prev_frame_parry_count[2];
+static u8 prev_frame_parry_bonus[2];
+static u8 prev_frame_parry_state[2];
 static u8 prev_frame_throw_active[2];
 static u8 prev_frame_throw_caught[2];
 static u8 prev_frame_throw_escape[2];
@@ -112,6 +114,10 @@ static bool is_ordinary_jump_air_routine(u16 routine1, u16 routine2) {
 
 static bool is_throw_escape_routine(u16 routine1, u16 routine2) {
     return routine1 == 0 && (routine2 == 47 || routine2 == 48 || routine2 == 49 || routine2 == 50);
+}
+
+static bool is_parry_success_routine(u16 routine1, u16 routine2) {
+    return routine1 == 0 && (routine2 == 31 || routine2 == 32 || routine2 == 33 || routine2 == 34);
 }
 
 static u8 derive_jump_phase(const RLObservationV1* obs) {
@@ -519,6 +525,10 @@ void RLObservation_OnFrameEnd() {
         const u8 opp_contact_state = (u8)((obs.opp_guard_flag != 0) || obs.opp_hit_stop);
         const u8 self_parry_count = paring_ctr_vs[Play_Type][self];
         const u8 opp_parry_count = paring_ctr_vs[Play_Type][opp];
+        const u8 self_parry_bonus = (u8)(paring_bonus_r[self] != 0);
+        const u8 opp_parry_bonus = (u8)(paring_bonus_r[opp] != 0);
+        const u8 self_parry_state = (u8)is_parry_success_routine(obs.self_routine[1], obs.self_routine[2]);
+        const u8 opp_parry_state = (u8)is_parry_success_routine(obs.opp_routine[1], obs.opp_routine[2]);
 
         obs.delta_self_hp = self_hp_delta;
         obs.delta_opp_hp = opp_hp_delta;
@@ -554,8 +564,14 @@ void RLObservation_OnFrameEnd() {
         obs.opp_entered_contact_state = (u8)(!prev_frame_contact_state[opp] && opp_contact_state);
         obs.self_entered_damage_state = (u8)(self_hp_delta > 0 || self_stun_delta > 0);
         obs.opp_entered_damage_state = (u8)(opp_hp_delta > 0 || opp_stun_delta > 0);
-        obs.self_parry_started = (u8)(self_parry_count != 0 && self_parry_count != prev_frame_parry_count[self]);
-        obs.opp_parry_started = (u8)(opp_parry_count != 0 && opp_parry_count != prev_frame_parry_count[opp]);
+        obs.self_parry_started =
+            (u8)((self_parry_count != 0 && self_parry_count != prev_frame_parry_count[self]) ||
+                 (self_parry_bonus && !prev_frame_parry_bonus[self]) ||
+                 (self_parry_state && !prev_frame_parry_state[self]));
+        obs.opp_parry_started =
+            (u8)((opp_parry_count != 0 && opp_parry_count != prev_frame_parry_count[opp]) ||
+                 (opp_parry_bonus && !prev_frame_parry_bonus[opp]) ||
+                 (opp_parry_state && !prev_frame_parry_state[opp]));
         prev_frame_contact_state[self] = self_contact_state;
         prev_frame_contact_state[opp] = opp_contact_state;
     } else {
@@ -598,6 +614,10 @@ void RLObservation_OnFrameEnd() {
     prev_frame_hit_stop[opp] = obs.opp_hit_stop;
     prev_frame_parry_count[self] = paring_ctr_vs[Play_Type][self];
     prev_frame_parry_count[opp] = paring_ctr_vs[Play_Type][opp];
+    prev_frame_parry_bonus[self] = (u8)(paring_bonus_r[self] != 0);
+    prev_frame_parry_bonus[opp] = (u8)(paring_bonus_r[opp] != 0);
+    prev_frame_parry_state[self] = (u8)is_parry_success_routine(obs.self_routine[1], obs.self_routine[2]);
+    prev_frame_parry_state[opp] = (u8)is_parry_success_routine(obs.opp_routine[1], obs.opp_routine[2]);
     prev_frame_throw_active[self] = obs.self_throw_active;
     prev_frame_throw_active[opp] = obs.opp_throw_active;
     prev_frame_throw_caught[self] = obs.self_throw_caught;

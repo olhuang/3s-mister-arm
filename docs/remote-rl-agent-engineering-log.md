@@ -88,6 +88,10 @@ Refinement after first live CEM pass:
   rising edges from `paring_ctr_vs[Play_Type][side]`; projectile CEM treats that
   edge as a valid projectile target edge even without HP/stun/damage or block
   reaction.
+- Follow-up live report still showed `CEM P +0/+0` for parried opponent
+  fireballs, so parry evidence was widened. Observation now ORs together parry
+  counter rising, parry bonus rising, and parry success routine rising
+  (`R1=0`, `R2=31/32/33/34`) before feeding `target_parry_started` into CEM.
 
 ## 2026-05-05: Combat Event Phase 5C/5D Throw Live Refinement Prep
 

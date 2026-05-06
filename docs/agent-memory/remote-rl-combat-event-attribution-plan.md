@@ -1822,6 +1822,12 @@ Phase 5C implementation contract:
   `R2=47/48/49/50` throw-escape routines must finalize as `CTR U`, not `CTR T`.
   Normal forward throw and back throw success remain `CTR T` when caught-state
   evidence appears without contested evidence.
+- Phase 5D live validation accepted mutual throw/tech-like cases when they
+  finalize as `CTR U` without any `CTR T` false-positive. The side split is
+  allowed to be self-only, opponent-only, or both-sided (`+1/0`, `0/+1`, or
+  `+1/+1`) because the current tracker is conservative and depends on which
+  side's throw-start/escape evidence is observed in the confirm window. Full
+  bilateral attribution is deferred to Phase 6 contact/result matching.
 - Outcome overlay now shows:
   - `CT S/F/A` for throw started/finalized/active side splits
   - `CTR T/W/U` for throw success/whiff/unknown side splits

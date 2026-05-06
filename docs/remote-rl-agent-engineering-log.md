@@ -39,6 +39,12 @@ Update after live retest:
   evidence arriving after the old two-frame success confirm. The success
   confirm window is now widened to 8 frames so late nagenuke/escape evidence can
   win before `CTR T`.
+- Final Phase 5D live retest accepted mutual throw/tech-like behavior:
+  observed cases were `CT/CTR U 0/+1`, `+1/0`, and `+1/+1`, with no remaining
+  `CTR T` false-positive. The side split may be one-sided or both-sided because
+  the current tracker only credits the side whose start/escape evidence is
+  observed inside the confirm window; Phase 6 matching will handle complete
+  bilateral attribution.
 
 Milestone:
 - Milestone 6: Combat event attribution Phase 5C/5D
@@ -115,9 +121,10 @@ Validation:
   minizip `mktemp` linker warning remains.
 
 Follow-up:
-- Phase 5D live validation should re-check close forward throw, back throw,
-  out-of-range throw whiff, simultaneous throw/tech-like cases, opponent throw,
-  and pause preservation.
+- Phase 5D is live-accepted for close throw success, clean whiff, and
+  mutual/tech-like conservative unknown. Phase 6 should improve side-complete
+  attribution for mutual throws instead of treating the one-sided `CTR U` cases
+  as Phase 5 bugs.
 
 ## 2026-05-05: Combat Event Phase 5C Throw Event Ring Foundation
 

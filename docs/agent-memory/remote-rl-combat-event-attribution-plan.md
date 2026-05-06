@@ -1999,7 +1999,10 @@ Phase 6a-1B implementation slice:
 - Live expectations:
   - normal hit: `CEM A`, `CEA R`, and usually `CEAE HP` or `CEAE DM`
   - normal block: `CEM A`, `CEA R`, and `CEAE BL` or `CEAX CT`
-  - projectile hit/block: `CEM P`, `CEA R`, and HP/DM/BL as appropriate
+  - projectile hit/block: `CEM P`, `CEA R`, and HP/DM/BL as appropriate.
+    Blocked projectile chip can legitimately appear as `CEAE HP` with
+    `CEAE BL +0`; Phase 6b will interpret HP delta plus guard/block context as
+    blocked chip instead of treating it as a clean hit.
   - projectile parry: `CEM P`, `CEA R`, and `CEAX PA`
   - throw success/contact: `CEM T`, `CEA R`, and `CEAX TH`
   - projectile clash: `CEM P`, `CEA R`, and `CEAX CL`

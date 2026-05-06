@@ -2649,6 +2649,7 @@ Tasks:
   - [x] Phase 6a-1A attribution ring skeleton: each CEM record now writes a debug-only attribution event with source family, source event id when available, target side, edge type, conservative confidence, and failure reason; Outcome adds `CEA R/F/O` counters for ring records, failures, and overwrites without changing transition schema, rewards, replay, or trainer behavior.
   - [x] Phase 6a-1A live smoke: whiffs and jumped/evaded fireballs left `CEM` / `CEA` unchanged, and broad live testing did not reveal obvious `CEA` / `CEM` mismatches.
   - [x] Phase 6a-1B attribution edge coverage: Outcome now shows `CEAE HP/ST/DM/BL` and `CEAX PA/TH/CL/HS/CT` counters, and the Outcome view is narrowed to combat-event lifecycle/attribution lines only for live testing.
+  - [x] Phase 6a-1B blocked projectile note: live blocked fireball reached `CEM P +1` / `CEA R +1` with `CEAE HP +1` and `BL +0`; this is accepted as chip HP attribution, with blocked-chip semantics deferred to Phase 6b defense result context.
 - [ ] Combat event attribution Phase 6b: implement defense result emission with intended action, actual guard state at contact, target_state, wakeup context, block_possible, confidence, and failure reasons
 - [ ] Combat event attribution Phase 6c: implement punish detection after finalized unsafe/whiff/interrupted attack events with high-confidence gating
 - [ ] Combat event attribution Phase 7: roll out transition schema v4 compact summaries plus `combat_event_schema_version=1` event journal export inside the same transition batch/envelope

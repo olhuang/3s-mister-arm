@@ -37,6 +37,11 @@ Validation:
 - `python3 -m py_compile tools/rl_probe_server.py tools/analyze_rl_transitions.py` passed.
 - `tools/mister/build-game.sh --flavor telemetry` passed, rebuilding
   `rl_combat_event.c`, `rl_observation.c`, and `rl_session.c`.
+- Live note: blocked fireball produced `CEM P +1`, `CEA R +1`, and `CEAE HP
+  +1` with `CEAE BL +0`. This is accepted for Phase 6a-1B because blocked
+  projectile chip can surface as HP delta as the primary attribution edge.
+  Phase 6b must combine HP delta with guard/block context to emit blocked-chip
+  defense results.
 
 ## 2026-05-06: Combat Event Phase 6a-1A Attribution Ring Skeleton
 

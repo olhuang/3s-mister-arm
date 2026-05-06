@@ -74,6 +74,11 @@ Refinement after first live CEM pass:
   ring, not raw `routine/current_attack` state. Throw events now remember whether
   they already produced a contact match, so the caught edge and delayed
   HP/stun/damage from the same throw do not both increment `CEM T`.
+- Third live report still showed `CEM A+1` for SA1 fireball and projectile
+  clashes. Fix: the CEM attack fallback now excludes active attack events that
+  are `projectile_like` or have already seen a projectile. Projectile parent
+  attacks should remain lifecycle context for `CP` / `CPR`, not fallback strike
+  sources.
 
 ## 2026-05-05: Combat Event Phase 5C/5D Throw Live Refinement Prep
 

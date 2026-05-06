@@ -1918,6 +1918,9 @@ Phase 6a-0 implementation slice:
   `routine/current_attack` state. Raw attack state is too broad for projectile
   supers, projectile clashes, and parent fireball routines, where it can leak
   false `CEM A` after the projectile event is already the true source.
+- CEM attack candidates must also exclude active attack events that are
+  `projectile_like` or have already seen a projectile. Projectile parent
+  attacks are lifecycle context for `CP` / `CPR`, not fallback strike sources.
 - Throw contact matching is one-shot per throw event. The first caught/contact
   edge marks the throw event as already matched, so delayed HP/stun/damage
   evidence from the same throw does not create a second `CEM T`.

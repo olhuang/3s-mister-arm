@@ -115,7 +115,8 @@ static bool RLCombatEvent_HasAttackCandidateForSide(u64 run_id, u32 episode_id, 
     for (u32 i = 0; i < RL_COMBAT_ATTACK_EVENT_RING_CAP; i++) {
         const RLCombatAttackEvent* event = &ring->events[i];
         if (event->status == RL_COMBAT_ATTACK_EVENT_ACTIVE && event->run_id == run_id &&
-            event->episode_id == episode_id && event->side == side) {
+            event->episode_id == episode_id && event->side == side && !event->projectile_like &&
+            !event->saw_projectile) {
             return true;
         }
     }

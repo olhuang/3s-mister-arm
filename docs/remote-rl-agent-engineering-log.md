@@ -33,6 +33,12 @@ Update after live retest:
   after non-whiff throw results. Opposing engine throw-start edges now count as
   contested evidence, and `R2=2` completed-throw support is no longer used as a
   start source.
+- Fourth live retest reduced mutual-throw cases to three paths: one still
+  emitted self-side `CTR T`, one correctly emitted both-side `CTR U`, and one
+  emitted self-side `CTR U`. Root cause is likely delayed escape/opposing
+  evidence arriving after the old two-frame success confirm. The success
+  confirm window is now widened to 8 frames so late nagenuke/escape evidence can
+  win before `CTR T`.
 
 Milestone:
 - Milestone 6: Combat event attribution Phase 5C/5D
@@ -72,8 +78,8 @@ Implementation notes:
 - Throw finalization treats opposing throw evidence and throw-escape routines
   as contested. Contested caught evidence without real damage/stun evidence is
   finalized as `CTR U`, not `CTR T`; clean non-contested forward/back throw
-  success still uses target caught evidence and remains `CTR T` after the short
-  success confirm window.
+  success still uses target caught evidence and remains `CTR T` after the
+  widened success confirm window.
 
 Validation:
 - `git diff --check` passed.
@@ -98,6 +104,12 @@ Validation:
 - After the start-source split/recent-result guard, `git diff --check`,
   `python3 -m py_compile tools/rl_probe_server.py tools/analyze_rl_transitions.py`,
   `cc -std=c11 -Wall -Wextra -Isrc -Iinclude -c src/rl/rl_combat_event.c -o /tmp/rl_combat_event_throw_refine4.o`,
+  and `tools/mister/build-game.sh --flavor telemetry` passed. The telemetry
+  build rebuilt `rl_combat_event.c` and `rl_session.c`; the existing third-party
+  minizip `mktemp` linker warning remains.
+- After widening throw success confirm to 8 frames, `git diff --check`,
+  `python3 -m py_compile tools/rl_probe_server.py tools/analyze_rl_transitions.py`,
+  `cc -std=c11 -Wall -Wextra -Isrc -Iinclude -c src/rl/rl_combat_event.c -o /tmp/rl_combat_event_throw_confirm8.o`,
   and `tools/mister/build-game.sh --flavor telemetry` passed. The telemetry
   build rebuilt `rl_combat_event.c` and `rl_session.c`; the existing third-party
   minizip `mktemp` linker warning remains.

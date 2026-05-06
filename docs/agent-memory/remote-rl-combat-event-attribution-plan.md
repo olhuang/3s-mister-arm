@@ -1806,9 +1806,9 @@ Phase 5C implementation contract:
   observed (`opp_throw_caught*` for self owner, `self_throw_caught*` for
   opponent owner) and there is no simultaneous/escape evidence that makes the
   interaction contested. Success waits a short confirm window
-  (`RL_COMBAT_THROW_SUCCESS_CONFIRM_FRAMES`) unless clear damage/stun evidence
-  already confirms the throw; this gives tech/escape evidence a chance to win
-  before `CTR T` is emitted.
+  (`RL_COMBAT_THROW_SUCCESS_CONFIRM_FRAMES`, currently 8 frames) unless clear
+  damage/stun evidence already confirms the throw; this gives delayed
+  tech/escape evidence a chance to win before `CTR T` is emitted.
 - `CTR W` whiff is emitted only when owner throw-active ends after the minimum
   whiff window with no target caught evidence, no target contact/damage
   evidence, no HP/stun delta, no actor interruption, and no opposing

@@ -148,6 +148,35 @@ static bool RLCombatEvent_HasProjectileCandidateForSide(u64 run_id,
     return false;
 }
 
+static bool RLCombatEvent_HasMutualProjectileExpireEdge(u64 run_id,
+                                                        u32 episode_id,
+                                                        RLCombatEventSide side,
+                                                        u32 frame_id) {
+    bool side_expired = false;
+    bool opposing_expired = false;
+
+    if (run_id == 0 || episode_id == 0 || side == RL_COMBAT_EVENT_SIDE_NONE) {
+        return false;
+    }
+
+    for (u32 i = 0; i < RL_COMBAT_PROJECTILE_EVENT_RING_CAP; i++) {
+        const RLCombatProjectileEvent* event = &projectile_ring.events[i];
+        if (event->status != RL_COMBAT_PROJECTILE_EVENT_FINALIZED || event->run_id != run_id ||
+            event->episode_id != episode_id || event->end_frame != frame_id ||
+            event->result != RL_COMBAT_PROJECTILE_RESULT_EXPIRED ||
+            event->finalize_reason != RL_COMBAT_PROJECTILE_FINALIZE_DISAPPEARED) {
+            continue;
+        }
+        if (event->owner_side == side) {
+            side_expired = true;
+        } else if (event->owner_side != RL_COMBAT_EVENT_SIDE_NONE) {
+            opposing_expired = true;
+        }
+    }
+
+    return side_expired && opposing_expired;
+}
+
 static bool RLCombatEvent_HasThrowCandidateForSide(u64 run_id,
                                                    u32 episode_id,
                                                    RLCombatEventSide side,
@@ -293,7 +322,8 @@ static void RLCombatEvent_IncrementSideCounter(RLCombatEventSide side, u32* self
 static bool RLCombatEvent_ContactMatchHasTargetEdge(const RLCombatContactMatchUpdate* update,
                                                     bool projectile_candidate,
                                                     bool throw_candidate,
-                                                    bool attack_candidate) {
+                                                    bool attack_candidate,
+                                                    bool projectile_clash_edge) {
     const bool strong_edge =
         update != NULL &&
         (update->target_entered_damage_state || update->target_hp_delta || update->target_stun_delta ||
@@ -302,6 +332,9 @@ static bool RLCombatEvent_ContactMatchHasTargetEdge(const RLCombatContactMatchUp
         update != NULL && (update->target_entered_hit_stop || update->target_entered_contact_state);
 
     if (strong_edge) {
+        return true;
+    }
+    if (projectile_candidate && projectile_clash_edge) {
         return true;
     }
     if (!contact_edge) {
@@ -1471,6 +1504,7 @@ u32 RLCombatEvent_UpdateThrows(const RLCombatThrowEventUpdate* update) {
 
 bool RLCombatEvent_RecordContactMatch(const RLCombatContactMatchUpdate* update) {
     bool projectile_candidate = false;
+    bool projectile_clash_edge = false;
     bool throw_candidate = false;
     bool attack_candidate = false;
     RLCombatContactMatchSource source = RL_COMBAT_CONTACT_MATCH_SOURCE_UNKNOWN;
@@ -1490,6 +1524,10 @@ bool RLCombatEvent_RecordContactMatch(const RLCombatContactMatchUpdate* update) 
                                                      update->episode_id,
                                                      update->source_side,
                                                      update->frame_id));
+    projectile_clash_edge = RLCombatEvent_HasMutualProjectileExpireEdge(update->run_id,
+                                                                        update->episode_id,
+                                                                        update->source_side,
+                                                                        update->frame_id);
     throw_candidate = (update->throw_candidate ||
                        RLCombatEvent_HasThrowCandidateForSide(update->run_id,
                                                              update->episode_id,
@@ -1502,7 +1540,8 @@ bool RLCombatEvent_RecordContactMatch(const RLCombatContactMatchUpdate* update) 
     if (!RLCombatEvent_ContactMatchHasTargetEdge(update,
                                                  projectile_candidate,
                                                  throw_candidate,
-                                                 attack_candidate)) {
+                                                 attack_candidate,
+                                                 projectile_clash_edge)) {
         return false;
     }
 

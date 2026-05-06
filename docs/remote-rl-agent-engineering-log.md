@@ -92,6 +92,13 @@ Refinement after first live CEM pass:
   fireballs, so parry evidence was widened. Observation now ORs together parry
   counter rising, parry bonus rising, and parry success routine rising
   (`R1=0`, `R2=31/32/33/34`) before feeding `target_parry_started` into CEM.
+- Next live report showed fireball parry fixed, but fireball-vs-fireball
+  collision produced `CEM P +0/+0` even when projectile results finalized as
+  `CPR X`. Root cause: CEM only accepted character target edges, while a
+  projectile clash can consume both projectile objects without HP/stun/contact
+  on either player. Fix: CEM now treats same-frame mutual projectile expiration
+  (`CPR X` / `DISAPPEARED`) as a projectile clash edge. Single-projectile
+  expiration still remains `CPR X` only and does not produce CEM.
 
 ## 2026-05-05: Combat Event Phase 5C/5D Throw Live Refinement Prep
 

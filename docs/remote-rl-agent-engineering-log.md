@@ -79,6 +79,10 @@ Refinement after first live CEM pass:
   are `projectile_like` or have already seen a projectile. Projectile parent
   attacks should remain lifecycle context for `CP` / `CPR`, not fallback strike
   sources.
+- Fourth live report showed a failed jump over an opponent fireball could
+  produce `CEM P +0/+2`. Fix: projectile-only soft contact no longer counts
+  unless the target is in a block-reaction routine; projectile hits should wait
+  for HP/stun/damage evidence, avoiding a separate early hit-stop/contact count.
 
 ## 2026-05-05: Combat Event Phase 5C/5D Throw Live Refinement Prep
 

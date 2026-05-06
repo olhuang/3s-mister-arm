@@ -1909,6 +1909,11 @@ Phase 6a-0 implementation slice:
   block reaction, the attacker's own hit-stop, side swaps, and
   projectile-contact splash from creating repeated or reverse-side `CEM U`
   noise.
+- Projectile-only soft contact is stricter than strike contact: if a projectile
+  candidate has no HP/stun/damage edge yet, the soft contact only counts when a
+  block-reaction routine is present. This prevents a failed jump over a
+  projectile from counting both the early hit-stop/contact edge and the later
+  damage edge.
 - Source-family priority is projectile -> throw -> attack -> unknown. Projectile
   wins over the projectile parent attack so fireball hit/block/expire behavior
   remains owned by `CP` / `CPR`; throw wins over generic attack when caught or

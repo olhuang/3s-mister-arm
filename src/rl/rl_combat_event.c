@@ -290,7 +290,10 @@ static void RLCombatEvent_IncrementSideCounter(RLCombatEventSide side, u32* self
     }
 }
 
-static bool RLCombatEvent_ContactMatchHasTargetEdge(const RLCombatContactMatchUpdate* update, bool has_candidate) {
+static bool RLCombatEvent_ContactMatchHasTargetEdge(const RLCombatContactMatchUpdate* update,
+                                                    bool projectile_candidate,
+                                                    bool throw_candidate,
+                                                    bool attack_candidate) {
     const bool strong_edge =
         update != NULL &&
         (update->target_entered_damage_state || update->target_hp_delta || update->target_stun_delta ||
@@ -298,7 +301,16 @@ static bool RLCombatEvent_ContactMatchHasTargetEdge(const RLCombatContactMatchUp
     const bool contact_edge =
         update != NULL && (update->target_entered_hit_stop || update->target_entered_contact_state);
 
-    return strong_edge || (contact_edge && has_candidate);
+    if (strong_edge) {
+        return true;
+    }
+    if (!contact_edge) {
+        return false;
+    }
+    if (projectile_candidate && !throw_candidate && !attack_candidate) {
+        return update->target_block_reaction != 0;
+    }
+    return projectile_candidate || throw_candidate || attack_candidate;
 }
 
 static void RLCombatEvent_IncrementContactMatchCounter(RLCombatEventSide side,
@@ -1488,7 +1500,9 @@ bool RLCombatEvent_RecordContactMatch(const RLCombatContactMatchUpdate* update) 
          RLCombatEvent_HasAttackCandidateForSide(update->run_id, update->episode_id, update->source_side));
 
     if (!RLCombatEvent_ContactMatchHasTargetEdge(update,
-                                                 projectile_candidate || throw_candidate || attack_candidate)) {
+                                                 projectile_candidate,
+                                                 throw_candidate,
+                                                 attack_candidate)) {
         return false;
     }
 

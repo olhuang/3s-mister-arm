@@ -53,6 +53,14 @@ def combat_event_key(row: dict[str, Any]) -> tuple[Any, Any, Any, Any]:
     return row.get("run_id"), row.get("episode_id"), row.get("event_kind"), row.get("event_id")
 
 
+def event_lookup_key(row: dict[str, Any]) -> tuple[Any, Any]:
+    return row.get("run_id"), row.get("event_id")
+
+
+def source_lookup_key(row: dict[str, Any]) -> tuple[Any, Any]:
+    return row.get("run_id"), row.get("source_event_id")
+
+
 def side_sort_key(side: str) -> tuple[int, str]:
     if side == "self":
         return 0, side
@@ -83,6 +91,14 @@ def attack_bucket(row: dict[str, Any]) -> str:
     if result == "unknown":
         return "true_unknown_other"
     return result
+
+
+def as_int(value: object) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    return 0
 
 
 def projectile_result_bucket(projectile: dict[str, Any]) -> str:
@@ -120,6 +136,77 @@ def summarize_side_rows(
         for field in counter_fields:
             side_summary[f"{field}_counts"] = dict(collections.Counter(str(row.get(field)) for row in side_rows))
         summary[side] = side_summary
+    return summary
+
+
+def attribution_unknown_bucket(
+    row: dict[str, Any],
+    events_by_id: dict[tuple[Any, Any], dict[str, Any]],
+) -> str:
+    if str(row.get("defense_result")) != "unknown":
+        return str(row.get("defense_result"))
+
+    failure_reason = str(row.get("failure_reason", "none"))
+    if failure_reason != "none":
+        return f"unknown_failure_{failure_reason}"
+
+    source_event_id = row.get("source_event_id")
+    if source_event_id in (None, 0):
+        return "unknown_missing_source_ref"
+
+    source = events_by_id.get(source_lookup_key(row))
+    if source is None:
+        return "unknown_missing_source_ref"
+
+    if as_int(row.get("target_hp_delta")) > 0 or as_int(row.get("target_stun_delta")) > 0:
+        return "unknown_has_damage_delta"
+    if as_int(row.get("target_block_reaction")) > 0:
+        return "unknown_has_block_reaction"
+    if as_int(row.get("target_parry_started")) > 0:
+        return "unknown_has_parry"
+    if as_int(row.get("target_throw_caught")) > 0:
+        return "unknown_has_throw_caught"
+
+    source_kind = str(source.get("event_kind", "unknown"))
+    source_result = str(source.get("result", "unknown"))
+    source_reason = str(source.get("finalize_reason", "unknown"))
+    if source_kind == "attack":
+        if source_reason == "superseded_by_new_start":
+            return "unknown_source_rollover"
+        if source_reason == "basic_unknown_timeout":
+            return "unknown_source_timeout"
+        if source_reason == "episode_flush":
+            return "unknown_source_episode_flush"
+        if source_result == "whiff":
+            return "unknown_source_whiff_later"
+
+    edge_type = str(row.get("edge_type", "unknown"))
+    if edge_type == "hit_stop":
+        return "unknown_hitstop_no_damage"
+    if as_int(row.get("target_airborne")) > 0 or str(row.get("target_state")) == "air":
+        return "unknown_target_air"
+    if as_int(row.get("target_attack_state_active")) > 0 or str(row.get("target_state")) == "attacking":
+        return "unknown_target_attacking"
+    if edge_type == "contact_state":
+        return "unknown_contact_no_damage"
+    return "unknown_other"
+
+
+def summarize_attribution_unknown_side_rows(
+    rows: list[dict[str, Any]],
+    side_field: str,
+    events_by_id: dict[tuple[Any, Any], dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    summary: dict[str, dict[str, Any]] = {}
+    sides = sorted({str(row.get(side_field, "unknown")) for row in rows}, key=side_sort_key)
+    for side in sides:
+        side_rows = [row for row in rows if str(row.get(side_field, "unknown")) == side]
+        summary[side] = {
+            "rows": len(side_rows),
+            "bucket_counts": dict(collections.Counter(attribution_unknown_bucket(row, events_by_id) for row in side_rows)),
+            "edge_type_counts": dict(collections.Counter(str(row.get("edge_type")) for row in side_rows)),
+            "target_state_counts": dict(collections.Counter(str(row.get("target_state")) for row in side_rows)),
+        }
     return summary
 
 
@@ -168,6 +255,7 @@ def make_summary(event_rows: list[dict[str, Any]], transition_rows: list[dict[st
     by_kind: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
     for row in event_rows:
         by_kind[str(row.get("event_kind"))].append(row)
+    events_by_id = {event_lookup_key(row): row for row in event_rows}
 
     attacks = by_kind.get("attack", [])
     projectile_rows = by_kind.get("projectile", [])
@@ -249,6 +337,30 @@ def make_summary(event_rows: list[dict[str, Any]], transition_rows: list[dict[st
     punish_rows = by_kind.get("punish", [])
     throw_rows = by_kind.get("throw", [])
     attribution_rows = by_kind.get("attribution", [])
+    attribution_unknown_rows = [
+        row for row in attribution_rows if str(row.get("defense_result")) == "unknown"
+    ]
+    attribution_unknown_examples: list[dict[str, Any]] = []
+    for row in attribution_unknown_rows[:12]:
+        source = events_by_id.get(source_lookup_key(row), {})
+        attribution_unknown_examples.append(
+            {
+                "event_id": row.get("event_id"),
+                "episode_id": row.get("episode_id"),
+                "source_side": row.get("source_side"),
+                "target_side": row.get("target_side"),
+                "bucket": attribution_unknown_bucket(row, events_by_id),
+                "edge_type": row.get("edge_type"),
+                "source_event_id": row.get("source_event_id"),
+                "source_kind": source.get("event_kind"),
+                "source_result": source.get("result"),
+                "source_finalize_reason": source.get("finalize_reason"),
+                "target_state": row.get("target_state"),
+                "actual_guard_state": row.get("actual_guard_state"),
+                "target_attack_state_active": row.get("target_attack_state_active"),
+                "target_airborne": row.get("target_airborne"),
+            }
+        )
     missing_punished_refs = [
         row for row in punish_rows if row.get("punished_attack_event_id") not in event_id_set
     ]
@@ -436,6 +548,22 @@ def make_summary(event_rows: list[dict[str, Any]], transition_rows: list[dict[st
             "confidence_counts": dict(collections.Counter(str(row.get("confidence")) for row in attribution_rows)),
             "failure_reason_counts": dict(collections.Counter(str(row.get("failure_reason")) for row in attribution_rows)),
             "defense_result_counts": dict(collections.Counter(str(row.get("defense_result")) for row in attribution_rows)),
+            "defense_unknown": {
+                "rows": len(attribution_unknown_rows),
+                "bucket_counts": dict(
+                    collections.Counter(attribution_unknown_bucket(row, events_by_id) for row in attribution_unknown_rows)
+                ),
+                "edge_type_counts": dict(collections.Counter(str(row.get("edge_type")) for row in attribution_unknown_rows)),
+                "target_state_counts": dict(collections.Counter(str(row.get("target_state")) for row in attribution_unknown_rows)),
+                "source_family_counts": dict(collections.Counter(str(row.get("source_family")) for row in attribution_unknown_rows)),
+                "by_source_side": summarize_attribution_unknown_side_rows(
+                    attribution_unknown_rows, "source_side", events_by_id
+                ),
+                "by_target_side": summarize_attribution_unknown_side_rows(
+                    attribution_unknown_rows, "target_side", events_by_id
+                ),
+                "examples": attribution_unknown_examples,
+            },
             "by_source_side": summarize_side_rows(
                 attribution_rows,
                 "source_side",
@@ -483,6 +611,30 @@ def print_side_summary(title: str, summary: dict[str, dict[str, Any]]) -> None:
             if key == "rows":
                 continue
             print(f"      {key}={format_counter(collections.Counter(value))}")
+
+
+def print_attribution_unknown_summary(summary: dict[str, Any], examples: int) -> None:
+    if not summary or summary["rows"] == 0:
+        return
+    print("  defense_unknown")
+    print(f"    rows={summary['rows']}")
+    print(f"    bucket_counts={format_counter(collections.Counter(summary['bucket_counts']))}")
+    print(f"    edge_type_counts={format_counter(collections.Counter(summary['edge_type_counts']))}")
+    print(f"    target_state_counts={format_counter(collections.Counter(summary['target_state_counts']))}")
+    print(f"    source_family_counts={format_counter(collections.Counter(summary['source_family_counts']))}")
+    print_side_summary("defense_unknown_by_source_side", summary["by_source_side"])
+    print_side_summary("defense_unknown_by_target_side", summary["by_target_side"])
+    for row in summary["examples"][:examples]:
+        print(
+            "    defense_unknown_example "
+            f"event_id={row['event_id']} ep={row['episode_id']} "
+            f"source={row['source_side']} target={row['target_side']} bucket={row['bucket']} "
+            f"edge={row['edge_type']} source_event_id={row['source_event_id']} "
+            f"source_kind={row['source_kind']} source_result={row['source_result']} "
+            f"source_reason={row['source_finalize_reason']} target_state={row['target_state']} "
+            f"guard={row['actual_guard_state']} target_attack={row['target_attack_state_active']} "
+            f"target_air={row['target_airborne']}"
+        )
 
 
 def print_text_report(summary: dict[str, Any], examples: int) -> None:
@@ -571,10 +723,13 @@ def print_text_report(summary: dict[str, Any], examples: int) -> None:
                 continue
             if key.startswith("by_"):
                 continue
+            if key == "defense_unknown":
+                continue
             print(f"  {key}={format_counter(collections.Counter(value))}")
         if section_name == "throw":
             print_side_summary("by_owner_side", section["by_owner_side"])
         elif section_name == "attribution":
+            print_attribution_unknown_summary(section["defense_unknown"], examples)
             print_side_summary("by_source_side", section["by_source_side"])
             print_side_summary("by_target_side", section["by_target_side"])
         elif section_name == "punish":

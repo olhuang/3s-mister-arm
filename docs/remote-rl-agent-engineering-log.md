@@ -2,6 +2,39 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-06: Combat Event Phase 8A-5 Defense Unknown Sub-Buckets
+
+Milestone:
+- Combat event attribution Phase 8A-5
+
+Files changed:
+- `tools/analyze_rl_combat_events.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/agent-memory/remote-rl-combat-event-attribution-plan.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Make `defense_result=unknown` attribution rows explain why they stayed
+  unknown before any Phase 9 reward/trainer adoption.
+
+Implementation notes:
+- Added analyzer-side attribution unknown bucketing with source-event joins.
+- The report now prints `defense_unknown` totals, bucket counts, edge type
+  counts, target state counts, source-family counts, source/target side splits,
+  and examples with source event lifecycle information.
+- Buckets are conservative and derived only in the analyzer. C journal rows,
+  transition schema, rewards, replay, and trainer features are unchanged.
+
+Validation:
+- `python3 -m py_compile tools/analyze_rl_combat_events.py` passed.
+- `python3 tools/analyze_rl_combat_events.py logs/phase7a-event-journal-live-events.ndjson --transition-log logs/phase7a-event-journal-live-transitions.ndjson --examples 3` passed.
+- `python3 tools/analyze_rl_combat_events.py logs/phase7a-event-journal-live-events.ndjson --transition-log logs/phase7a-event-journal-live-transitions.ndjson --json-output /tmp/rl-combat-event-summary.json --examples 1` passed.
+- `python3 -m json.tool /tmp/rl-combat-event-summary.json >/tmp/rl-combat-event-summary.pretty.json` passed.
+- The latest live log's `94` unknown defense attributions split into
+  `unknown_source_rollover=41`, `unknown_source_timeout=30`,
+  `unknown_source_whiff_later=20`, and `unknown_source_episode_flush=3`.
+- `git diff --check` passed.
+
 ## 2026-05-06: Combat Event Phase 8A-4 Probe/Trainer Safety Hardening
 
 Milestone:

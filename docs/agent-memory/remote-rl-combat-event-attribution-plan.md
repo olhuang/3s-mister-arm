@@ -2352,6 +2352,13 @@ Work:
   addition to Phase 0+1 evidence fields. Combat event journal rows remain
   analysis/debug data until an explicit Phase 9 learner adoption gate promotes
   selected high-confidence labels.
+- Attribution reports must sub-bucket `defense_result=unknown` before any
+  trainer reward adoption. The first analyzer buckets are source-lifecycle
+  oriented (`unknown_source_rollover`, `unknown_source_timeout`,
+  `unknown_source_whiff_later`, `unknown_source_episode_flush`) with fallback
+  target/evidence buckets for future logs (`unknown_hitstop_no_damage`,
+  `unknown_contact_no_damage`, `unknown_target_air`,
+  `unknown_target_attacking`, and related evidence-conflict buckets).
 - add fight replay summaries:
   - timeline
   - per-side damage sources

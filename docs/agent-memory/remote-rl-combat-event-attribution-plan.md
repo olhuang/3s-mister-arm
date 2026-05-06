@@ -2162,6 +2162,102 @@ Phase 6c-1 implementation slice:
   post-finalization hit is still a punish. Finalized interrupted candidates may
   still use the short window.
 
+Phase 6c-2 frozen debug overlay contract:
+
+This is the live-validated Outcome overlay contract to carry into Phase 7 event
+journal export. It is not a learner feature contract yet.
+
+General rules:
+
+- All `self/opp` pairs are side splits. For source counters, `self` means the
+  agent/self side caused the event. For target/defense counters, `self` means
+  the self side received the event.
+- These counters are episode-local unless explicitly labeled lifetime in a
+  different overlay view.
+- Outcome overlay is a debugging surface for validating event semantics. It is
+  allowed to be conservative and miss uncertain cases; it must not count
+  neutral hits as punish or force ambiguous attribution.
+
+Attack lifecycle:
+
+- `CE S/F/A self/opp`: attack events started, finalized, active.
+- `CER W/I/U/F/R/D self/opp`: attack result/finalize summaries for whiff,
+  interrupted, unknown, flush, rollover, and dropped start.
+- Accepted live behavior: simultaneous whiffs can increment both sides; quick
+  repeated LP chains may be one logical event if the engine never exposes a new
+  start edge.
+
+Projectile lifecycle:
+
+- `CP S/F/A self/opp`: projectile events started, finalized, active.
+- `CPR H/B/X/U self/opp`: projectile hit, blocked, expired/clashed, unknown.
+- Accepted live behavior:
+  - normal fireball spawn increments `CP S`
+  - hit/block/flyout become `CPR H/B/X`
+  - fireball clash is `CPR X +1/+1`
+  - projectile parry may remain conservative `CPR U` while attribution/defense
+    context records parry elsewhere
+  - projectile parent attacks are not allowed to pollute attack unknown/rollover
+    counters
+
+Throw lifecycle:
+
+- `CT S/F/A self/opp`: throw events started, finalized, active.
+- `CTR T/W/U self/opp`: throw success, whiff, unknown/tech-like contested result.
+- Accepted live behavior:
+  - ordinary and back throw success both count as `CTR T`
+  - clean throw whiff counts as `CTR W` when engine evidence exposes the whiff
+  - simultaneous/tech-like throw contest stays conservative `CTR U`
+
+Attribution source and edge coverage:
+
+- `CEM A/P/T/U self/opp`: contact/effect matched to attack, projectile, throw,
+  or unknown source, split by source side.
+- `CEA R/F/O`: attribution records, attribution failures, ring overwrites.
+- `CEAE HP/ST/DM/BL`: edge type counters for HP delta, stun delta,
+  damage-state, and block-reaction.
+- `CEAX PA/TH/CL/HS/CT`: parry, throw-caught, projectile clash, hit-stop, and
+  contact-state edge types.
+- Accepted live behavior:
+  - whiffs and jumped/evaded fireballs do not increment `CEM` / `CEA`
+  - fireball clash can produce `CEM P +1/+1` and `CEAX CL+2`
+  - blocked projectile chip may surface as `CEAE HP` rather than `BL`; Phase 6b
+    context interprets that as chip when block evidence is present
+
+Defense result and context:
+
+- `CDR H/B/C/P self/opp`: target-side defense result for clean hit, blocked
+  contact, blocked chip, and parry.
+- `CDRX T/E/U self/opp`: thrown, evaded/negated, unknown defense result.
+- `CDC G/BR/PA/TC self/opp`: raw target context evidence for guard active,
+  block reaction, parry edge, and throw-caught edge.
+- Accepted live behavior:
+  - ordinary hit and fireball hit become `CDR H`
+  - fireball block/chip becomes `CDR C`
+  - parry becomes `CDR P`
+  - throw success becomes `CDRX T`
+  - projectile clash becomes `CDRX E`
+  - `CDC G` is raw guard context only; it can be noisy and must not by itself
+    classify a clean hit as chip/block
+
+Punish candidates:
+
+- `CPN R/W/I self/opp`: punish candidate total, whiff-reason total, and
+  interrupted-reason total, split by punisher side.
+- `CPNX A/P/T self/opp`: punisher source family attack, projectile, throw.
+- `CPNC F/A self/opp`: punish candidate path, finalized-window vs active attack
+  fallback.
+- `CPNR FW/FI/AW/AI self/opp`: path plus reason: finalized whiff, finalized
+  interrupted, active whiff, active interrupted.
+- Accepted live behavior:
+  - immediate DP/large-special whiff punish is expected under `CPNC A` and
+    usually `CPNR AW` or `AI`
+  - fully recovered neutral hits must not increment `CPN` / `CPNC` / `CPNR`
+  - finalized whiff candidates (`FW`) are disabled until action-specific
+    recovery windows can prove post-finalization punish timing
+  - fireball-delayed whiff punish may be missed under this conservative
+    contract; that is accepted until later Phase 6c recovery-window work
+
 ### Phase 7: Transition Schema v4 And Event Journal Export
 
 Files:

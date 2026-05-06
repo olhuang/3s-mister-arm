@@ -2,6 +2,35 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-06: Combat Event Phase 6c-2 Frozen Debug Overlay Contract
+
+Milestone:
+- Combat event attribution Phase 6c-2
+
+Files changed:
+- `docs/agent-memory/remote-rl-combat-event-attribution-plan.md`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Freeze the live-validated Outcome overlay semantics before Phase 7 starts
+  exporting formal combat event journal rows.
+
+Implementation notes:
+- Documented the debug overlay contract for attack, projectile, throw,
+  attribution, defense, and punish counters:
+  `CE`/`CER`, `CP`/`CPR`, `CT`/`CTR`, `CEM`/`CEA`/`CEAE`/`CEAX`,
+  `CDR`/`CDRX`/`CDC`, and `CPN`/`CPNX`/`CPNC`/`CPNR`.
+- Recorded accepted live behavior from the MiSTer overlay tests, including
+  simultaneous whiffs, projectile clash, projectile parry, blocked projectile
+  chip context, throw contest handling, active-attack punish fallback, and
+  fully recovered neutral hits not counting as punish.
+- Kept this as a documentation-only contract. It does not change C logic,
+  transition schema, rewards, replay, trainer features, or event-journal export.
+
+Validation:
+- `git diff --check` passed.
+
 ## 2026-05-06: Combat Event Phase 6c-1 Punish Candidate Path Split
 
 Milestone:

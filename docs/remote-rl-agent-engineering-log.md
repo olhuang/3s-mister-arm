@@ -2,6 +2,41 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-07: Combat Event Phase 6b-4 Weak Attack-Only Suppression
+
+Milestone:
+- Combat event attribution Phase 6b-4
+
+Files changed:
+- `src/rl/rl_combat_event.c`
+- `docs/plan-remote-rl-agent.md`
+- `docs/agent-memory/remote-rl-combat-event-attribution-plan.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Fix the remaining `CDRX U` increase after hit-then-immediate-jump.
+
+Implementation notes:
+- The Phase 6b-3 airborne gate was not enough: live retest still showed
+  `CDRX U`, which suggests the residual weak edge can fire during jump startup
+  before the target is flagged airborne.
+- Removed the target-state dependency from weak attack suppression. Any
+  attack-sourced attribution with only `contact_state` / `hit_stop` and no
+  strong HP/stun/damage/block/parry/throw/projectile-clash evidence is now
+  suppressed before `CEM`, `CEA`, or `CDRX` counters increment.
+- This treats weak-only attack contact as debug evidence, not a defense result.
+  Strong hit/block/chip/parry/throw/clash paths still bypass the suppression.
+
+Validation:
+- `git diff --check` passed.
+- `python3 -m py_compile tools/analyze_rl_combat_events.py` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed and rebuilt
+  `src/rl/rl_combat_event.c`.
+- Follow-up live MiSTer smoke should retest: normal hit still increments
+  `CDR H` / derived hit, normal block still increments `CDR B` or `CDR C`,
+  simultaneous whiffs still increment `CER W`, and hit-then-immediate-jump no
+  longer adds `CDRX U`.
+
 ## 2026-05-07: Combat Event Phase 6b-3 Post-Hit Jump Weak-Edge Suppression
 
 Milestone:

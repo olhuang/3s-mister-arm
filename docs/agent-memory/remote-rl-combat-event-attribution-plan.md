@@ -2109,6 +2109,18 @@ Phase 6b-3 post-hit jump weak-edge suppression:
 - Real anti-air / air-to-air outcomes remain allowed because HP/stun/damage,
   parry, block, throw, or projectile-clash evidence bypasses the suppression.
 
+Phase 6b-4 weak attack-only suppression:
+
+- Live retest still showed `CDRX U` after hit-then-immediate-jump. That implies
+  the residual weak edge can fire before the target is flagged airborne.
+- The C-side gate is now target-state independent for attack-sourced weak-only
+  rows: if the edge is only `contact_state` / `hit_stop` and there is no
+  HP/stun/damage-state, block-reaction, parry, throw-caught, or
+  projectile-clash evidence, no attribution row is recorded.
+- This intentionally moves weak-only attack contact out of `CDR` / `CDRX`.
+  Such evidence remains suitable for lower-level debug counters, but it is not
+  a defense result.
+
 ### Phase 6c: Punish Detection
 
 Files:

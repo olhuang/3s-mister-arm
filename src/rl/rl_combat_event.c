@@ -467,7 +467,6 @@ static bool RLCombatEvent_ShouldSuppressWeakAttackAttribution(const RLCombatCont
                                                               RLCombatAttributionEdgeType edge_type,
                                                               bool projectile_clash_edge) {
     return update != NULL && source == RL_COMBAT_CONTACT_MATCH_SOURCE_ATTACK &&
-           (update->target_attack_state_active || update->target_airborne) &&
            RLCombatEvent_IsWeakContactOnlyEdge(edge_type) &&
            !RLCombatEvent_HasStrongDefenseOutcomeEdge(update, projectile_clash_edge);
 }

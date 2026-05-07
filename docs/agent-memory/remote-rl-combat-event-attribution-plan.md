@@ -2083,6 +2083,21 @@ Phase 6b-1 implementation slice:
 - This remains debug/internal only: no transition schema bump, no reward
   changes, no replay/trainer feature adoption, and no event-journal export yet.
 
+Phase 6b-2 dual-whiff weak-edge suppression:
+
+- Live testing showed repeated simultaneous LP whiffs correctly incremented
+  attack lifecycle `CER W`, but also rapidly incremented defense `CDRX U`.
+  The source was attack-sourced attribution created from weak
+  `contact_state` / `hit_stop` edges while the target was also attacking and
+  no strong outcome evidence existed.
+- C-side contact matching now suppresses those rows before `CEM`, `CEA`, or
+  `CDRX` counters increment. The suppressed case is narrowly defined as:
+  source family is attack, target attack state is active, edge type is only
+  `contact_state` or `hit_stop`, and there is no HP/stun/damage-state,
+  block-reaction, parry, throw-caught, or projectile-clash evidence.
+- Strong outcomes are unchanged. Hits, blocked/chip hits, parries, throws, and
+  projectile clashes still create attribution and defense-result rows.
+
 ### Phase 6c: Punish Detection
 
 Files:

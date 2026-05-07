@@ -446,6 +446,31 @@ static bool RLCombatEvent_ContactMatchHasTargetEdge(const RLCombatContactMatchUp
     return projectile_candidate || throw_candidate || attack_candidate;
 }
 
+static bool RLCombatEvent_IsWeakContactOnlyEdge(RLCombatAttributionEdgeType edge_type) {
+    return edge_type == RL_COMBAT_ATTRIBUTION_EDGE_CONTACT_STATE ||
+           edge_type == RL_COMBAT_ATTRIBUTION_EDGE_HIT_STOP;
+}
+
+static bool RLCombatEvent_HasStrongDefenseOutcomeEdge(const RLCombatContactMatchUpdate* update,
+                                                      bool projectile_clash_edge) {
+    if (update == NULL) {
+        return false;
+    }
+
+    return projectile_clash_edge || update->target_entered_damage_state || update->target_hp_delta ||
+           update->target_stun_delta || update->target_block_reaction || update->target_parry_started ||
+           update->target_throw_caught;
+}
+
+static bool RLCombatEvent_ShouldSuppressWeakDualAttackAttribution(const RLCombatContactMatchUpdate* update,
+                                                                  RLCombatContactMatchSource source,
+                                                                  RLCombatAttributionEdgeType edge_type,
+                                                                  bool projectile_clash_edge) {
+    return update != NULL && source == RL_COMBAT_CONTACT_MATCH_SOURCE_ATTACK &&
+           update->target_attack_state_active && RLCombatEvent_IsWeakContactOnlyEdge(edge_type) &&
+           !RLCombatEvent_HasStrongDefenseOutcomeEdge(update, projectile_clash_edge);
+}
+
 static void RLCombatEvent_IncrementContactMatchCounter(RLCombatEventSide side,
                                                        RLCombatContactMatchSource source) {
     combat_event_stats.contact_match_total_count++;
@@ -2430,6 +2455,13 @@ bool RLCombatEvent_RecordContactMatch(const RLCombatContactMatchUpdate* update) 
         source_event_id = attack_event != NULL ? attack_event->event_id : RL_COMBAT_EVENT_ID_NONE;
     } else {
         failure_reason = RL_COMBAT_ATTRIBUTION_FAILURE_NO_SOURCE_CANDIDATE;
+    }
+
+    if (RLCombatEvent_ShouldSuppressWeakDualAttackAttribution(update,
+                                                             source,
+                                                             edge_type,
+                                                             projectile_clash_edge)) {
+        return false;
     }
 
     RLCombatEvent_IncrementContactMatchCounter(update->source_side, source);

@@ -2,6 +2,40 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-07: Combat Event Phase 6b-2 Dual-Whiff Weak-Edge Suppression
+
+Milestone:
+- Combat event attribution Phase 6b-2
+
+Files changed:
+- `src/rl/rl_combat_event.c`
+- `docs/plan-remote-rl-agent.md`
+- `docs/agent-memory/remote-rl-combat-event-attribution-plan.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Stop simultaneous whiffs from polluting defense result unknown counters.
+
+Implementation notes:
+- Live testing showed continuous LP whiffs made `CER W` increase correctly,
+  but also made `CDRX U` increase. That means attack lifecycle whiff handling
+  was good, while defense attribution was recording weak `contact_state` /
+  `hit_stop` edges as unknown outcomes.
+- Added a narrow suppression gate before contact-match attribution counters are
+  incremented. It only suppresses attack-sourced rows where the target is also
+  attacking, the edge is weak contact/hit-stop only, and no HP/stun/damage,
+  block reaction, parry, throw-caught, or projectile-clash evidence exists.
+- Strong outcome paths remain unchanged, so true hit/block/chip/parry/throw
+  and projectile-clash records should still reach `CDR` / `CDRX`.
+
+Validation:
+- `git diff --check` passed.
+- `python3 -m py_compile tools/analyze_rl_combat_events.py` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed and rebuilt
+  `src/rl/rl_combat_event.c`.
+- Follow-up live MiSTer smoke should confirm repeated simultaneous LP whiffs
+  still increment `CER W` while `CDRX U` no longer races upward.
+
 ## 2026-05-06: Combat Event Phase 8A-8 Move Offense/Defense Stats
 
 Milestone:

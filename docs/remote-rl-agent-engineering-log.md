@@ -14824,3 +14824,60 @@ Validation:
   `src/rl/rl_combat_event.c`.
 - Re-running `tools/analyze_rl_combat_events.py` on the pre-fix live log is
   unchanged as expected, because the fix affects new C-side journal emission.
+
+## 2026-05-07: Per-Frame Combat Context Fallback
+
+Milestone:
+- Combat event attribution Phase 7A-3 / event journal source reliability
+
+Problem:
+- Live MK / tatsu-MK testing reduced attribution unknowns to one row, but the
+  remaining row showed opponent `routine1=4/routine2=17` damaging self while
+  `opp_engine_*` and `source_event_id` were zero.
+- `RLSession_OnObservationFrameEnd()` runs every frame, but combat event
+  updates were only applied when an active decision ledger entry existed. A
+  source start edge that occurs outside that span can therefore be observed by
+  the game-state sampler but not promoted into the combat event ring.
+
+Implementation:
+- Added a lightweight per-frame combat context in `rl_session.c`. When there is
+  no active ledger entry, the context fills run/episode/frame/nearest-decision
+  and character metadata from live state, then updates combat attack/projectile/
+  throw/contact rings without writing a transition row or accumulating reward.
+- Added `RLCombatEvent_HasActiveAttackForSide()` so source fallback can avoid
+  opening a duplicate attack when a normal active source already exists.
+- Split Ryu special strength decoding so special KW `0x08/0x0A/0x0C` and
+  `0x09/0x0B/0x0D` are treated as explicit strengths, while missing KW can
+  still create an unknown-strength special source instead of failing entirely.
+- Added a damage-triggered Ryu non-projectile special fallback for shoryuken,
+  tatsu, air tatsu, joudan, and shin shoryuken when target HP/stun damage
+  arrives and no same-side active attack source exists.
+- Analyzer now renders sub-action `0` as `unknown`, e.g.
+  `shoryuken-unknown`, rather than `sub0`.
+
+Expected live effect:
+- Opponent `routine2=17` damage without a captured start edge should become a
+  shoryuken-family source with unknown strength instead of
+  `failure_reason=no_source_candidate`.
+- Event capture should be less dependent on active ledger lifetime, while
+  transition rows and reward accumulation remain ledger-owned.
+- MK/tatsu move distribution should not inflate because fallback is gated by
+  target damage, no active same-side attack, and the existing start debounce.
+
+Risk:
+- Unknown-strength fallback is heuristic. Chaotic trades can still remain
+  unresolved, and a bad routine/KW window could label a source at damage time
+  instead of true startup time.
+- Re-test live overlay counters for CE/CER/CDR inflation, especially repeated
+  specials and simultaneous attacks.
+
+Validation:
+- First `tools/mister/build-game.sh --flavor telemetry` caught an unused helper
+  after the KW split; removed it.
+- Second `tools/mister/build-game.sh --flavor telemetry` passed.
+- `python3 -m py_compile tools/analyze_rl_combat_events.py` passed.
+- Python smoke confirmed analyzer renders `(shoryuken, sub_action=0)` as
+  `shoryuken-unknown` with `unknown_strength` tags.
+- Existing `logs/phase7a-event-journal-live-*.ndjson` files were not present in
+  the workspace at validation time, so C-side behavior requires a fresh MiSTer
+  deploy and live log.

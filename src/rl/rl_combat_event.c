@@ -266,6 +266,24 @@ static const RLCombatAttackEvent* RLCombatEvent_FindAttackCandidateForSide(u64 r
     return best;
 }
 
+bool RLCombatEvent_HasActiveAttackForSide(u64 run_id, u32 episode_id, RLCombatEventSide side) {
+    const RLCombatAttackEventRing* ring = RLCombatEvent_ConstRingForSide(side);
+
+    if (ring == NULL || run_id == 0 || episode_id == 0) {
+        return false;
+    }
+
+    for (u32 i = 0; i < RL_COMBAT_ATTACK_EVENT_RING_CAP; i++) {
+        const RLCombatAttackEvent* event = &ring->events[i];
+        if (event->status == RL_COMBAT_ATTACK_EVENT_ACTIVE && event->run_id == run_id &&
+            event->episode_id == episode_id && event->side == side) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 static const RLCombatProjectileEvent* RLCombatEvent_FindProjectileCandidateForSide(u64 run_id,
                                                                                    u32 episode_id,
                                                                                    RLCombatEventSide side,

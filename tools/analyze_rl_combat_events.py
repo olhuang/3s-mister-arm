@@ -29,6 +29,7 @@ RL_POLICY_ACTION_RYU_AIR_TATSU = 1246
 PUNCH_SUB_ACTIONS = {1, 2, 3}
 KICK_SUB_ACTIONS = {4, 5, 6}
 BUTTON_NAME_BY_SUB_ACTION = {
+    0: "unknown",
     1: "lp",
     2: "mp",
     3: "hp",
@@ -37,6 +38,7 @@ BUTTON_NAME_BY_SUB_ACTION = {
     6: "hk",
 }
 STRENGTH_TAG_BY_SUB_ACTION = {
+    0: "unknown_strength",
     1: "light",
     2: "medium",
     3: "heavy",

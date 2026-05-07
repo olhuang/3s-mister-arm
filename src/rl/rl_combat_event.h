@@ -707,6 +707,7 @@ u32 RLCombatEvent_UpdateProjectiles(const RLCombatProjectileEventUpdate* update)
 const RLCombatThrowEvent* RLCombatEvent_StartThrow(const RLCombatThrowEventStart* start);
 u32 RLCombatEvent_UpdateThrows(const RLCombatThrowEventUpdate* update);
 bool RLCombatEvent_RecordContactMatch(const RLCombatContactMatchUpdate* update);
+bool RLCombatEvent_HasActiveAttackForSide(u64 run_id, u32 episode_id, RLCombatEventSide side);
 bool RLCombatEvent_HasActiveThrowForSide(u64 run_id, u32 episode_id, RLCombatEventSide side);
 bool RLCombatEvent_HasRecentNonWhiffThrowForSide(u64 run_id,
                                                  u32 episode_id,

@@ -16,6 +16,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import rl_combat_event_training as combat_events
 import rl_probe_server as rl
 
 
@@ -6052,6 +6053,24 @@ def main() -> None:
     )
     parser.add_argument("--limit", type=int, default=0, help="Maximum rows to read across all transition logs; 0 means all")
     parser.add_argument(
+        "--combat-event-logs",
+        nargs="*",
+        default=[],
+        help=(
+            "Optional combat-events NDJSON logs paired with the transition logs. "
+            "Phase 9B currently supports validation-only ingestion."
+        ),
+    )
+    parser.add_argument(
+        "--combat-event-training-mode",
+        choices=combat_events.COMBAT_EVENT_TRAINING_MODES,
+        default="off",
+        help=(
+            "Combat event trainer adoption mode. off preserves existing training; "
+            "validate parses paired event logs and records join/schema diagnostics without changing rewards."
+        ),
+    )
+    parser.add_argument(
         "--drop-initial-episodes-per-run",
         type=int,
         default=0,
@@ -7218,6 +7237,23 @@ def main() -> None:
         replay_source_mix_config,
         int(args.seed),
     )
+    combat_event_training_mode = str(args.combat_event_training_mode)
+    combat_event_validation: combat_events.CombatEventTrainingValidation | None = None
+    combat_event_log_paths = [str(path) for path in args.combat_event_logs]
+    if combat_event_training_mode == "off" and combat_event_log_paths:
+        raise SystemExit("--combat-event-logs requires --combat-event-training-mode validate in Phase 9B")
+    if combat_event_training_mode != "off":
+        if not combat_event_log_paths:
+            raise SystemExit(f"--combat-event-training-mode {combat_event_training_mode} requires --combat-event-logs")
+        combat_event_validation = combat_events.validate_combat_event_training_logs(
+            combat_event_log_paths,
+            [str(path) for path in args.transition_logs],
+            rows,
+        )
+        if combat_event_validation.fatal_errors:
+            raise SystemExit(
+                "combat event validation failed: " + "; ".join(combat_event_validation.fatal_errors)
+            )
     if str(args.training_mode) == "bc":
         # --- BC training path ---
         bc_layers, bc_train_stats, bc_label_counts, bc_skipped = train_bc(
@@ -7246,6 +7282,8 @@ def main() -> None:
             "total_rows": len(rows),
             **bc_train_stats,
         }
+        if combat_event_validation is not None:
+            bc_metadata["combat_event_training"] = combat_event_validation.as_metadata()
         total_labeled = sum(bc_label_counts.values())
         if total_labeled <= 0:
             raise SystemExit("BC training: no labeled rows after parsing all transition logs")
@@ -7277,6 +7315,8 @@ def main() -> None:
             f"top_labels=({label_parts[:300]})",
             flush=True,
         )
+        if combat_event_validation is not None:
+            print(f"BC diagnostics combat_event={combat_event_validation.summary_line()}", flush=True)
         return
 
     dqn_action_filter_config = dqn_action_filter_config_from_args(args)
@@ -7589,6 +7629,8 @@ def main() -> None:
         "greedy_top_action_rate": greedy_diag.top_action_rate,
         **train_stats,
     }
+    if combat_event_validation is not None:
+        metadata["combat_event_training"] = combat_event_validation.as_metadata()
     publish_model(
         args.model_dir,
         version,
@@ -7689,6 +7731,8 @@ def main() -> None:
         f"target:{format_counts(replay_source_mix_stats.target_counts, sum(replay_source_mix_stats.target_counts.values()), args.diagnostic_top_n)}",
         flush=True,
     )
+    if combat_event_validation is not None:
+        print(f"DQN diagnostics combat_event={combat_event_validation.summary_line()}", flush=True)
     print(
         "DQN diagnostics "
         f"action_filter=movable_sources:{','.join(sorted(dqn_action_filter_config.require_movable_state_sources)) or 'none'} "

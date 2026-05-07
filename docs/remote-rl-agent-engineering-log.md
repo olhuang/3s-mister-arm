@@ -15086,3 +15086,57 @@ Risk:
 Validation:
 - Markdown updates reviewed by diff. No code validation required for this
   planning-only change.
+
+## 2026-05-07: Phase 9B-0 Event-Aware Trainer Validation Reader
+
+Milestone:
+- Combat event attribution Phase 9B-0 / trainer event-log validation reader
+
+Purpose:
+- Let the offline DQN trainer opt into reading paired combat event logs and
+  recording event/transition join diagnostics before any event label can affect
+  reward shaping or replay construction.
+- Preserve the default trainer path when no combat event flags are passed.
+
+Implementation:
+- Added `tools/rl_combat_event_training.py`:
+  - parses `combat_event_schema_version=1` event journal rows.
+  - counts schema/kind/result/side splits and unknown/no_source rows.
+  - checks event id monotonicity/duplicates and source/parent/punished refs.
+  - scans transition logs for accidental combat-event rows.
+  - joins event `start_decision_id`, `end_decision_id`, and attribution
+    `decision_id` references against transition rows.
+- Updated `tools/train_dqn_learner.py`:
+  - added `--combat-event-logs`.
+  - added `--combat-event-training-mode off|validate`.
+  - validates paired event logs after transition read/source mixing.
+  - records validation metadata for DQN and BC outputs only when validation mode
+    is enabled.
+  - prints a `DQN diagnostics combat_event=...` line in validation mode.
+
+Expected effect:
+- `--combat-event-training-mode validate` can verify a paired event/transition
+  dataset and publish normal DQN output using the existing reward path.
+- The mode remains label-only: no reward, sampling, feature, architecture, or
+  inference behavior changes.
+
+Risk:
+- Validation currently treats missing start-decision and attribution-decision
+  joins as fatal. Missing end-decision joins are reported but not fatal because
+  episode/round flush can leave event rows beyond the final transition row.
+- Future `prefer-event-action` must define how to choose `next_state` for those
+  terminal end-missing rows before direct event experiences are enabled.
+
+Validation:
+- `python3 -m py_compile tools/rl_combat_event_training.py tools/train_dqn_learner.py`
+  passed.
+- `git diff --check -- tools/rl_combat_event_training.py tools/train_dqn_learner.py`
+  passed.
+- Validation-mode smoke:
+  - `python3 tools/train_dqn_learner.py logs/phase7a-event-journal-live-transitions.ndjson --combat-event-logs logs/phase7a-event-journal-live-events.ndjson --combat-event-training-mode validate --model-dir /tmp/rl-combat-event-trainer-validate-smoke --steps 1 --batch-size 8 --log-interval 1 --diagnostic-top-n 5`
+  - Passed with `events:89`, `schemas:{'1': 89}`, `start_join:49/49`,
+    `end_join:47/49`, `missing_refs:0`, attribution unknown/no_source `0`, and
+    `errors:0`.
+- Default-off smoke:
+  - `python3 tools/train_dqn_learner.py logs/phase7a-event-journal-live-transitions.ndjson --model-dir /tmp/rl-combat-event-trainer-off-smoke --steps 1 --batch-size 8 --log-interval 1 --diagnostic-top-n 3`
+  - Passed and did not print combat event diagnostics.

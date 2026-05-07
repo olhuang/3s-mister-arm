@@ -2465,6 +2465,23 @@ Work:
 - use high-confidence event labels first
 - add source/confidence diagnostics to model metadata
 
+Phase 9B-0 validation reader status:
+
+- `tools/train_dqn_learner.py` has a validation-only reader mode:
+  - `--combat-event-logs`
+  - `--combat-event-training-mode validate`
+- The helper `tools/rl_combat_event_training.py` parses schema-v1 event rows,
+  rejects non-event/mixed-schema event logs, scans transition logs for accidental
+  combat-event rows, checks event refs, and reports transition start/decision
+  join coverage.
+- This mode records diagnostics in model metadata and stdout but does not alter
+  reward, replay sampling, action labels, DQN features, inference, or model
+  architecture.
+- End-decision misses are reported but not fatal in the validation reader because
+  episode/round flush can leave terminal event rows without a matching final
+  transition row. Phase 9C direct event experiences must choose an explicit
+  fallback policy before using those rows.
+
 Data recollection gate:
 
 - Phase 9 trainer adoption requires fresh paired transition/event logs. Old

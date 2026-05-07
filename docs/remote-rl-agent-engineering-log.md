@@ -14647,3 +14647,30 @@ Risk:
 - If the target contact/damage evidence is noisy, a small number of boundary
   whiffs could be lifecycle-resolved as contact. Hit/block truth remains in
   attribution/defense-result rows; this change only prevents timeout pollution.
+
+## 2026-05-07: Combat Event Attack Start Debounce Widening
+
+Milestone:
+- Combat event attribution Phase 6b-6 live overlay accuracy cleanup
+
+Problem:
+- Live overlay still showed a single close-range hit/block attack sometimes
+  adding `CE S/F +2`.
+- The likely sequence is one start edge at attack startup, followed more than
+  six frames later by a contact/Attack_Counter edge for the same physical move.
+  The previous same-signature debounce window was too short, so the second
+  edge created a duplicate attack event.
+
+Implementation:
+- Widened same-signature combat attack-start debounce from 6 to 24 frames.
+
+Expected live effect:
+- One close LP/MP/HP/LK/MK/HK hit or block should usually add only
+  `CE S/F +1`.
+- Fast repeated same-move chains may continue to be merged conservatively as a
+  single event, which is accepted for this phase.
+
+Risk:
+- Very fast same-move chains inside 24 frames are less likely to be counted as
+  separate starts. Different-move cancels can still start separate events when
+  their signature changes.

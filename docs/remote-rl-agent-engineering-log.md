@@ -15206,3 +15206,65 @@ Validation:
   - Passed with `mode:reward-shaping`, `applied:92`, `adjusted_rows:86`,
     `raw_sum:16.250`, `skipped_low_confidence_events=9`, and
     `reward_source=hp-delta+combat-event-safe-v1`.
+
+## 2026-05-07: Phase 9B-2 Event Reward Aggregation And Cap
+
+Milestone:
+- Combat event attribution Phase 9B-2 / safe-v1 reward aggregation
+
+Purpose:
+- Prevent a single source event with multiple HP/stun attribution ticks from
+  receiving repeated hit/block rewards.
+- Keep `safe-v1` outcome-based instead of damage-tick-based until a future
+  damage-aware profile is explicitly designed.
+
+Implementation:
+- Updated `tools/rl_combat_event_training.py`:
+  - groups high-confidence attribution rows by attack source event.
+  - caps duplicate same-outcome `defense_result` rewards within that source
+    event.
+  - records grouped attribution HP/stun sums as metadata only.
+  - caps duplicate linked projectile results for projectile-claimed parent
+    attacks.
+  - caps duplicate `punish:caused` rewards for the same source event.
+  - adds stats for attribution rows seen, grouped source events, grouped
+    projectile parents, capped duplicate rows, and grouped HP/stun totals.
+- Updated `tools/train_dqn_learner.py` diagnostics to print capped duplicate
+  count, low-confidence count, and grouped HP/stun totals in reward-shaping
+  mode.
+- Updated Phase 9 checklist and combat-event plan notes.
+
+Expected effect:
+- A normal attack that produces five `target_hp_delta=1` attribution rows now
+  receives one `attack:hit` reward, not five.
+- `safe-v1` remains stable across engine/logging details that split damage into
+  multiple small attribution rows.
+
+Risk:
+- Multi-hit moves no longer get extra reward from multiple damage ticks in
+  `safe-v1`. This is intentional; later profiles can add damage-aware or
+  multi-hit-aware shaping after A/B validation.
+
+Validation:
+- `python3 -m py_compile tools/rl_combat_event_training.py tools/train_dqn_learner.py`
+  passed.
+- Synthetic cap smoke:
+  - one attack source with five high-confidence `attack:hit` attribution rows
+    returned `reward=0.5`, `applied=1`, `capped=4`, `hp=5`, `stun=5`.
+- Snapshot logs:
+  - copied current live logs to `/tmp/phase9b-cap-transitions.ndjson` and
+    `/tmp/phase9b-cap-events.ndjson`.
+  - snapshot size: `18279` transition rows and `2092` event rows.
+- Default-off smoke:
+  - `python3 tools/train_dqn_learner.py /tmp/phase9b-cap-transitions.ndjson --model-dir /tmp/rl-combat-event-trainer-cap-off --steps 1 --batch-size 8 --log-interval 1 --diagnostic-top-n 3`
+  - Passed with no combat-event metadata and `reward_source=hp-delta`.
+- Validate smoke:
+  - `python3 tools/train_dqn_learner.py /tmp/phase9b-cap-transitions.ndjson --combat-event-logs /tmp/phase9b-cap-events.ndjson --combat-event-training-mode validate --model-dir /tmp/rl-combat-event-trainer-cap-validate --steps 1 --batch-size 8 --log-interval 1 --diagnostic-top-n 5`
+  - Passed with `events:2092`, `start_join:1244/1244`,
+    `end_join:1229/1248`, `missing_refs:0`, `errors:0`, and reward
+    `applied=0`.
+- Reward-shaping smoke:
+  - `python3 tools/train_dqn_learner.py /tmp/phase9b-cap-transitions.ndjson --combat-event-logs /tmp/phase9b-cap-events.ndjson --combat-event-training-mode reward-shaping --combat-event-reward-profile safe-v1 --combat-event-reward-scale 1.0 --model-dir /tmp/rl-combat-event-trainer-cap-reward --steps 1 --batch-size 8 --log-interval 1 --diagnostic-top-n 5`
+  - Passed with `applied=375`, `capped=7`, `low_conf=25`, `hp=115`,
+    `stun=106`, `raw_sum=71.550`, and
+    `reward_source=hp-delta+combat-event-safe-v1`.

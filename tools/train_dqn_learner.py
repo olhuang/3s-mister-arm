@@ -7796,6 +7796,10 @@ def main() -> None:
             f"matched_events:{combat_event_reward_stats.matched_event_rows} "
             f"adjusted_rows:{combat_event_reward_stats.adjusted_transition_rows} "
             f"applied:{combat_event_reward_stats.applied_event_rewards} "
+            f"capped:{combat_event_reward_stats.capped_duplicate_outcome_rows} "
+            f"low_conf:{combat_event_reward_stats.skipped_low_confidence_events} "
+            f"hp:{combat_event_reward_stats.grouped_hp_delta_sum} "
+            f"stun:{combat_event_reward_stats.grouped_stun_delta_sum} "
             f"raw_sum:{combat_event_reward_stats.raw_reward_sum:.3f} "
             f"outcomes:{format_float_counts(combat_event_reward_stats.raw_reward_by_outcome, args.diagnostic_top_n)}",
             flush=True,

@@ -2508,6 +2508,23 @@ Phase 9B-1 reward-shaping MVP status:
   and skipped unknown/no-reward/non-self/low-confidence counts. Default `off`
   mode writes no combat-event metadata.
 
+Phase 9B-2 reward aggregation/cap status:
+
+- `safe-v1` reward shaping now treats attribution rows as evidence for a source
+  event, not independent hit rewards. For each self-side attack source event,
+  high-confidence attribution rows are grouped and the same `defense_result`
+  can contribute at most one reward.
+- The grouped HP/stun delta sums are recorded as metadata only. They are not
+  multiplied into `safe-v1` rewards. A future damage-aware profile must opt into
+  that behavior explicitly.
+- Projectile-claimed parent attacks also cap duplicate linked projectile
+  results, and source-event punish rewards are capped to one `punish:caused`
+  reward.
+- Metadata now records `attribution_rows_seen`,
+  `grouped_attribution_source_events`, `grouped_projectile_parent_events`,
+  `capped_duplicate_outcome_rows`, per-outcome duplicate counts, and grouped
+  HP/stun totals.
+
 Data recollection gate:
 
 - Phase 9 trainer adoption requires fresh paired transition/event logs. Old

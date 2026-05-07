@@ -80,15 +80,23 @@ class CombatEventRewardStats:
     matched_transition_rows: int = 0
     matched_event_rows: int = 0
     adjusted_transition_rows: int = 0
+    attribution_rows_seen: int = 0
+    grouped_attribution_source_events: int = 0
+    grouped_projectile_parent_events: int = 0
     applied_event_rewards: int = 0
     skipped_non_self_events: int = 0
     skipped_low_confidence_events: int = 0
     skipped_unknown_events: int = 0
     skipped_no_reward_events: int = 0
+    skipped_child_projectile_events: int = 0
+    capped_duplicate_outcome_rows: int = 0
+    grouped_hp_delta_sum: int = 0
+    grouped_stun_delta_sum: int = 0
     raw_reward_sum: float = 0.0
     raw_reward_by_action: dict[str, float] = field(default_factory=dict)
     raw_reward_by_outcome: dict[str, float] = field(default_factory=dict)
     event_count_by_outcome: dict[str, int] = field(default_factory=dict)
+    capped_duplicate_rows_by_outcome: dict[str, int] = field(default_factory=dict)
 
     def add_reward(self, action_name: str, outcome_key: str, raw_reward: float) -> None:
         self.applied_event_rewards += 1
@@ -103,15 +111,23 @@ class CombatEventRewardStats:
             "matched_transition_rows": self.matched_transition_rows,
             "matched_event_rows": self.matched_event_rows,
             "adjusted_transition_rows": self.adjusted_transition_rows,
+            "attribution_rows_seen": self.attribution_rows_seen,
+            "grouped_attribution_source_events": self.grouped_attribution_source_events,
+            "grouped_projectile_parent_events": self.grouped_projectile_parent_events,
             "applied_event_rewards": self.applied_event_rewards,
             "skipped_non_self_events": self.skipped_non_self_events,
             "skipped_low_confidence_events": self.skipped_low_confidence_events,
             "skipped_unknown_events": self.skipped_unknown_events,
             "skipped_no_reward_events": self.skipped_no_reward_events,
+            "skipped_child_projectile_events": self.skipped_child_projectile_events,
+            "capped_duplicate_outcome_rows": self.capped_duplicate_outcome_rows,
+            "grouped_hp_delta_sum": self.grouped_hp_delta_sum,
+            "grouped_stun_delta_sum": self.grouped_stun_delta_sum,
             "raw_reward_sum": self.raw_reward_sum,
             "raw_reward_by_action": dict(sorted(self.raw_reward_by_action.items())),
             "raw_reward_by_outcome": dict(sorted(self.raw_reward_by_outcome.items())),
             "event_count_by_outcome": dict(sorted(self.event_count_by_outcome.items())),
+            "capped_duplicate_rows_by_outcome": dict(sorted(self.capped_duplicate_rows_by_outcome.items())),
         }
 
 
@@ -513,6 +529,15 @@ def _record_event_reward(
     return scaled_raw_reward
 
 
+def _record_capped_duplicate(stats: CombatEventRewardStats, kind: str, result: str) -> None:
+    outcome_key = f"{kind}:{result}"
+    stats.capped_duplicate_outcome_rows += 1
+    stats.capped_duplicate_rows_by_outcome[outcome_key] = (
+        stats.capped_duplicate_rows_by_outcome.get(outcome_key, 0) + 1
+    )
+    stats.event_count_by_outcome[outcome_key] = stats.event_count_by_outcome.get(outcome_key, 0) + 1
+
+
 def _same_self_side_event(row: dict[str, object]) -> bool:
     kind = str(row.get("event_kind", ""))
     if kind == "attack":
@@ -547,6 +572,11 @@ def _attack_event_reward(
             if str(row.get("source_side", "")) == "self"
             and str(row.get("failure_reason", "none")) == "none"
         ]
+        if attribution_candidates:
+            stats.attribution_rows_seen += len(attribution_candidates)
+            stats.grouped_attribution_source_events += 1
+            stats.grouped_hp_delta_sum += sum(_int_field(row, "target_hp_delta") for row in attribution_candidates)
+            stats.grouped_stun_delta_sum += sum(_int_field(row, "target_stun_delta") for row in attribution_candidates)
         attributions = [
             row
             for row in attribution_candidates
@@ -560,13 +590,19 @@ def _attack_event_reward(
         if not attributions:
             if not attribution_candidates:
                 raw_reward += _record_event_reward(config, stats, action_name, "attack", "contact")
+        rewarded_results: set[str] = set()
         for attribution in attributions:
+            attribution_result = str(attribution.get("defense_result", "unknown"))
+            if attribution_result in rewarded_results:
+                _record_capped_duplicate(stats, "attack", attribution_result)
+                continue
+            rewarded_results.add(attribution_result)
             raw_reward += _record_event_reward(
                 config,
                 stats,
                 action_name,
                 "attack",
-                str(attribution.get("defense_result", "unknown")),
+                attribution_result,
             )
     elif result == "unknown" and finalize_reason == "projectile_claimed":
         projectiles = [
@@ -576,20 +612,34 @@ def _attack_event_reward(
         ]
         if not projectiles:
             raw_reward += _record_event_reward(config, stats, action_name, "attack", "unknown")
+        if projectiles:
+            stats.grouped_projectile_parent_events += 1
+        rewarded_projectile_results: set[str] = set()
         for projectile in projectiles:
+            projectile_result = str(projectile.get("result", "unknown"))
+            if projectile_result in rewarded_projectile_results:
+                _record_capped_duplicate(stats, "projectile", projectile_result)
+                continue
+            rewarded_projectile_results.add(projectile_result)
             raw_reward += _record_event_reward(
                 config,
                 stats,
                 action_name,
                 "projectile",
-                str(projectile.get("result", "unknown")),
+                projectile_result,
             )
     else:
         raw_reward += _record_event_reward(config, stats, action_name, "attack", result)
 
-    for punish in index.punishes_by_source_event.get((run_id, event_id), []):
-        if str(punish.get("punisher_side", "")) == "self":
-            raw_reward += _record_event_reward(config, stats, action_name, "punish", "caused")
+    self_punishes = [
+        punish
+        for punish in index.punishes_by_source_event.get((run_id, event_id), [])
+        if str(punish.get("punisher_side", "")) == "self"
+    ]
+    if self_punishes:
+        raw_reward += _record_event_reward(config, stats, action_name, "punish", "caused")
+        for _punish in self_punishes[1:]:
+            _record_capped_duplicate(stats, "punish", "caused")
 
     return raw_reward
 
@@ -635,7 +685,7 @@ def reward_adjustment_for_transition(
         elif event_kind == "projectile":
             parent_attack_event_id = _int_field(event, "parent_attack_event_id")
             if parent_attack_event_id > 0:
-                stats.skipped_no_reward_events += 1
+                stats.skipped_child_projectile_events += 1
                 continue
             raw_adjustment += _record_event_reward(
                 config,

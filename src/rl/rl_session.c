@@ -1484,12 +1484,12 @@ static bool RLSession_BuildRyuDamageFallbackStateAttributionForSide(const RLDeci
     if (character_id != RL_CHARACTER_RYU || routine_1 != 4) {
         return false;
     }
-    if (!RLSession_RyuSpecialPolicyMetaFromRoutine2(side == RL_COMBAT_EVENT_SIDE_SELF ? entry : NULL,
-                                                    routine_2,
-                                                    kind_of_waza,
-                                                    true,
-                                                    &action_id,
-                                                    &sub_action_id)) {
+    if (RLSession_RyuSpecialPolicyMetaFromRoutine2(side == RL_COMBAT_EVENT_SIDE_SELF ? entry : NULL,
+                                                   routine_2,
+                                                   kind_of_waza,
+                                                   true,
+                                                   &action_id,
+                                                   &sub_action_id)) {
         label_source = RL_DEMO_ATTRIBUTION_RYU_ENGINE_ROUTINE_START;
     } else if (RLSession_RyuAirMpContinuationPolicyMetaFromRoutine2(routine_2, &action_id, &sub_action_id)) {
         label_source = RL_DEMO_ATTRIBUTION_RYU_ENGINE_NORMAL_ATTACK_START;

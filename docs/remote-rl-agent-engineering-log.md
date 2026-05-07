@@ -14936,3 +14936,46 @@ Validation:
 - Existing live logs remain useful for diagnosis but cannot show the C-side
   source fix retroactively; deploy and re-record the MP-only smoke to verify
   self-side `no_source_candidate` rows drop for Ryu `R2=2` HP/stun deltas.
+
+## 2026-05-07: Ryu R2=2 Damage Fallback Branch Fix
+
+Milestone:
+- Combat event attribution Phase 7A-4a / Ryu `R2=2` fallback correction
+
+Problem:
+- A fresh MP-only live log after the taxonomy/source correction still showed two
+  self-side `failure_reason=no_source_candidate` attribution rows.
+- The remaining unknown rows occurred while transition rows had self
+  `R1=4/R2=2` and target HP/stun deltas at decisions 174 and 177.
+- Code review found the damage fallback mapper tested the Ryu special mapper
+  inverted, so non-special `R2=2` states never reached the air-MP continuation
+  branch.
+
+Implementation:
+- Updated `src/rl/rl_session.c`:
+  - `RLSession_BuildRyuDamageFallbackStateAttributionForSide()` now first accepts
+    real Ryu special routine metadata.
+  - If the special mapper does not match, it then checks the Ryu-only `R2=2`
+    air-MP continuation fallback.
+  - Other characters, including Ken, remain unchanged.
+- Updated `docs/plan-remote-rl-agent.md` with the Phase 7A-4a checklist item.
+
+Expected live effect:
+- Re-recording the same Ryu-vs-Ryu MP-only smoke should attach the delayed
+  `R2=2` HP/stun deltas to an air-MP continuation source.
+- The analyzer's self-side `no_source_candidate` count for those `R2=2` damage
+  rows should drop from 2 to 0.
+
+Risk:
+- This remains a conservative damage-gated fallback. It should not create an
+  attack row for harmless `R2=2` windows with no target HP/stun delta.
+
+Validation:
+- `git diff --check` passed.
+- `python3 -m py_compile tools/analyze_rl_combat_events.py` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed and rebuilt
+  `src/rl/rl_session.c`. The only warning was the existing minizip `mktemp`
+  linker warning.
+- Existing live logs showed the pre-fix symptom (`no_source_candidate=2`) and
+  cannot validate the changed C branch retroactively; deploy this build and
+  re-record the MP-only smoke to confirm the count drops to 0.

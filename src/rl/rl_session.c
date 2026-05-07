@@ -282,6 +282,13 @@ static const RLLocalFakeAction kLocalFakeAgentSequence[] = {
 #define RL_POLICY_ACTION_RYU_TATSU 1230u
 #define RL_POLICY_ACTION_RYU_JOUDAN 1231u
 #define RL_POLICY_ACTION_RYU_AIR_TATSU 1246u
+#define RL_POLICY_ACTION_KEN_SHORYUREPPA 2120u
+#define RL_POLICY_ACTION_KEN_SHINRYUKEN 2121u
+#define RL_POLICY_ACTION_KEN_SHIPPU_JINRAIKYAKU 2122u
+#define RL_POLICY_ACTION_KEN_SHORYUKEN 2128u
+#define RL_POLICY_ACTION_KEN_FIREBALL 2129u
+#define RL_POLICY_ACTION_KEN_TATSU 2130u
+#define RL_POLICY_ACTION_KEN_AIR_TATSU 2146u
 #define RL_POLICY_SUB_ACTION_NONE 0u
 #define RL_POLICY_SUB_ACTION_LP 1u
 #define RL_POLICY_SUB_ACTION_MP 2u
@@ -300,6 +307,7 @@ static const RLLocalFakeAction kLocalFakeAgentSequence[] = {
 #define RL_POLICY_SUB_ACTION_CROUCH 21u
 #define RL_DEMO_GUARD_THREAT_DX 144
 #define RL_CHARACTER_RYU 2u
+#define RL_CHARACTER_KEN 11u
 #define RL_TRANSITION_SCHEMA_VERSION 9u
 #define RL_INPUT_LABEL_SOURCE_NONE 0u
 #define RL_INPUT_LABEL_SOURCE_DEMO_INPUT 1u
@@ -1158,7 +1166,11 @@ static bool RLSession_IsNormalPolicyAction(u16 action_id) {
            action_id == RL_POLICY_ACTION_COMMAND_NORMAL || action_id == RL_POLICY_ACTION_AIR_NORMAL;
 }
 
-static u16 RLSession_SpecialSubActionFromRyuKindOfWaza(u8 kind_of_waza) {
+static bool RLSession_CombatCharacterUsesEngineOwner(u8 character_id) {
+    return character_id == RL_CHARACTER_RYU || character_id == RL_CHARACTER_KEN;
+}
+
+static u16 RLSession_SpecialSubActionFromKindOfWaza(u8 kind_of_waza) {
     switch (kind_of_waza) {
     case 0x08:
         return RL_POLICY_SUB_ACTION_LP;
@@ -1215,7 +1227,7 @@ static bool RLSession_RyuSpecialPolicyMetaFromRoutine2(const RLDecisionLedgerEnt
                                                        bool allow_unknown_strength,
                                                        u16* action_id,
                                                        u16* sub_action_id) {
-    const u16 sub = RLSession_SpecialSubActionFromRyuKindOfWaza(kind_of_waza);
+    const u16 sub = RLSession_SpecialSubActionFromKindOfWaza(kind_of_waza);
 
     switch (routine2) {
     case 14:
@@ -1299,6 +1311,117 @@ static bool RLSession_RyuSpecialPolicyMetaFromRoutine2(const RLDecisionLedgerEnt
         break;
     }
 
+    return false;
+}
+
+static bool RLSession_KenSpecialPolicyMetaFromRoutine2(const RLDecisionLedgerEntry* entry,
+                                                       u16 routine2,
+                                                       u8 kind_of_waza,
+                                                       bool allow_unknown_strength,
+                                                       u16* action_id,
+                                                       u16* sub_action_id) {
+    const u16 sub = RLSession_SpecialSubActionFromKindOfWaza(kind_of_waza);
+
+    switch (routine2) {
+    case 14:
+    case 15:
+        *action_id = RL_POLICY_ACTION_THROW;
+        *sub_action_id = RLSession_ThrowSubActionForAttribution(entry);
+        return true;
+    case 16:
+        if (sub == RL_POLICY_SUB_ACTION_LP || sub == RL_POLICY_SUB_ACTION_MP ||
+            sub == RL_POLICY_SUB_ACTION_HP) {
+            *action_id = RL_POLICY_ACTION_KEN_FIREBALL;
+            *sub_action_id = sub;
+            return true;
+        }
+        if (allow_unknown_strength) {
+            *action_id = RL_POLICY_ACTION_KEN_FIREBALL;
+            *sub_action_id = RL_POLICY_SUB_ACTION_NONE;
+            return true;
+        }
+        break;
+    case 17:
+        if (sub == RL_POLICY_SUB_ACTION_LP || sub == RL_POLICY_SUB_ACTION_MP ||
+            sub == RL_POLICY_SUB_ACTION_HP) {
+            *action_id = RL_POLICY_ACTION_KEN_SHORYUKEN;
+            *sub_action_id = sub;
+            return true;
+        }
+        if (allow_unknown_strength) {
+            *action_id = RL_POLICY_ACTION_KEN_SHORYUKEN;
+            *sub_action_id = RL_POLICY_SUB_ACTION_NONE;
+            return true;
+        }
+        break;
+    case 18:
+        if (sub == RL_POLICY_SUB_ACTION_LK || sub == RL_POLICY_SUB_ACTION_MK ||
+            sub == RL_POLICY_SUB_ACTION_HK) {
+            *action_id = RL_POLICY_ACTION_KEN_TATSU;
+            *sub_action_id = sub;
+            return true;
+        }
+        if (allow_unknown_strength) {
+            *action_id = RL_POLICY_ACTION_KEN_TATSU;
+            *sub_action_id = RL_POLICY_SUB_ACTION_NONE;
+            return true;
+        }
+        break;
+    case 19:
+        *action_id = RL_POLICY_ACTION_KEN_SHORYUREPPA;
+        *sub_action_id = RL_POLICY_SUB_ACTION_NONE;
+        return true;
+    case 20:
+        *action_id = RL_POLICY_ACTION_KEN_SHINRYUKEN;
+        *sub_action_id = RL_POLICY_SUB_ACTION_NONE;
+        return true;
+    case 21:
+        *action_id = RL_POLICY_ACTION_KEN_SHIPPU_JINRAIKYAKU;
+        *sub_action_id = RL_POLICY_SUB_ACTION_NONE;
+        return true;
+    case 22:
+        if (sub == RL_POLICY_SUB_ACTION_LK || sub == RL_POLICY_SUB_ACTION_MK ||
+            sub == RL_POLICY_SUB_ACTION_HK) {
+            *action_id = RL_POLICY_ACTION_KEN_AIR_TATSU;
+            *sub_action_id = sub;
+            return true;
+        }
+        if (allow_unknown_strength) {
+            *action_id = RL_POLICY_ACTION_KEN_AIR_TATSU;
+            *sub_action_id = RL_POLICY_SUB_ACTION_NONE;
+            return true;
+        }
+        break;
+    default:
+        break;
+    }
+
+    return false;
+}
+
+static bool RLSession_CharacterSpecialPolicyMetaFromRoutine2(const RLDecisionLedgerEntry* entry,
+                                                             u8 character_id,
+                                                             u16 routine2,
+                                                             u8 kind_of_waza,
+                                                             bool allow_unknown_strength,
+                                                             u16* action_id,
+                                                             u16* sub_action_id) {
+    if (character_id == RL_CHARACTER_RYU) {
+        return RLSession_RyuSpecialPolicyMetaFromRoutine2(entry,
+                                                          routine2,
+                                                          kind_of_waza,
+                                                          allow_unknown_strength,
+                                                          action_id,
+                                                          sub_action_id);
+    }
+    if (character_id == RL_CHARACTER_KEN) {
+        return RLSession_KenSpecialPolicyMetaFromRoutine2(entry,
+                                                          routine2,
+                                                          kind_of_waza,
+                                                          allow_unknown_strength,
+                                                          action_id,
+                                                          sub_action_id);
+    }
     return false;
 }
 
@@ -1393,7 +1516,7 @@ static bool RLSession_BuildEngineAttributionForSideEx(const RLDecisionLedgerEntr
         routine_edge = obs->opp_attack_routine_started || obs->opp_throw_started;
     }
 
-    if (character_id != RL_CHARACTER_RYU) {
+    if (!RLSession_CombatCharacterUsesEngineOwner(character_id)) {
         return false;
     }
 
@@ -1401,12 +1524,13 @@ static bool RLSession_BuildEngineAttributionForSideEx(const RLDecisionLedgerEntr
         attack_edge || (routine_edge && routine_1 == 4 && RLSession_IsCommonNormalAttackRoutine2(routine_2));
 
     if ((routine_edge || attack_edge) && routine_1 == 4 &&
-        RLSession_RyuSpecialPolicyMetaFromRoutine2(side == RL_COMBAT_EVENT_SIDE_SELF ? entry : NULL,
-                                                   routine_2,
-                                                   kind_of_waza,
-                                                   true,
-                                                   &action_id,
-                                                   &sub_action_id)) {
+        RLSession_CharacterSpecialPolicyMetaFromRoutine2(side == RL_COMBAT_EVENT_SIDE_SELF ? entry : NULL,
+                                                         character_id,
+                                                         routine_2,
+                                                         kind_of_waza,
+                                                         true,
+                                                         &action_id,
+                                                         &sub_action_id)) {
         source = RL_DEMO_ATTRIBUTION_RYU_ENGINE_ROUTINE_START;
     } else if (normal_attack_start &&
                RLSession_RyuNormalPolicyMetaFromIdentity(entry, obs, side, &action_id, &sub_action_id)) {
@@ -1446,10 +1570,10 @@ static bool RLSession_BuildEngineStartAttributionForSide(const RLDecisionLedgerE
     return attribution != NULL && attribution->action_id != RL_POLICY_ACTION_THROW;
 }
 
-static bool RLSession_BuildRyuDamageFallbackStateAttributionForSide(const RLDecisionLedgerEntry* entry,
-                                                                    const RLObservationV1* obs,
-                                                                    RLCombatEventSide side,
-                                                                    RLEngineAttribution* attribution) {
+static bool RLSession_BuildCharacterDamageFallbackStateAttributionForSide(const RLDecisionLedgerEntry* entry,
+                                                                          const RLObservationV1* obs,
+                                                                          RLCombatEventSide side,
+                                                                          RLEngineAttribution* attribution) {
     u16 action_id = RL_POLICY_ACTION_NEUTRAL;
     u16 sub_action_id = RL_POLICY_SUB_ACTION_NONE;
     u8 label_source = RL_DEMO_ATTRIBUTION_RYU_ENGINE_ROUTINE_START;
@@ -1481,17 +1605,19 @@ static bool RLSession_BuildRyuDamageFallbackStateAttributionForSide(const RLDeci
         kind_of_waza = obs->opp_kind_of_waza;
     }
 
-    if (character_id != RL_CHARACTER_RYU || routine_1 != 4) {
+    if (!RLSession_CombatCharacterUsesEngineOwner(character_id) || routine_1 != 4) {
         return false;
     }
-    if (RLSession_RyuSpecialPolicyMetaFromRoutine2(side == RL_COMBAT_EVENT_SIDE_SELF ? entry : NULL,
-                                                   routine_2,
-                                                   kind_of_waza,
-                                                   true,
-                                                   &action_id,
-                                                   &sub_action_id)) {
+    if (RLSession_CharacterSpecialPolicyMetaFromRoutine2(side == RL_COMBAT_EVENT_SIDE_SELF ? entry : NULL,
+                                                         character_id,
+                                                         routine_2,
+                                                         kind_of_waza,
+                                                         true,
+                                                         &action_id,
+                                                         &sub_action_id)) {
         label_source = RL_DEMO_ATTRIBUTION_RYU_ENGINE_ROUTINE_START;
-    } else if (RLSession_RyuAirMpContinuationPolicyMetaFromRoutine2(routine_2, &action_id, &sub_action_id)) {
+    } else if (character_id == RL_CHARACTER_RYU &&
+               RLSession_RyuAirMpContinuationPolicyMetaFromRoutine2(routine_2, &action_id, &sub_action_id)) {
         label_source = RL_DEMO_ATTRIBUTION_RYU_ENGINE_NORMAL_ATTACK_START;
     } else {
         return false;
@@ -2494,6 +2620,7 @@ static bool RLSession_CombatPolicyActionIsProjectileLike(u16 policy_action_id) {
     case RL_POLICY_ACTION_RYU_FIREBALL:
     case RL_POLICY_ACTION_RYU_SHINKUU_HADOUKEN:
     case RL_POLICY_ACTION_RYU_DENJIN_HADOUKEN:
+    case RL_POLICY_ACTION_KEN_FIREBALL:
         return true;
     default:
         return false;
@@ -2603,10 +2730,10 @@ static bool RLSession_CombatAttackStartUsesEngineOwner(const RLDecisionLedgerEnt
         return false;
     }
     if (side == RL_COMBAT_EVENT_SIDE_SELF) {
-        return entry->agent_character_id == RL_CHARACTER_RYU;
+        return RLSession_CombatCharacterUsesEngineOwner(entry->agent_character_id);
     }
     if (side == RL_COMBAT_EVENT_SIDE_OPPONENT) {
-        return entry->opponent_character_id == RL_CHARACTER_RYU;
+        return RLSession_CombatCharacterUsesEngineOwner(entry->opponent_character_id);
     }
     return false;
 }
@@ -2772,6 +2899,12 @@ static bool RLSession_CombatActionCanUseDamageFallback(u16 policy_action_id) {
     case RL_POLICY_ACTION_RYU_AIR_TATSU:
     case RL_POLICY_ACTION_RYU_JOUDAN:
     case RL_POLICY_ACTION_RYU_SHIN_SHORYUKEN:
+    case RL_POLICY_ACTION_KEN_SHORYUREPPA:
+    case RL_POLICY_ACTION_KEN_SHINRYUKEN:
+    case RL_POLICY_ACTION_KEN_SHIPPU_JINRAIKYAKU:
+    case RL_POLICY_ACTION_KEN_SHORYUKEN:
+    case RL_POLICY_ACTION_KEN_TATSU:
+    case RL_POLICY_ACTION_KEN_AIR_TATSU:
     case RL_POLICY_ACTION_AIR_NORMAL:
         return true;
     default:
@@ -2813,7 +2946,7 @@ static void RLSession_MaybeStartCombatAttackEventFromDamage(RLDecisionLedgerEntr
     if (RLCombatEvent_HasActiveAttackForSide(entry->run_id, entry->episode_id, side)) {
         return;
     }
-    if (!RLSession_BuildRyuDamageFallbackStateAttributionForSide(entry, obs, side, &attribution)) {
+    if (!RLSession_BuildCharacterDamageFallbackStateAttributionForSide(entry, obs, side, &attribution)) {
         return;
     }
     if (!RLSession_CombatActionCanUseDamageFallback(attribution.action_id)) {
@@ -2998,7 +3131,7 @@ static void RLSession_UpdateCombatProjectileEvents(RLDecisionLedgerEntry* entry,
     RLCombatEvent_UpdateProjectiles(&update);
 }
 
-static bool RLSession_IsRyuThrowRoutine(u16 routine_1, u16 routine_2) {
+static bool RLSession_IsCommonEngineThrowRoutine(u16 routine_1, u16 routine_2) {
     return routine_1 == 4 && (routine_2 == 14 || routine_2 == 15);
 }
 
@@ -3028,7 +3161,8 @@ static bool RLSession_ObservationLooksLikeEngineThrowStartForSide(const RLDecisi
         return false;
     }
 
-    return character_id == RL_CHARACTER_RYU && edge && RLSession_IsRyuThrowRoutine(routine_1, routine_2);
+    return RLSession_CombatCharacterUsesEngineOwner(character_id) && edge &&
+           RLSession_IsCommonEngineThrowRoutine(routine_1, routine_2);
 }
 
 static bool RLSession_ThrowAttemptAlreadyStartedForSide(const RLDecisionLedgerEntry* entry, RLCombatEventSide side) {

@@ -665,6 +665,11 @@ Ken note:
 - Unlike Ryu, Ken's normal AS tables currently show no `.r_no=2` entry in the
   standing, crouching, or air-normal tables. Keep `R1=4/R2=2` unmapped for Ken
   until a Ken-specific live overlay/log pass proves a concrete meaning.
+- Combat event engine attribution now supports Ken's source-backed command
+  routines below. The emitted `engine_action_id` values are Ken-specific
+  `212x` IDs, while Python analyzers map them back to the existing generic
+  move names (`fireball-*`, `shoryuken-*`, `tatsu-*`, `air-tatsu-*`) for
+  side-by-side Ryu/Ken stats.
 
 | policy_action_id | slot | move_name | routines | handlers | macro_template | sub_action_group |
 |---:|---:|---|---|---|---|---|

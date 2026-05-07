@@ -14979,3 +14979,72 @@ Validation:
 - Existing live logs showed the pre-fix symptom (`no_source_candidate=2`) and
   cannot validate the changed C branch retroactively; deploy this build and
   re-record the MP-only smoke to confirm the count drops to 0.
+
+## 2026-05-07: Ken Engine Attribution Support
+
+Milestone:
+- Combat event attribution Phase 7A-5 / Ken source-backed engine attribution
+
+Problem:
+- Combat event engine-owned attack starts were deliberately Ryu-only while the
+  Ryu state machine was being validated.
+- The next character target is Ken. Ken's command routine table is
+  source-backed in `plpat11.c`, and the taxonomy already records the expected
+  `R2` values, but C did not yet use those rows for combat event source labels.
+- The recent Ryu `R2=2` edge case should stay Ryu-only; Ken's normal AS tables
+  have no validated `.r_no=2` meaning.
+
+Implementation:
+- Updated `src/rl/rl_session.c`:
+  - added Ken policy action constants (`2120/2121/2122/2128/2129/2130/2146`)
+    and `RL_CHARACTER_KEN`.
+  - generalized the engine-owned character gate to Ryu or Ken.
+  - added Ken special routine mapping:
+    - `R2=16` Hadouken -> `2129`
+    - `R2=17` Shoryuken -> `2128`
+    - `R2=18` Tatsumaki -> `2130`
+    - `R2=19` Shoryureppa -> `2120`
+    - `R2=20` Shinryuken -> `2121`
+    - `R2=21` Shippu Jinraikyaku -> `2122`
+    - `R2=22` Air Tatsumaki -> `2146`
+  - kept common throw startup on `R2=14/15` for both Ryu and Ken.
+  - kept Ryu `R2=2` air-MP continuation fallback Ryu-only.
+  - added Ken Hadouken as projectile-like, and Ken non-projectile specials as
+    allowed damage fallback sources.
+- Updated `tools/analyze_rl_combat_events.py` and `tools/rl_probe_server.py` so
+  Ken `212x` action IDs are summarized with the same generic move names used for
+  Ryu (`fireball-*`, `shoryuken-*`, `tatsu-*`, `air-tatsu-*`) plus Ken super
+  names.
+- Updated `docs/plan-remote-rl-agent.md` and
+  `docs/rl-policy-action-taxonomy.md`.
+
+Expected live effect:
+- Ken-vs-Ryu or Ken-vs-Ken event logs should no longer show Ken special attacks
+  as unknown engine actions when routine edges are visible.
+- Ken Hadouken attack rows should be marked projectile-like and delegate to
+  projectile journal rows.
+- Ken normal attacks should use the existing generic normal identity path.
+- Ken `R2=2` should remain unmapped unless a future Ken-specific live/source
+  pass proves a concrete meaning.
+
+Risk:
+- Ken super-art strength/sub-action is still conservative (`sub_action=none`).
+- This does not change learner/reward behavior; it only affects combat event
+  labeling and analyzer summaries.
+
+Validation:
+- `git diff --check` passed.
+- `python3 -m py_compile tools/analyze_rl_combat_events.py tools/rl_probe_server.py`
+  passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed and rebuilt
+  `src/rl/rl_session.c`. The only warning was the existing minizip `mktemp`
+  linker warning.
+- Existing Ryu event journal analyzer smoke passed on
+  `logs/phase7a-event-journal-live-events.ndjson` joined with
+  `logs/phase7a-event-journal-live-transitions.ndjson`.
+- Direct Python mapping smoke confirmed Ken action IDs `2129/2128/2130/2146`
+  map to `fireball-*`, `shoryuken-*`, `tatsu-*`, and `air-tatsu-*`, and Ken
+  super IDs `2120/2121/2122` map to `shoryureppa`, `shinryuken`, and
+  `shippu-jinraikyaku`.
+- Live Ken logs are still required to validate routine timing and edge counts on
+  device.

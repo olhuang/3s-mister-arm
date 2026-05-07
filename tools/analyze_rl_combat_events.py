@@ -25,6 +25,13 @@ RL_POLICY_ACTION_RYU_FIREBALL = 1229
 RL_POLICY_ACTION_RYU_TATSU = 1230
 RL_POLICY_ACTION_RYU_JOUDAN = 1231
 RL_POLICY_ACTION_RYU_AIR_TATSU = 1246
+RL_POLICY_ACTION_KEN_SHORYUREPPA = 2120
+RL_POLICY_ACTION_KEN_SHINRYUKEN = 2121
+RL_POLICY_ACTION_KEN_SHIPPU_JINRAIKYAKU = 2122
+RL_POLICY_ACTION_KEN_SHORYUKEN = 2128
+RL_POLICY_ACTION_KEN_FIREBALL = 2129
+RL_POLICY_ACTION_KEN_TATSU = 2130
+RL_POLICY_ACTION_KEN_AIR_TATSU = 2146
 
 PUNCH_SUB_ACTIONS = {1, 2, 3}
 KICK_SUB_ACTIONS = {4, 5, 6}
@@ -50,11 +57,15 @@ SUPER_ACTION_IDS = {
     RL_POLICY_ACTION_RYU_SHINKUU_HADOUKEN,
     RL_POLICY_ACTION_RYU_DENJIN_HADOUKEN,
     RL_POLICY_ACTION_RYU_SHIN_SHORYUKEN,
+    RL_POLICY_ACTION_KEN_SHORYUREPPA,
+    RL_POLICY_ACTION_KEN_SHINRYUKEN,
+    RL_POLICY_ACTION_KEN_SHIPPU_JINRAIKYAKU,
 }
 PROJECTILE_ACTION_IDS = {
     RL_POLICY_ACTION_RYU_FIREBALL,
     RL_POLICY_ACTION_RYU_SHINKUU_HADOUKEN,
     RL_POLICY_ACTION_RYU_DENJIN_HADOUKEN,
+    RL_POLICY_ACTION_KEN_FIREBALL,
 }
 SPECIAL_ACTION_IDS = {
     RL_POLICY_ACTION_RYU_FIREBALL,
@@ -62,6 +73,10 @@ SPECIAL_ACTION_IDS = {
     RL_POLICY_ACTION_RYU_TATSU,
     RL_POLICY_ACTION_RYU_JOUDAN,
     RL_POLICY_ACTION_RYU_AIR_TATSU,
+    RL_POLICY_ACTION_KEN_FIREBALL,
+    RL_POLICY_ACTION_KEN_SHORYUKEN,
+    RL_POLICY_ACTION_KEN_TATSU,
+    RL_POLICY_ACTION_KEN_AIR_TATSU,
 }
 NORMAL_ACTION_IDS = {
     RL_POLICY_ACTION_STAND_NORMAL,
@@ -194,15 +209,15 @@ def action_name(action_id: int, sub_action_id: int, event_kind: str) -> str:
         return f"crouch-{button}"
     if action_id == RL_POLICY_ACTION_AIR_NORMAL:
         return f"air-{button}"
-    if action_id == RL_POLICY_ACTION_RYU_FIREBALL:
+    if action_id in (RL_POLICY_ACTION_RYU_FIREBALL, RL_POLICY_ACTION_KEN_FIREBALL):
         return f"fireball-{button}"
-    if action_id == RL_POLICY_ACTION_RYU_SHORYUKEN:
+    if action_id in (RL_POLICY_ACTION_RYU_SHORYUKEN, RL_POLICY_ACTION_KEN_SHORYUKEN):
         return f"shoryuken-{button}"
-    if action_id == RL_POLICY_ACTION_RYU_TATSU:
+    if action_id in (RL_POLICY_ACTION_RYU_TATSU, RL_POLICY_ACTION_KEN_TATSU):
         return f"tatsu-{button}"
     if action_id == RL_POLICY_ACTION_RYU_JOUDAN:
         return f"joudan-{button}"
-    if action_id == RL_POLICY_ACTION_RYU_AIR_TATSU:
+    if action_id in (RL_POLICY_ACTION_RYU_AIR_TATSU, RL_POLICY_ACTION_KEN_AIR_TATSU):
         return f"air-tatsu-{button}"
     if action_id == RL_POLICY_ACTION_RYU_SHINKUU_HADOUKEN:
         return "shinkuu-hadouken"
@@ -210,6 +225,12 @@ def action_name(action_id: int, sub_action_id: int, event_kind: str) -> str:
         return "denjin-hadouken"
     if action_id == RL_POLICY_ACTION_RYU_SHIN_SHORYUKEN:
         return "shin-shoryuken"
+    if action_id == RL_POLICY_ACTION_KEN_SHORYUREPPA:
+        return "shoryureppa"
+    if action_id == RL_POLICY_ACTION_KEN_SHINRYUKEN:
+        return "shinryuken"
+    if action_id == RL_POLICY_ACTION_KEN_SHIPPU_JINRAIKYAKU:
+        return "shippu-jinraikyaku"
     if action_id == 0:
         return f"unknown-{event_kind}"
     return f"action-{action_id}/{sub_action_id}"
@@ -245,7 +266,7 @@ def action_tags(action_id: int, sub_action_id: int, event_kind: str) -> list[str
         tags.update({"ground", "stand", "command_normal"})
     elif action_id == RL_POLICY_ACTION_CROUCH_NORMAL:
         tags.update({"ground", "crouch"})
-    elif action_id in (RL_POLICY_ACTION_AIR_NORMAL, RL_POLICY_ACTION_RYU_AIR_TATSU):
+    elif action_id in (RL_POLICY_ACTION_AIR_NORMAL, RL_POLICY_ACTION_RYU_AIR_TATSU, RL_POLICY_ACTION_KEN_AIR_TATSU):
         tags.add("air")
     elif action_id != 0:
         tags.add("ground")

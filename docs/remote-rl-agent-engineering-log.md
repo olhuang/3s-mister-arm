@@ -15048,3 +15048,41 @@ Validation:
   `shippu-jinraikyaku`.
 - Live Ken logs are still required to validate routine timing and edge counts on
   device.
+
+## 2026-05-07: Phase 9 Event-Aware Trainer Data Recollection Gate
+
+Milestone:
+- Combat event attribution Phase 9 / learner adoption planning
+
+Purpose:
+- Document that event-aware DQN training requires fresh paired
+  transition/event logs, not old transition-only replay data.
+- Keep event rows as training labels/metadata until explicit trainer flags opt
+  into reward shaping or event-derived replay experiences.
+
+Implementation:
+- Updated `docs/plan-remote-rl-agent.md`:
+  - added Phase 9A data recollection, schema, analyzer, and training eligibility
+    gates.
+  - specified the first recollection curriculum for Ryu vs Ryu, Ken vs Ryu,
+    side-symmetry, and negative/safety cases.
+  - added Phase 9B/9C/9D trainer adoption steps for reader, reward-shaping MVP,
+    prefer-event-action, and event-aware sampling.
+- Updated `docs/agent-memory/remote-rl-combat-event-attribution-plan.md` with
+  the same paired-file collection contract and eligibility thresholds.
+
+Expected effect:
+- Future trainer work will first collect and validate sibling
+  `*-transitions.ndjson` and `*-events.ndjson` files from the same probe batch
+  envelope before any combat event label can affect rewards.
+- Candidate datasets must pass analyzer checks for schema, event id ordering,
+  missing refs, transition joins, projectile counters, unknown/no_source counts,
+  and side splits.
+
+Risk:
+- Documentation-only change. Runtime, probe, event journal export, and trainer
+  behavior are unchanged.
+
+Validation:
+- Markdown updates reviewed by diff. No code validation required for this
+  planning-only change.

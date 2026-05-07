@@ -2465,6 +2465,46 @@ Work:
 - use high-confidence event labels first
 - add source/confidence diagnostics to model metadata
 
+Data recollection gate:
+
+- Phase 9 trainer adoption requires fresh paired transition/event logs. Old
+  transition-only logs remain valid for baseline replay and model comparison,
+  but they are not eligible for event-reward training.
+- Every event-aware training dataset must come from the same probe batch
+  envelope split into two sibling files:
+  - `*-transitions.ndjson`
+  - `*-events.ndjson`
+- Capture requirements:
+  - MiSTer config/OSD has combat event export enabled.
+  - Probe command provides both `--transition-log` and `--combat-event-log`.
+  - Transition log contains zero `combat_event_schema_version` rows.
+  - Event log contains only `combat_event_schema_version` rows.
+  - Event ids are strictly increasing inside each run, with no missing source
+    references, duplicate event rows, or journal overflow.
+- Initial recollection curriculum before reward shaping:
+  - Ryu vs Ryu: LP/MP/HP/LK/MK/HK, fireball, Shoryuken, Tatsumaki, throw,
+    projectile clash, parry, whiff, block, hit, and punish examples.
+  - Ken vs Ryu: LP/MP/HP/LK/MK/HK, Hadouken, Shoryuken, Tatsumaki, Air
+    Tatsumaki, throw, and Ken SA1/SA2/SA3 where selectable.
+  - Side symmetry: at least one self-controlled and one opponent/CPU-controlled
+    sample for attack, projectile, throw, attribution, and punish rows.
+  - Negative/safety cases: blocked DP, whiffed throw, clean whiff, projectile
+    expired safely, projectile parried, projectile clash, and round/pause/session
+    boundary flush.
+- Analyzer gate:
+  - Run `tools/analyze_rl_combat_events.py <events> --transition-log <transitions>`
+    on every candidate dataset.
+  - Record event id ordering, schema distribution, missing refs, transition join
+    coverage, projectile counter checks, unknown/no_source counts, move stats,
+    and per-side source/target splits.
+- Training eligibility:
+  - A move family can affect rewards only if its unresolved unknown/no_source
+    rate is below the documented threshold, initially 10%, or if all unresolved
+    rows are explicitly excluded from reward.
+  - `unknown`, `no_source_candidate`, schema-mismatch, duplicate, missing-ref,
+    and journal-overflow episodes are analysis-only and must not shape rewards
+    in Phase 9 safe profiles.
+
 Candidate reward uses:
 
 - event-based hit/block/whiff/punish rewards by action family, replacing

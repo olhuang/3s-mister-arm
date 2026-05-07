@@ -15413,3 +15413,30 @@ Validation:
     `uses_transition_hp_delta=false`, `uses_event_damage_delta=true`,
     `applied=992`, `event_damage_reward_rows=652`,
     `event_damage_reward_sum=5.000`, and `raw_reward_sum=1.600`.
+
+Candidate training results:
+- Trained `model/dqn-combat-event-ryu-ken-v1-event-damage` for 2000 steps from
+  v62 using `event-damage-v1`.
+  - Publish passed with `reward_source=combat-event-event-damage-v1`,
+    `events:3748`, `missing_refs:0`, `applied:992`, `event_dmg:5.000`,
+    and `raw_sum:1.600`.
+  - Compare result: `attack_rate=6.0%`, `defense_rate=81.0%`,
+    `top=guard-stand:34.3%`.
+  - Interpretation: even with transition HP-delta disabled and small net event
+    damage reward, 2000 steps on this dataset still drifts into a defensive
+    policy, likely because the replay experiences are dominated by guard/back
+    rows after base HP reward is removed.
+- Trained `model/dqn-combat-event-ryu-ken-v1-event-damage-step200` for 200
+  steps from v62 using the same profile.
+  - Compare result: `attack_rate=47.6%`, `defense_rate=43.7%`,
+    `top=back:42.9%`, `throw=27.8%`.
+  - Interpretation: short warm-start fine-tuning preserves much more of the
+    base model's attack behavior than a full 2000-step run. Treat this as the
+    better first live-test candidate if testing this profile before adding
+    event-aware sampling.
+
+Follow-up:
+- Do not promote the 2000-step `event-damage-v1` candidate.
+- Next tuning should add event-aware sampling or source-family balancing before
+  long event-primary training, or use a short fine-tune budget as an explicit
+  warm-start recipe.

@@ -14744,3 +14744,40 @@ Risk:
 - No-contact events are intentionally unchanged. Contact-resolved is still a
   lifecycle label only; hit/block truth continues to come from attribution and
   defense-result rows.
+
+## 2026-05-07: Recent Source Continuation for Attribution
+
+Milestone:
+- Combat event attribution Phase 6a-2 / recent confirmed source continuation
+
+Problem:
+- Live event journals still showed `defense_result=unknown` rows with
+  `failure_reason=no_source_candidate`, `edge_type=hp_delta`, and target
+  hitstun shortly after successful hit/block attribution.
+- These rows are likely continuation damage/chip from a source that was already
+  confirmed but no longer active in the matcher window.
+
+Implementation:
+- Added a tiny per-direction recent attribution cache for successful
+  attack/projectile source matches only.
+- If a later HP/stun delta has no active attack/projectile/throw source
+  candidate, the matcher may reconnect it to the most recent same-direction
+  confirmed source.
+- Continuation is allowed only within a short window: 8 frames for attacks and
+  12 frames for projectiles.
+- Continuation is rejected if an opposite-direction confirmed attribution
+  happened after the candidate source, if the previous source was throw, or if
+  the previous defense result was not hit/block/chip.
+- Continuation rows do not open new punish candidates, so multi-hit continuation
+  does not double-count punish opportunities.
+
+Expected live effect:
+- `source_family=unknown` / `no_source_candidate` HP-delta rows should drop for
+  multi-hit or delayed chip/hit cases.
+- The same source event id should be reused for short continuation damage.
+- Throw rows and ambiguous long gaps remain conservative unknowns.
+
+Risk:
+- Wrong-source continuation is possible in chaotic trades. The first pass keeps
+  the window short, requires same source/target direction, and refuses to bridge
+  across an intervening confirmed opposite-side attribution.

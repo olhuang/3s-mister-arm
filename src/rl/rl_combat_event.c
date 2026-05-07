@@ -64,7 +64,22 @@ typedef struct RLCombatPunishableAttackCandidate {
     RLCombatPunishReason reason;
 } RLCombatPunishableAttackCandidate;
 
+typedef struct RLCombatRecentAttributionSource {
+    bool valid;
+    u64 run_id;
+    u32 episode_id;
+    u64 source_event_id;
+    u32 decision_id;
+    u32 frame_id;
+    RLCombatEventSide source_side;
+    RLCombatEventSide target_side;
+    RLCombatContactMatchSource source_family;
+    RLCombatDefenseResult defense_result;
+} RLCombatRecentAttributionSource;
+
 #define RL_COMBAT_PUNISH_CANDIDATE_WINDOW_FRAMES 12u
+#define RL_COMBAT_CONTINUATION_ATTACK_WINDOW_FRAMES 8u
+#define RL_COMBAT_CONTINUATION_PROJECTILE_WINDOW_FRAMES 12u
 #define RL_COMBAT_EVENT_JOURNAL_ENTRY_CAP 2048u
 
 static RLCombatAttackEventRing self_attack_ring;
@@ -78,6 +93,8 @@ static RLCombatJournalEntry journal_entries[RL_COMBAT_EVENT_JOURNAL_ENTRY_CAP];
 static u32 journal_entry_count;
 static RLCombatPunishableAttackCandidate self_punishable_attack;
 static RLCombatPunishableAttackCandidate opponent_punishable_attack;
+static RLCombatRecentAttributionSource self_recent_attribution_source;
+static RLCombatRecentAttributionSource opponent_recent_attribution_source;
 static u64 self_last_punished_attack_event_id;
 static u64 opponent_last_punished_attack_event_id;
 static RLCombatEventStats combat_event_stats;
@@ -93,6 +110,31 @@ static RLCombatAttackEventRing* RLCombatEvent_RingForSide(RLCombatEventSide side
         return &self_attack_ring;
     case RL_COMBAT_EVENT_SIDE_OPPONENT:
         return &opponent_attack_ring;
+    case RL_COMBAT_EVENT_SIDE_NONE:
+    default:
+        return NULL;
+    }
+}
+
+static RLCombatRecentAttributionSource* RLCombatEvent_RecentAttributionForSide(RLCombatEventSide side) {
+    switch (side) {
+    case RL_COMBAT_EVENT_SIDE_SELF:
+        return &self_recent_attribution_source;
+    case RL_COMBAT_EVENT_SIDE_OPPONENT:
+        return &opponent_recent_attribution_source;
+    case RL_COMBAT_EVENT_SIDE_NONE:
+    default:
+        return NULL;
+    }
+}
+
+static const RLCombatRecentAttributionSource*
+RLCombatEvent_ConstRecentAttributionForSide(RLCombatEventSide side) {
+    switch (side) {
+    case RL_COMBAT_EVENT_SIDE_SELF:
+        return &self_recent_attribution_source;
+    case RL_COMBAT_EVENT_SIDE_OPPONENT:
+        return &opponent_recent_attribution_source;
     case RL_COMBAT_EVENT_SIDE_NONE:
     default:
         return NULL;
@@ -1055,6 +1097,125 @@ static RLCombatDefenseTargetState RLCombatEvent_DeriveDefenseTargetState(const R
     return RL_COMBAT_DEFENSE_TARGET_STATE_NEUTRAL;
 }
 
+static bool RLCombatEvent_SourceFamilyCanContinue(RLCombatContactMatchSource source) {
+    return source == RL_COMBAT_CONTACT_MATCH_SOURCE_ATTACK ||
+           source == RL_COMBAT_CONTACT_MATCH_SOURCE_PROJECTILE;
+}
+
+static bool RLCombatEvent_DefenseResultCanContinue(RLCombatDefenseResult result) {
+    return result == RL_COMBAT_DEFENSE_RESULT_HIT ||
+           result == RL_COMBAT_DEFENSE_RESULT_BLOCKED ||
+           result == RL_COMBAT_DEFENSE_RESULT_BLOCKED_CHIP;
+}
+
+static bool RLCombatEvent_EdgeCanUseContinuation(RLCombatAttributionEdgeType edge_type) {
+    return edge_type == RL_COMBAT_ATTRIBUTION_EDGE_HP_DELTA ||
+           edge_type == RL_COMBAT_ATTRIBUTION_EDGE_STUN_DELTA;
+}
+
+static bool RLCombatEvent_TargetStateCanUseContinuation(const RLCombatContactMatchUpdate* update) {
+    const RLCombatDefenseTargetState state = RLCombatEvent_DeriveDefenseTargetState(update);
+    return state == RL_COMBAT_DEFENSE_TARGET_STATE_HITSTUN ||
+           state == RL_COMBAT_DEFENSE_TARGET_STATE_BLOCKSTUN;
+}
+
+static u32 RLCombatEvent_ContinuationWindowFrames(RLCombatContactMatchSource source) {
+    if (source == RL_COMBAT_CONTACT_MATCH_SOURCE_PROJECTILE) {
+        return RL_COMBAT_CONTINUATION_PROJECTILE_WINDOW_FRAMES;
+    }
+    return RL_COMBAT_CONTINUATION_ATTACK_WINDOW_FRAMES;
+}
+
+static RLCombatDefenseResult
+RLCombatEvent_ContinuationDefenseResult(RLCombatDefenseResult previous,
+                                        const RLCombatContactMatchUpdate* update) {
+    if ((previous == RL_COMBAT_DEFENSE_RESULT_BLOCKED ||
+         previous == RL_COMBAT_DEFENSE_RESULT_BLOCKED_CHIP) &&
+        update != NULL && (update->target_hp_delta || update->target_stun_delta)) {
+        return RL_COMBAT_DEFENSE_RESULT_BLOCKED_CHIP;
+    }
+    return previous;
+}
+
+static bool RLCombatEvent_OppositeContinuationIntervened(const RLCombatRecentAttributionSource* candidate,
+                                                        const RLCombatContactMatchUpdate* update) {
+    const RLCombatRecentAttributionSource* opposite = NULL;
+
+    if (candidate == NULL || update == NULL) {
+        return true;
+    }
+
+    opposite = RLCombatEvent_ConstRecentAttributionForSide(RLCombatEvent_OppositeSide(candidate->source_side));
+    return opposite != NULL && opposite->valid && opposite->run_id == update->run_id &&
+           opposite->episode_id == update->episode_id && opposite->frame_id > candidate->frame_id &&
+           opposite->frame_id <= update->frame_id;
+}
+
+static bool RLCombatEvent_TryUseRecentAttributionContinuation(const RLCombatContactMatchUpdate* update,
+                                                             RLCombatAttributionEdgeType edge_type,
+                                                             RLCombatContactMatchSource* source_out,
+                                                             u64* source_event_id_out,
+                                                             RLCombatDefenseResult* defense_result_out) {
+    const RLCombatRecentAttributionSource* recent = NULL;
+    u32 age = 0;
+
+    if (update == NULL || source_out == NULL || source_event_id_out == NULL ||
+        defense_result_out == NULL || !RLCombatEvent_EdgeCanUseContinuation(edge_type) ||
+        !RLCombatEvent_TargetStateCanUseContinuation(update)) {
+        return false;
+    }
+
+    recent = RLCombatEvent_ConstRecentAttributionForSide(update->source_side);
+    if (recent == NULL || !recent->valid || recent->run_id != update->run_id ||
+        recent->episode_id != update->episode_id || recent->source_side != update->source_side ||
+        recent->target_side != RLCombatEvent_OppositeSide(update->source_side) ||
+        recent->source_event_id == RL_COMBAT_EVENT_ID_NONE ||
+        !RLCombatEvent_SourceFamilyCanContinue(recent->source_family) ||
+        !RLCombatEvent_DefenseResultCanContinue(recent->defense_result) ||
+        update->frame_id < recent->frame_id ||
+        RLCombatEvent_OppositeContinuationIntervened(recent, update)) {
+        return false;
+    }
+
+    age = RLCombatEvent_FrameAge(update->frame_id, recent->frame_id);
+    if (age > RLCombatEvent_ContinuationWindowFrames(recent->source_family)) {
+        return false;
+    }
+
+    *source_out = recent->source_family;
+    *source_event_id_out = recent->source_event_id;
+    *defense_result_out = RLCombatEvent_ContinuationDefenseResult(recent->defense_result, update);
+    return true;
+}
+
+static void RLCombatEvent_RememberRecentAttributionSource(const RLCombatAttributionEvent* event) {
+    RLCombatRecentAttributionSource* recent = NULL;
+
+    if (event == NULL || event->failure_reason != RL_COMBAT_ATTRIBUTION_FAILURE_NONE ||
+        event->source_event_id == RL_COMBAT_EVENT_ID_NONE ||
+        !RLCombatEvent_SourceFamilyCanContinue(event->source_family) ||
+        !RLCombatEvent_DefenseResultCanContinue(event->defense_result)) {
+        return;
+    }
+
+    recent = RLCombatEvent_RecentAttributionForSide(event->source_side);
+    if (recent == NULL) {
+        return;
+    }
+
+    memset(recent, 0, sizeof(*recent));
+    recent->valid = true;
+    recent->run_id = event->run_id;
+    recent->episode_id = event->episode_id;
+    recent->source_event_id = event->source_event_id;
+    recent->decision_id = event->decision_id;
+    recent->frame_id = event->frame_id;
+    recent->source_side = event->source_side;
+    recent->target_side = event->target_side;
+    recent->source_family = event->source_family;
+    recent->defense_result = event->defense_result;
+}
+
 static void RLCombatEvent_IncrementDefenseContextCounters(const RLCombatAttributionEvent* event) {
     if (event == NULL) {
         return;
@@ -1363,7 +1524,9 @@ static void RLCombatEvent_RecordAttributionEvent(const RLCombatContactMatchUpdat
                                                  u64 source_event_id,
                                                  RLCombatAttributionEdgeType edge_type,
                                                  RLCombatAttributionFailureReason failure_reason,
-                                                 const RLCombatProjectileEvent* projectile_event) {
+                                                 const RLCombatProjectileEvent* projectile_event,
+                                                 RLCombatDefenseResult defense_result_override,
+                                                 bool continuation) {
     RLCombatAttributionEvent* event = NULL;
     RLCombatDefenseResult defense_result = RL_COMBAT_DEFENSE_RESULT_NONE;
 
@@ -1390,8 +1553,9 @@ static void RLCombatEvent_RecordAttributionEvent(const RLCombatContactMatchUpdat
     event->edge_type = edge_type;
     event->failure_reason = failure_reason;
     event->confidence = RLCombatEvent_DeriveAttributionConfidence(source, edge_type, failure_reason);
-    defense_result =
-        RLCombatEvent_DeriveDefenseResult(update, source, edge_type, failure_reason, projectile_event);
+    defense_result = (defense_result_override != RL_COMBAT_DEFENSE_RESULT_NONE)
+                         ? defense_result_override
+                         : RLCombatEvent_DeriveDefenseResult(update, source, edge_type, failure_reason, projectile_event);
     event->defense_result = defense_result;
     event->actual_guard_state_at_contact = update->target_guard_state;
     event->target_state = RLCombatEvent_DeriveDefenseTargetState(update);
@@ -1418,7 +1582,10 @@ static void RLCombatEvent_RecordAttributionEvent(const RLCombatContactMatchUpdat
     RLCombatEvent_IncrementAttributionEdgeCounter(edge_type);
     RLCombatEvent_IncrementDefenseResultCounter(event->target_side, defense_result);
     RLCombatEvent_IncrementDefenseContextCounters(event);
-    RLCombatEvent_TryRecordPunishCandidate(event);
+    if (!continuation) {
+        RLCombatEvent_TryRecordPunishCandidate(event);
+    }
+    RLCombatEvent_RememberRecentAttributionSource(event);
     if (failure_reason != RL_COMBAT_ATTRIBUTION_FAILURE_NONE) {
         combat_event_stats.attribution_failure_count++;
     }
@@ -1760,6 +1927,8 @@ static void RLCombatEvent_ClearRings(void) {
     RLCombatEvent_ClearJournal();
     memset(&self_punishable_attack, 0, sizeof(self_punishable_attack));
     memset(&opponent_punishable_attack, 0, sizeof(opponent_punishable_attack));
+    memset(&self_recent_attribution_source, 0, sizeof(self_recent_attribution_source));
+    memset(&opponent_recent_attribution_source, 0, sizeof(opponent_recent_attribution_source));
     self_last_punished_attack_event_id = RL_COMBAT_EVENT_ID_NONE;
     opponent_last_punished_attack_event_id = RL_COMBAT_EVENT_ID_NONE;
     RLCombatEvent_RefreshActiveStats();
@@ -2425,7 +2594,9 @@ bool RLCombatEvent_RecordContactMatch(const RLCombatContactMatchUpdate* update) 
     RLCombatContactMatchSource source = RL_COMBAT_CONTACT_MATCH_SOURCE_UNKNOWN;
     RLCombatAttributionFailureReason failure_reason = RL_COMBAT_ATTRIBUTION_FAILURE_NONE;
     RLCombatAttributionEdgeType edge_type = RL_COMBAT_ATTRIBUTION_EDGE_NONE;
+    RLCombatDefenseResult defense_result_override = RL_COMBAT_DEFENSE_RESULT_NONE;
     u64 source_event_id = RL_COMBAT_EVENT_ID_NONE;
+    bool continuation = false;
 
     if (update == NULL || update->run_id == 0 || update->episode_id == 0 ||
         update->source_side == RL_COMBAT_EVENT_SIDE_NONE) {
@@ -2480,6 +2651,12 @@ bool RLCombatEvent_RecordContactMatch(const RLCombatContactMatchUpdate* update) 
     } else if (attack_candidate) {
         source = RL_COMBAT_CONTACT_MATCH_SOURCE_ATTACK;
         source_event_id = attack_event != NULL ? attack_event->event_id : RL_COMBAT_EVENT_ID_NONE;
+    } else if (RLCombatEvent_TryUseRecentAttributionContinuation(update,
+                                                                 edge_type,
+                                                                 &source,
+                                                                 &source_event_id,
+                                                                 &defense_result_override)) {
+        continuation = true;
     } else {
         failure_reason = RL_COMBAT_ATTRIBUTION_FAILURE_NO_SOURCE_CANDIDATE;
     }
@@ -2489,7 +2666,14 @@ bool RLCombatEvent_RecordContactMatch(const RLCombatContactMatchUpdate* update) 
     }
 
     RLCombatEvent_IncrementContactMatchCounter(update->source_side, source);
-    RLCombatEvent_RecordAttributionEvent(update, source, source_event_id, edge_type, failure_reason, projectile_event);
+    RLCombatEvent_RecordAttributionEvent(update,
+                                         source,
+                                         source_event_id,
+                                         edge_type,
+                                         failure_reason,
+                                         projectile_event,
+                                         defense_result_override,
+                                         continuation);
     return true;
 }
 

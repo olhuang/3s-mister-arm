@@ -2479,7 +2479,7 @@ Phase 9B-0 validation reader status:
   architecture.
 - End-decision misses are reported but not fatal in the validation reader because
   episode/round flush can leave terminal event rows without a matching final
-  transition row. Phase 9C direct event experiences must choose an explicit
+  transition row. Phase 9C-2 direct event experiences must choose an explicit
   fallback policy before using those rows.
 
 Phase 9B-1 reward-shaping MVP status:
@@ -2524,6 +2524,28 @@ Phase 9B-2 reward aggregation/cap status:
   `grouped_attribution_source_events`, `grouped_projectile_parent_events`,
   `capped_duplicate_outcome_rows`, per-outcome duplicate counts, and grouped
   HP/stun totals.
+
+Phase 9C defensive reward-shaping status:
+
+- `safe-v1` now also uses defensive attribution labels without changing DQN
+  feature names or replay row schema. Offensive source events still join by
+  `(run_id, episode_id, start_decision_id)`, while defensive rows join by
+  `(run_id, episode_id, decision_id)` because the opponent owns the source
+  event and the agent owns the defending action at the contact frame.
+- Defensive reward rows must be high-confidence attribution rows with
+  `source_side=opponent`, `target_side=self`, and `failure_reason=none`.
+  Unknown, low-confidence, no-source, schema-invalid, or unsupported rows
+  remain zero-reward diagnostics.
+- The first defensive table is conservative:
+  - `defense:hit` and `defense:thrown` are negative.
+  - `defense:blocked`, `defense:blocked_chip`, `defense:parry`, and
+    `defense:evaded` are small positive or neutral rewards.
+- Duplicate same-source same-result defensive attribution rows are capped across
+  decisions, so multi-tick HP/stun deltas from one opponent source do not stack
+  repeated defense penalties or bonuses in `safe-v1`.
+- Metadata now records offensive vs defensive matched rows, defensive
+  attribution rows seen, grouped defensive source events, and rewarded
+  defensive source-result count.
 
 Data recollection gate:
 

@@ -15268,3 +15268,76 @@ Validation:
   - Passed with `applied=375`, `capped=7`, `low_conf=25`, `hp=115`,
     `stun=106`, `raw_sum=71.550`, and
     `reward_source=hp-delta+combat-event-safe-v1`.
+
+## 2026-05-07: Phase 9C Defensive Event Reward Shaping
+
+Milestone:
+- Combat event attribution Phase 9C / defensive reward shaping
+
+Purpose:
+- Let paired combat event logs shape rewards for the agent's defensive results,
+  not only for self-owned attack/projectile/throw/punish source events.
+- Preserve the core safety rule: combat event fields are labels/metadata only;
+  DQN feature names, replay row schema, live inference, and default trainer
+  behavior remain unchanged.
+
+Implementation:
+- Updated `tools/rl_combat_event_training.py`:
+  - added conservative `safe-v1` table entries for `defense:hit`,
+    `defense:blocked`, `defense:blocked_chip`, `defense:parry`,
+    `defense:evaded`, and `defense:thrown`.
+  - added a `by_decision` event index so defensive attribution rows can join to
+    transition rows by `(run_id, episode_id, decision_id)`.
+  - defensive shaping only accepts high-confidence attribution rows with
+    `source_side=opponent`, `target_side=self`, and `failure_reason=none`.
+  - raw `unknown`, low-confidence, no-source, unsupported, and schema-invalid
+    rows remain zero-reward diagnostics.
+  - caps duplicate same-source same-result defensive rows across decisions so a
+    multi-tick opponent hit/block sequence cannot stack repeated defense reward
+    or penalty in `safe-v1`.
+  - records offensive vs defensive matched rows, defensive attribution rows, and
+    grouped defensive source counts in metadata.
+- Updated `tools/train_dqn_learner.py` reward diagnostics to print offensive
+  and defensive matched row counts plus defensive attribution row count.
+- Updated Phase 9 checklist and combat-event plan notes. The direct
+  `prefer-event-action` replay mode is now explicitly deferred to Phase 9C-2.
+
+Expected effect:
+- Reward-shaping mode now gives the model a direct signal for defensive results:
+  getting hit/thrown is penalized, while blocking/parrying/evading opponent
+  contact is slightly rewarded.
+- The existing offensive source-event reward path remains action-start based;
+  defensive reward can apply on continuation rows and be credited through the
+  trainer's existing macro-continuation delayed reward path.
+
+Risk:
+- This changes reward distribution more than Phase 9B because many defensive
+  attributions occur while the agent is holding an action. Keep scale
+  conservative and compare event-aware models against an off-mode baseline before
+  promotion.
+- `safe-v1` still does not use damage magnitude for defense; HP/stun deltas are
+  represented by existing transition reward and by event metadata, not by
+  multiplying event reward.
+
+Validation:
+- `python3 -m py_compile tools/rl_combat_event_training.py tools/train_dqn_learner.py`
+  passed.
+- Synthetic defensive cap smoke:
+  - one transition with two high-confidence same-source `defense:hit`
+    attribution rows returned `reward=-0.5`, `applied=1`, `capped=1`,
+    `def_rows=1`, and `def_attr=2`.
+- Default-off smoke:
+  - `python3 tools/train_dqn_learner.py logs/phase7a-event-journal-live-transitions.ndjson --model-dir /tmp/rl-combat-event-trainer-defense-off --steps 1 --batch-size 8 --log-interval 1 --diagnostic-top-n 3`
+  - Passed with no combat-event reward metadata and normal `hp-delta` reward
+    source.
+- Validate smoke:
+  - `python3 tools/train_dqn_learner.py logs/phase7a-event-journal-live-transitions.ndjson --combat-event-logs logs/phase7a-event-journal-live-events.ndjson --combat-event-training-mode validate --model-dir /tmp/rl-combat-event-trainer-defense-validate --steps 1 --batch-size 8 --log-interval 1 --diagnostic-top-n 5`
+  - Passed with `events:3475`, `start_join:2051/2051`,
+    `end_join:2030/2061`, `missing_refs:0`, `errors:0`, and reward
+    `applied=0`.
+- Reward-shaping smoke:
+  - `python3 tools/train_dqn_learner.py logs/phase7a-event-journal-live-transitions.ndjson --combat-event-logs logs/phase7a-event-journal-live-events.ndjson --combat-event-training-mode reward-shaping --combat-event-reward-profile safe-v1 --combat-event-reward-scale 1.0 --model-dir /tmp/rl-combat-event-trainer-defense-reward --steps 1 --batch-size 8 --log-interval 1 --diagnostic-top-n 8`
+  - Passed with `events:3322`, `matched_rows:1427`, `off_rows:1016`,
+    `def_rows:443`, `applied:792`, `capped:180`, `low_conf:96`,
+    `def_attr:443`, `raw_sum:57.000`, and visible `defense:hit`
+    penalties in outcome diagnostics.

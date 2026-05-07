@@ -32,6 +32,12 @@ SAFE_V1_REWARD_TABLE: dict[tuple[str, str], float] = {
     ("throw", "success"): 0.5,
     ("throw", "whiff"): -0.35,
     ("punish", "caused"): 0.7,
+    ("defense", "hit"): -0.5,
+    ("defense", "blocked"): 0.12,
+    ("defense", "blocked_chip"): 0.05,
+    ("defense", "parry"): 0.35,
+    ("defense", "evaded"): 0.2,
+    ("defense", "thrown"): -0.6,
 }
 
 
@@ -79,10 +85,14 @@ class CombatEventRewardStats:
     checked_transition_rows: int = 0
     matched_transition_rows: int = 0
     matched_event_rows: int = 0
+    offensive_matched_transition_rows: int = 0
+    defensive_matched_transition_rows: int = 0
     adjusted_transition_rows: int = 0
     attribution_rows_seen: int = 0
+    defensive_attribution_rows_seen: int = 0
     grouped_attribution_source_events: int = 0
     grouped_projectile_parent_events: int = 0
+    grouped_defensive_source_events: int = 0
     applied_event_rewards: int = 0
     skipped_non_self_events: int = 0
     skipped_low_confidence_events: int = 0
@@ -97,6 +107,8 @@ class CombatEventRewardStats:
     raw_reward_by_outcome: dict[str, float] = field(default_factory=dict)
     event_count_by_outcome: dict[str, int] = field(default_factory=dict)
     capped_duplicate_rows_by_outcome: dict[str, int] = field(default_factory=dict)
+    defensive_source_event_keys: set[tuple[int, int, int]] = field(default_factory=set, repr=False)
+    rewarded_defensive_source_results: set[tuple[int, int, int, str]] = field(default_factory=set, repr=False)
 
     def add_reward(self, action_name: str, outcome_key: str, raw_reward: float) -> None:
         self.applied_event_rewards += 1
@@ -110,10 +122,15 @@ class CombatEventRewardStats:
             "checked_transition_rows": self.checked_transition_rows,
             "matched_transition_rows": self.matched_transition_rows,
             "matched_event_rows": self.matched_event_rows,
+            "offensive_matched_transition_rows": self.offensive_matched_transition_rows,
+            "defensive_matched_transition_rows": self.defensive_matched_transition_rows,
             "adjusted_transition_rows": self.adjusted_transition_rows,
             "attribution_rows_seen": self.attribution_rows_seen,
+            "defensive_attribution_rows_seen": self.defensive_attribution_rows_seen,
             "grouped_attribution_source_events": self.grouped_attribution_source_events,
             "grouped_projectile_parent_events": self.grouped_projectile_parent_events,
+            "grouped_defensive_source_events": self.grouped_defensive_source_events,
+            "rewarded_defensive_source_results": len(self.rewarded_defensive_source_results),
             "applied_event_rewards": self.applied_event_rewards,
             "skipped_non_self_events": self.skipped_non_self_events,
             "skipped_low_confidence_events": self.skipped_low_confidence_events,
@@ -164,6 +181,7 @@ class CombatEventIndex:
     by_event_key: dict[tuple[int, int, int], dict[str, object]] = field(default_factory=dict)
     by_start_decision: dict[tuple[int, int, int], list[dict[str, object]]] = field(default_factory=dict)
     by_end_decision: dict[tuple[int, int, int], list[dict[str, object]]] = field(default_factory=dict)
+    by_decision: dict[tuple[int, int, int], list[dict[str, object]]] = field(default_factory=dict)
     attributions_by_source_event: dict[tuple[int, int], list[dict[str, object]]] = field(default_factory=dict)
     projectiles_by_parent_attack: dict[tuple[int, int], list[dict[str, object]]] = field(default_factory=dict)
     punishes_by_source_event: dict[tuple[int, int], list[dict[str, object]]] = field(default_factory=dict)
@@ -369,6 +387,9 @@ def _populate_index(index: CombatEventIndex) -> None:
         end_decision_id = _int_field(row, "end_decision_id")
         if end_decision_id > 0:
             index.by_end_decision.setdefault((run_id, _episode_id, end_decision_id), []).append(row)
+        decision_id = _int_field(row, "decision_id")
+        if decision_id > 0:
+            index.by_decision.setdefault((run_id, _episode_id, decision_id), []).append(row)
 
     event_ids = [event_id for ids in run_event_ids.values() for event_id in ids]
     if event_ids:
@@ -644,6 +665,64 @@ def _attack_event_reward(
     return raw_reward
 
 
+def _defensive_event_reward(
+    index: CombatEventIndex,
+    row: dict[str, object],
+    action_name: str,
+    config: CombatEventRewardConfig,
+    stats: CombatEventRewardStats,
+) -> tuple[float, int]:
+    run_id = _int_field(row, "run_id")
+    episode_id = _int_field(row, "episode_id")
+    decision_id = _int_field(row, "decision_id")
+    attributions = [
+        event
+        for event in index.by_decision.get((run_id, episode_id, decision_id), [])
+        if str(event.get("event_kind", "")) == "attribution"
+        and str(event.get("target_side", "")) == "self"
+        and str(event.get("source_side", "")) == "opponent"
+        and str(event.get("failure_reason", "none")) == "none"
+    ]
+    if not attributions:
+        return 0.0, 0
+
+    stats.defensive_attribution_rows_seen += len(attributions)
+    raw_reward = 0.0
+    for attribution in attributions:
+        defense_result = str(attribution.get("defense_result", "unknown"))
+        if str(attribution.get("confidence", "unknown")) != "high":
+            stats.skipped_low_confidence_events += 1
+            outcome_key = f"defense:{defense_result}"
+            stats.event_count_by_outcome[outcome_key] = stats.event_count_by_outcome.get(outcome_key, 0) + 1
+            continue
+
+        source_event_id = _int_field(attribution, "source_event_id")
+        if source_event_id > 0:
+            source_key = (run_id, episode_id, source_event_id)
+        else:
+            # Keep no-source high-confidence rows separate instead of collapsing
+            # them into one synthetic source.
+            source_key = (run_id, episode_id, -_int_field(attribution, "event_id"))
+        if source_key not in stats.defensive_source_event_keys:
+            stats.defensive_source_event_keys.add(source_key)
+            stats.grouped_defensive_source_events += 1
+
+        result_key = (*source_key, defense_result)
+        if result_key in stats.rewarded_defensive_source_results:
+            _record_capped_duplicate(stats, "defense", defense_result)
+            continue
+        stats.rewarded_defensive_source_results.add(result_key)
+        raw_reward += _record_event_reward(
+            config,
+            stats,
+            action_name,
+            "defense",
+            defense_result,
+        )
+
+    return raw_reward, len(attributions)
+
+
 def reward_adjustment_for_transition(
     index: CombatEventIndex | None,
     row: dict[str, object],
@@ -652,7 +731,7 @@ def reward_adjustment_for_transition(
     config: CombatEventRewardConfig,
     stats: CombatEventRewardStats,
 ) -> float:
-    if index is None or not config.enabled or action_name is None or not action_start:
+    if index is None or not config.enabled or action_name is None:
         return 0.0
     stats.checked_transition_rows += 1
     key = (
@@ -660,42 +739,63 @@ def reward_adjustment_for_transition(
         _int_field(row, "episode_id"),
         _int_field(row, "decision_id"),
     )
-    events = index.by_start_decision.get(key, [])
-    if not events:
-        return 0.0
-    stats.matched_transition_rows += 1
-    stats.matched_event_rows += len(events)
 
     raw_adjustment = 0.0
-    for event in events:
-        if not _same_self_side_event(event):
-            stats.skipped_non_self_events += 1
-            continue
-        event_kind = str(event.get("event_kind", "unknown"))
-        if event_kind == "attack":
-            raw_adjustment += _attack_event_reward(index, event, action_name, config, stats)
-        elif event_kind == "throw":
-            raw_adjustment += _record_event_reward(
-                config,
-                stats,
-                action_name,
-                "throw",
-                str(event.get("result", "unknown")),
-            )
-        elif event_kind == "projectile":
-            parent_attack_event_id = _int_field(event, "parent_attack_event_id")
-            if parent_attack_event_id > 0:
-                stats.skipped_child_projectile_events += 1
+    matched_event_rows = 0
+    matched_any = False
+
+    if action_start:
+        events = index.by_start_decision.get(key, [])
+        if events:
+            stats.offensive_matched_transition_rows += 1
+            matched_any = True
+            matched_event_rows += len(events)
+        for event in events:
+            if not _same_self_side_event(event):
+                stats.skipped_non_self_events += 1
                 continue
-            raw_adjustment += _record_event_reward(
-                config,
-                stats,
-                action_name,
-                "projectile",
-                str(event.get("result", "unknown")),
-            )
-        else:
-            stats.skipped_no_reward_events += 1
+            event_kind = str(event.get("event_kind", "unknown"))
+            if event_kind == "attack":
+                raw_adjustment += _attack_event_reward(index, event, action_name, config, stats)
+            elif event_kind == "throw":
+                raw_adjustment += _record_event_reward(
+                    config,
+                    stats,
+                    action_name,
+                    "throw",
+                    str(event.get("result", "unknown")),
+                )
+            elif event_kind == "projectile":
+                parent_attack_event_id = _int_field(event, "parent_attack_event_id")
+                if parent_attack_event_id > 0:
+                    stats.skipped_child_projectile_events += 1
+                    continue
+                raw_adjustment += _record_event_reward(
+                    config,
+                    stats,
+                    action_name,
+                    "projectile",
+                    str(event.get("result", "unknown")),
+                )
+            else:
+                stats.skipped_no_reward_events += 1
+
+    defensive_adjustment, defensive_event_rows = _defensive_event_reward(
+        index,
+        row,
+        action_name,
+        config,
+        stats,
+    )
+    if defensive_event_rows > 0:
+        stats.defensive_matched_transition_rows += 1
+        matched_any = True
+        matched_event_rows += defensive_event_rows
+        raw_adjustment += defensive_adjustment
+
+    if matched_any:
+        stats.matched_transition_rows += 1
+        stats.matched_event_rows += matched_event_rows
 
     if raw_adjustment != 0.0:
         stats.adjusted_transition_rows += 1

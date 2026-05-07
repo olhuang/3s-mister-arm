@@ -14881,3 +14881,58 @@ Validation:
 - Existing `logs/phase7a-event-journal-live-*.ndjson` files were not present in
   the workspace at validation time, so C-side behavior requires a fresh MiSTer
   deploy and live log.
+
+## 2026-05-07: Ryu R2=2 Air-MP Continuation Fix
+
+Milestone:
+- Combat event attribution Phase 7A-4 / Ryu taxonomy and source correction
+
+Problem:
+- Fresh Ryu-vs-Ryu MP-only live logs showed transition rows where self entered
+  `R1=4/R2=2` four times, with three complete sequences producing two HP/stun
+  deltas each.
+- The event journal recorded those HP-delta rows as
+  `failure_reason=no_source_candidate` because C still treated Ryu `R2=2` as a
+  throw-like routine and rejected it from attack-event starts.
+- Source review showed the old taxonomy was wrong: Ryu `R2=2` comes from the
+  common `Attack_02000` path and the Ryu MP AS table entry, not from throw.
+
+Implementation:
+- Updated `docs/rl-policy-action-taxonomy.md`:
+  - Ryu `R1=4/R2=2` is documented as common `Attack_02000`, sourced from
+    `asstbl_lv_0010[_arcade][Ryu][MP][2]` (`.r_no=2`, `.char_ix=5`,
+    `.data_ix=21`), and live-observed as an air-MP continuation/follow-up damage
+    window.
+  - Ryu throw startup is now documented as `R1=4/R2=14` or `R1=4/R2=15`, with
+    successful throw ownership validated through `R1=2`/`R1=3` catch states.
+  - Ken's normal AS tables were checked and have no `.r_no=2` normal entry, so
+    the Ryu continuation rule must not be copied to Ken without separate live
+    validation.
+- Updated `src/rl/rl_session.c`:
+  - Removed Ryu `R2=2 -> RL_POLICY_ACTION_THROW`.
+  - Added `R2=15` to the Ryu throw-start routine check.
+  - Added a damage-triggered Ryu `R2=2` fallback source labeled as
+    `RL_POLICY_ACTION_AIR_NORMAL / MP`, used only when target damage/stun arrives
+    and no same-side active source exists.
+
+Expected live effect:
+- New logs for the same MP-only smoke should attach `R2=2` HP/stun deltas to an
+  air-MP continuation source instead of emitting self-side
+  `no_source_candidate` attribution rows.
+- Throw counters should no longer be affected by Ryu `R2=2`.
+- Ken remains unchanged.
+
+Risk:
+- Ryu `R2=2` has both a source-table standing forward-MP branch and a
+  live-observed air-MP continuation role. The current runtime fix is deliberately
+  damage-gated and Ryu-only, but a future detailed normal-table pass may need a
+  more precise `char_ix/data_ix`-backed label if the two uses must be separated.
+
+Validation:
+- `tools/mister/build-game.sh --flavor telemetry` passed and rebuilt
+  `src/rl/rl_session.c`. The only warning was the existing minizip `mktemp`
+  linker warning.
+- `python3 -m py_compile tools/analyze_rl_combat_events.py` passed.
+- Existing live logs remain useful for diagnosis but cannot show the C-side
+  source fix retroactively; deploy and re-record the MP-only smoke to verify
+  self-side `no_source_candidate` rows drop for Ryu `R2=2` HP/stun deltas.

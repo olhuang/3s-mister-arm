@@ -1218,8 +1218,8 @@ static bool RLSession_RyuSpecialPolicyMetaFromRoutine2(const RLDecisionLedgerEnt
     const u16 sub = RLSession_SpecialSubActionFromRyuKindOfWaza(kind_of_waza);
 
     switch (routine2) {
-    case 2:
     case 14:
+    case 15:
         *action_id = RL_POLICY_ACTION_THROW;
         *sub_action_id = RLSession_ThrowSubActionForAttribution(entry);
         return true;
@@ -1300,6 +1300,17 @@ static bool RLSession_RyuSpecialPolicyMetaFromRoutine2(const RLDecisionLedgerEnt
     }
 
     return false;
+}
+
+static bool RLSession_RyuAirMpContinuationPolicyMetaFromRoutine2(u16 routine2,
+                                                                 u16* action_id,
+                                                                 u16* sub_action_id) {
+    if (routine2 != 2) {
+        return false;
+    }
+    *action_id = RL_POLICY_ACTION_AIR_NORMAL;
+    *sub_action_id = RL_POLICY_SUB_ACTION_MP;
+    return true;
 }
 
 static bool RLSession_IsCommonNormalAttackRoutine2(u16 routine2) {
@@ -1435,12 +1446,13 @@ static bool RLSession_BuildEngineStartAttributionForSide(const RLDecisionLedgerE
     return attribution != NULL && attribution->action_id != RL_POLICY_ACTION_THROW;
 }
 
-static bool RLSession_BuildRyuSpecialStateAttributionForSide(const RLDecisionLedgerEntry* entry,
-                                                             const RLObservationV1* obs,
-                                                             RLCombatEventSide side,
-                                                             RLEngineAttribution* attribution) {
+static bool RLSession_BuildRyuDamageFallbackStateAttributionForSide(const RLDecisionLedgerEntry* entry,
+                                                                    const RLObservationV1* obs,
+                                                                    RLCombatEventSide side,
+                                                                    RLEngineAttribution* attribution) {
     u16 action_id = RL_POLICY_ACTION_NEUTRAL;
     u16 sub_action_id = RL_POLICY_SUB_ACTION_NONE;
+    u8 label_source = RL_DEMO_ATTRIBUTION_RYU_ENGINE_ROUTINE_START;
     u8 character_id = 0;
     u16 routine_1 = 0;
     u16 routine_2 = 0;
@@ -1478,6 +1490,10 @@ static bool RLSession_BuildRyuSpecialStateAttributionForSide(const RLDecisionLed
                                                     true,
                                                     &action_id,
                                                     &sub_action_id)) {
+        label_source = RL_DEMO_ATTRIBUTION_RYU_ENGINE_ROUTINE_START;
+    } else if (RLSession_RyuAirMpContinuationPolicyMetaFromRoutine2(routine_2, &action_id, &sub_action_id)) {
+        label_source = RL_DEMO_ATTRIBUTION_RYU_ENGINE_NORMAL_ATTACK_START;
+    } else {
         return false;
     }
     if (action_id == RL_POLICY_ACTION_THROW) {
@@ -1493,7 +1509,7 @@ static bool RLSession_BuildRyuSpecialStateAttributionForSide(const RLDecisionLed
     attribution->routine_2 = routine_2;
     attribution->current_attack = current_attack;
     attribution->kind_of_waza = kind_of_waza;
-    attribution->label_source = RL_DEMO_ATTRIBUTION_RYU_ENGINE_ROUTINE_START;
+    attribution->label_source = label_source;
     attribution->lag_frames = (u16)(lag_frames > 65535u ? 65535u : lag_frames);
     return true;
 }
@@ -2756,6 +2772,7 @@ static bool RLSession_CombatActionCanUseDamageFallback(u16 policy_action_id) {
     case RL_POLICY_ACTION_RYU_AIR_TATSU:
     case RL_POLICY_ACTION_RYU_JOUDAN:
     case RL_POLICY_ACTION_RYU_SHIN_SHORYUKEN:
+    case RL_POLICY_ACTION_AIR_NORMAL:
         return true;
     default:
         return false;
@@ -2796,7 +2813,7 @@ static void RLSession_MaybeStartCombatAttackEventFromDamage(RLDecisionLedgerEntr
     if (RLCombatEvent_HasActiveAttackForSide(entry->run_id, entry->episode_id, side)) {
         return;
     }
-    if (!RLSession_BuildRyuSpecialStateAttributionForSide(entry, obs, side, &attribution)) {
+    if (!RLSession_BuildRyuDamageFallbackStateAttributionForSide(entry, obs, side, &attribution)) {
         return;
     }
     if (!RLSession_CombatActionCanUseDamageFallback(attribution.action_id)) {
@@ -2982,7 +2999,7 @@ static void RLSession_UpdateCombatProjectileEvents(RLDecisionLedgerEntry* entry,
 }
 
 static bool RLSession_IsRyuThrowRoutine(u16 routine_1, u16 routine_2) {
-    return routine_1 == 4 && routine_2 == 14;
+    return routine_1 == 4 && (routine_2 == 14 || routine_2 == 15);
 }
 
 static bool RLSession_ObservationLooksLikeEngineThrowStartForSide(const RLDecisionLedgerEntry* entry,

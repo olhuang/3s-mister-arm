@@ -292,8 +292,33 @@ Ryu source-backed attack mapping:
 | 4 | 21 | `Att_DENJINHADOUKEN` | 1221 Denjin Hadouken | super-art `KW` still TBD | source-backed, overlay not fully validated |
 | 4 | 22 | `Att_KUUCHUUNICHIRINSHOU` | 1246 Air Tatsumaki Senpukyaku | likely `09/0B/0D`, verify | source-backed, overlay not fully validated |
 | 4 | 23 | `Att_SLIDE_and_JUMP` | 1231 Joudan Sokutou Geri | likely kick-special `KW`, verify | source-backed, overlay not fully validated |
-| 4 | 2 | common `plpat_lv_00[2]` / throw path | universal throw | direction from input row only | overlay-observed as completed throw routine |
-| 4 | 14 | common `plpat_lv_00[14]` / catch path | universal throw | direction from input row only | overlay-observed as grab/catch startup path |
+| 4 | 2 | common `plpat_lv_00[2]` / `Attack_02000` | air-MP continuation / Ryu MP branch | Ryu `asstbl_lv_0010[_arcade][Ryu][MP][2]` => `.r_no=2`, `.char_ix=5`, `.data_ix=21` | live-observed as Ryu air-MP follow-up damage; do not classify as throw |
+| 4 | 14 | common `plpat_lv_00[14]` / catch path | universal throw | direction from input row only | source table throw startup path |
+| 4 | 15 | common `plpat_lv_00[15]` / catch path | universal throw | direction from input row only | source table alternate throw startup path |
+
+Ryu `R1=4/R2=2` correction:
+
+- Source trace: `check_nm_attack()` selects `asstbl_lv_0010[_arcade]` for
+  standing normals; for Ryu `MP`, selector `waza_select(..., sf=0)` can choose
+  `koa=2` when `decode_wst_data()` sees `0x4004`, i.e. a new normalized
+  forward input. That table entry is `.r_no=2`, so `set_attack_routine_number()`
+  writes `routine_no[1]=4`, `routine_no[2]=2`.
+- Live Ryu-vs-Ryu MP-only validation later showed this state can also appear
+  as the grounded follow-up / continuation window after `air-mp`, where the
+  same visible air-MP causes two separate HP/stun deltas. Combat attribution
+  should attach that damage to `air-mp` / MP continuation semantics, not emit a
+  throw or a standalone throw result.
+- Throw startup for Ryu is `R1=4/R2=14` or `R1=4/R2=15`; successful throw
+  ownership is better validated from `Player_catch` (`R1=2`) and
+  `Player_caught` (`R1=3`) / catch flags, not from `R2=2`.
+
+Ken check:
+
+- Ken command/special routines still use the command rows below.
+- A source-table pass over Ken's normal AS tables
+  (`asstbl_lv_0010/1010/2010/3010/4010[_arcade]`) found no Ken normal entry
+  with `.r_no=2`. Do not apply the Ryu `R2=2` continuation rule to Ken without
+  a separate Ken live validation.
 
 Runtime decoder implementation:
 
@@ -506,11 +531,11 @@ Observed field behavior:
 | normal kick | `stand_normal` / `crouch_normal` / `air_normal` | `lk` | TBD | `01` | `100` | AK/KW observed; R2 still needs stance/jump validation |
 | normal kick | `stand_normal` / `crouch_normal` / `air_normal` | `mk` | TBD | `03` | `200` | AK/KW observed; R2 still needs stance/jump validation |
 | normal kick | `stand_normal` / `crouch_normal` / `air_normal` | `hk` | TBD | `05` | `400` | AK/KW observed; R2 still needs stance/jump validation |
+| air-MP continuation / MP branch | `air_normal` | `mp` | 2 | observed as missing/unstable in transition export | observed as missing/unstable in transition export | source table says Ryu standing forward+MP branch; live MP-only logs show it as the second damage window of visible air-MP |
 | Hadouken | 1229 | `lp` / `mp` / `hp` | 16 | `08` / `0A` / `0C` | not stable | overlay observed |
 | Shoryuken | 1228 | `lp` / `mp` / `hp` | 17 | `08` / `0A` / `0C` | not stable | overlay observed |
 | Tatsumaki Senpukyaku | 1230 | `lk` / `mk` / `hk` | 18 | `09` / `0B` / `0D` | not stable | overlay observed |
-| throw / completed throw | 8 | `forward` / `back` | 2 | TBD | not stable | overlay observed as throw result routine |
-| grab / catch startup path | 8 | `forward` / `back` | 14 | TBD | not stable | overlay observed as grab/catch path |
+| grab / catch startup path | 8 | `forward` / `back` | 14 / 15 | TBD | not stable | source-backed throw startup path; validate success with `R1=2` / `R1=3` catch states |
 
 Source-known Ryu command routines that still need overlay confirmation:
 
@@ -634,6 +659,12 @@ Source-known Ryu command routines that still need overlay confirmation:
 | 2032 | 32 | Byakko Soushouda | 16 | `Att_HADOUKEN` | `qcb+p` | `p` |
 
 ### Ken
+
+Ken note:
+
+- Unlike Ryu, Ken's normal AS tables currently show no `.r_no=2` entry in the
+  standing, crouching, or air-normal tables. Keep `R1=4/R2=2` unmapped for Ken
+  until a Ken-specific live overlay/log pass proves a concrete meaning.
 
 | policy_action_id | slot | move_name | routines | handlers | macro_template | sub_action_group |
 |---:|---:|---|---|---|---|---|

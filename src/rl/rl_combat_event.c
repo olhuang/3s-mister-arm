@@ -80,6 +80,7 @@ typedef struct RLCombatRecentAttributionSource {
 #define RL_COMBAT_PUNISH_CANDIDATE_WINDOW_FRAMES 12u
 #define RL_COMBAT_CONTINUATION_ATTACK_WINDOW_FRAMES 8u
 #define RL_COMBAT_CONTINUATION_PROJECTILE_WINDOW_FRAMES 12u
+#define RL_COMBAT_FINALIZED_ATTACK_RESCUE_WINDOW_FRAMES 18u
 #define RL_COMBAT_EVENT_JOURNAL_ENTRY_CAP 2048u
 
 static RLCombatAttackEventRing self_attack_ring;
@@ -244,6 +245,7 @@ static const RLCombatAttackEvent* RLCombatEvent_FindAttackCandidateForSide(u64 r
                                                                            u32 episode_id,
                                                                            RLCombatEventSide side) {
     const RLCombatAttackEventRing* ring = RLCombatEvent_ConstRingForSide(side);
+    const RLCombatAttackEvent* best = NULL;
 
     if (ring == NULL || run_id == 0 || episode_id == 0) {
         return NULL;
@@ -251,14 +253,17 @@ static const RLCombatAttackEvent* RLCombatEvent_FindAttackCandidateForSide(u64 r
 
     for (u32 i = 0; i < RL_COMBAT_ATTACK_EVENT_RING_CAP; i++) {
         const RLCombatAttackEvent* event = &ring->events[i];
-        if (event->status == RL_COMBAT_ATTACK_EVENT_ACTIVE && event->run_id == run_id &&
-            event->episode_id == episode_id && event->side == side && !event->projectile_like &&
-            !event->saw_projectile) {
-            return event;
+        if (event->status != RL_COMBAT_ATTACK_EVENT_ACTIVE || event->run_id != run_id ||
+            event->episode_id != episode_id || event->side != side || event->projectile_like) {
+            continue;
+        }
+        if (best == NULL || event->start_frame > best->start_frame ||
+            (event->start_frame == best->start_frame && event->event_id > best->event_id)) {
+            best = event;
         }
     }
 
-    return NULL;
+    return best;
 }
 
 static const RLCombatProjectileEvent* RLCombatEvent_FindProjectileCandidateForSide(u64 run_id,
@@ -1111,6 +1116,64 @@ static bool RLCombatEvent_DefenseResultCanContinue(RLCombatDefenseResult result)
 static bool RLCombatEvent_EdgeCanUseContinuation(RLCombatAttributionEdgeType edge_type) {
     return edge_type == RL_COMBAT_ATTRIBUTION_EDGE_HP_DELTA ||
            edge_type == RL_COMBAT_ATTRIBUTION_EDGE_STUN_DELTA;
+}
+
+static bool RLCombatEvent_EdgeCanUseFinalizedAttackRescue(RLCombatAttributionEdgeType edge_type) {
+    return edge_type == RL_COMBAT_ATTRIBUTION_EDGE_HP_DELTA ||
+           edge_type == RL_COMBAT_ATTRIBUTION_EDGE_STUN_DELTA ||
+           edge_type == RL_COMBAT_ATTRIBUTION_EDGE_DAMAGE_STATE;
+}
+
+static bool RLCombatEvent_AttackCanBeRescueSource(const RLCombatAttackEvent* event) {
+    if (event == NULL || event->status != RL_COMBAT_ATTACK_EVENT_FINALIZED || event->projectile_like) {
+        return false;
+    }
+    if (event->result == RL_COMBAT_ATTACK_RESULT_WHIFF &&
+        event->finalize_reason == RL_COMBAT_ATTACK_FINALIZE_BASIC_WHIFF_WINDOW) {
+        return true;
+    }
+    return event->result == RL_COMBAT_ATTACK_RESULT_UNKNOWN &&
+           event->finalize_reason == RL_COMBAT_ATTACK_FINALIZE_SUPERSEDED_BY_NEW_START;
+}
+
+static const RLCombatAttackEvent*
+RLCombatEvent_FindFinalizedAttackRescueCandidateForSide(const RLCombatContactMatchUpdate* update,
+                                                        RLCombatAttributionEdgeType edge_type) {
+    const RLCombatAttackEventRing* ring = NULL;
+    const RLCombatAttackEvent* best = NULL;
+    u32 best_age = RL_COMBAT_FINALIZED_ATTACK_RESCUE_WINDOW_FRAMES + 1u;
+
+    if (update == NULL || !RLCombatEvent_EdgeCanUseFinalizedAttackRescue(edge_type)) {
+        return NULL;
+    }
+
+    ring = RLCombatEvent_ConstRingForSide(update->source_side);
+    if (ring == NULL || update->run_id == 0 || update->episode_id == 0) {
+        return NULL;
+    }
+
+    for (u32 i = 0; i < RL_COMBAT_ATTACK_EVENT_RING_CAP; i++) {
+        const RLCombatAttackEvent* event = &ring->events[i];
+        u32 age = 0;
+        if (!RLCombatEvent_AttackCanBeRescueSource(event) || event->run_id != update->run_id ||
+            event->episode_id != update->episode_id || event->side != update->source_side ||
+            update->frame_id < event->end_frame) {
+            continue;
+        }
+        age = RLCombatEvent_FrameAge(update->frame_id, event->end_frame);
+        if (age > RL_COMBAT_FINALIZED_ATTACK_RESCUE_WINDOW_FRAMES) {
+            continue;
+        }
+        if (best == NULL || age < best_age ||
+            (age == best_age && (event->start_frame > best->start_frame ||
+                                 (event->start_frame == best->start_frame &&
+                                  event->event_id > best->event_id)))) {
+            best = event;
+            best_age = age;
+        }
+    }
+
+    return best;
 }
 
 static bool RLCombatEvent_TargetStateCanUseContinuation(const RLCombatContactMatchUpdate* update) {
@@ -2586,6 +2649,7 @@ u32 RLCombatEvent_UpdateThrows(const RLCombatThrowEventUpdate* update) {
 
 bool RLCombatEvent_RecordContactMatch(const RLCombatContactMatchUpdate* update) {
     const RLCombatAttackEvent* attack_event = NULL;
+    const RLCombatAttackEvent* rescue_attack_event = NULL;
     const RLCombatProjectileEvent* projectile_event = NULL;
     bool projectile_candidate = false;
     bool projectile_clash_edge = false;
@@ -2651,6 +2715,10 @@ bool RLCombatEvent_RecordContactMatch(const RLCombatContactMatchUpdate* update) 
     } else if (attack_candidate) {
         source = RL_COMBAT_CONTACT_MATCH_SOURCE_ATTACK;
         source_event_id = attack_event != NULL ? attack_event->event_id : RL_COMBAT_EVENT_ID_NONE;
+    } else if ((rescue_attack_event =
+                    RLCombatEvent_FindFinalizedAttackRescueCandidateForSide(update, edge_type)) != NULL) {
+        source = RL_COMBAT_CONTACT_MATCH_SOURCE_ATTACK;
+        source_event_id = rescue_attack_event->event_id;
     } else if (RLCombatEvent_TryUseRecentAttributionContinuation(update,
                                                                  edge_type,
                                                                  &source,

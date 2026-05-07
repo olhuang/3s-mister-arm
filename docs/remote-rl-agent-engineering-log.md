@@ -14781,3 +14781,46 @@ Risk:
 - Wrong-source continuation is possible in chaotic trades. The first pass keeps
   the window short, requires same source/target direction, and refuses to bridge
   across an intervening confirmed opposite-side attribution.
+
+## 2026-05-07: Finalized Attack Rescue for Orphan Attribution
+
+Milestone:
+- Combat event attribution Phase 6a-3 / finalized attack rescue attribution
+
+Problem:
+- A live Ryu-vs-Ryu log recorded with only self `MK` and `fireball-mp` still
+  had three `defense_result=unknown` / `failure_reason=no_source_candidate`
+  HP-delta attribution rows.
+- Two self-side examples showed damage a few frames after an `air-mk` had
+  already finalized as `whiff`, or while a `crouch-mk` source overlapped an
+  older projectile and was therefore not selected as the active attack source.
+
+Implementation:
+- `RLCombatEvent_FindAttackCandidateForSide()` now chooses the newest active
+  non-projectile attack and no longer rejects an otherwise valid strike just
+  because it has observed a same-side projectile. Projectile candidates still
+  have higher priority, so real projectile contact remains projectile-owned.
+- Added a finalized attack rescue path for strong HP/stun/damage edges with no
+  projectile, throw, or active attack candidate.
+- Rescue can only select the newest same-side non-projectile attack finalized
+  as clean `whiff` or `superseded_by_new_start` unknown within an 18-frame
+  window. Active/newer sources win before rescue, so cases like blocked
+  `air-mk` followed by hit `crouch-mk` should credit the newer `crouch-mk`.
+
+Expected live effect:
+- Late air-normal contact and short delayed normal damage should stop becoming
+  `source_family=unknown` / `no_source_candidate`.
+- `MK` / `fireball-mp` only logs should keep self move stats limited to MK
+  normals and MP fireballs, aside from true input/execution mistakes.
+
+Risk:
+- The 18-frame window is intentionally narrow but still heuristic. Chaotic
+  trades can remain unresolved if multiple finalized sources are plausible; the
+  matcher picks the most recently ended/newest source and otherwise keeps the
+  standard projectile/throw/active-attack priority.
+
+Validation:
+- `tools/mister/build-game.sh --flavor telemetry` passed and rebuilt
+  `src/rl/rl_combat_event.c`.
+- Re-running `tools/analyze_rl_combat_events.py` on the pre-fix live log is
+  unchanged as expected, because the fix affects new C-side journal emission.

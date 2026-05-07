@@ -2547,6 +2547,35 @@ Phase 9C defensive reward-shaping status:
   attribution rows seen, grouped defensive source events, and rewarded
   defensive source-result count.
 
+Phase 9C-1 event-damage-v1 reward profile status:
+
+- `tools/train_dqn_learner.py` now supports an opt-in damage-aware profile:
+  - `--combat-event-training-mode reward-shaping`
+  - `--combat-event-reward-profile event-damage-v1`
+  - `--combat-event-reward-scale`
+- When `event-damage-v1` is enabled, transition HP-delta reward is disabled for
+  that training run. The model reward source is combat-event primary, not
+  `hp-delta + event`, and metadata records:
+  - `uses_transition_hp_delta = false`
+  - `uses_event_damage_delta = true`
+- Damage reward comes from high-confidence attribution rows grouped by source
+  event:
+  - self attack/projectile/throw source damage is positive reward.
+  - opponent source damage where `target_side=self` is negative reward.
+  - `target_hp_delta` rows are summed per source event/result, so a normal move
+    split into several `target_hp_delta=1` rows still represents the source
+    event's total damage rather than repeated outcome rewards.
+- The profile keeps only small tactical shaping values for non-damage outcomes:
+  whiff/interrupted/parried are small negative signals, block/parry/evade on
+  defense are small positive or neutral signals, and punish-caused remains a
+  small bonus.
+- `unknown`, low-confidence, no-source/unresolved, missing-ref, schema-invalid,
+  and unsupported rows remain zero-reward diagnostics. There is no fallback to
+  transition HP delta inside this profile; if an event source cannot be trusted,
+  it should not shape reward.
+- DQN feature names, replay row shape, live inference, BC mode, and default
+  `off` training behavior remain unchanged.
+
 Data recollection gate:
 
 - Phase 9 trainer adoption requires fresh paired transition/event logs. Old

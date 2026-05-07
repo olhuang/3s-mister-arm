@@ -15341,3 +15341,75 @@ Validation:
     `def_rows:443`, `applied:792`, `capped:180`, `low_conf:96`,
     `def_attr:443`, `raw_sum:57.000`, and visible `defense:hit`
     penalties in outcome diagnostics.
+
+## 2026-05-07: Phase 9C-1 Event Damage Reward Profile
+
+Milestone:
+- Combat event attribution Phase 9C-1 / event-primary damage reward profile
+
+Purpose:
+- Add an opt-in `event-damage-v1` reward profile for paired transition/event
+  training logs.
+- Use high-confidence combat-event attribution HP deltas grouped by source
+  event as the primary damage reward, instead of mixing transition HP-delta
+  reward with event reward.
+
+Implementation:
+- Updated `tools/rl_combat_event_training.py`:
+  - added `event-damage-v1` to `COMBAT_EVENT_REWARD_PROFILES`.
+  - added a small tactical shaping table for non-damage outcomes while leaving
+    hit/chip damage to event attribution HP deltas.
+  - added `uses_transition_hp_delta()` and `uses_event_damage_delta()` helpers.
+  - sums high-confidence attribution `target_hp_delta` by source event/result
+    for self attack/projectile/throw rewards.
+  - applies negative event damage when opponent attribution rows target `self`.
+  - treats damage-primary hit/chip/throw outcomes as handled by grouped damage
+    rather than as skipped no-reward table misses.
+  - records event-damage rows, net damage reward, and per-outcome damage reward
+    in trainer metadata.
+- Updated `tools/train_dqn_learner.py`:
+  - disables the base transition HP-delta reward when the combat-event reward
+    config is enabled with `event-damage-v1`.
+  - keeps default/off and `safe-v1` behavior unchanged.
+  - reports `event_dmg` in combat-event reward diagnostics.
+- Updated Phase 9 checklist and combat-event plan notes.
+
+Expected effect:
+- Event-aware training with `--combat-event-reward-profile event-damage-v1`
+  records `reward_source=combat-event-event-damage-v1` when event reward is
+  applied.
+- Model features, replay row schema, live inference, and BC mode remain
+  unchanged.
+- Damage magnitude is preserved through grouped event attribution HP delta,
+  while duplicate same-source attribution ticks do not become repeated outcome
+  rewards.
+
+Risk:
+- This profile intentionally changes reward semantics more than `safe-v1`; it
+  should be compared against both baseline HP-delta training and `safe-v1`
+  before promotion.
+- Untrusted event rows receive zero reward and there is no transition HP-delta
+  fallback inside `event-damage-v1`, so event-log quality gates matter.
+
+Validation:
+- `python3 -m py_compile tools/rl_combat_event_training.py tools/train_dqn_learner.py`
+  passed.
+- `git diff --check` passed.
+- Config metadata smoke:
+  - `python3 -c 'import rl_combat_event_training as c; cfg=c.CombatEventRewardConfig(enabled=True, profile="event-damage-v1", scale=1.0); print(cfg.as_metadata())'`
+  - Confirmed `uses_transition_hp_delta: False` and
+    `uses_event_damage_delta: True`.
+- Synthetic attack damage smoke:
+  - one self attack source with two high-confidence hit attribution rows
+    returned `reward=10.0`, `event_damage=10.0`, `applied=1`, and
+    `capped=1`.
+- Synthetic defense damage smoke:
+  - one opponent source with two high-confidence `defense:hit` rows targeting
+    self returned `reward=-10.0`, `event_damage=-10.0`, `applied=1`, and
+    `capped=1`.
+- One-step trainer smoke:
+  - `python3 tools/train_dqn_learner.py logs/phase7a-event-journal-live-transitions.ndjson --combat-event-logs logs/phase7a-event-journal-live-events.ndjson --combat-event-training-mode reward-shaping --combat-event-reward-profile event-damage-v1 --combat-event-reward-scale 1.0 --init-model model/dqn-projectile-schema-v5-full-actions-v62-group-margin-candidate/current.json --init-model-action-mode exact --model-dir /tmp/rl-combat-event-damage-v1-smoke --steps 1 --batch-size 8 --log-interval 1 --diagnostic-top-n 8 --seed 20260507`
+  - Passed with `reward_source=combat-event-event-damage-v1`,
+    `uses_transition_hp_delta=false`, `uses_event_damage_delta=true`,
+    `applied=992`, `event_damage_reward_rows=652`,
+    `event_damage_reward_sum=5.000`, and `raw_reward_sum=1.600`.

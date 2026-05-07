@@ -3152,7 +3152,12 @@ def build_experiences(
             build_stats.action_source_counts[action_selection.source] = (
                 build_stats.action_source_counts.get(action_selection.source, 0) + 1
             )
-            base_reward = rl.tabular_training_reward(row, training_mode_hp_delta_mode) * reward_scale
+            transition_hp_reward = rl.tabular_training_reward(row, training_mode_hp_delta_mode) * reward_scale
+            base_reward = (
+                transition_hp_reward
+                if combat_events.uses_transition_hp_delta(combat_event_reward_config)
+                else 0.0
+            )
             if (
                 action_start
                 and action_name is not None
@@ -7502,7 +7507,9 @@ def main() -> None:
         projectile_expert_margin_config,
     )
     version = next_model_version(args.model_dir, args.model_version)
-    reward_sources = ["hp-delta"]
+    reward_sources = []
+    if combat_events.uses_transition_hp_delta(combat_event_reward_config):
+        reward_sources.append("hp-delta")
     if reward_risk_config.profile != "none":
         reward_sources.append("risk-cost")
     if reward_guard_stats.net_adjustment != 0.0:
@@ -7529,11 +7536,11 @@ def main() -> None:
         reward_sources.append("projectile-timing-group-margin")
     if movement_regression_config.enabled:
         reward_sources.append("movement-regression-loss")
-    if str(args.training_mode_hp_delta_mode) == "damage-only":
+    if combat_events.uses_transition_hp_delta(combat_event_reward_config) and str(args.training_mode_hp_delta_mode) == "damage-only":
         reward_sources.append("training-mode-damage-only-hp")
     if combat_event_reward_stats.applied_event_rewards > 0:
         reward_sources.append(f"combat-event-{combat_event_reward_config.profile}")
-    reward_source = "+".join(reward_sources)
+    reward_source = "+".join(reward_sources) if reward_sources else "none"
     metadata = {
         "transition_logs": args.transition_logs,
         "incremental_training": init_model is not None,
@@ -7803,6 +7810,7 @@ def main() -> None:
             f"def_attr:{combat_event_reward_stats.defensive_attribution_rows_seen} "
             f"hp:{combat_event_reward_stats.grouped_hp_delta_sum} "
             f"stun:{combat_event_reward_stats.grouped_stun_delta_sum} "
+            f"event_dmg:{combat_event_reward_stats.event_damage_reward_sum:.3f} "
             f"raw_sum:{combat_event_reward_stats.raw_reward_sum:.3f} "
             f"outcomes:{format_float_counts(combat_event_reward_stats.raw_reward_by_outcome, args.diagnostic_top_n)}",
             flush=True,

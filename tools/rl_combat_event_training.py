@@ -12,7 +12,7 @@ from typing import Any
 
 COMBAT_EVENT_SCHEMA_VERSION = 1
 COMBAT_EVENT_TRAINING_MODES = ("off", "validate", "reward-shaping")
-COMBAT_EVENT_REWARD_PROFILES = ("safe-v1",)
+COMBAT_EVENT_REWARD_PROFILES = ("safe-v1", "event-damage-v1")
 
 
 SAFE_V1_REWARD_TABLE: dict[tuple[str, str], float] = {
@@ -39,6 +39,43 @@ SAFE_V1_REWARD_TABLE: dict[tuple[str, str], float] = {
     ("defense", "evaded"): 0.2,
     ("defense", "thrown"): -0.6,
 }
+
+
+EVENT_DAMAGE_V1_SHAPING_TABLE: dict[tuple[str, str], float] = {
+    ("attack", "blocked"): 0.02,
+    ("attack", "blocked_chip"): 0.02,
+    ("attack", "parry"): -0.05,
+    ("attack", "evaded"): 0.0,
+    ("attack", "whiff"): -0.05,
+    ("attack", "interrupted"): -0.1,
+    ("projectile", "blocked"): 0.02,
+    ("projectile", "blocked_chip"): 0.02,
+    ("projectile", "parry"): -0.05,
+    ("projectile", "expired"): 0.0,
+    ("projectile", "evaded"): 0.0,
+    ("throw", "success"): 0.1,
+    ("throw", "whiff"): -0.08,
+    ("punish", "caused"): 0.15,
+    ("defense", "blocked"): 0.02,
+    ("defense", "blocked_chip"): 0.0,
+    ("defense", "parry"): 0.1,
+    ("defense", "evaded"): 0.05,
+}
+
+
+EVENT_DAMAGE_V1_DAMAGE_OUTCOMES = frozenset(
+    {
+        ("attack", "hit"),
+        ("attack", "blocked_chip"),
+        ("projectile", "hit"),
+        ("projectile", "blocked"),
+        ("projectile", "blocked_chip"),
+        ("throw", "success"),
+        ("defense", "hit"),
+        ("defense", "blocked_chip"),
+        ("defense", "thrown"),
+    }
+)
 
 
 def _counter_dict(counter: collections.Counter[object]) -> dict[str, int]:
@@ -71,11 +108,13 @@ class CombatEventRewardConfig:
     scale: float = 1.0
 
     def as_metadata(self) -> dict[str, object]:
-        table = SAFE_V1_REWARD_TABLE if self.profile == "safe-v1" else {}
+        table = _reward_table_for_profile(self.profile)
         return {
             "enabled": self.enabled,
             "profile": self.profile,
             "scale": self.scale,
+            "uses_transition_hp_delta": uses_transition_hp_delta(self),
+            "uses_event_damage_delta": uses_event_damage_delta(self),
             "table": {f"{kind}:{result}": value for (kind, result), value in sorted(table.items())},
         }
 
@@ -102,6 +141,9 @@ class CombatEventRewardStats:
     capped_duplicate_outcome_rows: int = 0
     grouped_hp_delta_sum: int = 0
     grouped_stun_delta_sum: int = 0
+    event_damage_reward_rows: int = 0
+    event_damage_reward_sum: float = 0.0
+    event_damage_by_outcome: dict[str, float] = field(default_factory=dict)
     raw_reward_sum: float = 0.0
     raw_reward_by_action: dict[str, float] = field(default_factory=dict)
     raw_reward_by_outcome: dict[str, float] = field(default_factory=dict)
@@ -140,6 +182,9 @@ class CombatEventRewardStats:
             "capped_duplicate_outcome_rows": self.capped_duplicate_outcome_rows,
             "grouped_hp_delta_sum": self.grouped_hp_delta_sum,
             "grouped_stun_delta_sum": self.grouped_stun_delta_sum,
+            "event_damage_reward_rows": self.event_damage_reward_rows,
+            "event_damage_reward_sum": self.event_damage_reward_sum,
+            "event_damage_by_outcome": dict(sorted(self.event_damage_by_outcome.items())),
             "raw_reward_sum": self.raw_reward_sum,
             "raw_reward_by_action": dict(sorted(self.raw_reward_by_action.items())),
             "raw_reward_by_outcome": dict(sorted(self.raw_reward_by_outcome.items())),
@@ -520,7 +565,56 @@ def build_transition_join_stats(
 def _reward_table_for_profile(profile: str) -> dict[tuple[str, str], float]:
     if profile == "safe-v1":
         return SAFE_V1_REWARD_TABLE
+    if profile == "event-damage-v1":
+        return EVENT_DAMAGE_V1_SHAPING_TABLE
     return {}
+
+
+def uses_transition_hp_delta(config: CombatEventRewardConfig) -> bool:
+    return not (config.enabled and config.profile == "event-damage-v1")
+
+
+def uses_event_damage_delta(config: CombatEventRewardConfig) -> bool:
+    return config.enabled and config.profile == "event-damage-v1"
+
+
+def _is_event_damage_primary_outcome(config: CombatEventRewardConfig, kind: str, result: str) -> bool:
+    return uses_event_damage_delta(config) and (kind, result) in EVENT_DAMAGE_V1_DAMAGE_OUTCOMES
+
+
+def _record_event_damage_reward(
+    config: CombatEventRewardConfig,
+    stats: CombatEventRewardStats,
+    action_name: str,
+    outcome_key: str,
+    hp_delta: int,
+    sign: int,
+) -> float:
+    if not uses_event_damage_delta(config) or hp_delta <= 0:
+        return 0.0
+    raw_reward = float(hp_delta * sign) * config.scale
+    stats.event_damage_reward_rows += 1
+    stats.event_damage_reward_sum += raw_reward
+    stats.event_damage_by_outcome[outcome_key] = stats.event_damage_by_outcome.get(outcome_key, 0.0) + raw_reward
+    stats.add_reward(action_name, f"{outcome_key}:damage", raw_reward)
+    return raw_reward
+
+
+def _source_event_hp_delta(
+    index: CombatEventIndex,
+    run_id: int,
+    source_event_id: int,
+    source_side: str,
+    defense_result: str | None = None,
+) -> int:
+    return sum(
+        _int_field(row, "target_hp_delta")
+        for row in index.attributions_by_source_event.get((run_id, source_event_id), [])
+        if str(row.get("source_side", "")) == source_side
+        and str(row.get("failure_reason", "none")) == "none"
+        and str(row.get("confidence", "unknown")) == "high"
+        and (defense_result is None or str(row.get("defense_result", "unknown")) == defense_result)
+    )
 
 
 def _record_event_reward(
@@ -538,6 +632,9 @@ def _record_event_reward(
         return 0.0
     raw_reward = _reward_table_for_profile(config.profile).get((kind, normalized_result))
     if raw_reward is None:
+        if _is_event_damage_primary_outcome(config, kind, normalized_result):
+            stats.event_count_by_outcome[outcome_key] = stats.event_count_by_outcome.get(outcome_key, 0) + 1
+            return 0.0
         stats.skipped_no_reward_events += 1
         stats.event_count_by_outcome[outcome_key] = stats.event_count_by_outcome.get(outcome_key, 0) + 1
         return 0.0
@@ -545,6 +642,9 @@ def _record_event_reward(
     if scaled_raw_reward != 0.0:
         stats.add_reward(action_name, outcome_key, scaled_raw_reward)
     else:
+        if _is_event_damage_primary_outcome(config, kind, normalized_result):
+            stats.event_count_by_outcome[outcome_key] = stats.event_count_by_outcome.get(outcome_key, 0) + 1
+            return 0.0
         stats.skipped_no_reward_events += 1
         stats.event_count_by_outcome[outcome_key] = stats.event_count_by_outcome.get(outcome_key, 0) + 1
     return scaled_raw_reward
@@ -618,6 +718,15 @@ def _attack_event_reward(
                 _record_capped_duplicate(stats, "attack", attribution_result)
                 continue
             rewarded_results.add(attribution_result)
+            if attribution_result in ("hit", "blocked_chip"):
+                raw_reward += _record_event_damage_reward(
+                    config,
+                    stats,
+                    action_name,
+                    f"attack:{attribution_result}",
+                    _source_event_hp_delta(index, run_id, event_id, "self", attribution_result),
+                    1,
+                )
             raw_reward += _record_event_reward(
                 config,
                 stats,
@@ -642,6 +751,16 @@ def _attack_event_reward(
                 _record_capped_duplicate(stats, "projectile", projectile_result)
                 continue
             rewarded_projectile_results.add(projectile_result)
+            projectile_event_id = _int_field(projectile, "event_id")
+            if projectile_result in ("hit", "blocked_chip", "blocked"):
+                raw_reward += _record_event_damage_reward(
+                    config,
+                    stats,
+                    action_name,
+                    f"projectile:{projectile_result}",
+                    _source_event_hp_delta(index, run_id, projectile_event_id, "self"),
+                    1,
+                )
             raw_reward += _record_event_reward(
                 config,
                 stats,
@@ -688,6 +807,11 @@ def _defensive_event_reward(
 
     stats.defensive_attribution_rows_seen += len(attributions)
     raw_reward = 0.0
+    high_confidence_attributions = [
+        attribution
+        for attribution in attributions
+        if str(attribution.get("confidence", "unknown")) == "high"
+    ]
     for attribution in attributions:
         defense_result = str(attribution.get("defense_result", "unknown"))
         if str(attribution.get("confidence", "unknown")) != "high":
@@ -712,6 +836,24 @@ def _defensive_event_reward(
             _record_capped_duplicate(stats, "defense", defense_result)
             continue
         stats.rewarded_defensive_source_results.add(result_key)
+        if defense_result in ("hit", "blocked_chip", "thrown"):
+            if source_event_id > 0:
+                hp_delta = _source_event_hp_delta(index, run_id, source_event_id, "opponent", defense_result)
+            else:
+                hp_delta = sum(
+                    _int_field(row, "target_hp_delta")
+                    for row in high_confidence_attributions
+                    if str(row.get("defense_result", "unknown")) == defense_result
+                    and _int_field(row, "source_event_id") == 0
+                )
+            raw_reward += _record_event_damage_reward(
+                config,
+                stats,
+                action_name,
+                f"defense:{defense_result}",
+                hp_delta,
+                -1,
+            )
         raw_reward += _record_event_reward(
             config,
             stats,
@@ -758,24 +900,46 @@ def reward_adjustment_for_transition(
             if event_kind == "attack":
                 raw_adjustment += _attack_event_reward(index, event, action_name, config, stats)
             elif event_kind == "throw":
+                throw_result = str(event.get("result", "unknown"))
+                if throw_result == "success":
+                    run_id, _episode_id, throw_event_id = _event_key(event)
+                    raw_adjustment += _record_event_damage_reward(
+                        config,
+                        stats,
+                        action_name,
+                        "throw:success",
+                        _source_event_hp_delta(index, run_id, throw_event_id, "self"),
+                        1,
+                    )
                 raw_adjustment += _record_event_reward(
                     config,
                     stats,
                     action_name,
                     "throw",
-                    str(event.get("result", "unknown")),
+                    throw_result,
                 )
             elif event_kind == "projectile":
                 parent_attack_event_id = _int_field(event, "parent_attack_event_id")
                 if parent_attack_event_id > 0:
                     stats.skipped_child_projectile_events += 1
                     continue
+                projectile_result = str(event.get("result", "unknown"))
+                if projectile_result in ("hit", "blocked_chip", "blocked"):
+                    run_id, _episode_id, projectile_event_id = _event_key(event)
+                    raw_adjustment += _record_event_damage_reward(
+                        config,
+                        stats,
+                        action_name,
+                        f"projectile:{projectile_result}",
+                        _source_event_hp_delta(index, run_id, projectile_event_id, "self"),
+                        1,
+                    )
                 raw_adjustment += _record_event_reward(
                     config,
                     stats,
                     action_name,
                     "projectile",
-                    str(event.get("result", "unknown")),
+                    projectile_result,
                 )
             else:
                 stats.skipped_no_reward_events += 1

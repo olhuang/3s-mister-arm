@@ -14707,3 +14707,40 @@ Risk:
 - Ryu attacks that only expose `Attack_Counter` without a routine/current-attack
   start edge may be undercounted. Live Ryu-vs-Ryu six-button, projectile, throw,
   and special smokes are required before extending this pattern to Ken.
+
+## 2026-05-07: Ryu Attack Lifecycle Throw/Contact Cleanup
+
+Milestone:
+- Combat event attribution Phase 6b-8 / Ryu-vs-Ryu lifecycle cleanup
+
+Problem:
+- Live Ryu-vs-Ryu logs showed throw routines appearing as attack rows in
+  addition to real throw rows.
+- Some attacks with later attribution evidence still finalized as
+  `basic_unknown_timeout`, and some superseded attacks with contact evidence
+  finalized as `superseded_by_new_start` unknown.
+
+Implementation:
+- Ryu engine-owned attack starts now reject engine attribution rows whose
+  lifecycle action is `RL_POLICY_ACTION_THROW`; throw attempts remain owned by
+  the throw event ring.
+- The generic attack start path also drops starts whose effective lifecycle
+  action is throw, preventing policy/input throw rows from entering the attack
+  ring.
+- `RLCombatEvent_FinalizeActiveSide()` now resolves superseded active attacks
+  as `contact_resolved` when target contact/damage evidence was already seen,
+  before falling back to clean-whiff or unknown handling.
+- `RLCombatEvent_TryBasicFinalize()` now applies the same contact-resolve check
+  at max-pending timeout before emitting `basic_unknown_timeout`.
+
+Expected live effect:
+- Attack move stats should no longer contain throw-like attack rows; throws
+  should remain only in `event_kind=throw`.
+- Ryu `shoryuken-*` or heavy normal rows that have hit/block attribution should
+  stop ending as `timeout_unknown` / `rollover_unknown`.
+- Rows with no contact/damage evidence remain conservative unknowns.
+
+Risk:
+- No-contact events are intentionally unchanged. Contact-resolved is still a
+  lifecycle label only; hit/block truth continues to come from attribution and
+  defense-result rows.

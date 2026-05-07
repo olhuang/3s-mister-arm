@@ -1408,7 +1408,10 @@ static bool RLSession_BuildEngineStartAttributionForSide(const RLDecisionLedgerE
                                                          const RLObservationV1* obs,
                                                          RLCombatEventSide side,
                                                          RLEngineAttribution* attribution) {
-    return RLSession_BuildEngineAttributionForSideEx(entry, obs, side, attribution, false);
+    if (!RLSession_BuildEngineAttributionForSideEx(entry, obs, side, attribution, false)) {
+        return false;
+    }
+    return attribution != NULL && attribution->action_id != RL_POLICY_ACTION_THROW;
 }
 
 static void RLSession_RecordEngineAttributionForSide(RLDecisionLedgerEntry* entry,
@@ -2524,6 +2527,18 @@ static void RLSession_ApplyEngineAttributionToAttackStart(RLCombatAttackEventSta
     start->engine_label_source = attribution->label_source;
 }
 
+static bool RLSession_CombatAttackStartIsThrow(const RLCombatAttackEventStart* start) {
+    u16 lifecycle_action_id = RL_POLICY_ACTION_NEUTRAL;
+
+    if (start == NULL) {
+        return false;
+    }
+
+    lifecycle_action_id = (start->engine_action_id != RL_POLICY_ACTION_NEUTRAL) ? start->engine_action_id
+                                                                                : start->policy_action_id;
+    return lifecycle_action_id == RL_POLICY_ACTION_THROW;
+}
+
 static int RLSession_CombatEventSideIndex(RLCombatEventSide side) {
     if (side == RL_COMBAT_EVENT_SIDE_SELF) {
         return 0;
@@ -2629,6 +2644,9 @@ static void RLSession_MaybeStartCombatAttackEvent(RLDecisionLedgerEntry* entry,
         RLSession_RecordEngineAttributionForSide(entry, side, &engine_start_attribution);
     }
     if (start.run_id == 0 || start.episode_id == 0 || start.side == RL_COMBAT_EVENT_SIDE_NONE) {
+        return;
+    }
+    if (RLSession_CombatAttackStartIsThrow(&start)) {
         return;
     }
     if (RLSession_ShouldSuppressDuplicateCombatAttackStart(&start)) {

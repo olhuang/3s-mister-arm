@@ -84,6 +84,7 @@ static RLCombatEventStats combat_event_stats;
 
 static bool RLCombatEvent_IsCleanBasicWhiff(const RLCombatAttackEvent* event);
 static bool RLCombatEvent_IsCleanFastWhiff(const RLCombatAttackEvent* event);
+static bool RLCombatEvent_IsResolvedContactAttack(const RLCombatAttackEvent* event);
 static u32 RLCombatEvent_FrameAge(u32 frame_id, u32 start_frame);
 
 static RLCombatAttackEventRing* RLCombatEvent_RingForSide(RLCombatEventSide side) {
@@ -2096,10 +2097,14 @@ u32 RLCombatEvent_FinalizeActiveSide(u64 run_id,
             continue;
         }
         if (reason == RL_COMBAT_ATTACK_FINALIZE_SUPERSEDED_BY_NEW_START &&
-            result == RL_COMBAT_ATTACK_RESULT_UNKNOWN &&
-            (RLCombatEvent_IsCleanBasicWhiff(event) || RLCombatEvent_IsCleanFastWhiff(event))) {
-            event_result = RL_COMBAT_ATTACK_RESULT_WHIFF;
-            event_reason = RL_COMBAT_ATTACK_FINALIZE_BASIC_WHIFF_WINDOW;
+            result == RL_COMBAT_ATTACK_RESULT_UNKNOWN) {
+            if (RLCombatEvent_IsResolvedContactAttack(event)) {
+                event_result = RL_COMBAT_ATTACK_RESULT_CONTACT;
+                event_reason = RL_COMBAT_ATTACK_FINALIZE_CONTACT_RESOLVED;
+            } else if (RLCombatEvent_IsCleanBasicWhiff(event) || RLCombatEvent_IsCleanFastWhiff(event)) {
+                event_result = RL_COMBAT_ATTACK_RESULT_WHIFF;
+                event_reason = RL_COMBAT_ATTACK_FINALIZE_BASIC_WHIFF_WINDOW;
+            }
         }
         if (RLCombatEvent_FinalizeSlot(event, event_result, event_reason, frame_id, decision_id)) {
             finalized++;
@@ -2184,6 +2189,13 @@ static bool RLCombatEvent_TryBasicFinalize(RLCombatAttackEvent* event, const RLC
     }
 
     if (age >= RLCombatEvent_MaxPendingFrames(event)) {
+        if (RLCombatEvent_IsResolvedContactAttack(event)) {
+            return RLCombatEvent_FinalizeSlot(event,
+                                              RL_COMBAT_ATTACK_RESULT_CONTACT,
+                                              RL_COMBAT_ATTACK_FINALIZE_CONTACT_RESOLVED,
+                                              update->frame_id,
+                                              update->decision_id);
+        }
         if (RLCombatEvent_IsCleanBasicWhiff(event)) {
             return RLCombatEvent_FinalizeSlot(event,
                                               RL_COMBAT_ATTACK_RESULT_WHIFF,

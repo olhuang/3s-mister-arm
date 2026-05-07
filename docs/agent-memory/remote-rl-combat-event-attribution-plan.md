@@ -1506,6 +1506,13 @@ Implementation status:
   still-active clean event, the old event is finalized as `WHIFF` instead of
   `UNKNOWN + SUPERSEDED_BY_NEW_START`. `R` / rollover unknown remains reserved
   for contact/projectile-like/throw-protected ambiguous events.
+- 2026-05-07 duplicate-start refinement: a single physical attack can expose
+  multiple start edges across adjacent frames (`routine_started`,
+  `current_attack_started`, and/or `attack_counter_started`). Session-side
+  attack starts now debounce same-side starts with the same current-attack,
+  engine action, or policy action signature inside a short six-frame window.
+  This keeps one LP from producing multiple `CE S/F` and `CER W` rows while
+  still allowing different-action cancels to supersede the previous event.
 - 2026-05-05 side-split overlay refinement: round-local OSD stats now display
   self/opponent splits as `CE Sself/opp Fself/opp Aself/opp`, `CER Wself/opp
   Iself/opp Uself/opp`, and in All view `CEU Fself/opp Rself/opp Dself/opp`.

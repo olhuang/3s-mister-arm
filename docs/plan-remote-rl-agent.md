@@ -2617,6 +2617,7 @@ Tasks:
   - [x] Phase 2 live-smoke refinement: whiff lifecycle now treats routine attack state as the active-window signal, not sticky `current_attack`; accepted attack-start events are whiff-eligible so very short LP whiffs do not require a separately latched routine-active frame
   - [x] Phase 2 timeout/LP refinement: clean non-projectile pending timeouts finalize as `W` instead of `U`, and normal LP events get a 20-frame fast whiff fallback for sticky active-window / unrelated projectile-noise cases
   - [x] Phase 2 rollover refinement: same-side new starts finalize previous clean active events as `W`, leaving `R` only for contact/projectile-like/throw-protected ambiguous rollovers
+  - [x] Phase 2 duplicate-start debounce: attack event starts now suppress same-side duplicate start edges with the same attack/action signature inside a short frame window, so one physical LP does not appear as `CE/CER S/F/W +2/+3`.
   - [x] Phase 2 overlay stats refinement: `CE` / `CEU` counters are round-local and reset at episode begin; `CEL` / `CELU` lifetime counters remain available in `All` view, while event ids stay run-wide monotonic
   - [x] Phase 2 side-split overlay refinement: round-local `CE` / `CER` / `CEU` lines now show self/opponent splits for S/F/A/W/I/U/F/R/D so simultaneous-whiff misses reveal which side diverged
   - [x] Phase 2 timeout-cause overlay refinement: `All` view now shows `CEUC` / `CEUL` self/opponent cause splits for timeout unknowns: contact, projectile, throw, projectile-like, and not-whiff-eligible

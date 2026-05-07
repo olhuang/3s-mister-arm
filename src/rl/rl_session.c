@@ -69,6 +69,20 @@ typedef struct RLRemoteActiveAction {
     u8 attack_remaining_frames;
 } RLRemoteActiveAction;
 
+typedef struct RLCombatAttackStartDebounce {
+    bool valid;
+    u64 run_id;
+    u32 episode_id;
+    u32 frame_id;
+    RLCombatEventSide side;
+    u16 current_attack;
+    u8 kind_of_waza;
+    u16 engine_action_id;
+    u16 engine_sub_action_id;
+    u16 policy_action_id;
+    u16 policy_sub_action_id;
+} RLCombatAttackStartDebounce;
+
 typedef struct RLDecisionLedgerEntry {
     bool valid;
     bool active;
@@ -247,6 +261,7 @@ static const RLLocalFakeAction kLocalFakeAgentSequence[] = {
 #define RL_REMOTE_SEEN_CAP 32u
 #define RL_DECISION_LEDGER_CAP 128u
 #define RL_TRANSITION_FORMAT_BUFFER_SIZE 4096u
+#define RL_COMBAT_ATTACK_START_DEBOUNCE_FRAMES 6u
 #define RL_POLICY_ACTION_NEUTRAL 0u
 #define RL_POLICY_ACTION_WALK 1u
 #define RL_POLICY_ACTION_JUMP 3u
@@ -344,6 +359,7 @@ static u32 transition_batch_row_count;
 static u32 transition_batch_event_row_count;
 static u64 combat_event_journal_exported_run_id;
 static u32 combat_event_journal_exported_episode_id = UINT32_MAX;
+static RLCombatAttackStartDebounce combat_attack_start_debounce[2];
 static bool hp_damage_baseline_valid;
 static s16 last_self_damage_total;
 static s16 last_opp_damage_total;
@@ -2458,6 +2474,81 @@ static void RLSession_FillCombatAttackStart(RLCombatAttackEventStart* start,
     }
 }
 
+static int RLSession_CombatEventSideIndex(RLCombatEventSide side) {
+    if (side == RL_COMBAT_EVENT_SIDE_SELF) {
+        return 0;
+    }
+    if (side == RL_COMBAT_EVENT_SIDE_OPPONENT) {
+        return 1;
+    }
+    return -1;
+}
+
+static bool RLSession_CombatAttackStartSignatureMatches(const RLCombatAttackStartDebounce* cached,
+                                                        const RLCombatAttackEventStart* start) {
+    if (cached == NULL || start == NULL) {
+        return false;
+    }
+    if (cached->current_attack != 0 && start->current_attack != 0 &&
+        cached->current_attack == start->current_attack &&
+        cached->kind_of_waza == start->kind_of_waza) {
+        return true;
+    }
+    if (cached->engine_action_id != RL_POLICY_ACTION_NEUTRAL &&
+        start->engine_action_id != RL_POLICY_ACTION_NEUTRAL &&
+        cached->engine_action_id == start->engine_action_id &&
+        cached->engine_sub_action_id == start->engine_sub_action_id) {
+        return true;
+    }
+    if (cached->policy_action_id != RL_POLICY_ACTION_NEUTRAL &&
+        start->policy_action_id != RL_POLICY_ACTION_NEUTRAL &&
+        cached->policy_action_id == start->policy_action_id &&
+        cached->policy_sub_action_id == start->policy_sub_action_id) {
+        return true;
+    }
+    return false;
+}
+
+static bool RLSession_ShouldSuppressDuplicateCombatAttackStart(const RLCombatAttackEventStart* start) {
+    const int side_index = start != NULL ? RLSession_CombatEventSideIndex(start->side) : -1;
+    const RLCombatAttackStartDebounce* cached = side_index >= 0 ? &combat_attack_start_debounce[side_index] : NULL;
+    u32 age = 0;
+
+    if (start == NULL || cached == NULL || !cached->valid ||
+        cached->run_id != start->run_id ||
+        cached->episode_id != start->episode_id ||
+        cached->side != start->side ||
+        start->frame_id < cached->frame_id) {
+        return false;
+    }
+
+    age = start->frame_id - cached->frame_id;
+    return age <= RL_COMBAT_ATTACK_START_DEBOUNCE_FRAMES &&
+           RLSession_CombatAttackStartSignatureMatches(cached, start);
+}
+
+static void RLSession_RememberCombatAttackStart(const RLCombatAttackEventStart* start) {
+    const int side_index = start != NULL ? RLSession_CombatEventSideIndex(start->side) : -1;
+    RLCombatAttackStartDebounce* cached = side_index >= 0 ? &combat_attack_start_debounce[side_index] : NULL;
+
+    if (start == NULL || cached == NULL) {
+        return;
+    }
+
+    memset(cached, 0, sizeof(*cached));
+    cached->valid = true;
+    cached->run_id = start->run_id;
+    cached->episode_id = start->episode_id;
+    cached->frame_id = start->frame_id;
+    cached->side = start->side;
+    cached->current_attack = start->current_attack;
+    cached->kind_of_waza = start->kind_of_waza;
+    cached->engine_action_id = start->engine_action_id;
+    cached->engine_sub_action_id = start->engine_sub_action_id;
+    cached->policy_action_id = start->policy_action_id;
+    cached->policy_sub_action_id = start->policy_sub_action_id;
+}
+
 static void RLSession_MaybeStartCombatAttackEvent(RLDecisionLedgerEntry* entry,
                                                   const RLObservationV1* obs,
                                                   RLCombatEventSide side) {
@@ -2472,6 +2563,9 @@ static void RLSession_MaybeStartCombatAttackEvent(RLDecisionLedgerEntry* entry,
     if (start.run_id == 0 || start.episode_id == 0 || start.side == RL_COMBAT_EVENT_SIDE_NONE) {
         return;
     }
+    if (RLSession_ShouldSuppressDuplicateCombatAttackStart(&start)) {
+        return;
+    }
 
     RLCombatEvent_FinalizeActiveSide(start.run_id,
                                      start.episode_id,
@@ -2480,7 +2574,9 @@ static void RLSession_MaybeStartCombatAttackEvent(RLDecisionLedgerEntry* entry,
                                      RL_COMBAT_ATTACK_FINALIZE_SUPERSEDED_BY_NEW_START,
                                      start.frame_id,
                                      start.decision_id);
-    RLCombatEvent_StartAttack(&start);
+    if (RLCombatEvent_StartAttack(&start) != NULL) {
+        RLSession_RememberCombatAttackStart(&start);
+    }
 }
 
 static void RLSession_FillCombatAttackUpdate(RLCombatAttackEventUpdate* update,

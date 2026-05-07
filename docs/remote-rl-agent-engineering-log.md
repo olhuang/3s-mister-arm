@@ -2,6 +2,45 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-07: Combat Event Phase 2 Duplicate Attack-Start Debounce
+
+Milestone:
+- Combat event attribution Phase 2 live refinement
+
+Files changed:
+- `src/rl/rl_session.c`
+- `docs/plan-remote-rl-agent.md`
+- `docs/agent-memory/remote-rl-combat-event-attribution-plan.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Stop one physical attack, especially LP, from appearing as multiple
+  attack-event starts/finalizations/whiffs in the Outcome overlay.
+
+Implementation notes:
+- Live testing showed one LP could make `CE/CER S/F/W` increase by `+2` or
+  `+3`. The likely source is several start edges (`routine_started`,
+  `current_attack_started`, `attack_counter_started`) arriving across adjacent
+  frames for the same physical move.
+- Added a small session-side debounce cache per side. If a new start arrives
+  within six frames for the same run/episode/side and matches the previous
+  current-attack, engine action/sub-action, or policy action/sub-action
+  signature, the duplicate start is suppressed before it can finalize/restart
+  the active attack event.
+- Different action signatures can still supersede the active event. Very fast
+  same-move chains inside the debounce window remain one logical event, which
+  matches the accepted treatment for rapid LP chains when the engine does not
+  expose distinct starts.
+
+Validation:
+- `git diff --check` passed.
+- `python3 -m py_compile tools/analyze_rl_combat_events.py` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed and rebuilt
+  `src/rl/rl_session.c`.
+- Follow-up live MiSTer smoke should confirm one isolated LP increments
+  `CE S/F` and `CER W` by one logical event instead of `+2` / `+3`, while a
+  different immediate cancel still starts a new event.
+
 ## 2026-05-07: Combat Event Phase 6b-4 Weak Attack-Only Suppression
 
 Milestone:

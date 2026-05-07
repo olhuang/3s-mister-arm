@@ -2576,6 +2576,106 @@ Phase 9C-1 event-damage-v1 reward profile status:
 - DQN feature names, replay row shape, live inference, BC mode, and default
   `off` training behavior remain unchanged.
 
+Phase 9C-2 event-aware replay filtering plan:
+
+Problem:
+
+- `event-damage-v1` makes combat events the primary reward source and disables
+  transition HP-delta reward. On the 30-round Ryu vs Ken capture, a 2000-step
+  warm-start run still drifted into a defensive policy:
+  - `attack_rate=6.0%`
+  - `defense_rate=81.0%`
+- The reward values themselves were not large (`event_damage_reward_sum=5.000`,
+  `raw_reward_sum=1.600`). The likely issue is replay composition: the
+  transition log contains many `guard-stand`, `guard-crouch`, `back`, and
+  `forward` rows that have no combat-event label and zero reward, but uniform
+  replay still updates the Q-network from them.
+
+Goal:
+
+- Do not drop movement as a category. The model still needs neutral movement,
+  spacing, jump, and guard examples.
+- Instead, keep all labeled/meaningful movement rows and downsample only
+  unlabeled passive movement rows.
+
+Proposed CLI:
+
+- `--combat-event-unlabeled-movement-policy keep|downsample|drop`
+- `--combat-event-unlabeled-movement-keep-ratio <float>`
+- `--combat-event-unlabeled-movement-seed <int>`
+
+Defaults:
+
+- `policy=keep`
+- `keep_ratio=1.0`
+
+These defaults preserve current trainer behavior.
+
+Rows that must always be kept:
+
+- attack, projectile, throw, punish, normal, special, and source-event rows.
+- rows with self-side combat source events joined by start decision.
+- rows with defensive attribution labels joined by decision id:
+  - `defense:hit`
+  - `defense:blocked`
+  - `defense:blocked_chip`
+  - `defense:parry`
+  - `defense:evaded`
+  - `defense:thrown`
+- rows with event damage reward or penalty.
+- rows with incoming projectile threat labels or projectile-response outcomes.
+- rows with HP/stun delta in non-`event-damage-v1` profiles.
+- `done` rows and episode/round boundary rows.
+
+Rows eligible for downsampling:
+
+- action is one of:
+  - `back`
+  - `forward`
+  - `guard-stand`
+  - `guard-crouch`
+  - jump-start actions
+- and all of these are true:
+  - combat event reward adjustment is zero.
+  - no defensive attribution joined the transition row.
+  - no attack/projectile/throw/punish source event joined the transition row.
+  - no incoming projectile threat or projectile response outcome is present.
+  - no HP/stun delta is present.
+  - row is not `done` and not an episode boundary row.
+
+Recommended first training recipe:
+
+- `--combat-event-reward-profile event-damage-v1`
+- `--combat-event-unlabeled-movement-policy downsample`
+- `--combat-event-unlabeled-movement-keep-ratio 0.20`
+
+Metadata/diagnostics required:
+
+- policy, keep ratio, and seed.
+- checked rows, kept rows, dropped rows.
+- dropped/kept counts by action.
+- training experiences before/after filtering.
+- count of labeled movement rows that were protected from filtering.
+
+Validation required:
+
+- default `keep` smoke must produce the same behavior as current training.
+- `downsample` smoke must reduce unlabeled movement rows while preserving:
+  - all source-event rows
+  - all defense-labeled rows
+  - all event-damage rows
+  - all done/boundary rows
+- 2000-step comparison should include:
+  - base v62
+  - `safe-v1`
+  - `event-damage-v1`
+  - `event-damage-v1 + unlabeled movement downsample`
+- Success target for the first pass is not final quality, only avoiding
+  defensive collapse:
+  - attack rate should not fall back to the `6%` range.
+  - defense rate should not stay around `80%+`.
+  - top action should not collapse entirely to guard/back.
+
 Data recollection gate:
 
 - Phase 9 trainer adoption requires fresh paired transition/event logs. Old

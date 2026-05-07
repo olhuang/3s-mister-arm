@@ -15440,3 +15440,51 @@ Follow-up:
 - Next tuning should add event-aware sampling or source-family balancing before
   long event-primary training, or use a short fine-tune budget as an explicit
   warm-start recipe.
+
+## 2026-05-07: Phase 9C-2 Replay Filtering Plan
+
+Milestone:
+- Combat event attribution Phase 9C-2 / event-aware replay filtering planning
+
+Purpose:
+- Document the next trainer fix before implementation.
+- Address the `event-damage-v1` finding that long uniform replay training can
+  still drift into a defensive policy even when reward values are not large.
+
+Decision:
+- Do not drop movement wholesale. The model still needs neutral movement,
+  spacing, jump, and guard examples.
+- Add an opt-in policy to downsample only unlabeled passive movement rows:
+  - `back`
+  - `forward`
+  - `guard-stand`
+  - `guard-crouch`
+  - jump-start actions
+- Keep every row with a combat label, event damage, source event, defensive
+  attribution, projectile threat/response, HP/stun delta, or done/boundary
+  semantics.
+
+Planned CLI:
+- `--combat-event-unlabeled-movement-policy keep|downsample|drop`
+- `--combat-event-unlabeled-movement-keep-ratio`
+- `--combat-event-unlabeled-movement-seed`
+
+Default behavior:
+- `policy=keep`
+- `keep_ratio=1.0`
+- Existing trainer behavior remains unchanged until the option is explicitly
+  enabled.
+
+Recommended first experiment:
+- Train `event-damage-v1` with:
+  - `--combat-event-unlabeled-movement-policy downsample`
+  - `--combat-event-unlabeled-movement-keep-ratio 0.20`
+- Compare against base v62, `safe-v1`, plain `event-damage-v1` 2000-step, and
+  `event-damage-v1` 200-step.
+
+Validation plan:
+- Default keep smoke: should match current behavior.
+- Downsample smoke: must reduce unlabeled movement rows while preserving all
+  labeled movement, source-event, defense-event, event-damage, and done rows.
+- Train/compare smoke: first success criterion is avoiding the `attack_rate=6%`
+  defensive collapse while preserving enough movement support for live play.

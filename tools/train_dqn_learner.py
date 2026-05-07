@@ -3060,6 +3060,8 @@ def build_experiences(
     grounded_normal_defense_bc_config: GroundedNormalDefenseBCConfig,
     engine_outcome_config: EngineOutcomeConfig,
     action_filter_config: DQNActionFilterConfig,
+    combat_event_validation: combat_events.CombatEventTrainingValidation | None,
+    combat_event_reward_config: combat_events.CombatEventRewardConfig,
 ) -> tuple[
     list[Experience],
     dict[str, int],
@@ -3075,6 +3077,7 @@ def build_experiences(
     RewardProjectileResponseStats,
     ProjectileResponseOversampleStats,
     EngineOutcomeStats,
+    combat_events.CombatEventRewardStats,
 ]:
     action_to_index = {action: index for index, action in enumerate(actions)}
     build_stats = BuildDiagnostics()
@@ -3097,6 +3100,7 @@ def build_experiences(
     projectile_response_stats = RewardProjectileResponseStats()
     projectile_response_oversample_stats = ProjectileResponseOversampleStats()
     engine_outcome_stats = EngineOutcomeStats()
+    combat_event_reward_stats = combat_events.CombatEventRewardStats()
 
     for episode_rows in by_episode.values():
         episode_rows.sort(key=row_order_key)
@@ -3230,6 +3234,16 @@ def build_experiences(
                 + position_adjustment
                 + projectile_response_adjustment
             ) * reward_scale
+            combat_event_reward_adjustment = combat_events.reward_adjustment_for_transition(
+                combat_event_validation.index if combat_event_validation is not None else None,
+                row,
+                action_name,
+                action_start,
+                combat_event_reward_config,
+                combat_event_reward_stats,
+            )
+            if combat_event_reward_adjustment != 0.0:
+                reward += combat_event_reward_adjustment * reward_scale
             if action_name is None:
                 if reward != 0.0:
                     if add_delayed_reward_to_indices(
@@ -3378,6 +3392,7 @@ def build_experiences(
         projectile_response_stats,
         projectile_response_oversample_stats,
         engine_outcome_stats,
+        combat_event_reward_stats,
     )
 
 
@@ -5899,6 +5914,16 @@ def format_counts(counts: dict[str, int], total: int, limit: int) -> str:
     return ",".join(parts) if parts else "none"
 
 
+def format_float_counts(values: dict[str, float], limit: int) -> str:
+    ordered = sorted(values.items(), key=lambda item: (abs(item[1]), item[0]), reverse=True)
+    parts = [f"{key}:{value:.3f}" for key, value in ordered[: max(1, limit)] if value != 0.0]
+    if len(ordered) > limit:
+        remaining = sum(value for _, value in ordered[max(1, limit) :])
+        if remaining != 0.0:
+            parts.append(f"...{remaining:+.3f}")
+    return ",".join(parts) if parts else "none"
+
+
 def format_source_action_scores(
     source_stats: SourceReplayDiagnostics,
     actions: tuple[str, ...],
@@ -6058,7 +6083,7 @@ def main() -> None:
         default=[],
         help=(
             "Optional combat-events NDJSON logs paired with the transition logs. "
-            "Phase 9B currently supports validation-only ingestion."
+            "Phase 9B supports validation-only and opt-in reward-shaping ingestion."
         ),
     )
     parser.add_argument(
@@ -6067,8 +6092,21 @@ def main() -> None:
         default="off",
         help=(
             "Combat event trainer adoption mode. off preserves existing training; "
-            "validate parses paired event logs and records join/schema diagnostics without changing rewards."
+            "validate records join/schema diagnostics without changing rewards; "
+            "reward-shaping adds a fixed event-outcome reward table on top of transition rewards."
         ),
+    )
+    parser.add_argument(
+        "--combat-event-reward-profile",
+        choices=combat_events.COMBAT_EVENT_REWARD_PROFILES,
+        default="safe-v1",
+        help="Combat event reward table profile used only with --combat-event-training-mode reward-shaping.",
+    )
+    parser.add_argument(
+        "--combat-event-reward-scale",
+        type=float,
+        default=1.0,
+        help="Additional multiplier for combat event reward shaping before the global --reward-scale.",
     )
     parser.add_argument(
         "--drop-initial-episodes-per-run",
@@ -7240,8 +7278,13 @@ def main() -> None:
     combat_event_training_mode = str(args.combat_event_training_mode)
     combat_event_validation: combat_events.CombatEventTrainingValidation | None = None
     combat_event_log_paths = [str(path) for path in args.combat_event_logs]
+    combat_event_reward_config = combat_events.CombatEventRewardConfig(
+        enabled=combat_event_training_mode == "reward-shaping",
+        profile=str(args.combat_event_reward_profile),
+        scale=max(0.0, float(args.combat_event_reward_scale)),
+    )
     if combat_event_training_mode == "off" and combat_event_log_paths:
-        raise SystemExit("--combat-event-logs requires --combat-event-training-mode validate in Phase 9B")
+        raise SystemExit("--combat-event-logs requires --combat-event-training-mode validate or reward-shaping")
     if combat_event_training_mode != "off":
         if not combat_event_log_paths:
             raise SystemExit(f"--combat-event-training-mode {combat_event_training_mode} requires --combat-event-logs")
@@ -7249,12 +7292,15 @@ def main() -> None:
             combat_event_log_paths,
             [str(path) for path in args.transition_logs],
             rows,
+            mode=combat_event_training_mode,
         )
         if combat_event_validation.fatal_errors:
             raise SystemExit(
                 "combat event validation failed: " + "; ".join(combat_event_validation.fatal_errors)
             )
     if str(args.training_mode) == "bc":
+        if combat_event_reward_config.enabled:
+            raise SystemExit("--combat-event-training-mode reward-shaping is only supported for DQN training")
         # --- BC training path ---
         bc_layers, bc_train_stats, bc_label_counts, bc_skipped = train_bc(
             rows,
@@ -7355,6 +7401,7 @@ def main() -> None:
         reward_projectile_response_stats,
         projectile_response_oversample_stats,
         engine_outcome_stats,
+        combat_event_reward_stats,
     ) = build_experiences(
         rows,
         actions,
@@ -7376,6 +7423,8 @@ def main() -> None:
         grounded_normal_defense_bc_config,
         engine_outcome_config,
         dqn_action_filter_config,
+        combat_event_validation,
+        combat_event_reward_config,
     )
     if not experiences:
         raise SystemExit("No DQN experiences built from transition logs")
@@ -7482,6 +7531,8 @@ def main() -> None:
         reward_sources.append("movement-regression-loss")
     if str(args.training_mode_hp_delta_mode) == "damage-only":
         reward_sources.append("training-mode-damage-only-hp")
+    if combat_event_reward_stats.applied_event_rewards > 0:
+        reward_sources.append(f"combat-event-{combat_event_reward_config.profile}")
     reward_source = "+".join(reward_sources)
     metadata = {
         "transition_logs": args.transition_logs,
@@ -7631,6 +7682,8 @@ def main() -> None:
     }
     if combat_event_validation is not None:
         metadata["combat_event_training"] = combat_event_validation.as_metadata()
+        metadata["combat_event_reward_config"] = combat_event_reward_config.as_metadata()
+        metadata["combat_event_reward_stats"] = combat_event_reward_stats.as_metadata()
     publish_model(
         args.model_dir,
         version,
@@ -7733,6 +7786,20 @@ def main() -> None:
     )
     if combat_event_validation is not None:
         print(f"DQN diagnostics combat_event={combat_event_validation.summary_line()}", flush=True)
+        print(
+            "DQN diagnostics "
+            f"combat_event_reward=enabled:{int(combat_event_reward_config.enabled)} "
+            f"profile:{combat_event_reward_config.profile} "
+            f"scale:{combat_event_reward_config.scale:.3f} "
+            f"checked:{combat_event_reward_stats.checked_transition_rows} "
+            f"matched_rows:{combat_event_reward_stats.matched_transition_rows} "
+            f"matched_events:{combat_event_reward_stats.matched_event_rows} "
+            f"adjusted_rows:{combat_event_reward_stats.adjusted_transition_rows} "
+            f"applied:{combat_event_reward_stats.applied_event_rewards} "
+            f"raw_sum:{combat_event_reward_stats.raw_reward_sum:.3f} "
+            f"outcomes:{format_float_counts(combat_event_reward_stats.raw_reward_by_outcome, args.diagnostic_top_n)}",
+            flush=True,
+        )
     print(
         "DQN diagnostics "
         f"action_filter=movable_sources:{','.join(sorted(dqn_action_filter_config.require_movable_state_sources)) or 'none'} "

@@ -2482,6 +2482,32 @@ Phase 9B-0 validation reader status:
   transition row. Phase 9C direct event experiences must choose an explicit
   fallback policy before using those rows.
 
+Phase 9B-1 reward-shaping MVP status:
+
+- `tools/train_dqn_learner.py` now has an opt-in reward-shaping mode:
+  - `--combat-event-training-mode reward-shaping`
+  - `--combat-event-reward-profile safe-v1`
+  - `--combat-event-reward-scale`
+- The first table is deliberately code-owned and fixed in
+  `tools/rl_combat_event_training.py` as `safe-v1`. CLI config can select the
+  profile and scale it, but arbitrary external reward tables are deferred until
+  the safe profile has stable A/B results.
+- The trainer joins event rows to transition rows by
+  `(run_id, episode_id, start_decision_id)` and only applies shaping to
+  self-side action-start rows. DQN feature names, model inputs, replay schema,
+  live inference, and BC training remain unchanged.
+- `attack` rows use high-confidence attribution rows when available; projectile
+  parent attacks delegate to linked projectile outcomes; throw rows use their
+  own result; punish rows add reward through the source event. Unknown or
+  unsupported outcomes contribute zero reward and remain visible in metadata.
+- Reward values are small raw adjustments before the global trainer
+  `--reward-scale`; `--combat-event-reward-scale` is an extra multiplier for
+  the event table only.
+- Metadata records `combat_event_reward_config`,
+  `combat_event_reward_stats`, applied event counts, per-outcome reward totals,
+  and skipped unknown/no-reward/non-self/low-confidence counts. Default `off`
+  mode writes no combat-event metadata.
+
 Data recollection gate:
 
 - Phase 9 trainer adoption requires fresh paired transition/event logs. Old

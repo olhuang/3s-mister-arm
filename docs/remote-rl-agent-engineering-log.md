@@ -15140,3 +15140,69 @@ Validation:
 - Default-off smoke:
   - `python3 tools/train_dqn_learner.py logs/phase7a-event-journal-live-transitions.ndjson --model-dir /tmp/rl-combat-event-trainer-off-smoke --steps 1 --batch-size 8 --log-interval 1 --diagnostic-top-n 3`
   - Passed and did not print combat event diagnostics.
+
+## 2026-05-07: Phase 9B-1 Event-Aware Reward-Shaping MVP
+
+Milestone:
+- Combat event attribution Phase 9B-1 / opt-in trainer reward shaping
+
+Purpose:
+- Let paired combat event logs adjust DQN rewards without changing DQN feature
+  names, replay row shape, live inference, or default trainer behavior.
+- Keep the first reward table reproducible: a fixed code-owned `safe-v1` table
+  with CLI profile/scale knobs, not an arbitrary external reward config yet.
+
+Implementation:
+- Extended `tools/rl_combat_event_training.py`:
+  - added `reward-shaping` mode and `safe-v1` reward profile.
+  - indexed attribution rows by source event, projectiles by parent attack, and
+    punish rows by source event.
+  - added self-side event reward helpers for attack hit/block/chip/parry/whiff,
+    delegated projectile hit/block/expired/parry, throw success/whiff, and
+    punish-caused outcomes.
+  - records reward stats for applied, skipped-unknown, skipped-no-reward,
+    skipped-low-confidence, and skipped-non-self events.
+- Updated `tools/train_dqn_learner.py`:
+  - added `--combat-event-training-mode reward-shaping`.
+  - added `--combat-event-reward-profile safe-v1`.
+  - added `--combat-event-reward-scale`.
+  - applies event shaping only to DQN action-start rows joined by
+    `(run_id, episode_id, start_decision_id)`.
+  - rejects reward-shaping in BC mode.
+  - writes reward config/stats metadata only when combat event mode is enabled.
+
+Expected effect:
+- Default DQN training remains `hp-delta` only.
+- `validate` mode still publishes a normal model with event diagnostics but no
+  event reward.
+- `reward-shaping` mode adds small event-outcome reward on top of the existing
+  transition reward and records `reward_source=hp-delta+combat-event-safe-v1`
+  when any event reward is applied.
+
+Risk:
+- The `safe-v1` values are intentionally conservative but still affect Q
+  learning. Use only on fresh paired transition/event logs that pass analyzer
+  health checks.
+- Unknown, no-source, missing-ref, schema-mismatch, and unsupported outcomes
+  remain zero-reward and must be watched in metadata before promotion.
+
+Validation:
+- `python3 -m py_compile tools/rl_combat_event_training.py tools/train_dqn_learner.py`
+  passed.
+- `git diff --check` passed.
+- Default-off smoke:
+  - copied the live logs to `/tmp/phase9b-reward-transitions.ndjson` and
+    `/tmp/phase9b-reward-events.ndjson` for a stable snapshot
+  - `python3 tools/train_dqn_learner.py /tmp/phase9b-reward-transitions.ndjson --model-dir /tmp/rl-combat-event-trainer-off-snapshot --steps 1 --batch-size 8 --log-interval 1 --diagnostic-top-n 3`
+  - Passed with `rows=4367`, `experiences=1580`, no combat-event metadata, and
+    `reward_source=hp-delta`.
+- Validate smoke:
+  - `python3 tools/train_dqn_learner.py /tmp/phase9b-reward-transitions.ndjson --combat-event-logs /tmp/phase9b-reward-events.ndjson --combat-event-training-mode validate --model-dir /tmp/rl-combat-event-trainer-validate-snapshot --steps 1 --batch-size 8 --log-interval 1 --diagnostic-top-n 5`
+  - Passed with `mode:validate`, `events:490`, `schemas:{'1': 490}`,
+    `start_join:284/284`, `end_join:282/285`, `missing_refs:0`,
+    `errors:0`, and `applied_event_rewards=0`.
+- Reward-shaping smoke:
+  - `python3 tools/train_dqn_learner.py /tmp/phase9b-reward-transitions.ndjson --combat-event-logs /tmp/phase9b-reward-events.ndjson --combat-event-training-mode reward-shaping --combat-event-reward-profile safe-v1 --combat-event-reward-scale 1.0 --model-dir /tmp/rl-combat-event-trainer-reward-snapshot --steps 1 --batch-size 8 --log-interval 1 --diagnostic-top-n 5`
+  - Passed with `mode:reward-shaping`, `applied:92`, `adjusted_rows:86`,
+    `raw_sum:16.250`, `skipped_low_confidence_events=9`, and
+    `reward_source=hp-delta+combat-event-safe-v1`.

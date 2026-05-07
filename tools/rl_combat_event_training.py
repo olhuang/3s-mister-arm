@@ -11,7 +11,28 @@ from typing import Any
 
 
 COMBAT_EVENT_SCHEMA_VERSION = 1
-COMBAT_EVENT_TRAINING_MODES = ("off", "validate")
+COMBAT_EVENT_TRAINING_MODES = ("off", "validate", "reward-shaping")
+COMBAT_EVENT_REWARD_PROFILES = ("safe-v1",)
+
+
+SAFE_V1_REWARD_TABLE: dict[tuple[str, str], float] = {
+    ("attack", "hit"): 0.5,
+    ("attack", "blocked"): 0.1,
+    ("attack", "blocked_chip"): 0.15,
+    ("attack", "parry"): -0.25,
+    ("attack", "evaded"): 0.0,
+    ("attack", "whiff"): -0.25,
+    ("attack", "interrupted"): -0.4,
+    ("projectile", "hit"): 0.4,
+    ("projectile", "blocked"): 0.1,
+    ("projectile", "blocked_chip"): 0.1,
+    ("projectile", "parry"): -0.25,
+    ("projectile", "expired"): 0.0,
+    ("projectile", "evaded"): 0.0,
+    ("throw", "success"): 0.5,
+    ("throw", "whiff"): -0.35,
+    ("punish", "caused"): 0.7,
+}
 
 
 def _counter_dict(counter: collections.Counter[object]) -> dict[str, int]:
@@ -35,6 +56,63 @@ def _event_key(row: dict[str, object]) -> tuple[int, int, int]:
 
 def _run_event_key(row: dict[str, object], field_name: str) -> tuple[int, int]:
     return (_int_field(row, "run_id"), _int_field(row, field_name))
+
+
+@dataclass(frozen=True)
+class CombatEventRewardConfig:
+    enabled: bool = False
+    profile: str = "safe-v1"
+    scale: float = 1.0
+
+    def as_metadata(self) -> dict[str, object]:
+        table = SAFE_V1_REWARD_TABLE if self.profile == "safe-v1" else {}
+        return {
+            "enabled": self.enabled,
+            "profile": self.profile,
+            "scale": self.scale,
+            "table": {f"{kind}:{result}": value for (kind, result), value in sorted(table.items())},
+        }
+
+
+@dataclass
+class CombatEventRewardStats:
+    checked_transition_rows: int = 0
+    matched_transition_rows: int = 0
+    matched_event_rows: int = 0
+    adjusted_transition_rows: int = 0
+    applied_event_rewards: int = 0
+    skipped_non_self_events: int = 0
+    skipped_low_confidence_events: int = 0
+    skipped_unknown_events: int = 0
+    skipped_no_reward_events: int = 0
+    raw_reward_sum: float = 0.0
+    raw_reward_by_action: dict[str, float] = field(default_factory=dict)
+    raw_reward_by_outcome: dict[str, float] = field(default_factory=dict)
+    event_count_by_outcome: dict[str, int] = field(default_factory=dict)
+
+    def add_reward(self, action_name: str, outcome_key: str, raw_reward: float) -> None:
+        self.applied_event_rewards += 1
+        self.raw_reward_sum += raw_reward
+        self.raw_reward_by_action[action_name] = self.raw_reward_by_action.get(action_name, 0.0) + raw_reward
+        self.raw_reward_by_outcome[outcome_key] = self.raw_reward_by_outcome.get(outcome_key, 0.0) + raw_reward
+        self.event_count_by_outcome[outcome_key] = self.event_count_by_outcome.get(outcome_key, 0) + 1
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "checked_transition_rows": self.checked_transition_rows,
+            "matched_transition_rows": self.matched_transition_rows,
+            "matched_event_rows": self.matched_event_rows,
+            "adjusted_transition_rows": self.adjusted_transition_rows,
+            "applied_event_rewards": self.applied_event_rewards,
+            "skipped_non_self_events": self.skipped_non_self_events,
+            "skipped_low_confidence_events": self.skipped_low_confidence_events,
+            "skipped_unknown_events": self.skipped_unknown_events,
+            "skipped_no_reward_events": self.skipped_no_reward_events,
+            "raw_reward_sum": self.raw_reward_sum,
+            "raw_reward_by_action": dict(sorted(self.raw_reward_by_action.items())),
+            "raw_reward_by_outcome": dict(sorted(self.raw_reward_by_outcome.items())),
+            "event_count_by_outcome": dict(sorted(self.event_count_by_outcome.items())),
+        }
 
 
 @dataclass
@@ -70,6 +148,9 @@ class CombatEventIndex:
     by_event_key: dict[tuple[int, int, int], dict[str, object]] = field(default_factory=dict)
     by_start_decision: dict[tuple[int, int, int], list[dict[str, object]]] = field(default_factory=dict)
     by_end_decision: dict[tuple[int, int, int], list[dict[str, object]]] = field(default_factory=dict)
+    attributions_by_source_event: dict[tuple[int, int], list[dict[str, object]]] = field(default_factory=dict)
+    projectiles_by_parent_attack: dict[tuple[int, int], list[dict[str, object]]] = field(default_factory=dict)
+    punishes_by_source_event: dict[tuple[int, int], list[dict[str, object]]] = field(default_factory=dict)
 
     @property
     def has_rows(self) -> bool:
@@ -250,11 +331,21 @@ def _populate_index(index: CombatEventIndex) -> None:
             index.attack_finalize_reason_counts[str(row.get("finalize_reason", "unknown"))] += 1
         elif event_kind == "projectile":
             index.projectile_result_counts[result] += 1
+            parent_attack_event_id = _int_field(row, "parent_attack_event_id")
+            if parent_attack_event_id > 0:
+                index.projectiles_by_parent_attack.setdefault((run_id, parent_attack_event_id), []).append(row)
         elif event_kind == "throw":
             index.throw_result_counts[result] += 1
         elif event_kind == "attribution":
             index.attribution_defense_result_counts[str(row.get("defense_result", "unknown"))] += 1
             index.attribution_failure_reason_counts[str(row.get("failure_reason", "unknown"))] += 1
+            source_event_id = _int_field(row, "source_event_id")
+            if source_event_id > 0:
+                index.attributions_by_source_event.setdefault((run_id, source_event_id), []).append(row)
+        elif event_kind == "punish":
+            source_event_id = _int_field(row, "source_event_id")
+            if source_event_id > 0:
+                index.punishes_by_source_event.setdefault((run_id, source_event_id), []).append(row)
 
         start_decision_id = _int_field(row, "start_decision_id")
         if start_decision_id > 0:
@@ -389,10 +480,183 @@ def build_transition_join_stats(
     }
 
 
+def _reward_table_for_profile(profile: str) -> dict[tuple[str, str], float]:
+    if profile == "safe-v1":
+        return SAFE_V1_REWARD_TABLE
+    return {}
+
+
+def _record_event_reward(
+    config: CombatEventRewardConfig,
+    stats: CombatEventRewardStats,
+    action_name: str,
+    kind: str,
+    result: str,
+) -> float:
+    normalized_result = str(result)
+    outcome_key = f"{kind}:{normalized_result}"
+    if normalized_result == "unknown":
+        stats.skipped_unknown_events += 1
+        stats.event_count_by_outcome[outcome_key] = stats.event_count_by_outcome.get(outcome_key, 0) + 1
+        return 0.0
+    raw_reward = _reward_table_for_profile(config.profile).get((kind, normalized_result))
+    if raw_reward is None:
+        stats.skipped_no_reward_events += 1
+        stats.event_count_by_outcome[outcome_key] = stats.event_count_by_outcome.get(outcome_key, 0) + 1
+        return 0.0
+    scaled_raw_reward = raw_reward * config.scale
+    if scaled_raw_reward != 0.0:
+        stats.add_reward(action_name, outcome_key, scaled_raw_reward)
+    else:
+        stats.skipped_no_reward_events += 1
+        stats.event_count_by_outcome[outcome_key] = stats.event_count_by_outcome.get(outcome_key, 0) + 1
+    return scaled_raw_reward
+
+
+def _same_self_side_event(row: dict[str, object]) -> bool:
+    kind = str(row.get("event_kind", ""))
+    if kind == "attack":
+        return str(row.get("side", "")) == "self"
+    if kind in ("projectile", "throw"):
+        return str(row.get("owner_side", "")) == "self"
+    if kind in ("attribution", "punish"):
+        return str(row.get("source_side", row.get("punisher_side", ""))) == "self"
+    return False
+
+
+def _attack_event_reward(
+    index: CombatEventIndex,
+    event: dict[str, object],
+    action_name: str,
+    config: CombatEventRewardConfig,
+    stats: CombatEventRewardStats,
+) -> float:
+    run_id, _episode_id, event_id = _event_key(event)
+    result = str(event.get("result", "unknown"))
+    finalize_reason = str(event.get("finalize_reason", "unknown"))
+    raw_reward = 0.0
+
+    if result == "whiff":
+        raw_reward += _record_event_reward(config, stats, action_name, "attack", "whiff")
+    elif result == "interrupted":
+        raw_reward += _record_event_reward(config, stats, action_name, "attack", "interrupted")
+    elif result == "contact":
+        attribution_candidates = [
+            row
+            for row in index.attributions_by_source_event.get((run_id, event_id), [])
+            if str(row.get("source_side", "")) == "self"
+            and str(row.get("failure_reason", "none")) == "none"
+        ]
+        attributions = [
+            row
+            for row in attribution_candidates
+            if str(row.get("confidence", "unknown")) == "high"
+        ]
+        for attribution in attribution_candidates:
+            if str(attribution.get("confidence", "unknown")) != "high":
+                stats.skipped_low_confidence_events += 1
+                outcome_key = f"attack:{attribution.get('defense_result', 'unknown')}"
+                stats.event_count_by_outcome[outcome_key] = stats.event_count_by_outcome.get(outcome_key, 0) + 1
+        if not attributions:
+            if not attribution_candidates:
+                raw_reward += _record_event_reward(config, stats, action_name, "attack", "contact")
+        for attribution in attributions:
+            raw_reward += _record_event_reward(
+                config,
+                stats,
+                action_name,
+                "attack",
+                str(attribution.get("defense_result", "unknown")),
+            )
+    elif result == "unknown" and finalize_reason == "projectile_claimed":
+        projectiles = [
+            row
+            for row in index.projectiles_by_parent_attack.get((run_id, event_id), [])
+            if str(row.get("owner_side", "")) == "self"
+        ]
+        if not projectiles:
+            raw_reward += _record_event_reward(config, stats, action_name, "attack", "unknown")
+        for projectile in projectiles:
+            raw_reward += _record_event_reward(
+                config,
+                stats,
+                action_name,
+                "projectile",
+                str(projectile.get("result", "unknown")),
+            )
+    else:
+        raw_reward += _record_event_reward(config, stats, action_name, "attack", result)
+
+    for punish in index.punishes_by_source_event.get((run_id, event_id), []):
+        if str(punish.get("punisher_side", "")) == "self":
+            raw_reward += _record_event_reward(config, stats, action_name, "punish", "caused")
+
+    return raw_reward
+
+
+def reward_adjustment_for_transition(
+    index: CombatEventIndex | None,
+    row: dict[str, object],
+    action_name: str | None,
+    action_start: bool,
+    config: CombatEventRewardConfig,
+    stats: CombatEventRewardStats,
+) -> float:
+    if index is None or not config.enabled or action_name is None or not action_start:
+        return 0.0
+    stats.checked_transition_rows += 1
+    key = (
+        _int_field(row, "run_id"),
+        _int_field(row, "episode_id"),
+        _int_field(row, "decision_id"),
+    )
+    events = index.by_start_decision.get(key, [])
+    if not events:
+        return 0.0
+    stats.matched_transition_rows += 1
+    stats.matched_event_rows += len(events)
+
+    raw_adjustment = 0.0
+    for event in events:
+        if not _same_self_side_event(event):
+            stats.skipped_non_self_events += 1
+            continue
+        event_kind = str(event.get("event_kind", "unknown"))
+        if event_kind == "attack":
+            raw_adjustment += _attack_event_reward(index, event, action_name, config, stats)
+        elif event_kind == "throw":
+            raw_adjustment += _record_event_reward(
+                config,
+                stats,
+                action_name,
+                "throw",
+                str(event.get("result", "unknown")),
+            )
+        elif event_kind == "projectile":
+            parent_attack_event_id = _int_field(event, "parent_attack_event_id")
+            if parent_attack_event_id > 0:
+                stats.skipped_no_reward_events += 1
+                continue
+            raw_adjustment += _record_event_reward(
+                config,
+                stats,
+                action_name,
+                "projectile",
+                str(event.get("result", "unknown")),
+            )
+        else:
+            stats.skipped_no_reward_events += 1
+
+    if raw_adjustment != 0.0:
+        stats.adjusted_transition_rows += 1
+    return raw_adjustment
+
+
 def validate_combat_event_training_logs(
     event_paths: list[str],
     transition_paths: list[str],
     transition_rows: list[dict[str, object]],
+    mode: str = "validate",
 ) -> CombatEventTrainingValidation:
     index = read_combat_event_index(event_paths)
     transition_scan = scan_transition_logs_for_combat_events(transition_paths)
@@ -427,7 +691,7 @@ def validate_combat_event_training_logs(
         fatal_errors.append(f"missing attribution decision joins={join_stats.get('decision_missing_rows', 0)}")
 
     return CombatEventTrainingValidation(
-        mode="validate",
+        mode=mode,
         index=index,
         transition_scan=transition_scan,
         join_stats=join_stats,

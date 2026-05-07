@@ -15488,3 +15488,85 @@ Validation plan:
   labeled movement, source-event, defense-event, event-damage, and done rows.
 - Train/compare smoke: first success criterion is avoiding the `attack_rate=6%`
   defensive collapse while preserving enough movement support for live play.
+
+## 2026-05-08: Phase 9C-2 Replay Filtering Implementation
+
+Milestone:
+- Combat event attribution Phase 9C-2 / event-aware replay filtering
+
+Purpose:
+- Reduce uniform replay pressure from zero-reward unlabeled passive movement
+  rows in `event-damage-v1`, without dropping movement examples that carry
+  combat meaning.
+
+Changes:
+- Added opt-in trainer CLI:
+  - `--combat-event-unlabeled-movement-policy keep|downsample|drop`
+  - `--combat-event-unlabeled-movement-keep-ratio`
+  - `--combat-event-unlabeled-movement-seed`
+- Added deterministic per-row downsampling using `(run_id, episode_id,
+  decision_id, obs_frame, action ids, action name, seed)`.
+- Added protection for:
+  - self source-event rows
+  - defensive attribution rows
+  - nonzero event/transition reward rows
+  - HP/stun delta rows
+  - done rows
+  - incoming projectile threat rows
+  - clean spacing successes (`back_spacing_success`,
+    `forward_engage_success`)
+- Added metadata/diagnostics:
+  - checked/protected/eligible/kept/dropped counts
+  - dropped counts by action
+  - protected reasons
+  - `protected_dropped_rows` must stay `0`
+
+Validation:
+- `python3 -m py_compile tools/rl_combat_event_training.py tools/train_dqn_learner.py`
+- Default keep smoke on the 30-round Ryu vs Ken paired log:
+  - experiences stayed at `12076`
+  - no movement filter diagnostic printed because policy remained `keep`
+- Downsample smoke on the same log with keep ratio `0.20`:
+  - experiences reduced `12076 -> 6064`
+  - checked movement rows: `10730`
+  - protected rows: `3164`
+  - eligible unlabeled rows: `7566`
+  - kept unlabeled rows: `1554`
+  - dropped rows: `6012`
+  - `protected_dropped=0`
+  - largest drop actions: `guard-stand=2287`, `back=1534`,
+    `guard-crouch=1481`, `forward=416`, `jump-forward-start=270`
+  - main protection reasons: `hp_or_stun_delta=2093`,
+    `forward_engage_success=708`, `defense_attribution=482`,
+    `back_spacing_success=361`, `nonzero_reward=212`
+
+Next:
+- Run the planned 2000-step `event-damage-v1 + downsample 0.20` candidate and
+  compare against base v62, plain `event-damage-v1`, and the 200-step
+  `event-damage-v1` warm-start candidate.
+
+Candidate training result:
+- Trained `model/dqn-combat-event-ryu-ken-v1-event-damage-downsample-v1` for
+  2000 steps from v62 using `event-damage-v1` and unlabeled movement
+  downsample `0.20`.
+  - Publish passed with `experiences=6064`, `protected_dropped=0`,
+    `checked=10730`, `protected=3164`, `eligible=7566`,
+    `kept_unlabeled=1554`, and `dropped=6012`.
+  - Same-log compare over 5000 rows with `action-start-v1` mask:
+    - base v62: `attack_rate=5.6%`, `defense_rate=50.8%`,
+      top=`back:46.1%`
+    - plain `event-damage-v1` 2000-step: `attack_rate=0.1%`,
+      `defense_rate=88.7%`, top=`back:38.1%`
+    - `event-damage-v1` 200-step: `attack_rate=1.4%`,
+      `defense_rate=77.0%`, top=`back:61.4%`
+    - `event-damage-v1 + downsample 0.20`: `attack_rate=0.1%`,
+      `defense_rate=86.5%`, top=`back:39.7%`
+
+Interpretation:
+- Phase 9C-2 filtering is mechanically correct and protects labeled/threat
+  movement rows, but downsampling alone does not fix the long-run defensive
+  drift on this dataset.
+- Do not promote `dqn-combat-event-ryu-ken-v1-event-damage-downsample-v1`.
+- Next trainer work should move to Phase 9D event-aware sampling/source-family
+  balancing, or constrain event-primary adoption to short warm-start budgets
+  until balanced replay proves stable.

@@ -13,6 +13,7 @@ from typing import Any
 COMBAT_EVENT_SCHEMA_VERSION = 1
 COMBAT_EVENT_TRAINING_MODES = ("off", "validate", "reward-shaping")
 COMBAT_EVENT_REWARD_PROFILES = ("safe-v1", "event-damage-v1")
+COMBAT_EVENT_UNLABELED_MOVEMENT_POLICIES = ("keep", "downsample", "drop")
 
 
 SAFE_V1_REWARD_TABLE: dict[tuple[str, str], float] = {
@@ -191,6 +192,18 @@ class CombatEventRewardStats:
             "event_count_by_outcome": dict(sorted(self.event_count_by_outcome.items())),
             "capped_duplicate_rows_by_outcome": dict(sorted(self.capped_duplicate_rows_by_outcome.items())),
         }
+
+
+@dataclass(frozen=True)
+class CombatEventTransitionLabel:
+    has_source_event: bool = False
+    has_defensive_attribution: bool = False
+    source_event_rows: int = 0
+    defensive_attribution_rows: int = 0
+
+    @property
+    def has_combat_label(self) -> bool:
+        return self.has_source_event or self.has_defensive_attribution
 
 
 @dataclass
@@ -668,6 +681,39 @@ def _same_self_side_event(row: dict[str, object]) -> bool:
     if kind in ("attribution", "punish"):
         return str(row.get("source_side", row.get("punisher_side", ""))) == "self"
     return False
+
+
+def transition_label_for_row(
+    index: CombatEventIndex | None,
+    row: dict[str, object],
+    action_start: bool,
+) -> CombatEventTransitionLabel:
+    if index is None:
+        return CombatEventTransitionLabel()
+    key = (
+        _int_field(row, "run_id"),
+        _int_field(row, "episode_id"),
+        _int_field(row, "decision_id"),
+    )
+    source_events = [
+        event
+        for event in index.by_start_decision.get(key, [])
+        if action_start and _same_self_side_event(event)
+    ]
+    defensive_attributions = [
+        event
+        for event in index.by_decision.get(key, [])
+        if str(event.get("event_kind", "")) == "attribution"
+        and str(event.get("target_side", "")) == "self"
+        and str(event.get("source_side", "")) == "opponent"
+        and str(event.get("failure_reason", "none")) == "none"
+    ]
+    return CombatEventTransitionLabel(
+        has_source_event=bool(source_events),
+        has_defensive_attribution=bool(defensive_attributions),
+        source_event_rows=len(source_events),
+        defensive_attribution_rows=len(defensive_attributions),
+    )
 
 
 def _attack_event_reward(

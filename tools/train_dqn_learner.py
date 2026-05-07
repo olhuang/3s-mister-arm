@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import collections
 import copy
+import hashlib
 import json
 import math
 import os
@@ -307,6 +308,9 @@ PROJECTILE_DEFENSIVE_EXPERT_COMPETITOR_ACTIONS = (
 )
 MOVEMENT_SPACING_ACTIONS = frozenset({"forward", "back"})
 MOVEMENT_REGRESSION_MOVEMENT_ACTIONS = frozenset(
+    {"forward", "back", "guard-stand", "guard-crouch"}
+) | JUMP_START_ACTIONS
+UNLABELED_MOVEMENT_FILTER_ACTIONS = frozenset(
     {"forward", "back", "guard-stand", "guard-crouch"}
 ) | JUMP_START_ACTIONS
 MOVEMENT_REGRESSION_ACTION_GROUPS = frozenset(
@@ -785,6 +789,81 @@ class RewardProjectileResponseConfig:
             or self.close_back_success_bonus > 0.0
             or self.close_guard_success_bonus > 0.0
         )
+
+
+@dataclass(frozen=True)
+class CombatEventUnlabeledMovementFilterConfig:
+    policy: str = "keep"
+    keep_ratio: float = 1.0
+    seed: int = 20260507
+
+    @property
+    def enabled(self) -> bool:
+        return self.policy != "keep"
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "policy": self.policy,
+            "enabled": self.enabled,
+            "keep_ratio": self.keep_ratio,
+            "seed": self.seed,
+            "actions": sorted(UNLABELED_MOVEMENT_FILTER_ACTIONS),
+        }
+
+
+@dataclass
+class CombatEventUnlabeledMovementFilterStats:
+    checked_rows: int = 0
+    protected_rows: int = 0
+    eligible_rows: int = 0
+    kept_unlabeled_rows: int = 0
+    dropped_rows: int = 0
+    protected_dropped_rows: int = 0
+    by_action_checked: dict[str, int] = field(default_factory=dict)
+    by_action_protected: dict[str, int] = field(default_factory=dict)
+    by_action_eligible: dict[str, int] = field(default_factory=dict)
+    by_action_kept_unlabeled: dict[str, int] = field(default_factory=dict)
+    by_action_dropped: dict[str, int] = field(default_factory=dict)
+    protected_by_reason: dict[str, int] = field(default_factory=dict)
+
+    def _inc(self, counts: dict[str, int], key: str, amount: int = 1) -> None:
+        counts[key] = counts.get(key, 0) + amount
+
+    def add_checked(self, action_name: str) -> None:
+        self.checked_rows += 1
+        self._inc(self.by_action_checked, action_name)
+
+    def add_protected(self, action_name: str, reasons: list[str]) -> None:
+        self.protected_rows += 1
+        self._inc(self.by_action_protected, action_name)
+        for reason in reasons:
+            self._inc(self.protected_by_reason, reason)
+
+    def add_unlabeled(self, action_name: str, kept: bool) -> None:
+        self.eligible_rows += 1
+        self._inc(self.by_action_eligible, action_name)
+        if kept:
+            self.kept_unlabeled_rows += 1
+            self._inc(self.by_action_kept_unlabeled, action_name)
+        else:
+            self.dropped_rows += 1
+            self._inc(self.by_action_dropped, action_name)
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "checked_rows": self.checked_rows,
+            "protected_rows": self.protected_rows,
+            "eligible_rows": self.eligible_rows,
+            "kept_unlabeled_rows": self.kept_unlabeled_rows,
+            "dropped_rows": self.dropped_rows,
+            "protected_dropped_rows": self.protected_dropped_rows,
+            "by_action_checked": dict(sorted(self.by_action_checked.items())),
+            "by_action_protected": dict(sorted(self.by_action_protected.items())),
+            "by_action_eligible": dict(sorted(self.by_action_eligible.items())),
+            "by_action_kept_unlabeled": dict(sorted(self.by_action_kept_unlabeled.items())),
+            "by_action_dropped": dict(sorted(self.by_action_dropped.items())),
+            "protected_by_reason": dict(sorted(self.protected_by_reason.items())),
+        }
 
 
 @dataclass(frozen=True)
@@ -2505,6 +2584,140 @@ def incoming_projectile_threat(row: dict[str, object], config: RewardProjectileR
     )
 
 
+def has_hp_or_stun_delta(row: dict[str, object]) -> bool:
+    return any(
+        int_field(row, field_name) != 0
+        for field_name in ("delta_self_hp", "delta_opp_hp", "delta_self_stun", "delta_opp_stun")
+    )
+
+
+def incoming_projectile_threat_for_filter(row: dict[str, object]) -> bool:
+    if int_field(row, "obs_projectile_active") == 0:
+        return False
+    if int_field(row, "obs_projectile_owner") != PROJECTILE_OWNER_OPPONENT:
+        return False
+
+    rel_x = int_field(row, "obs_projectile_rel_x")
+    rel_y = int_field(row, "obs_projectile_rel_y")
+    vel_x = int_field(row, "obs_projectile_vel_x")
+    time_to_self = int_field(row, "obs_projectile_time_to_self")
+    return (
+        rel_x > 0
+        and rel_x <= 240
+        and abs(rel_y) <= 48
+        and vel_x < 0
+        and 1 <= time_to_self <= 24
+    )
+
+
+def movement_spacing_filter_reason(
+    episode_rows: list[dict[str, object]],
+    row_index: int,
+    action_name: str,
+) -> str:
+    if action_name not in MOVEMENT_SPACING_ACTIONS:
+        return ""
+    next_boundary = next_decision_boundary_row(episode_rows, row_index)
+    if next_boundary is None:
+        return ""
+
+    _, next_row = next_boundary
+    current_dx = int_field(episode_rows[row_index], "obs_abs_dx")
+    next_dx = int_field(next_row, "obs_abs_dx")
+    window_rows = episode_rows[row_index : next_boundary[0] + 1]
+    clean_window = not any(
+        int_field(window_row, "delta_self_hp") != 0 or int_field(window_row, "delta_self_stun") != 0
+        for window_row in window_rows
+    )
+    if not clean_window:
+        return ""
+    if action_name == "back" and next_dx >= current_dx + 8:
+        return "back_spacing_success"
+    if action_name == "forward" and next_dx <= current_dx - 8:
+        return "forward_engage_success"
+    return ""
+
+
+def deterministic_keep_unlabeled_movement(
+    row: dict[str, object],
+    action_name: str,
+    config: CombatEventUnlabeledMovementFilterConfig,
+) -> bool:
+    if config.policy == "keep":
+        return True
+    if config.policy == "drop":
+        return False
+    if config.keep_ratio >= 1.0:
+        return True
+    if config.keep_ratio <= 0.0:
+        return False
+    key = ":".join(
+        str(value)
+        for value in (
+            config.seed,
+            int_field(row, "run_id"),
+            int_field(row, "episode_id"),
+            int_field(row, "decision_id"),
+            int_field(row, "obs_frame"),
+            int_field(row, "input_action_id"),
+            int_field(row, "policy_executed_action_id"),
+            action_name,
+        )
+    )
+    digest = hashlib.sha256(key.encode("ascii")).digest()
+    value = int.from_bytes(digest[:8], "big") / float(1 << 64)
+    return value < config.keep_ratio
+
+
+def should_drop_unlabeled_movement_transition(
+    episode_rows: list[dict[str, object]],
+    row_index: int,
+    row: dict[str, object],
+    action_name: str,
+    action_start: bool,
+    reward: float,
+    projectile_response_outcome_result: ProjectileResponseOutcome,
+    combat_event_validation: combat_events.CombatEventTrainingValidation | None,
+    config: CombatEventUnlabeledMovementFilterConfig,
+    stats: CombatEventUnlabeledMovementFilterStats,
+) -> bool:
+    if not config.enabled:
+        return False
+    if not action_start or action_name not in UNLABELED_MOVEMENT_FILTER_ACTIONS:
+        return False
+
+    stats.add_checked(action_name)
+    label = combat_events.transition_label_for_row(
+        combat_event_validation.index if combat_event_validation is not None else None,
+        row,
+        action_start,
+    )
+    protected_reasons: list[str] = []
+    if label.has_source_event:
+        protected_reasons.append("source_event")
+    if label.has_defensive_attribution:
+        protected_reasons.append("defense_attribution")
+    if reward != 0.0:
+        protected_reasons.append("nonzero_reward")
+    if has_hp_or_stun_delta(row):
+        protected_reasons.append("hp_or_stun_delta")
+    if bool(row.get("done", False)):
+        protected_reasons.append("done")
+    if projectile_response_outcome_result.threat or incoming_projectile_threat_for_filter(row):
+        protected_reasons.append("incoming_projectile_threat")
+    spacing_reason = movement_spacing_filter_reason(episode_rows, row_index, action_name)
+    if spacing_reason:
+        protected_reasons.append(spacing_reason)
+
+    if protected_reasons:
+        stats.add_protected(action_name, protected_reasons)
+        return False
+
+    kept = deterministic_keep_unlabeled_movement(row, action_name, config)
+    stats.add_unlabeled(action_name, kept)
+    return not kept
+
+
 def projectile_cleared_or_passed(row: dict[str, object], config: RewardProjectileResponseConfig) -> bool:
     if not incoming_projectile_threat(row, config):
         return True
@@ -3062,6 +3275,7 @@ def build_experiences(
     action_filter_config: DQNActionFilterConfig,
     combat_event_validation: combat_events.CombatEventTrainingValidation | None,
     combat_event_reward_config: combat_events.CombatEventRewardConfig,
+    combat_event_unlabeled_movement_filter_config: CombatEventUnlabeledMovementFilterConfig,
 ) -> tuple[
     list[Experience],
     dict[str, int],
@@ -3078,6 +3292,7 @@ def build_experiences(
     ProjectileResponseOversampleStats,
     EngineOutcomeStats,
     combat_events.CombatEventRewardStats,
+    CombatEventUnlabeledMovementFilterStats,
 ]:
     action_to_index = {action: index for index, action in enumerate(actions)}
     build_stats = BuildDiagnostics()
@@ -3101,6 +3316,7 @@ def build_experiences(
     projectile_response_oversample_stats = ProjectileResponseOversampleStats()
     engine_outcome_stats = EngineOutcomeStats()
     combat_event_reward_stats = combat_events.CombatEventRewardStats()
+    combat_event_unlabeled_movement_filter_stats = CombatEventUnlabeledMovementFilterStats()
 
     for episode_rows in by_episode.values():
         episode_rows.sort(key=row_order_key)
@@ -3284,6 +3500,21 @@ def build_experiences(
                 last_exp_indices = []
                 continue
 
+            if should_drop_unlabeled_movement_transition(
+                episode_rows,
+                index,
+                row,
+                action_name,
+                action_start,
+                reward,
+                projectile_response_outcome_result,
+                combat_event_validation,
+                combat_event_unlabeled_movement_filter_config,
+                combat_event_unlabeled_movement_filter_stats,
+            ):
+                last_exp_indices = []
+                continue
+
             if not action_start:
                 build_stats.macro_continuation_rows += 1
                 if reward != 0.0:
@@ -3398,6 +3629,7 @@ def build_experiences(
         projectile_response_oversample_stats,
         engine_outcome_stats,
         combat_event_reward_stats,
+        combat_event_unlabeled_movement_filter_stats,
     )
 
 
@@ -3538,6 +3770,22 @@ def reward_projectile_response_config_from_args(args: argparse.Namespace) -> Rew
         close_guard_success_bonus=max(0.0, float(args.reward_projectile_close_guard_success_bonus)),
         back_escape_min_dx_delta=max(0, int(args.reward_projectile_back_escape_min_dx_delta)),
         guard_require_contact=bool(args.reward_projectile_guard_require_contact),
+    )
+
+
+def combat_event_unlabeled_movement_filter_config_from_args(
+    args: argparse.Namespace,
+) -> CombatEventUnlabeledMovementFilterConfig:
+    policy = str(args.combat_event_unlabeled_movement_policy)
+    if policy not in combat_events.COMBAT_EVENT_UNLABELED_MOVEMENT_POLICIES:
+        raise SystemExit(
+            f"unknown --combat-event-unlabeled-movement-policy {policy!r}; "
+            f"expected one of {','.join(combat_events.COMBAT_EVENT_UNLABELED_MOVEMENT_POLICIES)}"
+        )
+    return CombatEventUnlabeledMovementFilterConfig(
+        policy=policy,
+        keep_ratio=min(1.0, max(0.0, float(args.combat_event_unlabeled_movement_keep_ratio))),
+        seed=int(args.combat_event_unlabeled_movement_seed),
     )
 
 
@@ -6114,6 +6362,28 @@ def main() -> None:
         help="Additional multiplier for combat event reward shaping before the global --reward-scale.",
     )
     parser.add_argument(
+        "--combat-event-unlabeled-movement-policy",
+        choices=combat_events.COMBAT_EVENT_UNLABELED_MOVEMENT_POLICIES,
+        default="keep",
+        help=(
+            "Event-aware replay filter for zero-reward unlabeled passive movement rows. "
+            "keep preserves all rows, downsample keeps --combat-event-unlabeled-movement-keep-ratio, "
+            "drop removes all eligible unlabeled rows. Protected event/threat/damage/done rows are never dropped."
+        ),
+    )
+    parser.add_argument(
+        "--combat-event-unlabeled-movement-keep-ratio",
+        type=float,
+        default=1.0,
+        help="Deterministic keep ratio used only when --combat-event-unlabeled-movement-policy downsample.",
+    )
+    parser.add_argument(
+        "--combat-event-unlabeled-movement-seed",
+        type=int,
+        default=20260507,
+        help="Stable seed for deterministic unlabeled movement downsampling.",
+    )
+    parser.add_argument(
         "--drop-initial-episodes-per-run",
         type=int,
         default=0,
@@ -7288,8 +7558,16 @@ def main() -> None:
         profile=str(args.combat_event_reward_profile),
         scale=max(0.0, float(args.combat_event_reward_scale)),
     )
+    combat_event_unlabeled_movement_filter_config = (
+        combat_event_unlabeled_movement_filter_config_from_args(args)
+    )
     if combat_event_training_mode == "off" and combat_event_log_paths:
         raise SystemExit("--combat-event-logs requires --combat-event-training-mode validate or reward-shaping")
+    if combat_event_unlabeled_movement_filter_config.enabled and combat_event_training_mode != "reward-shaping":
+        raise SystemExit(
+            "--combat-event-unlabeled-movement-policy requires "
+            "--combat-event-training-mode reward-shaping"
+        )
     if combat_event_training_mode != "off":
         if not combat_event_log_paths:
             raise SystemExit(f"--combat-event-training-mode {combat_event_training_mode} requires --combat-event-logs")
@@ -7306,6 +7584,8 @@ def main() -> None:
     if str(args.training_mode) == "bc":
         if combat_event_reward_config.enabled:
             raise SystemExit("--combat-event-training-mode reward-shaping is only supported for DQN training")
+        if combat_event_unlabeled_movement_filter_config.enabled:
+            raise SystemExit("--combat-event-unlabeled-movement-policy is only supported for DQN training")
         # --- BC training path ---
         bc_layers, bc_train_stats, bc_label_counts, bc_skipped = train_bc(
             rows,
@@ -7407,6 +7687,7 @@ def main() -> None:
         projectile_response_oversample_stats,
         engine_outcome_stats,
         combat_event_reward_stats,
+        combat_event_unlabeled_movement_filter_stats,
     ) = build_experiences(
         rows,
         actions,
@@ -7430,6 +7711,7 @@ def main() -> None:
         dqn_action_filter_config,
         combat_event_validation,
         combat_event_reward_config,
+        combat_event_unlabeled_movement_filter_config,
     )
     if not experiences:
         raise SystemExit("No DQN experiences built from transition logs")
@@ -7540,6 +7822,8 @@ def main() -> None:
         reward_sources.append("training-mode-damage-only-hp")
     if combat_event_reward_stats.applied_event_rewards > 0:
         reward_sources.append(f"combat-event-{combat_event_reward_config.profile}")
+    if combat_event_unlabeled_movement_filter_stats.dropped_rows > 0:
+        reward_sources.append("event-unlabeled-movement-filter")
     reward_source = "+".join(reward_sources) if reward_sources else "none"
     metadata = {
         "transition_logs": args.transition_logs,
@@ -7563,6 +7847,12 @@ def main() -> None:
         "replay_source_mix_config": replay_source_mix_config.as_metadata(),
         "replay_source_mix_stats": replay_source_mix_stats.as_metadata(),
         "dqn_action_filter_config": dqn_action_filter_config.as_metadata(),
+        "combat_event_unlabeled_movement_filter_config": (
+            combat_event_unlabeled_movement_filter_config.as_metadata()
+        ),
+        "combat_event_unlabeled_movement_filter_stats": (
+            combat_event_unlabeled_movement_filter_stats.as_metadata()
+        ),
         "experiences": len(experiences),
         "actions_subset": list(actions),
         "actions_subset_size": len(actions),
@@ -7813,6 +8103,22 @@ def main() -> None:
             f"event_dmg:{combat_event_reward_stats.event_damage_reward_sum:.3f} "
             f"raw_sum:{combat_event_reward_stats.raw_reward_sum:.3f} "
             f"outcomes:{format_float_counts(combat_event_reward_stats.raw_reward_by_outcome, args.diagnostic_top_n)}",
+            flush=True,
+        )
+    if combat_event_unlabeled_movement_filter_config.enabled:
+        print(
+            "DQN diagnostics "
+            f"combat_event_unlabeled_movement_filter="
+            f"policy:{combat_event_unlabeled_movement_filter_config.policy} "
+            f"keep:{combat_event_unlabeled_movement_filter_config.keep_ratio:.3f} "
+            f"checked:{combat_event_unlabeled_movement_filter_stats.checked_rows} "
+            f"protected:{combat_event_unlabeled_movement_filter_stats.protected_rows} "
+            f"eligible:{combat_event_unlabeled_movement_filter_stats.eligible_rows} "
+            f"kept_unlabeled:{combat_event_unlabeled_movement_filter_stats.kept_unlabeled_rows} "
+            f"dropped:{combat_event_unlabeled_movement_filter_stats.dropped_rows} "
+            f"protected_dropped:{combat_event_unlabeled_movement_filter_stats.protected_dropped_rows} "
+            f"drop_actions:{format_counts(combat_event_unlabeled_movement_filter_stats.by_action_dropped, combat_event_unlabeled_movement_filter_stats.dropped_rows, args.diagnostic_top_n)} "
+            f"protected_reasons:{format_counts(combat_event_unlabeled_movement_filter_stats.protected_by_reason, combat_event_unlabeled_movement_filter_stats.protected_rows, args.diagnostic_top_n)}",
             flush=True,
         )
     print(

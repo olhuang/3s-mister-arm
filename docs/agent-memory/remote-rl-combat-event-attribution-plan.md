@@ -2625,6 +2625,11 @@ Rows that must always be kept:
 - rows with event damage reward or penalty.
 - rows with incoming projectile threat labels or projectile-response outcomes.
 - rows with HP/stun delta in non-`event-damage-v1` profiles.
+- spacing-success movement rows:
+  - `back_spacing_success` when clean `back` increases `obs_abs_dx` by at
+    least 8 by the next decision boundary.
+  - `forward_engage_success` when clean `forward` decreases `obs_abs_dx` by at
+    least 8 by the next decision boundary.
 - `done` rows and episode/round boundary rows.
 
 Rows eligible for downsampling:
@@ -2641,7 +2646,23 @@ Rows eligible for downsampling:
   - no attack/projectile/throw/punish source event joined the transition row.
   - no incoming projectile threat or projectile response outcome is present.
   - no HP/stun delta is present.
+  - no spacing-success protection is present.
   - row is not `done` and not an episode boundary row.
+
+Implementation status:
+
+- Implemented in `tools/train_dqn_learner.py`:
+  - `--combat-event-unlabeled-movement-policy keep|downsample|drop`
+  - `--combat-event-unlabeled-movement-keep-ratio`
+  - `--combat-event-unlabeled-movement-seed`
+- `keep` is the default and preserves existing trainer behavior.
+- `downsample`/`drop` require `--combat-event-training-mode reward-shaping`.
+- Filtering diagnostics are written to model metadata under:
+  - `combat_event_unlabeled_movement_filter_config`
+  - `combat_event_unlabeled_movement_filter_stats`
+- `tools/rl_combat_event_training.py` exposes `transition_label_for_row()` so
+  the trainer can protect rows with self source events or defensive attribution
+  labels without changing DQN feature names.
 
 Recommended first training recipe:
 

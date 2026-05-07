@@ -2916,7 +2916,9 @@ static bool RLCombatEvent_EmitAttackJournalLine(const RLCombatAttackEvent* event
         "\"finalize_reason\":\"%s\",\"finalize_reason_code\":%u,"
         "\"start_decision_id\":%u,\"start_frame\":%u,\"end_decision_id\":%u,\"end_frame\":%u,"
         "\"projectile_like\":%u,\"whiff_eligible\":%u,"
-        "\"engine_action_id\":%u,\"engine_sub_action_id\":%u,\"engine_current_attack\":%u,"
+        "\"routine_1\":%u,\"routine_2\":%u,\"current_attack\":%u,\"kind_of_waza\":%u,"
+        "\"engine_action_id\":%u,\"engine_sub_action_id\":%u,\"engine_routine_1\":%u,"
+        "\"engine_routine_2\":%u,\"engine_current_attack\":%u,\"engine_kind_of_waza\":%u,"
         "\"engine_label_source\":%u,\"policy_action_id\":%u,\"policy_sub_action_id\":%u,"
         "\"policy_action_step\":%u}\n",
         RL_COMBAT_EVENT_JOURNAL_SCHEMA_VERSION,
@@ -2936,9 +2938,16 @@ static bool RLCombatEvent_EmitAttackJournalLine(const RLCombatAttackEvent* event
         event->end_frame,
         event->projectile_like,
         event->whiff_eligible,
+        event->routine_1,
+        event->routine_2,
+        event->current_attack,
+        event->kind_of_waza,
         event->engine_action_id,
         event->engine_sub_action_id,
+        event->engine_routine_1,
+        event->engine_routine_2,
         event->engine_current_attack,
+        event->engine_kind_of_waza,
         event->engine_label_source,
         event->policy_action_id,
         event->policy_sub_action_id,

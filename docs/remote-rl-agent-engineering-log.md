@@ -14674,3 +14674,36 @@ Risk:
 - Very fast same-move chains inside 24 frames are less likely to be counted as
   separate starts. Different-move cancels can still start separate events when
   their signature changes.
+
+## 2026-05-07: Ryu Engine-Owned Combat Attack Starts
+
+Milestone:
+- Combat event attribution Phase 6b-7 / Ryu-vs-Ryu engine state-machine cleanup
+
+Problem:
+- Live self-side move distribution was wrong when the agent character was Ken
+  because only Ryu has source-backed engine attribution today.
+- Before expanding to Ken and other characters, the Ryu-vs-Ryu path needs a
+  cleaner state-machine contract: engine attack identity should own attack
+  starts, while `Attack_Counter` and contact edges should be evidence only.
+
+Implementation:
+- Added a strict engine-start attribution path for Ryu attack events.
+- For Ryu sides, attack starts require routine/current-attack based engine
+  attribution and no longer accept `Attack_Counter` alone as a start edge.
+- Existing permissive engine attribution remains for transition/debug labeling.
+- Attack journal rows now include raw `routine_1`, `routine_2`,
+  `current_attack`, `kind_of_waza`, and matching engine routine/KW fields so
+  Ryu-vs-Ryu logs can be audited directly.
+
+Expected live effect:
+- In Ryu-vs-Ryu tests, one physical normal/special attack should create one
+  attack event from engine state.
+- Delayed contact / `Attack_Counter` evidence should not create a second
+  `CE S/F` for the same Ryu attack.
+- Analyzer move stats should primarily use engine labels for both sides.
+
+Risk:
+- Ryu attacks that only expose `Attack_Counter` without a routine/current-attack
+  start edge may be undercounted. Live Ryu-vs-Ryu six-button, projectile, throw,
+  and special smokes are required before extending this pattern to Ken.

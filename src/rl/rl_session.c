@@ -1317,10 +1317,11 @@ static bool RLSession_RyuNormalPolicyMetaFromIdentity(const RLDecisionLedgerEntr
     return true;
 }
 
-static bool RLSession_BuildEngineAttributionForSide(const RLDecisionLedgerEntry* entry,
-                                                    const RLObservationV1* obs,
-                                                    RLCombatEventSide side,
-                                                    RLEngineAttribution* attribution) {
+static bool RLSession_BuildEngineAttributionForSideEx(const RLDecisionLedgerEntry* entry,
+                                                      const RLObservationV1* obs,
+                                                      RLCombatEventSide side,
+                                                      RLEngineAttribution* attribution,
+                                                      bool allow_attack_counter_edge) {
     u16 action_id = RL_POLICY_ACTION_NEUTRAL;
     u16 sub_action_id = RL_POLICY_SUB_ACTION_NONE;
     u8 source = RL_DEMO_ATTRIBUTION_NONE;
@@ -1347,7 +1348,8 @@ static bool RLSession_BuildEngineAttributionForSide(const RLDecisionLedgerEntry*
         routine_2 = obs->self_routine[2];
         current_attack = obs->self_current_attack;
         kind_of_waza = obs->self_kind_of_waza;
-        attack_edge = obs->self_attack_started || obs->self_attack_counter_started;
+        attack_edge = obs->self_attack_started || obs->self_attack_code_changed ||
+                      (allow_attack_counter_edge && obs->self_attack_counter_started);
         routine_edge = obs->self_attack_routine_started || obs->self_throw_started;
     } else if (side == RL_COMBAT_EVENT_SIDE_OPPONENT) {
         character_id = entry->opponent_character_id;
@@ -1355,7 +1357,8 @@ static bool RLSession_BuildEngineAttributionForSide(const RLDecisionLedgerEntry*
         routine_2 = obs->opp_routine[2];
         current_attack = obs->opp_current_attack;
         kind_of_waza = obs->opp_kind_of_waza;
-        attack_edge = obs->opp_attack_started || obs->opp_attack_counter_started;
+        attack_edge = obs->opp_attack_started || obs->opp_attack_code_changed ||
+                      (allow_attack_counter_edge && obs->opp_attack_counter_started);
         routine_edge = obs->opp_attack_routine_started || obs->opp_throw_started;
     }
 
@@ -1392,6 +1395,20 @@ static bool RLSession_BuildEngineAttributionForSide(const RLDecisionLedgerEntry*
     attribution->label_source = source;
     attribution->lag_frames = (u16)(lag_frames > 65535u ? 65535u : lag_frames);
     return true;
+}
+
+static bool RLSession_BuildEngineAttributionForSide(const RLDecisionLedgerEntry* entry,
+                                                    const RLObservationV1* obs,
+                                                    RLCombatEventSide side,
+                                                    RLEngineAttribution* attribution) {
+    return RLSession_BuildEngineAttributionForSideEx(entry, obs, side, attribution, true);
+}
+
+static bool RLSession_BuildEngineStartAttributionForSide(const RLDecisionLedgerEntry* entry,
+                                                         const RLObservationV1* obs,
+                                                         RLCombatEventSide side,
+                                                         RLEngineAttribution* attribution) {
+    return RLSession_BuildEngineAttributionForSideEx(entry, obs, side, attribution, false);
 }
 
 static void RLSession_RecordEngineAttributionForSide(RLDecisionLedgerEntry* entry,
@@ -2395,6 +2412,25 @@ static bool RLSession_CombatAttackUsesFastWhiffFallback(u16 policy_action_id,
     return (u8)(kind_of_waza & 0xf8u) == 0 && attack_sub == RL_POLICY_SUB_ACTION_LP;
 }
 
+static void RLSession_UpdateCombatAttackStartLifecycleFlags(RLCombatAttackEventStart* start) {
+    if (start == NULL) {
+        return;
+    }
+
+    const u16 lifecycle_action_id = (start->engine_action_id != RL_POLICY_ACTION_NEUTRAL) ? start->engine_action_id
+                                                                                         : start->policy_action_id;
+    const u16 lifecycle_sub_action_id = (start->engine_action_id != RL_POLICY_ACTION_NEUTRAL)
+                                            ? start->engine_sub_action_id
+                                            : start->policy_sub_action_id;
+
+    start->projectile_like = (u8)RLSession_CombatPolicyActionIsProjectileLike(lifecycle_action_id);
+    start->fast_whiff_fallback =
+        (u8)RLSession_CombatAttackUsesFastWhiffFallback(lifecycle_action_id,
+                                                        lifecycle_sub_action_id,
+                                                        start->current_attack,
+                                                        start->kind_of_waza);
+}
+
 static void RLSession_FillCombatAttackStart(RLCombatAttackEventStart* start,
                                             const RLDecisionLedgerEntry* entry,
                                             const RLObservationV1* obs,
@@ -2437,18 +2473,7 @@ static void RLSession_FillCombatAttackStart(RLCombatAttackEventStart* start,
             start->policy_sub_action_id = entry->policy_requested_sub_action_id;
             start->policy_action_step = entry->policy_requested_action_step;
         }
-        {
-            const u16 lifecycle_action_id =
-                (start->engine_action_id != RL_POLICY_ACTION_NEUTRAL) ? start->engine_action_id : start->policy_action_id;
-            const u16 lifecycle_sub_action_id =
-                (start->engine_action_id != RL_POLICY_ACTION_NEUTRAL) ? start->engine_sub_action_id : start->policy_sub_action_id;
-            start->projectile_like = (u8)RLSession_CombatPolicyActionIsProjectileLike(lifecycle_action_id);
-            start->fast_whiff_fallback =
-                (u8)RLSession_CombatAttackUsesFastWhiffFallback(lifecycle_action_id,
-                                                                lifecycle_sub_action_id,
-                                                                start->current_attack,
-                                                                start->kind_of_waza);
-        }
+        RLSession_UpdateCombatAttackStartLifecycleFlags(start);
     } else if (side == RL_COMBAT_EVENT_SIDE_OPPONENT) {
         start->character_id = entry->opponent_character_id;
         start->routine_1 = obs->opp_routine[1];
@@ -2465,13 +2490,38 @@ static void RLSession_FillCombatAttackStart(RLCombatAttackEventStart* start,
         start->engine_label_source = entry->opp_engine_label_source;
         start->policy_action_id = entry->opp_engine_action_id;
         start->policy_sub_action_id = entry->opp_engine_sub_action_id;
-        start->projectile_like = (u8)RLSession_CombatPolicyActionIsProjectileLike(start->policy_action_id);
-        start->fast_whiff_fallback =
-            (u8)RLSession_CombatAttackUsesFastWhiffFallback(start->policy_action_id,
-                                                            start->policy_sub_action_id,
-                                                            start->current_attack,
-                                                            start->kind_of_waza);
+        RLSession_UpdateCombatAttackStartLifecycleFlags(start);
     }
+}
+
+static bool RLSession_CombatAttackStartUsesEngineOwner(const RLDecisionLedgerEntry* entry,
+                                                       RLCombatEventSide side) {
+    if (entry == NULL) {
+        return false;
+    }
+    if (side == RL_COMBAT_EVENT_SIDE_SELF) {
+        return entry->agent_character_id == RL_CHARACTER_RYU;
+    }
+    if (side == RL_COMBAT_EVENT_SIDE_OPPONENT) {
+        return entry->opponent_character_id == RL_CHARACTER_RYU;
+    }
+    return false;
+}
+
+static void RLSession_ApplyEngineAttributionToAttackStart(RLCombatAttackEventStart* start,
+                                                          const RLEngineAttribution* attribution) {
+    if (start == NULL || attribution == NULL || attribution->label_source == RL_DEMO_ATTRIBUTION_NONE) {
+        return;
+    }
+
+    start->engine_action_id = attribution->action_id;
+    start->engine_sub_action_id = attribution->sub_action_id;
+    start->engine_routine_1 = attribution->routine_1;
+    start->engine_routine_2 = attribution->routine_2;
+    start->engine_current_attack = attribution->current_attack;
+    start->engine_lag_frames = attribution->lag_frames;
+    start->engine_kind_of_waza = attribution->kind_of_waza;
+    start->engine_label_source = attribution->label_source;
 }
 
 static int RLSession_CombatEventSideIndex(RLCombatEventSide side) {
@@ -2553,13 +2603,31 @@ static void RLSession_MaybeStartCombatAttackEvent(RLDecisionLedgerEntry* entry,
                                                   const RLObservationV1* obs,
                                                   RLCombatEventSide side) {
     RLCombatAttackEventStart start;
+    RLEngineAttribution engine_start_attribution;
+    const bool engine_owned_start = RLSession_CombatAttackStartUsesEngineOwner(entry, side);
 
-    if (entry == NULL || obs == NULL || !RLSession_ObservationAttackStartedForSide(obs, side)) {
+    if (entry == NULL || obs == NULL) {
+        return;
+    }
+    memset(&engine_start_attribution, 0, sizeof(engine_start_attribution));
+
+    if (engine_owned_start) {
+        if (!RLSession_BuildEngineStartAttributionForSide(entry, obs, side, &engine_start_attribution)) {
+            return;
+        }
+    } else if (!RLSession_ObservationAttackStartedForSide(obs, side)) {
         return;
     }
 
-    RLSession_MaybeAttributeEngineActionForSide(entry, obs, side);
+    if (!engine_owned_start) {
+        RLSession_MaybeAttributeEngineActionForSide(entry, obs, side);
+    }
     RLSession_FillCombatAttackStart(&start, entry, obs, side);
+    if (engine_owned_start) {
+        RLSession_ApplyEngineAttributionToAttackStart(&start, &engine_start_attribution);
+        RLSession_UpdateCombatAttackStartLifecycleFlags(&start);
+        RLSession_RecordEngineAttributionForSide(entry, side, &engine_start_attribution);
+    }
     if (start.run_id == 0 || start.episode_id == 0 || start.side == RL_COMBAT_EVENT_SIDE_NONE) {
         return;
     }

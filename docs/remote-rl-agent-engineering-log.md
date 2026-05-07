@@ -2,6 +2,40 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-07: Combat Event Phase 6b-3 Post-Hit Jump Weak-Edge Suppression
+
+Milestone:
+- Combat event attribution Phase 6b-3
+
+Files changed:
+- `src/rl/rl_combat_event.c`
+- `docs/plan-remote-rl-agent.md`
+- `docs/agent-memory/remote-rl-combat-event-attribution-plan.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Stop clean hits followed by immediate jumps from adding extra raw
+  `CDRX U` defense unknowns.
+
+Implementation notes:
+- Live testing showed that after being hit by a normal such as LP, immediately
+  jumping could increment `CDRX U`. The real hit is already recorded by strong
+  HP/stun/damage evidence; the later jump case is residual weak
+  `contact_state` / `hit_stop` evidence with the target airborne.
+- Broadened the Phase 6b-2 suppression gate from "target is attacking" to
+  "target is attacking or airborne" for attack-sourced weak-only attribution.
+- Strong outcome evidence still bypasses the gate, so real anti-air,
+  air-to-air, block, parry, throw, and projectile-clash events remain recordable.
+
+Validation:
+- `git diff --check` passed.
+- `python3 -m py_compile tools/analyze_rl_combat_events.py` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed and rebuilt
+  `src/rl/rl_combat_event.c`.
+- Follow-up live MiSTer smoke should confirm LP hit still reaches `CDR H` /
+  derived hit attribution while an immediate jump afterward does not add an
+  extra `CDRX U`.
+
 ## 2026-05-07: Combat Event Phase 6b-2 Dual-Whiff Weak-Edge Suppression
 
 Milestone:

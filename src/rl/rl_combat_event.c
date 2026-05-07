@@ -462,12 +462,13 @@ static bool RLCombatEvent_HasStrongDefenseOutcomeEdge(const RLCombatContactMatch
            update->target_throw_caught;
 }
 
-static bool RLCombatEvent_ShouldSuppressWeakDualAttackAttribution(const RLCombatContactMatchUpdate* update,
-                                                                  RLCombatContactMatchSource source,
-                                                                  RLCombatAttributionEdgeType edge_type,
-                                                                  bool projectile_clash_edge) {
+static bool RLCombatEvent_ShouldSuppressWeakAttackAttribution(const RLCombatContactMatchUpdate* update,
+                                                              RLCombatContactMatchSource source,
+                                                              RLCombatAttributionEdgeType edge_type,
+                                                              bool projectile_clash_edge) {
     return update != NULL && source == RL_COMBAT_CONTACT_MATCH_SOURCE_ATTACK &&
-           update->target_attack_state_active && RLCombatEvent_IsWeakContactOnlyEdge(edge_type) &&
+           (update->target_attack_state_active || update->target_airborne) &&
+           RLCombatEvent_IsWeakContactOnlyEdge(edge_type) &&
            !RLCombatEvent_HasStrongDefenseOutcomeEdge(update, projectile_clash_edge);
 }
 
@@ -2457,10 +2458,7 @@ bool RLCombatEvent_RecordContactMatch(const RLCombatContactMatchUpdate* update) 
         failure_reason = RL_COMBAT_ATTRIBUTION_FAILURE_NO_SOURCE_CANDIDATE;
     }
 
-    if (RLCombatEvent_ShouldSuppressWeakDualAttackAttribution(update,
-                                                             source,
-                                                             edge_type,
-                                                             projectile_clash_edge)) {
+    if (RLCombatEvent_ShouldSuppressWeakAttackAttribution(update, source, edge_type, projectile_clash_edge)) {
         return false;
     }
 

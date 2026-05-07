@@ -2098,6 +2098,17 @@ Phase 6b-2 dual-whiff weak-edge suppression:
 - Strong outcomes are unchanged. Hits, blocked/chip hits, parries, throws, and
   projectile clashes still create attribution and defense-result rows.
 
+Phase 6b-3 post-hit jump weak-edge suppression:
+
+- A follow-up live test showed another `CDRX U` source: after a real LP hit,
+  immediately jumping could produce an extra attack-sourced weak
+  `contact_state` / `hit_stop` attribution while the target was airborne.
+- The Phase 6b-2 gate now also suppresses weak attack-sourced rows for airborne
+  targets when no strong outcome evidence exists. This preserves the real hit
+  attribution while blocking the residual post-hit jump `CDRX U`.
+- Real anti-air / air-to-air outcomes remain allowed because HP/stun/damage,
+  parry, block, throw, or projectile-clash evidence bypasses the suppression.
+
 ### Phase 6c: Punish Detection
 
 Files:

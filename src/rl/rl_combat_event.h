@@ -71,6 +71,7 @@ typedef enum RLCombatAttackEventResult {
     RL_COMBAT_ATTACK_RESULT_WHIFF = 1,
     RL_COMBAT_ATTACK_RESULT_INTERRUPTED = 2,
     RL_COMBAT_ATTACK_RESULT_UNKNOWN = 3,
+    RL_COMBAT_ATTACK_RESULT_CONTACT = 4,
 } RLCombatAttackEventResult;
 
 typedef enum RLCombatAttackFinalizeReason {
@@ -82,6 +83,7 @@ typedef enum RLCombatAttackFinalizeReason {
     RL_COMBAT_ATTACK_FINALIZE_BASIC_INTERRUPTED = 5,
     RL_COMBAT_ATTACK_FINALIZE_BASIC_UNKNOWN_TIMEOUT = 6,
     RL_COMBAT_ATTACK_FINALIZE_PROJECTILE_CLAIMED = 7,
+    RL_COMBAT_ATTACK_FINALIZE_CONTACT_RESOLVED = 8,
 } RLCombatAttackFinalizeReason;
 
 typedef enum RLCombatProjectileEventStatus {

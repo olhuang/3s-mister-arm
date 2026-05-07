@@ -14618,3 +14618,32 @@ Conclusion:
 - Shoryuken over-concentration improved from v330 (52.8%) but still elevated
   (35.2%). Further tuning needed.
 - Model promoted to v335 as current best.
+
+## 2026-05-07: Combat Event Attack Contact Lifecycle Resolve
+
+Milestone:
+- Combat event attribution Phase 6b-5 / Phase 8 analyzer hygiene
+
+Problem:
+- Live overlay showed close-range attacks that clearly contacted the opponent
+  (hit or blocked) left `CE A +1` active for a long time.
+- After the max pending window, the attack lifecycle timed out and incremented
+  `CER U +1`, even though CEM/CEA/CDR attribution already had contact evidence.
+
+Implementation:
+- Added attack lifecycle `result=contact` and
+  `finalize_reason=contact_resolved`.
+- Non-projectile, non-throw attack events that saw target contact/damage now
+  finalize as contact once the actor leaves attack state.
+- Analyzer buckets these rows as `contact_resolved` instead of unknown.
+
+Expected live effect:
+- Close LP/MP/HP/LK/MK/HK hit or block should drop `CE A` shortly after the
+  attack state ends and should not later add `CER U`.
+- True whiffs should still finalize through `CER W`.
+- Projectile-like parent attacks remain delegated to projectile lifecycle.
+
+Risk:
+- If the target contact/damage evidence is noisy, a small number of boundary
+  whiffs could be lifecycle-resolved as contact. Hit/block truth remains in
+  attribution/defense-result rows; this change only prevents timeout pollution.

@@ -1086,6 +1086,7 @@ static RLCombatPunishReason RLCombatEvent_PunishReasonForAttackResult(RLCombatAt
         return RL_COMBAT_PUNISH_REASON_WHIFF;
     case RL_COMBAT_ATTACK_RESULT_INTERRUPTED:
         return RL_COMBAT_PUNISH_REASON_INTERRUPTED;
+    case RL_COMBAT_ATTACK_RESULT_CONTACT:
     case RL_COMBAT_ATTACK_RESULT_PENDING:
     case RL_COMBAT_ATTACK_RESULT_UNKNOWN:
     default:
@@ -2130,6 +2131,11 @@ static bool RLCombatEvent_IsCleanFastWhiff(const RLCombatAttackEvent* event) {
            !event->saw_target_contact_or_damage && !event->saw_throw && !event->projectile_like;
 }
 
+static bool RLCombatEvent_IsResolvedContactAttack(const RLCombatAttackEvent* event) {
+    return event != NULL && event->saw_target_contact_or_damage && !event->saw_projectile &&
+           !event->saw_throw && !event->projectile_like;
+}
+
 static bool RLCombatEvent_TryBasicFinalize(RLCombatAttackEvent* event, const RLCombatAttackEventUpdate* update) {
     const u32 age = RLCombatEvent_FrameAge(update->frame_id, event->start_frame);
 
@@ -2164,6 +2170,15 @@ static bool RLCombatEvent_TryBasicFinalize(RLCombatAttackEvent* event, const RLC
         return RLCombatEvent_FinalizeSlot(event,
                                           RL_COMBAT_ATTACK_RESULT_WHIFF,
                                           RL_COMBAT_ATTACK_FINALIZE_BASIC_WHIFF_WINDOW,
+                                          update->frame_id,
+                                          update->decision_id);
+    }
+
+    if (!update->actor_attack_state_active && age >= RL_COMBAT_ATTACK_MIN_WHIFF_FRAMES &&
+        RLCombatEvent_IsResolvedContactAttack(event)) {
+        return RLCombatEvent_FinalizeSlot(event,
+                                          RL_COMBAT_ATTACK_RESULT_CONTACT,
+                                          RL_COMBAT_ATTACK_FINALIZE_CONTACT_RESOLVED,
                                           update->frame_id,
                                           update->decision_id);
     }
@@ -2565,6 +2580,8 @@ static const char* RLCombatEvent_AttackResultText(RLCombatAttackEventResult resu
         return "interrupted";
     case RL_COMBAT_ATTACK_RESULT_UNKNOWN:
         return "unknown";
+    case RL_COMBAT_ATTACK_RESULT_CONTACT:
+        return "contact";
     case RL_COMBAT_ATTACK_RESULT_PENDING:
     default:
         return "pending";
@@ -2587,6 +2604,8 @@ static const char* RLCombatEvent_AttackFinalizeReasonText(RLCombatAttackFinalize
         return "basic_unknown_timeout";
     case RL_COMBAT_ATTACK_FINALIZE_PROJECTILE_CLAIMED:
         return "projectile_claimed";
+    case RL_COMBAT_ATTACK_FINALIZE_CONTACT_RESOLVED:
+        return "contact_resolved";
     case RL_COMBAT_ATTACK_FINALIZE_NONE:
     default:
         return "none";

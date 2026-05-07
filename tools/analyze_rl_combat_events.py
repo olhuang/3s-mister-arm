@@ -139,6 +139,8 @@ def attack_bucket(row: dict[str, Any]) -> str:
 
     if reason == "projectile_claimed":
         return "delegated_to_projectile"
+    if result == "contact" or reason == "contact_resolved":
+        return "contact_resolved"
     if result == "whiff":
         return "whiff"
     if result == "interrupted":

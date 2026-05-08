@@ -492,6 +492,40 @@ class ActorCriticInferenceConfig:
 
 
 @dataclass(frozen=True)
+class ActorCriticSpacingPriorConfig:
+    enabled: bool = False
+    close_max_abs_dx: int = 64
+    poke_max_abs_dx: int = 120
+    very_far_min_abs_dx: int = 220
+    forward_bonus: float = 0.70
+    back_penalty: float = 0.80
+    far_guard_penalty: float = 0.25
+    close_attack_far_penalty: float = 0.75
+    shoryuken_far_penalty: float = 1.20
+    fireball_bonus: float = 0.35
+    fireball_min_abs_dx: int = 96
+    fireball_max_abs_dx: int = 280
+    threat_suppress_max_time_to_self: int = 12
+    threat_suppress_max_abs_dx: int = 144
+    threat_suppress_max_abs_y: int = 96
+
+    def label(self) -> str:
+        if not self.enabled:
+            return "off"
+        return (
+            f"close<={self.close_max_abs_dx}"
+            f"/poke<={self.poke_max_abs_dx}"
+            f"/very_far>={self.very_far_min_abs_dx}"
+            f"/forward+{self.forward_bonus:.3f}"
+            f"/back-{self.back_penalty:.3f}"
+            f"/guard-{self.far_guard_penalty:.3f}"
+            f"/close_attack-{self.close_attack_far_penalty:.3f}"
+            f"/dp-{self.shoryuken_far_penalty:.3f}"
+            f"/fireball+{self.fireball_bonus:.3f}@{self.fireball_min_abs_dx}-{self.fireball_max_abs_dx}"
+        )
+
+
+@dataclass(frozen=True)
 class DQNProjectileTimingPriorConfig:
     enabled: bool = False
     min_time_to_self: int = 0
@@ -1677,6 +1711,70 @@ def dqn_threat_defense_prior_penalty(
     if row_int_field(row, "obs_abs_dx") > config.max_abs_dx:
         return 0.0
     return max(0.0, config.unsafe_penalty)
+
+
+def actor_critic_spacing_prior_suppressed_by_threat(
+    row: dict[str, object],
+    config: ActorCriticSpacingPriorConfig,
+) -> bool:
+    if row_int_field(row, "obs_projectile_active") == 0:
+        return False
+    if row_int_field(row, "obs_projectile_owner") != 2:
+        return False
+    rel_x = row_int_field(row, "obs_projectile_rel_x")
+    rel_y = row_int_field(row, "obs_projectile_rel_y")
+    vel_x = row_int_field(row, "obs_projectile_vel_x")
+    time_to_self = row_int_field(row, "obs_projectile_time_to_self")
+    return (
+        1 <= time_to_self <= config.threat_suppress_max_time_to_self
+        and 0 < rel_x <= config.threat_suppress_max_abs_dx
+        and abs(rel_y) <= config.threat_suppress_max_abs_y
+        and vel_x < 0
+    )
+
+
+def actor_critic_close_attack_action(action: str) -> bool:
+    return (
+        action in STAND_NORMAL_ACTION_NAMES
+        or action in CROUCH_NORMAL_ACTION_NAMES
+        or action == "forward-hp"
+        or action == "throw"
+    )
+
+
+def actor_critic_spacing_prior_adjustment(
+    action: str,
+    row: dict[str, object],
+    config: ActorCriticSpacingPriorConfig,
+) -> float:
+    if not config.enabled:
+        return 0.0
+    if row_int_field(row, "obs_self_airborne") != 0 or row_int_field(row, "obs_self_jump_phase") != 0:
+        return 0.0
+    if actor_critic_spacing_prior_suppressed_by_threat(row, config):
+        return 0.0
+
+    abs_dx = row_int_field(row, "obs_abs_dx")
+    adjustment = 0.0
+    if abs_dx > config.poke_max_abs_dx:
+        if action == "forward":
+            adjustment += max(0.0, config.forward_bonus)
+        elif action == "back":
+            adjustment -= max(0.0, config.back_penalty)
+        elif action in ("guard-stand", "guard-crouch"):
+            adjustment -= max(0.0, config.far_guard_penalty)
+    if abs_dx > config.close_max_abs_dx and actor_critic_close_attack_action(action):
+        adjustment -= max(0.0, config.close_attack_far_penalty)
+    if abs_dx > config.poke_max_abs_dx and action in SHORYUKEN_ACTION_NAMES:
+        adjustment -= max(0.0, config.shoryuken_far_penalty)
+    if abs_dx >= config.very_far_min_abs_dx and action in SHORYUKEN_ACTION_NAMES + STAND_NORMAL_ACTION_NAMES:
+        adjustment -= max(0.0, config.close_attack_far_penalty)
+    if (
+        config.fireball_min_abs_dx <= abs_dx <= config.fireball_max_abs_dx
+        and action in FIREBALL_ACTION_NAMES
+    ):
+        adjustment += max(0.0, config.fireball_bonus)
+    return adjustment
 
 
 def normalize_dqn_valid_action_mask_mode(mode: object) -> str:
@@ -3258,6 +3356,7 @@ def actor_critic_ranked_action_scores(
     actor_critic_model: dict[str, object],
     row: dict[str, object],
     valid_action_mask_config: DQNValidActionMaskConfig = DQNValidActionMaskConfig(),
+    spacing_prior_config: ActorCriticSpacingPriorConfig = ActorCriticSpacingPriorConfig(),
 ) -> list[tuple[str, float]]:
     logits, _value = actor_critic_predict_logits_value(actor_critic_model, row)
     if not logits:
@@ -3268,7 +3367,9 @@ def actor_critic_ranked_action_scores(
             continue
         if not dqn_valid_action_for_row(action, row, valid_action_mask_config):
             continue
-        scored_actions.append((action, float(logits[index])))
+        score = float(logits[index])
+        score += actor_critic_spacing_prior_adjustment(action, row, spacing_prior_config)
+        scored_actions.append((action, score))
     return sorted(scored_actions, key=lambda item: (item[1], item[0]), reverse=True)
 
 
@@ -3311,6 +3412,7 @@ def actor_critic_actor_action_name(
     obs_row: dict[str, object] | None,
     config: ActorCriticInferenceConfig,
     valid_action_mask_config: DQNValidActionMaskConfig = DQNValidActionMaskConfig(),
+    spacing_prior_config: ActorCriticSpacingPriorConfig = ActorCriticSpacingPriorConfig(),
 ) -> str | None:
     if actor.policy != "actor-critic" or not obs_row or not actor.actor_critic_model:
         return None
@@ -3324,6 +3426,7 @@ def actor_critic_actor_action_name(
         actor.actor_critic_model,
         obs_row,
         valid_action_mask_config,
+        spacing_prior_config,
     )
     return actor_critic_sample_ranked_action_name(ranked_actions, config)
 
@@ -3422,6 +3525,7 @@ def policy_action_frame(
     dqn_threat_defense_prior_config: DQNThreatDefensePriorConfig = DQNThreatDefensePriorConfig(),
     bc_inference_config: BCInferenceConfig = BCInferenceConfig(),
     actor_critic_inference_config: ActorCriticInferenceConfig = ActorCriticInferenceConfig(),
+    actor_critic_spacing_prior_config: ActorCriticSpacingPriorConfig = ActorCriticSpacingPriorConfig(),
 ) -> PolicyActionFrame:
     if actor.policy in MODEL_POLICY_CHOICES:
         macro_action = active_macro_action_name(macro_states, nonce, run_id, episode_id)
@@ -3468,6 +3572,7 @@ def policy_action_frame(
             obs_row_override,
             actor_critic_inference_config,
             dqn_valid_action_mask_config,
+            actor_critic_spacing_prior_config,
         )
     if action_name is not None:
         fixed = fixed_action_wire(action_name)
@@ -3500,6 +3605,7 @@ def policy_action_wire(
     dqn_threat_defense_prior_config: DQNThreatDefensePriorConfig = DQNThreatDefensePriorConfig(),
     bc_inference_config: BCInferenceConfig = BCInferenceConfig(),
     actor_critic_inference_config: ActorCriticInferenceConfig = ActorCriticInferenceConfig(),
+    actor_critic_spacing_prior_config: ActorCriticSpacingPriorConfig = ActorCriticSpacingPriorConfig(),
 ) -> int:
     return policy_action_frame(
         actor,
@@ -3521,6 +3627,7 @@ def policy_action_wire(
         dqn_threat_defense_prior_config,
         bc_inference_config,
         actor_critic_inference_config,
+        actor_critic_spacing_prior_config,
     ).action_wire
 
 
@@ -3531,6 +3638,7 @@ def format_dqn_verbose_diagnostics(
     valid_action_mask_config: DQNValidActionMaskConfig,
     valid_action_mask_source: str,
     actor_critic_inference_config: ActorCriticInferenceConfig,
+    actor_critic_spacing_prior_config: ActorCriticSpacingPriorConfig,
     projectile_timing_prior_config: DQNProjectileTimingPriorConfig,
     shoryuken_context_prior_config: DQNShoryukenContextPriorConfig,
     ground_normal_context_prior_config: DQNGroundNormalContextPriorConfig,
@@ -3545,26 +3653,35 @@ def format_dqn_verbose_diagnostics(
             return (
                 f" ac_action={action_name}"
                 f" ac_mask={valid_action_mask_config.label()}"
-                f" ac_mask_source={valid_action_mask_source}"
-                f" ac_infer={actor_critic_inference_config.label()}"
-                " ac_valid=n/a"
-                " ac_value=n/a"
-            )
+            f" ac_mask_source={valid_action_mask_source}"
+            f" ac_infer={actor_critic_inference_config.label()}"
+            f" ac_spacing={actor_critic_spacing_prior_config.label()}"
+            " ac_valid=n/a"
+            " ac_value=n/a"
+        )
         valid_actions = dqn_valid_actions_for_row(obs_row, actor.actions, valid_action_mask_config)
         ranked_actions = actor_critic_ranked_action_scores(
             actor.actions,
             actor.actor_critic_model,
             obs_row,
             valid_action_mask_config,
+            actor_critic_spacing_prior_config,
         )
         _logits, value = actor_critic_predict_logits_value(actor.actor_critic_model, obs_row)
         top = ",".join(f"{name}:{score:.3f}" for name, score in ranked_actions[:5]) if ranked_actions else "none"
         value_label = "n/a" if value is None else f"{value:.3f}"
+        spacing_adjustment = actor_critic_spacing_prior_adjustment(
+            action_name or "",
+            obs_row,
+            actor_critic_spacing_prior_config,
+        )
         return (
             f" ac_action={action_name}"
             f" ac_mask={valid_action_mask_config.label()}"
             f" ac_mask_source={valid_action_mask_source}"
             f" ac_infer={actor_critic_inference_config.label()}"
+            f" ac_spacing={actor_critic_spacing_prior_config.label()}"
+            f" ac_spacing_adj={spacing_adjustment:.3f}"
             f" ac_valid={len(valid_actions)}/{len(actor.actions)}"
             f" ac_phase={dqn_self_mask_phase(obs_row)}"
             f" ac_value={value_label}"
@@ -3736,6 +3853,7 @@ def serve(
     actor_critic_valid_action_mask_config: DQNValidActionMaskConfig,
     actor_critic_valid_action_mask_auto: bool,
     actor_critic_inference_config: ActorCriticInferenceConfig,
+    actor_critic_spacing_prior_config: ActorCriticSpacingPriorConfig,
     dqn_projectile_timing_prior_config: DQNProjectileTimingPriorConfig,
     dqn_shoryuken_context_prior_config: DQNShoryukenContextPriorConfig,
     dqn_ground_normal_context_prior_config: DQNGroundNormalContextPriorConfig,
@@ -3807,6 +3925,8 @@ def serve(
         print(f"BC inference active {bc_inference_config.label()}", flush=True)
     if policy == "actor-critic" or model_store.current().policy == "actor-critic":
         print(f"Actor-critic inference active {actor_critic_inference_config.label()}", flush=True)
+    if actor_critic_spacing_prior_config.enabled:
+        print(f"Actor-critic spacing prior active {actor_critic_spacing_prior_config.label()}", flush=True)
     active_model = model_store.current()
     if active_model.policy == "bc":
         initial_cli_mask_config = bc_valid_action_mask_config
@@ -3933,6 +4053,7 @@ def serve(
                     dqn_threat_defense_prior_config,
                     bc_inference_config,
                     actor_critic_inference_config,
+                    actor_critic_spacing_prior_config,
                 )
                 payload = make_action_packet(
                     nonce,
@@ -3966,6 +4087,7 @@ def serve(
                         effective_dqn_valid_action_mask_config,
                         dqn_valid_action_mask_source,
                         actor_critic_inference_config,
+                        actor_critic_spacing_prior_config,
                         dqn_projectile_timing_prior_config,
                         dqn_shoryuken_context_prior_config,
                         dqn_ground_normal_context_prior_config,
@@ -4303,6 +4425,77 @@ def main() -> None:
         help="Optional nucleus threshold after top-k filtering for actor-critic sampling; 0 disables top-p",
     )
     parser.add_argument(
+        "--actor-critic-spacing-prior",
+        action="store_true",
+        help="Apply an opt-in spacing prior to actor-critic logits so far rows prefer approach/fireball over close-range attacks",
+    )
+    parser.add_argument(
+        "--actor-critic-spacing-close-max-abs-dx",
+        type=int,
+        default=64,
+        help="Maximum obs_abs_dx treated as close enough for unpenalized close-range actor-critic attacks",
+    )
+    parser.add_argument(
+        "--actor-critic-spacing-poke-max-abs-dx",
+        type=int,
+        default=120,
+        help="Maximum obs_abs_dx treated as poke range before actor-critic far-spacing penalties/forward bonus apply",
+    )
+    parser.add_argument(
+        "--actor-critic-spacing-very-far-min-abs-dx",
+        type=int,
+        default=220,
+        help="Minimum obs_abs_dx treated as very far for extra actor-critic close-action suppression",
+    )
+    parser.add_argument(
+        "--actor-critic-spacing-forward-bonus",
+        type=float,
+        default=0.70,
+        help="Actor-critic logit bonus for forward beyond the poke range",
+    )
+    parser.add_argument(
+        "--actor-critic-spacing-back-penalty",
+        type=float,
+        default=0.80,
+        help="Actor-critic logit penalty for back beyond the poke range",
+    )
+    parser.add_argument(
+        "--actor-critic-spacing-far-guard-penalty",
+        type=float,
+        default=0.25,
+        help="Actor-critic logit penalty for guard-stand/guard-crouch beyond the poke range",
+    )
+    parser.add_argument(
+        "--actor-critic-spacing-close-attack-far-penalty",
+        type=float,
+        default=0.75,
+        help="Actor-critic logit penalty for close-range attacks beyond close range",
+    )
+    parser.add_argument(
+        "--actor-critic-spacing-shoryuken-far-penalty",
+        type=float,
+        default=1.20,
+        help="Actor-critic logit penalty for Shoryuken beyond poke range",
+    )
+    parser.add_argument(
+        "--actor-critic-spacing-fireball-bonus",
+        type=float,
+        default=0.35,
+        help="Actor-critic logit bonus for fireballs inside the configured zoning range",
+    )
+    parser.add_argument(
+        "--actor-critic-spacing-fireball-min-abs-dx",
+        type=int,
+        default=96,
+        help="Minimum obs_abs_dx where actor-critic fireball spacing bonus applies",
+    )
+    parser.add_argument(
+        "--actor-critic-spacing-fireball-max-abs-dx",
+        type=int,
+        default=280,
+        help="Maximum obs_abs_dx where actor-critic fireball spacing bonus applies",
+    )
+    parser.add_argument(
         "--dqn-projectile-timing-prior",
         action="store_true",
         help="Apply a soft jump-start Q penalty for close incoming opponent projectiles before DQN argmax",
@@ -4566,6 +4759,34 @@ def main() -> None:
         top_k=max(0, int(args.actor_critic_top_k)),
         top_p=max(0.0, min(1.0, float(args.actor_critic_top_p))),
     )
+    actor_critic_spacing_close_max_dx = max(0, int(args.actor_critic_spacing_close_max_abs_dx))
+    actor_critic_spacing_poke_max_dx = max(
+        actor_critic_spacing_close_max_dx,
+        int(args.actor_critic_spacing_poke_max_abs_dx),
+    )
+    actor_critic_spacing_very_far_min_dx = max(
+        actor_critic_spacing_poke_max_dx,
+        int(args.actor_critic_spacing_very_far_min_abs_dx),
+    )
+    actor_critic_spacing_fireball_min_dx = max(0, int(args.actor_critic_spacing_fireball_min_abs_dx))
+    actor_critic_spacing_fireball_max_dx = max(
+        actor_critic_spacing_fireball_min_dx,
+        int(args.actor_critic_spacing_fireball_max_abs_dx),
+    )
+    actor_critic_spacing_prior_config = ActorCriticSpacingPriorConfig(
+        enabled=bool(args.actor_critic_spacing_prior),
+        close_max_abs_dx=actor_critic_spacing_close_max_dx,
+        poke_max_abs_dx=actor_critic_spacing_poke_max_dx,
+        very_far_min_abs_dx=actor_critic_spacing_very_far_min_dx,
+        forward_bonus=max(0.0, float(args.actor_critic_spacing_forward_bonus)),
+        back_penalty=max(0.0, float(args.actor_critic_spacing_back_penalty)),
+        far_guard_penalty=max(0.0, float(args.actor_critic_spacing_far_guard_penalty)),
+        close_attack_far_penalty=max(0.0, float(args.actor_critic_spacing_close_attack_far_penalty)),
+        shoryuken_far_penalty=max(0.0, float(args.actor_critic_spacing_shoryuken_far_penalty)),
+        fireball_bonus=max(0.0, float(args.actor_critic_spacing_fireball_bonus)),
+        fireball_min_abs_dx=actor_critic_spacing_fireball_min_dx,
+        fireball_max_abs_dx=actor_critic_spacing_fireball_max_dx,
+    )
     projectile_prior_min_time = max(0, int(args.dqn_projectile_prior_min_time_to_self))
     projectile_prior_urgent_max_time = max(
         projectile_prior_min_time,
@@ -4686,6 +4907,7 @@ def main() -> None:
         actor_critic_valid_action_mask_config,
         actor_critic_valid_action_mask_auto,
         actor_critic_inference_config,
+        actor_critic_spacing_prior_config,
         dqn_projectile_timing_prior_config,
         dqn_shoryuken_context_prior_config,
         dqn_ground_normal_context_prior_config,

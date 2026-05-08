@@ -16668,3 +16668,70 @@ Follow-up:
 - Phase 11E should run the live MiSTer gate with:
   `--policy actor-critic --model-dir model/actor-critic-awac-movement-balanced-human-11c3-v2`
 - Keep the model directory untracked until a live candidate is promoted.
+
+## 2026-05-08: Phase 11E-1 Actor-Critic Spacing Prior
+
+Milestone:
+- Phase 11E-1 / live actor-critic spacing diagnostic and inference prior.
+
+Purpose:
+- The first Phase 11E live tests showed that actor-critic inference worked, but
+  the policy still felt stiff.
+- Deterministic actor-critic made attacks more common, but it often used
+  close-range attacks or Shoryuken while too far away.
+- Add an opt-in runtime prior that makes range/spacing explicit before we spend
+  another training pass on range-aware AWAC.
+
+Implementation:
+- Added `ActorCriticSpacingPriorConfig` to `tools/rl_probe_server.py`.
+- Added `--actor-critic-spacing-prior`, default off.
+- Added spacing parameters for:
+  - close max distance
+  - poke max distance
+  - very-far threshold
+  - forward bonus
+  - back penalty
+  - far guard penalty
+  - close-attack far penalty
+  - Shoryuken far penalty
+  - fireball zoning bonus/range
+- Actor-critic ranking now adds the spacing adjustment after the actor logits
+  and valid-action mask, before top-k/top-p sampling.
+- The prior suppresses itself for urgent incoming opponent projectile rows so it
+  does not blindly force approach into obvious fireballs.
+- Verbose actor-critic diagnostics now include:
+  - `ac_spacing`
+  - `ac_spacing_adj`
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py`
+- Replay validation on
+  `logs/phase11e-actor-critic-live-deterministic-transitions.ndjson` using the
+  same actor-critic artifact:
+  - prior off deterministic top:
+    `forward=35.7%`, `stand-lp=29.0%`, `guard-crouch=16.9%`,
+    `back=13.2%`, `fireball-mp=1.4%`
+  - prior on deterministic top:
+    `forward=51.3%`, `fireball-mp=28.2%`, `guard-crouch=15.7%`,
+    `back=4.6%`
+  - far bucket changed from
+    `forward=36.7%`, `stand-lp=30.2%`, `back=18.9%`
+    to
+    `forward=72.2%`, `fireball-mp=24.4%`, `back=2.9%`
+  - very-far bucket changed from
+    `back=61.3%`, `forward=12.0%`, `shoryuken-mp=6.7%`
+    to
+    `forward=81.6%`, `back=15.0%`, `fireball-mp=2.3%`
+
+Interpretation:
+- The prior does what it is designed to do: it removes most far-range local
+  attacks and turns very-far states into approach/fireball choices.
+- This is still a bridge, not the final trainer solution. If live behavior
+  improves, the same spacing buckets should move into Phase 11C/11E range-aware
+  AWAC training instead of staying as a permanent hand-authored prior.
+
+Follow-up:
+- Run a live gate with deterministic or low-temperature actor-critic plus:
+  `--actor-critic-spacing-prior`.
+- If behavior improves, implement range-aware AWAC labels/advantages so the
+  learned actor owns this behavior without a large runtime prior.

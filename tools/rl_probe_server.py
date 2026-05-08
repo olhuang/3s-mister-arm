@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import collections
 import json
+import math
 import os
 import random
 import socket
@@ -163,6 +164,7 @@ SCRIPTED_POLICY_CHOICES = (
 MODEL_POLICY_CHOICES = (
     "tabular",
     "dqn",
+    "bc",
 )
 POLICY_CHOICES = SCRIPTED_POLICY_CHOICES + MODEL_POLICY_CHOICES
 GUARD_MACRO_DECISION_STEPS = 6
@@ -453,6 +455,27 @@ class DQNValidActionMaskConfig:
 
     def label(self) -> str:
         return self.mode
+
+
+@dataclass(frozen=True)
+class BCInferenceConfig:
+    temperature: float = 0.8
+    top_k: int = 3
+    deterministic_danger: bool = False
+    danger_max_time_to_self: int = 12
+    danger_max_abs_dx: int = 144
+    danger_max_abs_y: int = 96
+
+    def label(self) -> str:
+        danger = "on" if self.deterministic_danger else "off"
+        return (
+            f"temperature:{self.temperature:.3f}"
+            f"/top_k:{self.top_k}"
+            f"/danger:{danger}"
+            f"/danger_t<={self.danger_max_time_to_self}"
+            f"/danger_dx<={self.danger_max_abs_dx}"
+            f"/danger_abs_y<={self.danger_max_abs_y}"
+        )
 
 
 @dataclass(frozen=True)
@@ -1039,7 +1062,7 @@ class ActorModelStore:
                         "min_action_count": model.min_action_count,
                     }
                 )
-            elif model.policy == "dqn":
+            elif model.policy in ("dqn", "bc"):
                 payload.update(
                     {
                         "actions": list(model.actions),
@@ -1590,8 +1613,8 @@ def resolve_dqn_valid_action_mask_config(
 ) -> tuple[DQNValidActionMaskConfig, str]:
     if not auto_from_metadata:
         return cli_config, "cli"
-    if actor.policy != "dqn":
-        return DQNValidActionMaskConfig(), "auto:not-dqn"
+    if actor.policy not in ("dqn", "bc"):
+        return DQNValidActionMaskConfig(), f"auto:not-{actor.policy}"
     return dqn_valid_action_mask_config_from_metadata(actor.metadata)
 
 
@@ -2982,6 +3005,97 @@ def dqn_actor_action_name(
     return ranked_actions[0][0]
 
 
+def bc_projectile_danger_active(row: dict[str, object], config: BCInferenceConfig) -> bool:
+    if row_int_field(row, "obs_self_airborne") != 0 or row_int_field(row, "obs_self_jump_phase") >= 2:
+        return False
+    if row_int_field(row, "obs_projectile_active") == 0:
+        return False
+    if row_int_field(row, "obs_projectile_owner") != 2:
+        return False
+    rel_x = row_int_field(row, "obs_projectile_rel_x")
+    rel_y = row_int_field(row, "obs_projectile_rel_y")
+    vel_x = row_int_field(row, "obs_projectile_vel_x")
+    time_to_self = row_int_field(row, "obs_projectile_time_to_self")
+    return (
+        1 <= time_to_self <= config.danger_max_time_to_self
+        and 0 < rel_x <= config.danger_max_abs_dx
+        and abs(rel_y) <= config.danger_max_abs_y
+        and vel_x < 0
+    )
+
+
+def bc_close_attack_danger_active(row: dict[str, object], config: BCInferenceConfig) -> bool:
+    return (
+        row_int_field(row, "obs_self_airborne") == 0
+        and row_int_field(row, "obs_self_jump_phase") == 0
+        and row_int_field(row, "obs_opp_routine_attack_state") != 0
+        and row_int_field(row, "obs_opp_airborne") == 0
+        and row_int_field(row, "obs_opp_jump_phase") == 0
+        and row_int_field(row, "obs_abs_dx") <= config.danger_max_abs_dx
+    )
+
+
+def bc_deterministic_danger_action_name(
+    ranked_actions: list[tuple[str, float]],
+    row: dict[str, object],
+    config: BCInferenceConfig,
+) -> str | None:
+    if not config.deterministic_danger:
+        return None
+    if not bc_projectile_danger_active(row, config) and not bc_close_attack_danger_active(row, config):
+        return None
+    ranked_by_score = {action: score for action, score in ranked_actions}
+    candidates = ("guard-crouch", "guard-stand", "back")
+    eligible = [action for action in candidates if action in ranked_by_score]
+    if not eligible:
+        return None
+    return max(eligible, key=lambda action: (ranked_by_score[action], action))
+
+
+def bc_sample_ranked_action_name(
+    ranked_actions: list[tuple[str, float]],
+    config: BCInferenceConfig,
+) -> str | None:
+    if not ranked_actions:
+        return None
+    top_k = max(0, int(config.top_k))
+    candidates = ranked_actions if top_k == 0 else ranked_actions[:top_k]
+    if len(candidates) <= 1 or config.temperature <= 0.0:
+        return candidates[0][0]
+    max_score = max(score for _, score in candidates)
+    inv_temp = 1.0 / max(1e-6, float(config.temperature))
+    weights = [math.exp(max(-80.0, min(80.0, (score - max_score) * inv_temp))) for _, score in candidates]
+    if not weights or sum(weights) <= 0.0:
+        return candidates[0][0]
+    return random.choices([action for action, _ in candidates], weights=weights, k=1)[0]
+
+
+def bc_actor_action_name(
+    actor: ActorModel,
+    obs_row: dict[str, object] | None,
+    config: BCInferenceConfig,
+    valid_action_mask_config: DQNValidActionMaskConfig = DQNValidActionMaskConfig(),
+) -> str | None:
+    if actor.policy != "bc" or not obs_row or not actor.dqn_model:
+        return None
+    if random.random() < actor.epsilon:
+        eligible_actions = dqn_valid_actions_for_row(obs_row, actor.actions, valid_action_mask_config)
+        if not eligible_actions:
+            return None
+        return random.choice(eligible_actions)
+    ranked_actions = dqn_ranked_action_scores(
+        actor.actions,
+        actor.dqn_model,
+        actor.metadata,
+        obs_row,
+        valid_action_mask_config=valid_action_mask_config,
+    )
+    danger_action = bc_deterministic_danger_action_name(ranked_actions, obs_row, config)
+    if danger_action is not None:
+        return danger_action
+    return bc_sample_ranked_action_name(ranked_actions, config)
+
+
 def active_macro_action_frame(
     macro_states: dict[tuple[int, int, int], dict[str, int | str]],
     nonce: int,
@@ -3074,6 +3188,7 @@ def policy_action_frame(
     dqn_ground_normal_context_prior_config: DQNGroundNormalContextPriorConfig = DQNGroundNormalContextPriorConfig(),
     dqn_fireball_zoning_prior_config: DQNFireballZoningPriorConfig = DQNFireballZoningPriorConfig(),
     dqn_threat_defense_prior_config: DQNThreatDefensePriorConfig = DQNThreatDefensePriorConfig(),
+    bc_inference_config: BCInferenceConfig = BCInferenceConfig(),
 ) -> PolicyActionFrame:
     if actor.policy in MODEL_POLICY_CHOICES:
         macro_action = active_macro_action_name(macro_states, nonce, run_id, episode_id)
@@ -3107,6 +3222,13 @@ def policy_action_frame(
             dqn_fireball_zoning_prior_config,
             dqn_threat_defense_prior_config,
         )
+    elif actor.policy == "bc":
+        action_name = bc_actor_action_name(
+            actor,
+            obs_row_override,
+            bc_inference_config,
+            dqn_valid_action_mask_config,
+        )
     if action_name is not None:
         fixed = fixed_action_wire(action_name)
         if fixed is not None:
@@ -3136,6 +3258,7 @@ def policy_action_wire(
     dqn_ground_normal_context_prior_config: DQNGroundNormalContextPriorConfig = DQNGroundNormalContextPriorConfig(),
     dqn_fireball_zoning_prior_config: DQNFireballZoningPriorConfig = DQNFireballZoningPriorConfig(),
     dqn_threat_defense_prior_config: DQNThreatDefensePriorConfig = DQNThreatDefensePriorConfig(),
+    bc_inference_config: BCInferenceConfig = BCInferenceConfig(),
 ) -> int:
     return policy_action_frame(
         actor,
@@ -3155,6 +3278,7 @@ def policy_action_wire(
         dqn_ground_normal_context_prior_config,
         dqn_fireball_zoning_prior_config,
         dqn_threat_defense_prior_config,
+        bc_inference_config,
     ).action_wire
 
 
@@ -3170,9 +3294,31 @@ def format_dqn_verbose_diagnostics(
     fireball_zoning_prior_config: DQNFireballZoningPriorConfig,
     threat_defense_prior_config: DQNThreatDefensePriorConfig,
 ) -> str:
-    if actor.policy != "dqn":
+    if actor.policy not in ("dqn", "bc"):
         return ""
     action_name = policy_action_frame_name(target_action)
+    if actor.policy == "bc":
+        if obs_row is None:
+            return (
+                f" bc_action={action_name}"
+                f" bc_mask={valid_action_mask_config.label()}"
+                f" bc_mask_source={valid_action_mask_source}"
+                " bc_valid=n/a"
+            )
+        valid_actions = dqn_valid_actions_for_row(obs_row, actor.actions, valid_action_mask_config)
+        return (
+            f" bc_action={action_name}"
+            f" bc_mask={valid_action_mask_config.label()}"
+            f" bc_mask_source={valid_action_mask_source}"
+            f" bc_valid={len(valid_actions)}/{len(actor.actions)}"
+            f" bc_phase={dqn_self_mask_phase(obs_row)}"
+            f" self_r1={row_int_field(obs_row, 'obs_self_routine_1')}"
+            f" self_r2={row_int_field(obs_row, 'obs_self_routine_2')}"
+            f" self_atk={row_int_field(obs_row, 'obs_self_routine_attack_state')}"
+            f" self_contact={row_int_field(obs_row, 'obs_self_contact_reaction_state')}"
+            f" proj={row_int_field(obs_row, 'obs_projectile_active')}/{row_int_field(obs_row, 'obs_projectile_owner')}"
+            f" proj_t={row_int_field(obs_row, 'obs_projectile_time_to_self')}"
+        )
     if obs_row is None:
         return (
             f" dqn_action={action_name}"
@@ -3305,6 +3451,9 @@ def serve(
     dqn_support_prior_config: DQNSupportPriorConfig,
     dqn_valid_action_mask_config: DQNValidActionMaskConfig,
     dqn_valid_action_mask_auto: bool,
+    bc_valid_action_mask_config: DQNValidActionMaskConfig,
+    bc_valid_action_mask_auto: bool,
+    bc_inference_config: BCInferenceConfig,
     dqn_projectile_timing_prior_config: DQNProjectileTimingPriorConfig,
     dqn_shoryuken_context_prior_config: DQNShoryukenContextPriorConfig,
     dqn_ground_normal_context_prior_config: DQNGroundNormalContextPriorConfig,
@@ -3372,17 +3521,26 @@ def serve(
         print(f"DQN fireball zoning prior active {dqn_fireball_zoning_prior_config.label()}", flush=True)
     if dqn_threat_defense_prior_config.enabled:
         print(f"DQN threat-defense prior active {dqn_threat_defense_prior_config.label()}", flush=True)
+    if policy == "bc" or model_store.current().policy == "bc":
+        print(f"BC inference active {bc_inference_config.label()}", flush=True)
     active_model = model_store.current()
+    initial_cli_mask_config = bc_valid_action_mask_config if active_model.policy == "bc" else dqn_valid_action_mask_config
+    initial_mask_auto = bc_valid_action_mask_auto if active_model.policy == "bc" else dqn_valid_action_mask_auto
     initial_mask_config, initial_mask_source = resolve_dqn_valid_action_mask_config(
         active_model,
-        dqn_valid_action_mask_config,
-        dqn_valid_action_mask_auto,
+        initial_cli_mask_config,
+        initial_mask_auto,
     )
-    last_dqn_mask_status: tuple[int, str, str] | None = None
-    if active_model.policy == "dqn":
-        last_dqn_mask_status = (active_model.version, initial_mask_config.mode, initial_mask_source)
+    last_model_mask_status: tuple[str, int, str, str] | None = None
+    if active_model.policy in ("dqn", "bc"):
+        last_model_mask_status = (
+            active_model.policy,
+            active_model.version,
+            initial_mask_config.mode,
+            initial_mask_source,
+        )
         print(
-            f"DQN valid-action mask {initial_mask_config.label()} "
+            f"{active_model.policy.upper()} valid-action mask {initial_mask_config.label()} "
             f"source={initial_mask_source} model_version={active_model.version}",
             flush=True,
         )
@@ -3396,21 +3554,24 @@ def serve(
         if len(data) >= OBS_HEADER.size:
             inference_start_ns = time.perf_counter_ns()
             active_model = model_store.current()
+            mask_cli_config = bc_valid_action_mask_config if active_model.policy == "bc" else dqn_valid_action_mask_config
+            mask_auto = bc_valid_action_mask_auto if active_model.policy == "bc" else dqn_valid_action_mask_auto
             effective_dqn_valid_action_mask_config, dqn_valid_action_mask_source = resolve_dqn_valid_action_mask_config(
                 active_model,
-                dqn_valid_action_mask_config,
-                dqn_valid_action_mask_auto,
+                mask_cli_config,
+                mask_auto,
             )
-            if active_model.policy == "dqn":
-                dqn_mask_status = (
+            if active_model.policy in ("dqn", "bc"):
+                model_mask_status = (
+                    active_model.policy,
                     active_model.version,
                     effective_dqn_valid_action_mask_config.mode,
                     dqn_valid_action_mask_source,
                 )
-                if dqn_mask_status != last_dqn_mask_status:
-                    last_dqn_mask_status = dqn_mask_status
+                if model_mask_status != last_model_mask_status:
+                    last_model_mask_status = model_mask_status
                     print(
-                        f"DQN valid-action mask {effective_dqn_valid_action_mask_config.label()} "
+                        f"{active_model.policy.upper()} valid-action mask {effective_dqn_valid_action_mask_config.label()} "
                         f"source={dqn_valid_action_mask_source} model_version={active_model.version}",
                         flush=True,
                     )
@@ -3472,6 +3633,7 @@ def serve(
                     dqn_ground_normal_context_prior_config,
                     dqn_fireball_zoning_prior_config,
                     dqn_threat_defense_prior_config,
+                    bc_inference_config,
                 )
                 payload = make_action_packet(
                     nonce,
@@ -3770,6 +3932,50 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--bc-valid-action-mask",
+        choices=DQN_VALID_ACTION_MASK_CLI_MODES,
+        default="action-start-v1",
+        help=(
+            "BC action eligibility mask. Defaults to action-start-v1 so sampled BC actions respect "
+            "ground/jump/air start eligibility; auto reads metadata.dqn_valid_action_mask_config."
+        ),
+    )
+    parser.add_argument(
+        "--bc-temperature",
+        type=float,
+        default=0.8,
+        help="Softmax temperature for BC top-k action sampling; 0 makes BC deterministic argmax",
+    )
+    parser.add_argument(
+        "--bc-top-k",
+        type=int,
+        default=3,
+        help="Number of highest-logit valid BC actions to sample from; 0 samples from every valid action",
+    )
+    parser.add_argument(
+        "--bc-deterministic-danger",
+        action="store_true",
+        help="Force BC to choose the best guard/back action in close attack or urgent projectile danger rows",
+    )
+    parser.add_argument(
+        "--bc-danger-max-time-to-self",
+        type=int,
+        default=12,
+        help="Maximum obs_projectile_time_to_self treated as urgent for --bc-deterministic-danger",
+    )
+    parser.add_argument(
+        "--bc-danger-max-abs-dx",
+        type=int,
+        default=144,
+        help="Maximum obs_abs_dx or incoming projectile rel_x treated as danger for BC deterministic guard/back",
+    )
+    parser.add_argument(
+        "--bc-danger-max-abs-y",
+        type=int,
+        default=96,
+        help="Maximum absolute projectile rel_y treated as urgent for --bc-deterministic-danger",
+    )
+    parser.add_argument(
         "--dqn-projectile-timing-prior",
         action="store_true",
         help="Apply a soft jump-start Q penalty for close incoming opponent projectiles before DQN argmax",
@@ -4014,6 +4220,17 @@ def main() -> None:
     dqn_valid_action_mask_auto, dqn_valid_action_mask_config = parse_dqn_valid_action_mask_cli_config(
         str(args.dqn_valid_action_mask)
     )
+    bc_valid_action_mask_auto, bc_valid_action_mask_config = parse_dqn_valid_action_mask_cli_config(
+        str(args.bc_valid_action_mask)
+    )
+    bc_inference_config = BCInferenceConfig(
+        temperature=max(0.0, float(args.bc_temperature)),
+        top_k=max(0, int(args.bc_top_k)),
+        deterministic_danger=bool(args.bc_deterministic_danger),
+        danger_max_time_to_self=max(0, int(args.bc_danger_max_time_to_self)),
+        danger_max_abs_dx=max(0, int(args.bc_danger_max_abs_dx)),
+        danger_max_abs_y=max(0, int(args.bc_danger_max_abs_y)),
+    )
     projectile_prior_min_time = max(0, int(args.dqn_projectile_prior_min_time_to_self))
     projectile_prior_urgent_max_time = max(
         projectile_prior_min_time,
@@ -4128,6 +4345,9 @@ def main() -> None:
         dqn_support_prior_config,
         dqn_valid_action_mask_config,
         dqn_valid_action_mask_auto,
+        bc_valid_action_mask_config,
+        bc_valid_action_mask_auto,
+        bc_inference_config,
         dqn_projectile_timing_prior_config,
         dqn_shoryuken_context_prior_config,
         dqn_ground_normal_context_prior_config,

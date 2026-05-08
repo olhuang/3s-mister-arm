@@ -15989,3 +15989,56 @@ Interpretation:
 - Phase 10B still needs probe-side `policy=bc` inference, valid-action masked
   softmax/top-k sampling, and danger-state deterministic overrides before this
   line can replace DQN in live play.
+
+## 2026-05-08: Phase 10B BC Actor Inference
+
+Milestone:
+- Phase 10B / live behavior-cloning actor path.
+
+Purpose:
+- Make the human-only event-weighted BC model usable by the live probe server
+  without forcing hard argmax behavior.
+- Keep the BC model format compatible with the existing DQN payload while
+  changing action selection to a stochastic imitation policy.
+
+Implementation:
+- `tools/rl_probe_server.py` now includes `bc` in `MODEL_POLICY_CHOICES`.
+- `ActorModelStore` accepts and republishes `policy=bc` models with the shared
+  `dqn` network payload (`actions`, `epsilon`, `fallback_policy`, `dqn`).
+- Added `BCInferenceConfig` and CLI flags:
+  - `--bc-valid-action-mask` (default `action-start-v1`)
+  - `--bc-temperature` (default `0.8`)
+  - `--bc-top-k` (default `3`)
+  - `--bc-deterministic-danger`
+  - `--bc-danger-max-time-to-self`
+  - `--bc-danger-max-abs-dx`
+  - `--bc-danger-max-abs-y`
+- BC inference reuses the trained network outputs as logits, filters invalid
+  actions through the selected valid-action mask, then samples from the top-k
+  valid actions using softmax temperature. `--bc-temperature 0` gives a
+  deterministic argmax debug path.
+- Optional deterministic danger override picks the highest-ranked
+  `guard-crouch` / `guard-stand` / `back` candidate for close grounded attack
+  threats or urgent incoming projectile rows.
+- Verbose probe logging now prints BC mask and eligibility diagnostics when
+  `--policy bc` is active.
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py`
+- Local first-5000-row sanity on
+  `model/bc-event-weighted-balanced-human-10b-v1/current.json` with
+  `logs/phase7a-event-journal-live-human-transitions.ndjson`:
+  - deterministic BC (`--bc-temperature 0`, `top_k=3`,
+    `action-start-v1` mask): `forward=3855`, `back=1144`,
+    `fireball-mp=1`.
+  - stochastic BC (`--bc-temperature 0.8`, `top_k=3`,
+    `action-start-v1` mask): `forward=2396`, `back=2119`,
+    `stand-lp=233`, `guard-crouch=214`, `fireball-mp=22`,
+    `fireball-lp=15`, `fireball-hp=1`.
+
+Interpretation:
+- Phase 10B removes the worst argmax stiffness from the BC model while keeping
+  the action-start legality guard.
+- Next gate is live MiSTer testing with `--policy bc`; tune
+  `--bc-temperature`, `--bc-top-k`, and optional
+  `--bc-deterministic-danger` based on observed behavior.

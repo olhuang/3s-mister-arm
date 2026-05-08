@@ -66,6 +66,8 @@ class ActorCriticSample:
     event_return: float = 0.0
     advantage: float = 0.0
     family: str = "other"
+    movement_bucket: str = ""
+    mask_phase: str = ""
     valid_action_indices: tuple[int, ...] = ()
 
 
@@ -77,6 +79,8 @@ class ActorCriticDatasetStats:
     skipped_reasons: collections.Counter[str] = field(default_factory=collections.Counter)
     action_counts: collections.Counter[str] = field(default_factory=collections.Counter)
     family_counts: collections.Counter[str] = field(default_factory=collections.Counter)
+    movement_bucket_counts: collections.Counter[str] = field(default_factory=collections.Counter)
+    mask_phase_counts: collections.Counter[str] = field(default_factory=collections.Counter)
     event_reward_rows: int = 0
     positive_reward_rows: int = 0
     negative_reward_rows: int = 0
@@ -105,6 +109,8 @@ class ActorCriticDatasetStats:
             "skipped_reasons": dict(sorted(self.skipped_reasons.items())),
             "action_counts": dict(sorted(self.action_counts.items())),
             "family_counts": dict(sorted(self.family_counts.items())),
+            "movement_bucket_counts": dict(sorted(self.movement_bucket_counts.items())),
+            "mask_phase_counts": dict(sorted(self.mask_phase_counts.items())),
             "event_reward_rows": self.event_reward_rows,
             "positive_reward_rows": self.positive_reward_rows,
             "negative_reward_rows": self.negative_reward_rows,
@@ -288,6 +294,18 @@ def action_family(action_name: str) -> str:
     return "other"
 
 
+def movement_bucket(action_name: str) -> str:
+    if action_name == "back":
+        return "move-back"
+    if action_name == "forward":
+        return "move-forward"
+    if action_name in ("guard-stand", "guard-crouch"):
+        return "move-guard"
+    if action_name in rl.JUMP_START_ACTION_NAMES:
+        return "move-jump-start"
+    return ""
+
+
 def skip_reason_for_unlabeled_row(row: dict[str, object]) -> str:
     r1 = int_field(row, "obs_self_routine_1")
     if r1 == 1:
@@ -333,6 +351,8 @@ def build_actor_critic_samples(
             reward_stats,
         )
         family = action_family(action_name)
+        sample_movement_bucket = movement_bucket(action_name)
+        mask_phase = rl.dqn_self_mask_phase(row)
         valid_action_indices = rl.dqn_valid_action_indices_for_row(row, actions, valid_action_mask, len(actions))
         if label_index not in valid_action_indices:
             stats.target_masked_rows += 1
@@ -347,12 +367,17 @@ def build_actor_critic_samples(
                 decision_id=int_field(row, "decision_id"),
                 event_reward=event_reward,
                 family=family,
+                movement_bucket=sample_movement_bucket,
+                mask_phase=mask_phase,
                 valid_action_indices=valid_action_indices,
             )
         )
         stats.labeled_rows += 1
         stats.action_counts[action_name] += 1
         stats.family_counts[family] += 1
+        if sample_movement_bucket:
+            stats.movement_bucket_counts[sample_movement_bucket] += 1
+        stats.mask_phase_counts[mask_phase] += 1
         if event_reward != 0.0:
             stats.event_reward_rows += 1
         if event_reward > 0.0:
@@ -494,12 +519,25 @@ def build_awac_sample_pools(samples: list[ActorCriticSample]) -> dict[str, list[
     for sample in samples:
         pools["all"].append(sample)
         pools[sample.family].append(sample)
+        pools[f"action-{sample.action_name}"].append(sample)
+        if sample.movement_bucket:
+            pools[sample.movement_bucket].append(sample)
+        if sample.mask_phase:
+            pools[f"phase-{sample.mask_phase}"].append(sample)
         if sample.event_reward > 0.0:
             pools["positive-event"].append(sample)
+            if sample.movement_bucket != "move-back":
+                pools["positive-event-nonback"].append(sample)
+            if sample.family != "movement-defense":
+                pools["positive-event-nonmovement"].append(sample)
         elif sample.event_reward < 0.0:
             pools["negative-event"].append(sample)
+            if sample.movement_bucket == "move-back":
+                pools["negative-event-back"].append(sample)
         if sample.advantage > 0.0:
             pools["positive-advantage"].append(sample)
+            if sample.movement_bucket != "move-back":
+                pools["positive-advantage-nonback"].append(sample)
         elif sample.advantage < 0.0:
             pools["negative-advantage"].append(sample)
     return pools
@@ -852,7 +890,10 @@ def main() -> None:
         help=(
             "Comma-separated pool ratios for --awac-sampling family-balanced-v1. "
             "Pools include movement-defense, projectile, normal, special, throw, "
-            "air-normal, positive-event, negative-event, positive-advantage, negative-advantage."
+            "air-normal, move-back, move-forward, move-guard, move-jump-start, "
+            "phase-<mask-phase>, action-<action-name>, positive-event, "
+            "positive-event-nonback, positive-event-nonmovement, negative-event, "
+            "positive-advantage, positive-advantage-nonback, negative-advantage."
         ),
     )
     parser.add_argument("--awac-log-interval", type=int, default=200, help="Offline AWAC progress print interval")

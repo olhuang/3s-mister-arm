@@ -16522,3 +16522,82 @@ Follow-up:
 - Phase 11C-3 should split movement-defense by state/mask phase and movement
   subaction (`back`, `forward`, `guard-*`, jump-start), then balance or
   regularize those subactions without removing movement competence.
+
+## 2026-05-08: Phase 11C-3 Movement Subaction Balance
+
+Milestone:
+- Phase 11C-3 / fix remaining movement-defense `back` collapse.
+
+Purpose:
+- The Phase 11C-2 family-balanced candidate proved that balancing broad action
+  families helps, but still left `back` as the dominant top action.
+- Split movement-defense and state/mask phase into finer AWAC pools so the
+  actor can preserve movement support without learning "always back" as the
+  default answer.
+
+Implementation:
+- Extended `ActorCriticSample` with:
+  - `movement_bucket`
+  - `mask_phase`
+- Added dataset diagnostics:
+  - `movement_bucket_counts`
+  - `mask_phase_counts`
+- Added AWAC pools:
+  - `move-back`
+  - `move-forward`
+  - `move-guard`
+  - `move-jump-start`
+  - `phase-<mask-phase>`
+  - `action-<action-name>`
+  - `positive-event-nonback`
+  - `positive-event-nonmovement`
+  - `positive-advantage-nonback`
+  - `negative-event-back`
+- `--awac-family-ratios` can now express recipes that avoid direct `move-back`
+  quota while still including forward, guard, and jump-start support.
+
+Validation:
+- `python3 -m py_compile tools/train_actor_critic.py tools/train_dqn_learner.py tools/rl_combat_event_training.py`
+- 20-step movement-balanced smoke:
+  - ratios:
+    `positive-event-nonback=0.25,normal=0.22,projectile=0.20,special=0.15,throw=0.05,move-forward=0.05,move-guard=0.05,move-jump-start=0.03`
+  - validation errors `0`;
+  - sampled pools approximately matched the recipe;
+  - eval top action `back=50.9%` after only 20 steps.
+- 300-step movement-balanced v1:
+  - `model/actor-critic-awac-movement-balanced-human-11c3-v1`
+  - same ratios as the 20-step smoke;
+  - validation errors `0`;
+  - final averages: actor loss `2.834417`, value loss `0.506205`,
+    entropy `0.002201`, advantage weight `1.272978`;
+  - top families: `normal=40.1%`, `projectile=25.8%`,
+    `movement-defense=24.2%`, `special=4.3%`, `throw=2.1%`;
+  - top actions: `stand-lp=38.3%`, `back=12.3%`,
+    `fireball-mp=10.4%`, `fireball-hp=8.5%`, `forward=8.3%`.
+- 300-step movement/action-balanced v2:
+  - `model/actor-critic-awac-movement-balanced-human-11c3-v2`
+  - ratios:
+    `positive-event-nonback=0.20,projectile=0.20,special=0.15,throw=0.08,action-stand-lp=0.04,action-stand-mp=0.04,action-stand-hp=0.04,action-crouch-mk=0.05,action-crouch-hk=0.03,move-forward=0.05,move-guard=0.05,move-jump-start=0.04,positive-advantage-nonback=0.03`
+  - validation errors `0`;
+  - final averages: actor loss `2.892214`, value loss `0.429904`,
+    entropy `0.002229`, advantage weight `1.271634`;
+  - top families: `projectile=37.2%`, `normal=25.9%`,
+    `movement-defense=24.3%`, `special=4.4%`, `throw=2.5%`;
+  - top actions: `fireball-mp=21.9%`, `stand-lp=15.3%`,
+    `back=14.6%`, `stand-mp=10.5%`, `fireball-hp=8.3%`,
+    `forward=7.5%`, `fireball-lp=6.9%`, `throw=2.5%`.
+
+Interpretation:
+- Phase 11C-3 solved the immediate `back` collapse locally. The best current
+  actor-critic candidate is `actor-critic-awac-movement-balanced-human-11c3-v2`.
+- v1 showed that removing `back` quota can simply move the collapse to
+  `stand-lp`; v2's action-level normal pools produce a much healthier local
+  distribution.
+- This is still only a local gate. It is now reasonable to implement
+  probe-side actor-critic inference for a live test, but not to call the model
+  promoted.
+
+Follow-up:
+- Phase 11D should add `--policy actor-critic` to `rl_probe_server.py` and
+  live-test `actor-critic-awac-movement-balanced-human-11c3-v2`.
+- The model directories are local artifacts and remain untracked.

@@ -16042,3 +16042,65 @@ Interpretation:
 - Next gate is live MiSTer testing with `--policy bc`; tune
   `--bc-temperature`, `--bc-top-k`, and optional
   `--bc-deterministic-danger` based on observed behavior.
+
+## 2026-05-08: Phase 10B Live Gate Failed, Phase 10C Strong Balance Candidate
+
+Milestone:
+- Phase 10B live validation and Phase 10C first repair candidate.
+
+Purpose:
+- Record the live result that `bc-event-weighted-balanced-human-10b-v1` is not
+  playable.
+- Try the smallest trainer-side repair before adding new BC margin losses.
+
+Live observation:
+- User reported the 10B BC actor was "completely unusable": it mostly did
+  short forward/back steps plus LP.
+- This matches the local 10B sanity distribution, where even stochastic
+  top-k sampling was still dominated by movement and light punches.
+- Conclusion: this is not mainly a `--bc-temperature` issue. It is the
+  one-step BC objective imitating high-volume row labels too strongly.
+
+Experiment:
+- Trained `model/bc-event-weighted-balanced-human-10c-v1` from the same
+  human-only paired logs:
+  - transitions:
+    `logs/phase7a-event-journal-live-human-transitions.ndjson`
+  - events:
+    `logs/phase7a-event-journal-live-human-events.ndjson`
+  - `--bc-event-weighting event-weighted-v1`
+  - `--bc-event-weight-positive-scale 1.0`
+  - `--bc-event-weight-negative-scale 1.0`
+  - `--bc-event-weight-min 0.10`
+  - `--bc-event-weight-max 8.0`
+  - `--bc-label-balance inverse-frequency`
+  - `--bc-label-balance-min 0.10`
+  - `--bc-label-balance-max 8.0`
+  - `--steps 3000`
+- Training stats:
+  - rows `29869`, labeled `23933`, skipped `attack-unknown=5936`.
+  - loss `2.316684`, avg loss `2.498310`.
+  - event validation `3951` rows, `missing_refs=0`, `errors=0`.
+  - event weighting `1054` weighted rows, avg event weight `1.012`.
+  - label-balance avg factor `0.857`; rare actions such as `crouch-hk`,
+    `stand-lk`, `stand-mk`, and `tatsu-*` clamped at `8.0`.
+
+Local sanity:
+- Compared against the first 5000 rows of the same human transition log with
+  `action-start-v1` valid-action mask.
+- Old 10B, `temperature=0.8`, `top_k=3`:
+  `forward=2396`, `back=2119`, `stand-lp=233`, `guard-crouch=214`,
+  with only tiny fireball presence.
+- New 10C-v1, `temperature=0.8`, `top_k=5`:
+  `back=1543`, `forward=1462`, `guard-crouch=1125`, `stand-hp=371`,
+  `stand-lp=157`, `shoryuken-hp=127`, `shoryuken-mp=59`, `throw=48`,
+  plus small fireball presence.
+
+Interpretation:
+- `10c-v1` is not proven good, but it is a better live candidate than 10B
+  because it no longer collapses to only forward/back/LP in local sampling.
+- If 10C-v1 is still too stiff or too defensive live, the next real code step
+  is a Phase 10C explicit objective: event-anchor/family margins that require
+  successful attack/projectile/throw labels to outrank generic movement, and
+  low/projectile defense labels to outrank bad defensive choices in matching
+  threat contexts.

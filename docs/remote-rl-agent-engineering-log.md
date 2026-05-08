@@ -16191,3 +16191,88 @@ Interpretation:
   the next objective should not be stronger class balancing; it should add
   event-return/AWR style sequence credit or direct action-family sampling in
   the live actor.
+
+## 2026-05-08: Phase 10D Event-Return Weighted BC
+
+Milestone:
+- Phase 10D / AWR-style weighted imitation.
+
+Purpose:
+- Move beyond one-row BC event weighting by giving credit or blame to labeled
+  actions based on a short future window of combat-event outcomes in the same
+  run/episode.
+- Test whether event-return advantage can reduce the stiff movement/LP bias
+  that survived 10B and 10C live gates.
+
+Implementation:
+- Added opt-in BC-only trainer flags:
+  - `--bc-advantage-weighting off|event-return-v1`
+  - `--bc-advantage-gamma`
+  - `--bc-advantage-horizon`
+  - `--bc-advantage-temperature`
+  - `--bc-advantage-weight-min`
+  - `--bc-advantage-weight-max`
+  - `--bc-advantage-baseline mean|zero`
+- `event-return-v1` requires `--training-mode bc`,
+  `--combat-event-training-mode validate`, paired `--combat-event-logs`, and
+  `--bc-event-weighting event-weighted-v1`.
+- The BC dataset now stores the raw event reward adjustment plus
+  run/episode/decision ids for each labeled sample.
+- After dataset construction, the trainer groups samples by `(run_id,
+  episode_id)`, computes a truncated discounted return over the next N labeled
+  samples, subtracts a mean or zero baseline, and applies
+  `exp(advantage / temperature)` as a multiplicative sample weight.
+- Added metadata/stdout diagnostics for return rows, positive/negative return
+  rows, baseline, average advantage, average weight, clamps, and per-label
+  advantage weights.
+
+Validation:
+- `python3 -m py_compile tools/train_dqn_learner.py tools/rl_combat_event_training.py`
+- 10-step smoke with event-return weighting, event weighting, label balance,
+  and family margin:
+  - event validation passed with `missing_refs=0`, `errors=0`.
+  - advantage weighting rows `23933`, avg weight `1.078`.
+  - family margin sampled `10` rows with `10` violations.
+- Full candidate:
+  `model/bc-event-return-family-margin-human-10d-v1`
+  trained from:
+  - `logs/phase7a-event-journal-live-human-transitions.ndjson`
+  - `logs/phase7a-event-journal-live-human-events.ndjson`
+  with:
+  - `--bc-event-weighting event-weighted-v1`
+  - `--bc-advantage-weighting event-return-v1`
+  - `--bc-advantage-horizon 8`
+  - `--bc-advantage-gamma 0.95`
+  - `--bc-advantage-temperature 3.0`
+  - `--bc-advantage-weight-min 0.40`
+  - `--bc-advantage-weight-max 2.5`
+  - `--bc-family-margin positive-event-v1`
+  - `--bc-label-balance inverse-frequency`
+- Full train stats:
+  - rows `29869`, labeled `23933`.
+  - event validation `3951` rows, `missing_refs=0`, `errors=0`.
+  - event weighting avg weight `1.012`.
+  - advantage weighting rows `23933`, positive returns `4366`,
+    negative returns `3751`, neutral returns `15816`, avg return `0.028329`,
+    baseline `0.028329`, avg weight `1.024`.
+  - family margin eligible `233`, sampled `3716`, violations `3716`.
+
+Local sanity:
+- First 5000 rows, `action-start-v1` mask.
+- `10c-v2`, `temperature=0.8`, `top_k=8`:
+  `back=1426`, `forward=1402`, `guard-crouch=1011`,
+  `crouch-mk=232`, `stand-hp=196`, `guard-stand=184`,
+  `stand-lp=148`, `throw=146`, `shoryuken-lp=92`,
+  `shoryuken-hp=90`, `shoryuken-mp=28`.
+- `10d-v1`, `temperature=0.8`, `top_k=8`:
+  `back=1494`, `forward=1372`, `guard-crouch=977`,
+  `stand-hp=303`, `crouch-mk=221`, `stand-lp=159`,
+  `shoryuken-mp=149`, `throw=109`, `shoryuken-lp=100`.
+
+Interpretation:
+- Event-return weighting is implemented and safe, but the local distribution is
+  only a moderate change, not a breakthrough. It lifts `shoryuken-mp` and
+  `stand-hp`, while movement remains high.
+- If live behavior is still too stiff, the next direction should likely be
+  actor-side action-family sampling or a different policy architecture rather
+  than more scalar BC weighting.

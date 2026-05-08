@@ -363,6 +363,7 @@ DQN_TARGET_MODES = ("standard", "double")
 BC_EVENT_WEIGHTING_MODES = ("off", "event-weighted-v1")
 BC_LABEL_BALANCE_MODES = ("off", "inverse-sqrt", "inverse-frequency")
 BC_FAMILY_MARGIN_MODES = ("off", "positive-event-v1")
+BC_ADVANTAGE_WEIGHTING_MODES = ("off", "event-return-v1")
 
 
 @dataclass(frozen=True)
@@ -545,6 +546,80 @@ class BCFamilyMarginStats:
             "avg_loss": self.avg_loss,
             "target_action_counts": dict(sorted(self.target_action_counts.items())),
             "negative_action_counts": dict(sorted(self.negative_action_counts.items())),
+        }
+
+
+@dataclass(frozen=True)
+class BCAdvantageWeightConfig:
+    mode: str = "off"
+    gamma: float = 0.97
+    horizon: int = 12
+    temperature: float = 2.0
+    min_weight: float = 0.25
+    max_weight: float = 4.0
+    baseline: str = "mean"
+
+    @property
+    def enabled(self) -> bool:
+        return self.mode != "off"
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "mode": self.mode,
+            "enabled": self.enabled,
+            "gamma": self.gamma,
+            "horizon": self.horizon,
+            "temperature": self.temperature,
+            "min_weight": self.min_weight,
+            "max_weight": self.max_weight,
+            "baseline": self.baseline,
+        }
+
+
+@dataclass
+class BCAdvantageWeightStats:
+    rows: int = 0
+    positive_return_rows: int = 0
+    negative_return_rows: int = 0
+    neutral_return_rows: int = 0
+    clamped_min_rows: int = 0
+    clamped_max_rows: int = 0
+    return_sum: float = 0.0
+    baseline_value: float = 0.0
+    advantage_sum: float = 0.0
+    weight_sum: float = 0.0
+    label_weight_sum: dict[str, float] = field(default_factory=dict)
+    label_weight_count: dict[str, int] = field(default_factory=dict)
+
+    @property
+    def avg_return(self) -> float:
+        return self.return_sum / max(1, self.rows)
+
+    @property
+    def avg_advantage(self) -> float:
+        return self.advantage_sum / max(1, self.rows)
+
+    @property
+    def avg_weight(self) -> float:
+        return self.weight_sum / max(1, self.rows)
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "rows": self.rows,
+            "positive_return_rows": self.positive_return_rows,
+            "negative_return_rows": self.negative_return_rows,
+            "neutral_return_rows": self.neutral_return_rows,
+            "clamped_min_rows": self.clamped_min_rows,
+            "clamped_max_rows": self.clamped_max_rows,
+            "return_sum": self.return_sum,
+            "avg_return": self.avg_return,
+            "baseline_value": self.baseline_value,
+            "advantage_sum": self.advantage_sum,
+            "avg_advantage": self.avg_advantage,
+            "weight_sum": self.weight_sum,
+            "avg_weight": self.avg_weight,
+            "label_weight_sum": dict(sorted(self.label_weight_sum.items())),
+            "label_weight_count": dict(sorted(self.label_weight_count.items())),
         }
 
 
@@ -2398,6 +2473,28 @@ def bc_family_margin_config_from_args(args: argparse.Namespace) -> BCFamilyMargi
             str(args.bc_family_margin_negative_actions),
             "--bc-family-margin-negative-actions",
         ),
+    )
+
+
+def bc_advantage_weight_config_from_args(args: argparse.Namespace) -> BCAdvantageWeightConfig:
+    mode = str(args.bc_advantage_weighting)
+    if mode not in BC_ADVANTAGE_WEIGHTING_MODES:
+        raise SystemExit(
+            f"unknown --bc-advantage-weighting {mode!r}; expected one of {','.join(BC_ADVANTAGE_WEIGHTING_MODES)}"
+        )
+    baseline = str(args.bc_advantage_baseline)
+    if baseline not in ("mean", "zero"):
+        raise SystemExit("--bc-advantage-baseline must be mean or zero")
+    min_weight = max(0.0, float(args.bc_advantage_weight_min))
+    max_weight = max(min_weight, float(args.bc_advantage_weight_max))
+    return BCAdvantageWeightConfig(
+        mode=mode,
+        gamma=max(0.0, min(1.0, float(args.bc_advantage_gamma))),
+        horizon=max(0, int(args.bc_advantage_horizon)),
+        temperature=max(1e-6, float(args.bc_advantage_temperature)),
+        min_weight=min_weight,
+        max_weight=max_weight,
+        baseline=baseline,
     )
 
 
@@ -5436,6 +5533,11 @@ class BCDatasetSample:
     sample_weight: float
     raw_adjustment: float
     family_margin_eligible: bool
+    run_id: int
+    episode_id: int
+    decision_id: int
+    event_return: float = 0.0
+    advantage_weight: float = 1.0
 
 
 def bc_family_margin_eligible(action_name: str, raw_adjustment: float, config: BCFamilyMarginConfig) -> bool:
@@ -5482,6 +5584,59 @@ def apply_bc_family_margin_loss(
     return loss
 
 
+def apply_bc_advantage_weights(
+    dataset: list[BCDatasetSample],
+    actions: tuple[str, ...],
+    config: BCAdvantageWeightConfig,
+) -> BCAdvantageWeightStats:
+    stats = BCAdvantageWeightStats()
+    if not config.enabled or not dataset:
+        return stats
+
+    indices_by_episode: dict[tuple[int, int], list[int]] = collections.defaultdict(list)
+    for index, sample in enumerate(dataset):
+        indices_by_episode[(sample.run_id, sample.episode_id)].append(index)
+
+    returns = [0.0 for _ in dataset]
+    for indices in indices_by_episode.values():
+        for local_index, sample_index in enumerate(indices):
+            event_return = 0.0
+            discount = 1.0
+            max_local_index = min(len(indices), local_index + config.horizon + 1)
+            for future_local_index in range(local_index, max_local_index):
+                future_sample = dataset[indices[future_local_index]]
+                event_return += discount * future_sample.raw_adjustment
+                discount *= config.gamma
+            returns[sample_index] = event_return
+            dataset[sample_index].event_return = event_return
+
+    stats.rows = len(dataset)
+    stats.return_sum = sum(returns)
+    stats.positive_return_rows = sum(1 for value in returns if value > 0.0)
+    stats.negative_return_rows = sum(1 for value in returns if value < 0.0)
+    stats.neutral_return_rows = stats.rows - stats.positive_return_rows - stats.negative_return_rows
+    baseline = (stats.return_sum / max(1, stats.rows)) if config.baseline == "mean" else 0.0
+    stats.baseline_value = baseline
+
+    for sample, event_return in zip(dataset, returns):
+        advantage = event_return - baseline
+        raw_weight = math.exp(max(-20.0, min(20.0, advantage / config.temperature)))
+        weight = max(config.min_weight, min(config.max_weight, raw_weight))
+        sample.sample_weight *= weight
+        sample.advantage_weight = weight
+        stats.advantage_sum += advantage
+        stats.weight_sum += weight
+        if weight <= config.min_weight and raw_weight < config.min_weight:
+            stats.clamped_min_rows += 1
+        if weight >= config.max_weight and raw_weight > config.max_weight:
+            stats.clamped_max_rows += 1
+        action_name = actions[sample.label_index] if 0 <= sample.label_index < len(actions) else "unknown"
+        stats.label_weight_sum[action_name] = stats.label_weight_sum.get(action_name, 0.0) + weight
+        stats.label_weight_count[action_name] = stats.label_weight_count.get(action_name, 0) + 1
+
+    return stats
+
+
 def train_bc(
     rows: list[dict[str, object]],
     actions: tuple[str, ...],
@@ -5497,6 +5652,7 @@ def train_bc(
     bc_event_weight_config: BCEventWeightConfig = BCEventWeightConfig(),
     bc_label_balance_config: BCLabelBalanceConfig = BCLabelBalanceConfig(),
     bc_family_margin_config: BCFamilyMarginConfig = BCFamilyMarginConfig(),
+    bc_advantage_weight_config: BCAdvantageWeightConfig = BCAdvantageWeightConfig(),
 ) -> tuple[
     list[dict[str, object]],
     dict[str, object],
@@ -5506,6 +5662,7 @@ def train_bc(
     combat_events.CombatEventRewardStats,
     BCLabelBalanceStats,
     BCFamilyMarginStats,
+    BCAdvantageWeightStats,
 ]:
     """Train a Behavior Cloning (supervised) model from labeled transition rows."""
     rng = random.Random(seed)
@@ -5523,6 +5680,7 @@ def train_bc(
     )
     bc_label_balance_stats = BCLabelBalanceStats()
     bc_family_margin_stats = BCFamilyMarginStats()
+    bc_advantage_weight_stats = BCAdvantageWeightStats()
 
     # Populate per-instance segment KW map from engine outcome rows before labeling
     global _BC_SEGMENT_KW_MAP
@@ -5574,12 +5732,21 @@ def train_bc(
                 sample_weight=sample_weight,
                 raw_adjustment=raw_adjustment,
                 family_margin_eligible=family_margin_eligible,
+                run_id=int_row_field(row, "run_id"),
+                episode_id=int_row_field(row, "episode_id"),
+                decision_id=int_row_field(row, "decision_id"),
             )
         )
         label_counts[action_name] += 1
 
     if not dataset:
         raise SystemExit("BC training: no labeled rows found")
+    if bc_advantage_weight_config.enabled:
+        bc_advantage_weight_stats = apply_bc_advantage_weights(
+            dataset,
+            actions,
+            bc_advantage_weight_config,
+        )
     if bc_label_balance_config.enabled:
         nonzero_counts = [count for count in label_counts.values() if count > 0]
         mean_count = sum(nonzero_counts) / max(1, len(nonzero_counts))
@@ -5600,6 +5767,11 @@ def train_bc(
                 sample_weight=sample.sample_weight * label_factors.get(actions[sample.label_index], 1.0),
                 raw_adjustment=sample.raw_adjustment,
                 family_margin_eligible=sample.family_margin_eligible,
+                run_id=sample.run_id,
+                episode_id=sample.episode_id,
+                decision_id=sample.decision_id,
+                event_return=sample.event_return,
+                advantage_weight=sample.advantage_weight,
             )
             for sample in dataset
         ]
@@ -5691,6 +5863,8 @@ def train_bc(
         "label_balance_stats": bc_label_balance_stats.as_metadata(),
         "family_margin": bc_family_margin_config.as_metadata(),
         "family_margin_stats": bc_family_margin_stats.as_metadata(),
+        "advantage_weighting": bc_advantage_weight_config.as_metadata(),
+        "advantage_weight_stats": bc_advantage_weight_stats.as_metadata(),
         "combined_sample_weight_sum": sum(sample.sample_weight for sample in dataset),
         "combined_avg_sample_weight": (
             sum(sample.sample_weight for sample in dataset) / max(1, len(dataset))
@@ -5707,6 +5881,7 @@ def train_bc(
         bc_event_reward_stats,
         bc_label_balance_stats,
         bc_family_margin_stats,
+        bc_advantage_weight_stats,
     )
 
 
@@ -7833,6 +8008,51 @@ def main() -> None:
         help="Comma-separated actions treated as generic negatives for --bc-family-margin positive-event-v1.",
     )
     parser.add_argument(
+        "--bc-advantage-weighting",
+        choices=BC_ADVANTAGE_WEIGHTING_MODES,
+        default="off",
+        help=(
+            "Opt-in Phase 10D AWR-style BC weighting. event-return-v1 builds a discounted return from "
+            "future combat-event reward adjustments and turns the advantage into an extra CE sample weight."
+        ),
+    )
+    parser.add_argument(
+        "--bc-advantage-gamma",
+        type=float,
+        default=0.97,
+        help="Discount factor for --bc-advantage-weighting event-return-v1.",
+    )
+    parser.add_argument(
+        "--bc-advantage-horizon",
+        type=int,
+        default=12,
+        help="Maximum future labeled samples included in the BC event-return advantage window.",
+    )
+    parser.add_argument(
+        "--bc-advantage-temperature",
+        type=float,
+        default=2.0,
+        help="Temperature for exp(advantage / temperature) in BC advantage weighting.",
+    )
+    parser.add_argument(
+        "--bc-advantage-weight-min",
+        type=float,
+        default=0.25,
+        help="Minimum multiplicative sample weight from BC advantage weighting.",
+    )
+    parser.add_argument(
+        "--bc-advantage-weight-max",
+        type=float,
+        default=4.0,
+        help="Maximum multiplicative sample weight from BC advantage weighting.",
+    )
+    parser.add_argument(
+        "--bc-advantage-baseline",
+        choices=("mean", "zero"),
+        default="mean",
+        help="Baseline used to convert event return to BC advantage.",
+    )
+    parser.add_argument(
         "--combat-event-unlabeled-movement-policy",
         choices=combat_events.COMBAT_EVENT_UNLABELED_MOVEMENT_POLICIES,
         default="keep",
@@ -9147,6 +9367,7 @@ def main() -> None:
     bc_event_weight_config = bc_event_weight_config_from_args(args)
     bc_label_balance_config = bc_label_balance_config_from_args(args)
     bc_family_margin_config = bc_family_margin_config_from_args(args)
+    bc_advantage_weight_config = bc_advantage_weight_config_from_args(args)
     combat_event_unlabeled_movement_filter_config = (
         combat_event_unlabeled_movement_filter_config_from_args(args)
     )
@@ -9171,6 +9392,15 @@ def main() -> None:
             raise SystemExit("--bc-family-margin requires --combat-event-logs")
         if not bc_event_weight_config.enabled:
             raise SystemExit("--bc-family-margin currently requires --bc-event-weighting event-weighted-v1")
+    if bc_advantage_weight_config.enabled:
+        if str(args.training_mode) != "bc":
+            raise SystemExit("--bc-advantage-weighting is only supported with --training-mode bc")
+        if combat_event_training_mode != "validate":
+            raise SystemExit("--bc-advantage-weighting requires --combat-event-training-mode validate")
+        if not combat_event_log_paths:
+            raise SystemExit("--bc-advantage-weighting requires --combat-event-logs")
+        if not bc_event_weight_config.enabled:
+            raise SystemExit("--bc-advantage-weighting currently requires --bc-event-weighting event-weighted-v1")
     if combat_event_unlabeled_movement_filter_config.enabled and combat_event_training_mode != "reward-shaping":
         raise SystemExit(
             "--combat-event-unlabeled-movement-policy requires "
@@ -9221,6 +9451,7 @@ def main() -> None:
             bc_event_reward_stats,
             bc_label_balance_stats,
             bc_family_margin_stats,
+            bc_advantage_weight_stats,
         ) = train_bc(
             rows,
             actions,
@@ -9236,6 +9467,7 @@ def main() -> None:
             bc_event_weight_config,
             bc_label_balance_config,
             bc_family_margin_config,
+            bc_advantage_weight_config,
         )
         replay_source_mix_summary = dict(replay_source_mix_stats.as_metadata()) if hasattr(replay_source_mix_stats, "as_metadata") else {}
         bc_metadata: dict[str, object] = {
@@ -9256,6 +9488,8 @@ def main() -> None:
             "bc_label_balance_stats": bc_label_balance_stats.as_metadata(),
             "bc_family_margin_config": bc_family_margin_config.as_metadata(),
             "bc_family_margin_stats": bc_family_margin_stats.as_metadata(),
+            "bc_advantage_weighting_config": bc_advantage_weight_config.as_metadata(),
+            "bc_advantage_weight_stats": bc_advantage_weight_stats.as_metadata(),
             **bc_train_stats,
         }
         if combat_event_validation is not None:
@@ -9294,6 +9528,8 @@ def main() -> None:
             f"label_balance_avg={bc_label_balance_stats.avg_factor:.3f} "
             f"family_margin={bc_family_margin_config.mode} "
             f"family_margin_eligible={bc_family_margin_stats.eligible_rows} "
+            f"advantage_weighting={bc_advantage_weight_config.mode} "
+            f"advantage_avg_weight={bc_advantage_weight_stats.avg_weight:.3f} "
             f"skipped={dict(bc_skipped)} "
             f"top_labels=({label_parts[:300]})",
             flush=True,
@@ -9328,6 +9564,30 @@ def main() -> None:
                 f"rows:{bc_label_balance_stats.balanced_rows} "
                 f"avg_factor:{bc_label_balance_stats.avg_factor:.3f} "
                 f"top_factors:{top_factors}",
+                flush=True,
+            )
+        if bc_advantage_weight_config.enabled:
+            top_advantage_weights = ",".join(
+                f"{action}:{weight:.2f}/{bc_advantage_weight_stats.label_weight_count.get(action, 0)}"
+                for action, weight in sorted(
+                    bc_advantage_weight_stats.label_weight_sum.items(),
+                    key=lambda item: (-item[1], item[0]),
+                )[: args.diagnostic_top_n]
+            )
+            print(
+                "BC diagnostics advantage_weight="
+                f"mode:{bc_advantage_weight_config.mode} "
+                f"rows:{bc_advantage_weight_stats.rows} "
+                f"pos:{bc_advantage_weight_stats.positive_return_rows} "
+                f"neg:{bc_advantage_weight_stats.negative_return_rows} "
+                f"neutral:{bc_advantage_weight_stats.neutral_return_rows} "
+                f"avg_return:{bc_advantage_weight_stats.avg_return:.6f} "
+                f"baseline:{bc_advantage_weight_stats.baseline_value:.6f} "
+                f"avg_adv:{bc_advantage_weight_stats.avg_advantage:.6f} "
+                f"avg_weight:{bc_advantage_weight_stats.avg_weight:.3f} "
+                f"clamp_min:{bc_advantage_weight_stats.clamped_min_rows} "
+                f"clamp_max:{bc_advantage_weight_stats.clamped_max_rows} "
+                f"top_weights:{top_advantage_weights}",
                 flush=True,
             )
         if bc_family_margin_config.enabled:

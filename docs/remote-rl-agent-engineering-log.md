@@ -16334,3 +16334,61 @@ Follow-up:
   returns, entropy regularization, and action-mask-aware diagnostics.
 - Phase 11D should add probe-side `--policy actor-critic` inference only after
   11C local action-family stats are better than Phase 10C/10D.
+
+## 2026-05-08: Phase 11C Offline AWAC Trainer
+
+Milestone:
+- Phase 11C / offline actor-critic training.
+
+Purpose:
+- Turn the Phase 11A/11B actor-critic artifact and event-return dataset into
+  an actual trained actor/value model before attempting probe-side live
+  inference.
+- Keep PPO out of this step; the immediate goal is a conservative offline
+  AWAC/AWR-style update that can be inspected locally.
+
+Implementation:
+- Extended `tools/train_actor_critic.py` with
+  `--training-mode validate|offline-awac`.
+- Added AWAC config flags:
+  - `--awac-steps`
+  - `--awac-batch-size`
+  - `--awac-actor-lr`
+  - `--awac-value-lr`
+  - `--awac-advantage-temperature`
+  - `--awac-weight-min`
+  - `--awac-weight-max`
+  - `--awac-use-negative-advantages`
+  - `--awac-entropy`
+  - `--awac-value-loss-weight`
+  - `--awac-log-interval`
+  - `--valid-action-mask`
+- The actor loss is masked cross entropy over the demonstrated action, scaled
+  by clipped `exp(advantage / temperature)`. By default, non-positive
+  advantages stay at neutral imitation weight instead of becoming anti-BC.
+- The value head regresses the 11B event return target.
+- The actor softmax and entropy term are valid-action-mask aware; if a label
+  is unexpectedly masked out, the target is added back to the mask and counted
+  as a diagnostic.
+- Published artifacts now store the trained `actor_layers` and `value_layers`
+  when `offline-awac` is enabled, with `algorithm_version=offline-awac-v1`.
+
+Validation:
+- `python3 -m py_compile tools/train_actor_critic.py`
+- 20-step smoke:
+  - `python3 tools/train_actor_critic.py --training-mode offline-awac --transitions logs/phase7a-event-journal-live-human-transitions.ndjson --combat-event-logs logs/phase7a-event-journal-live-human-events.ndjson --output-dir /tmp/rl-actor-critic-11c-smoke --summary-path /tmp/rl-actor-critic-11c-smoke/summary.json --awac-steps 20 --awac-batch-size 64 --awac-log-interval 10 --diagnostic-top-n 8`
+  - combat-event validation errors `0`;
+  - transitions `29869`, labeled `23933`, skipped `5936`;
+  - event reward rows `1054`, reward sum `92.330000`;
+  - final printed averages: actor loss `2.823221`, value loss `0.641490`,
+    entropy `0.002360`, average advantage weight `1.165571`;
+  - artifact check confirmed `policy=actor-critic`,
+    `algorithm_version=offline-awac-v1`, `training_mode=offline-awac`,
+    AWAC steps `20`, updated rows `23933`, fatal errors `[]`.
+
+Interpretation:
+- Phase 11C is now a real offline AWAC trainer, but only smoke-trained so far.
+  It is not yet a live candidate.
+- Next useful step is a longer local 11C train on the human paired log, followed
+  by action-family diagnostics. Probe-side `--policy actor-critic` should wait
+  until the local distribution is clearly better than the Phase 10 BC models.

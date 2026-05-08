@@ -28,6 +28,7 @@ import train_dqn_learner as dqn
 
 ACTOR_CRITIC_SCHEMA_VERSION = 1
 ACTOR_CRITIC_ALGORITHM_VERSION = "offline-awac-bootstrap-v1"
+ACTOR_CRITIC_AWAC_ALGORITHM_VERSION = "offline-awac-v1"
 
 
 @dataclass(frozen=True)
@@ -60,6 +61,7 @@ class ActorCriticSample:
     event_return: float = 0.0
     advantage: float = 0.0
     family: str = "other"
+    valid_action_indices: tuple[int, ...] = ()
 
 
 @dataclass
@@ -88,6 +90,7 @@ class ActorCriticDatasetStats:
     max_advantage: float = 0.0
     min_advantage: float = 0.0
     episodes: int = 0
+    target_masked_rows: int = 0
 
     def as_metadata(self) -> dict[str, object]:
         return {
@@ -115,6 +118,78 @@ class ActorCriticDatasetStats:
             "max_advantage": self.max_advantage,
             "min_advantage": self.min_advantage,
             "episodes": self.episodes,
+            "target_masked_rows": self.target_masked_rows,
+        }
+
+
+@dataclass(frozen=True)
+class OfflineAwacConfig:
+    enabled: bool = False
+    steps: int = 1000
+    batch_size: int = 128
+    actor_learning_rate: float = 0.0005
+    value_learning_rate: float = 0.0005
+    advantage_temperature: float = 2.0
+    advantage_weight_min: float = 0.2
+    advantage_weight_max: float = 5.0
+    positive_advantage_only: bool = True
+    entropy_reg_weight: float = 0.001
+    value_loss_weight: float = 1.0
+    valid_action_mask: str = "action-start-v1"
+    log_interval: int = 200
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "enabled": self.enabled,
+            "steps": self.steps,
+            "batch_size": self.batch_size,
+            "actor_learning_rate": self.actor_learning_rate,
+            "value_learning_rate": self.value_learning_rate,
+            "advantage_temperature": self.advantage_temperature,
+            "advantage_weight_min": self.advantage_weight_min,
+            "advantage_weight_max": self.advantage_weight_max,
+            "positive_advantage_only": self.positive_advantage_only,
+            "entropy_reg_weight": self.entropy_reg_weight,
+            "value_loss_weight": self.value_loss_weight,
+            "valid_action_mask": self.valid_action_mask,
+            "log_interval": self.log_interval,
+        }
+
+
+@dataclass
+class OfflineAwacStats:
+    steps: int = 0
+    sampled_rows: int = 0
+    target_masked_rows: int = 0
+    positive_advantage_samples: int = 0
+    nonpositive_advantage_samples: int = 0
+    clamped_min_samples: int = 0
+    clamped_max_samples: int = 0
+    actor_loss_last: float = 0.0
+    actor_loss_avg: float = 0.0
+    value_loss_last: float = 0.0
+    value_loss_avg: float = 0.0
+    entropy_bonus_last: float = 0.0
+    entropy_bonus_avg: float = 0.0
+    advantage_weight_sum: float = 0.0
+
+    def as_metadata(self) -> dict[str, object]:
+        avg_weight = self.advantage_weight_sum / max(1, self.sampled_rows)
+        return {
+            "steps": self.steps,
+            "sampled_rows": self.sampled_rows,
+            "target_masked_rows": self.target_masked_rows,
+            "positive_advantage_samples": self.positive_advantage_samples,
+            "nonpositive_advantage_samples": self.nonpositive_advantage_samples,
+            "clamped_min_samples": self.clamped_min_samples,
+            "clamped_max_samples": self.clamped_max_samples,
+            "actor_loss_last": self.actor_loss_last,
+            "actor_loss_avg": self.actor_loss_avg,
+            "value_loss_last": self.value_loss_last,
+            "value_loss_avg": self.value_loss_avg,
+            "entropy_bonus_last": self.entropy_bonus_last,
+            "entropy_bonus_avg": self.entropy_bonus_avg,
+            "advantage_weight_avg": avg_weight,
         }
 
 
@@ -161,6 +236,7 @@ def build_actor_critic_samples(
     actions: tuple[str, ...],
     event_validation: combat_events.CombatEventTrainingValidation,
     config: ActorCriticReturnConfig,
+    valid_action_mask: rl.DQNValidActionMaskConfig,
 ) -> tuple[list[ActorCriticSample], ActorCriticDatasetStats, combat_events.CombatEventRewardStats]:
     stats = ActorCriticDatasetStats(transition_rows=len(rows))
     reward_stats = combat_events.CombatEventRewardStats()
@@ -191,6 +267,10 @@ def build_actor_critic_samples(
             reward_stats,
         )
         family = action_family(action_name)
+        valid_action_indices = rl.dqn_valid_action_indices_for_row(row, actions, valid_action_mask, len(actions))
+        if label_index not in valid_action_indices:
+            stats.target_masked_rows += 1
+            valid_action_indices = tuple(sorted(set(valid_action_indices) | {label_index}))
         samples.append(
             ActorCriticSample(
                 features=rl.dqn_feature_vector(row),
@@ -201,6 +281,7 @@ def build_actor_critic_samples(
                 decision_id=int_field(row, "decision_id"),
                 event_reward=event_reward,
                 family=family,
+                valid_action_indices=valid_action_indices,
             )
         )
         stats.labeled_rows += 1
@@ -280,6 +361,156 @@ def apply_event_returns(
     stats.min_advantage = min(sample.advantage for sample in samples)
 
 
+def awac_sample_weight(sample: ActorCriticSample, config: OfflineAwacConfig, stats: OfflineAwacStats) -> float:
+    advantage = sample.advantage
+    if advantage > 0.0:
+        stats.positive_advantage_samples += 1
+    else:
+        stats.nonpositive_advantage_samples += 1
+        if config.positive_advantage_only:
+            advantage = 0.0
+    raw_weight = math.exp(max(-20.0, min(20.0, advantage / max(1e-6, config.advantage_temperature))))
+    weight = max(config.advantage_weight_min, min(config.advantage_weight_max, raw_weight))
+    if weight <= config.advantage_weight_min and raw_weight < config.advantage_weight_min:
+        stats.clamped_min_samples += 1
+    if weight >= config.advantage_weight_max and raw_weight > config.advantage_weight_max:
+        stats.clamped_max_samples += 1
+    stats.advantage_weight_sum += weight
+    return weight
+
+
+def masked_policy_grad(
+    logits: list[float],
+    sample: ActorCriticSample,
+    weight: float,
+) -> tuple[float, list[float]]:
+    if not logits:
+        return 0.0, []
+    valid_indices = tuple(index for index in sample.valid_action_indices if 0 <= index < len(logits))
+    if sample.action_index not in valid_indices:
+        valid_indices = tuple(sorted(set(valid_indices) | {sample.action_index}))
+    if not valid_indices:
+        valid_indices = tuple(range(len(logits)))
+    max_logit = max(logits[index] for index in valid_indices)
+    exp_values = {index: math.exp(logits[index] - max_logit) for index in valid_indices}
+    sum_exp = sum(exp_values.values())
+    probs = {index: value / max(sum_exp, 1e-15) for index, value in exp_values.items()}
+    target_prob = max(probs.get(sample.action_index, 0.0), 1e-15)
+    loss = -math.log(target_prob) * weight
+    output_grad = [0.0 for _ in logits]
+    for index, prob in probs.items():
+        output_grad[index] = prob * weight
+    if 0 <= sample.action_index < len(output_grad):
+        output_grad[sample.action_index] -= weight
+    return loss, output_grad
+
+
+def masked_entropy_grad(logits: list[float], valid_indices: tuple[int, ...], weight: float) -> tuple[float, float, list[float]]:
+    if weight <= 0.0 or not logits:
+        return 0.0, 0.0, [0.0 for _ in logits]
+    indices = tuple(index for index in valid_indices if 0 <= index < len(logits)) or tuple(range(len(logits)))
+    max_logit = max(logits[index] for index in indices)
+    exp_values = {index: math.exp(logits[index] - max_logit) for index in indices}
+    sum_exp = sum(exp_values.values())
+    if sum_exp <= 0.0:
+        return 0.0, 0.0, [0.0 for _ in logits]
+    probs = {index: value / sum_exp for index, value in exp_values.items()}
+    entropy = -sum(prob * math.log(max(prob, 1e-15)) for prob in probs.values())
+    grad = [0.0 for _ in logits]
+    for index, prob in probs.items():
+        grad[index] = weight * prob * (math.log(max(prob, 1e-15)) + entropy)
+    bonus = weight * entropy
+    return -bonus, bonus, grad
+
+
+def train_offline_awac(
+    samples: list[ActorCriticSample],
+    actions: tuple[str, ...],
+    hidden_sizes: list[int],
+    seed: int,
+    config: OfflineAwacConfig,
+) -> tuple[list[dict[str, object]], list[dict[str, object]], OfflineAwacStats]:
+    if not samples:
+        raise SystemExit("offline AWAC training: no labeled samples found")
+    rng = random.Random(seed)
+    input_dim = len(rl.DQN_FEATURE_NAMES)
+    actor_layers = dqn.init_network(input_dim, hidden_sizes, len(actions), rng)
+    value_layers = dqn.init_network(input_dim, hidden_sizes, 1, rng)
+    actor_grads = dqn.zero_grads(actor_layers)
+    value_grads = dqn.zero_grads(value_layers)
+    stats = OfflineAwacStats()
+
+    for step in range(1, config.steps + 1):
+        batch = rng.choices(samples, k=min(config.batch_size, len(samples)))
+        actor_loss = 0.0
+        value_loss = 0.0
+        entropy_bonus_total = 0.0
+        for sample in batch:
+            weight = awac_sample_weight(sample, config, stats)
+            logits, actor_activations, actor_pre_activations = dqn.forward(actor_layers, sample.features)
+            policy_loss, actor_output_grad = masked_policy_grad(logits, sample, weight)
+            entropy_loss, entropy_bonus, entropy_output_grad = masked_entropy_grad(
+                logits,
+                sample.valid_action_indices,
+                config.entropy_reg_weight,
+            )
+            for index, grad_value in enumerate(entropy_output_grad):
+                actor_output_grad[index] += grad_value
+            dqn.add_backward_grads(actor_layers, actor_grads, actor_activations, actor_pre_activations, actor_output_grad)
+            actor_loss += policy_loss + entropy_loss
+            entropy_bonus_total += entropy_bonus
+
+            value_values, value_activations, value_pre_activations = dqn.forward(value_layers, sample.features)
+            prediction = float(value_values[0]) if value_values else 0.0
+            error = prediction - sample.event_return
+            value_loss += 0.5 * config.value_loss_weight * error * error
+            dqn.add_backward_grads(
+                value_layers,
+                value_grads,
+                value_activations,
+                value_pre_activations,
+                [config.value_loss_weight * error],
+            )
+            stats.sampled_rows += 1
+            if sample.action_index not in sample.valid_action_indices:
+                stats.target_masked_rows += 1
+
+        batch_size = max(1, len(batch))
+        dqn.apply_grads(actor_layers, actor_grads, config.actor_learning_rate, batch_size)
+        dqn.apply_grads(value_layers, value_grads, config.value_learning_rate, batch_size)
+        actor_grads = dqn.zero_grads(actor_layers)
+        value_grads = dqn.zero_grads(value_layers)
+
+        stats.steps = step
+        stats.actor_loss_last = actor_loss / batch_size
+        stats.value_loss_last = value_loss / batch_size
+        stats.entropy_bonus_last = entropy_bonus_total / batch_size
+        stats.actor_loss_avg = (
+            stats.actor_loss_last if step == 1 else 0.98 * stats.actor_loss_avg + 0.02 * stats.actor_loss_last
+        )
+        stats.value_loss_avg = (
+            stats.value_loss_last if step == 1 else 0.98 * stats.value_loss_avg + 0.02 * stats.value_loss_last
+        )
+        stats.entropy_bonus_avg = (
+            stats.entropy_bonus_last
+            if step == 1
+            else 0.98 * stats.entropy_bonus_avg + 0.02 * stats.entropy_bonus_last
+        )
+        if config.log_interval > 0 and (step == 1 or step % config.log_interval == 0 or step == config.steps):
+            print(
+                "Actor-Critic 11C "
+                f"step={step} "
+                f"actor_loss={stats.actor_loss_last:.6f} "
+                f"actor_avg={stats.actor_loss_avg:.6f} "
+                f"value_loss={stats.value_loss_last:.6f} "
+                f"value_avg={stats.value_loss_avg:.6f} "
+                f"entropy={stats.entropy_bonus_last:.6f}",
+                flush=True,
+            )
+
+    return actor_layers, value_layers, stats
+
+
 def next_model_version(model_dir: str, requested: int | None) -> int:
     if requested is not None:
         return max(0, requested)
@@ -296,21 +527,18 @@ def publish_actor_critic_artifact(
     model_dir: str,
     version: int,
     actions: tuple[str, ...],
-    hidden_sizes: list[int],
     fallback_policy: str,
     metadata: dict[str, object],
-    seed: int,
     updated_rows: int,
+    actor_layers: list[dict[str, object]],
+    value_layers: list[dict[str, object]],
+    algorithm_version: str,
 ) -> None:
     os.makedirs(model_dir, exist_ok=True)
-    rng = random.Random(seed)
-    input_dim = len(rl.DQN_FEATURE_NAMES)
-    actor_layers = dqn.init_network(input_dim, hidden_sizes, len(actions), rng)
-    value_layers = dqn.init_network(input_dim, hidden_sizes, 1, rng)
     payload = {
         "version": version,
         "policy": "actor-critic",
-        "source": "offline-actor-critic-bootstrap",
+        "source": "offline-actor-critic",
         "action_set_version": rl.ACTION_SET_VERSION,
         "created_at_unix": time.time(),
         "metadata": metadata,
@@ -318,7 +546,7 @@ def publish_actor_critic_artifact(
         "fallback_policy": fallback_policy,
         "actor_critic": {
             "schema_version": ACTOR_CRITIC_SCHEMA_VERSION,
-            "algorithm_version": ACTOR_CRITIC_ALGORITHM_VERSION,
+            "algorithm_version": algorithm_version,
             "architecture": "independent-mlp-v1",
             "feature_names": list(rl.DQN_FEATURE_NAMES),
             "feature_scales": dict(rl.DQN_FEATURE_SCALES),
@@ -370,6 +598,12 @@ def main() -> None:
     parser.add_argument("--combat-event-logs", required=True, help="Comma-separated combat event NDJSON logs")
     parser.add_argument("--output-dir", default="", help="Optional actor-critic artifact output directory")
     parser.add_argument("--summary-path", default="", help="Optional dataset summary JSON path")
+    parser.add_argument(
+        "--training-mode",
+        default="validate",
+        choices=("validate", "offline-awac"),
+        help="validate builds 11B diagnostics; offline-awac also trains actor/value heads.",
+    )
     parser.add_argument("--actions", default="", help="Optional comma-separated action subset")
     parser.add_argument("--hidden-sizes", default="64,64", help="Actor/value MLP hidden sizes")
     parser.add_argument("--limit", type=int, default=0, help="Maximum transition rows to read")
@@ -391,6 +625,27 @@ def main() -> None:
         choices=("zero", "mean", "episode-mean"),
         help="Baseline subtracted from event returns to produce advantages",
     )
+    parser.add_argument(
+        "--valid-action-mask",
+        default="action-start-v1",
+        choices=rl.DQN_VALID_ACTION_MASK_MODES,
+        help="Valid-action mask used by the AWAC actor softmax.",
+    )
+    parser.add_argument("--awac-steps", type=int, default=1000, help="Offline AWAC update steps")
+    parser.add_argument("--awac-batch-size", type=int, default=128, help="Offline AWAC batch size")
+    parser.add_argument("--awac-actor-lr", type=float, default=0.0005, help="Actor learning rate")
+    parser.add_argument("--awac-value-lr", type=float, default=0.0005, help="Value learning rate")
+    parser.add_argument("--awac-advantage-temperature", type=float, default=2.0, help="AWAC advantage temperature")
+    parser.add_argument("--awac-weight-min", type=float, default=0.2, help="Minimum AWAC advantage weight")
+    parser.add_argument("--awac-weight-max", type=float, default=5.0, help="Maximum AWAC advantage weight")
+    parser.add_argument(
+        "--awac-use-negative-advantages",
+        action="store_true",
+        help="Let negative advantages downweight actions instead of treating them as neutral imitation weight.",
+    )
+    parser.add_argument("--awac-entropy", type=float, default=0.001, help="Masked policy entropy regularization")
+    parser.add_argument("--awac-value-loss-weight", type=float, default=1.0, help="Value regression loss weight")
+    parser.add_argument("--awac-log-interval", type=int, default=200, help="Offline AWAC progress print interval")
     parser.add_argument(
         "--allow-validation-errors",
         action="store_true",
@@ -427,12 +682,52 @@ def main() -> None:
         horizon=max(0, int(args.return_horizon)),
         baseline=str(args.return_baseline),
     )
-    samples, dataset_stats, reward_stats = build_actor_critic_samples(rows, actions, validation, return_config)
+    valid_action_mask = rl.DQNValidActionMaskConfig(str(args.valid_action_mask))
+    samples, dataset_stats, reward_stats = build_actor_critic_samples(
+        rows,
+        actions,
+        validation,
+        return_config,
+        valid_action_mask,
+    )
+    awac_config = OfflineAwacConfig(
+        enabled=str(args.training_mode) == "offline-awac",
+        steps=max(0, int(args.awac_steps)),
+        batch_size=max(1, int(args.awac_batch_size)),
+        actor_learning_rate=max(0.0, float(args.awac_actor_lr)),
+        value_learning_rate=max(0.0, float(args.awac_value_lr)),
+        advantage_temperature=max(1e-6, float(args.awac_advantage_temperature)),
+        advantage_weight_min=max(0.0, float(args.awac_weight_min)),
+        advantage_weight_max=max(float(args.awac_weight_min), float(args.awac_weight_max)),
+        positive_advantage_only=not bool(args.awac_use_negative_advantages),
+        entropy_reg_weight=max(0.0, float(args.awac_entropy)),
+        value_loss_weight=max(0.0, float(args.awac_value_loss_weight)),
+        valid_action_mask=str(args.valid_action_mask),
+        log_interval=max(0, int(args.awac_log_interval)),
+    )
+    if awac_config.enabled:
+        actor_layers, value_layers, awac_stats = train_offline_awac(
+            samples,
+            actions,
+            hidden_sizes,
+            int(args.seed),
+            awac_config,
+        )
+        algorithm_version = ACTOR_CRITIC_AWAC_ALGORITHM_VERSION
+    else:
+        rng = random.Random(int(args.seed))
+        actor_layers = dqn.init_network(len(rl.DQN_FEATURE_NAMES), hidden_sizes, len(actions), rng)
+        value_layers = dqn.init_network(len(rl.DQN_FEATURE_NAMES), hidden_sizes, 1, rng)
+        awac_stats = OfflineAwacStats()
+        algorithm_version = ACTOR_CRITIC_ALGORITHM_VERSION
     metadata: dict[str, Any] = {
-        "phase": "11A/11B",
+        "phase": "11C" if awac_config.enabled else "11A/11B",
         "actor_critic_schema_version": ACTOR_CRITIC_SCHEMA_VERSION,
-        "algorithm_version": ACTOR_CRITIC_ALGORITHM_VERSION,
+        "algorithm_version": algorithm_version,
+        "training_mode": str(args.training_mode),
         "return_config": return_config.as_metadata(),
+        "awac_config": awac_config.as_metadata(),
+        "awac_stats": awac_stats.as_metadata(),
         "transition_paths": transition_paths,
         "combat_event_paths": event_paths,
         "combat_event_training": validation.as_metadata(),
@@ -449,17 +744,18 @@ def main() -> None:
             str(args.output_dir),
             version,
             actions,
-            hidden_sizes,
             str(args.fallback_policy),
             metadata,
-            int(args.seed),
             len(samples),
+            actor_layers,
+            value_layers,
+            algorithm_version,
         )
         metadata["published_model_dir"] = str(args.output_dir)
         metadata["published_version"] = version
 
     print(
-        "Actor-Critic 11B "
+        f"Actor-Critic {'11C' if awac_config.enabled else '11B'} "
         f"transitions={dataset_stats.transition_rows} "
         f"labeled={dataset_stats.labeled_rows} "
         f"skipped={dataset_stats.skipped_rows} "
@@ -472,11 +768,21 @@ def main() -> None:
         flush=True,
     )
     print(
-        "Actor-Critic 11B "
+        f"Actor-Critic {'11C' if awac_config.enabled else '11B'} "
         f"families={top_counts(dataset_stats.family_counts, int(args.diagnostic_top_n))} "
         f"actions={top_counts(dataset_stats.action_counts, int(args.diagnostic_top_n))}",
         flush=True,
     )
+    if awac_config.enabled:
+        print(
+            "Actor-Critic 11C "
+            f"awac_steps={awac_stats.steps} "
+            f"actor_loss_avg={awac_stats.actor_loss_avg:.6f} "
+            f"value_loss_avg={awac_stats.value_loss_avg:.6f} "
+            f"entropy_avg={awac_stats.entropy_bonus_avg:.6f} "
+            f"adv_weight_avg={awac_stats.as_metadata()['advantage_weight_avg']:.6f}",
+            flush=True,
+        )
 
 
 if __name__ == "__main__":

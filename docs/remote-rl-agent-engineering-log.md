@@ -15901,3 +15901,91 @@ Interpretation:
 - Future captures should show Ken/Ryu opponent down LK/MK/HK as
   `crouch-lk`, `crouch-mk`, and `crouch-hk`, allowing low-defense reward
   shaping and margin diagnostics to activate.
+
+## 2026-05-08: Phase 10A Event-Weighted BC Trainer
+
+Milestone:
+- Phase 10A / event-weighted behavior cloning trainer.
+
+Purpose:
+- Promote the existing BC path from an equal-weight DQN warm-start helper into
+  the first step of an event-aware imitation-policy line.
+- Use combat event outcomes to decide how strongly each labeled BC row should
+  be imitated, without changing DQN reward shaping or transition features.
+
+Implementation:
+- Added opt-in BC-only flags to `tools/train_dqn_learner.py`:
+  - `--bc-event-weighting off|event-weighted-v1`
+  - `--bc-event-reward-profile`
+  - `--bc-event-reward-scale`
+  - `--bc-event-weight-positive-scale`
+  - `--bc-event-weight-negative-scale`
+  - `--bc-event-weight-min`
+  - `--bc-event-weight-max`
+- `--bc-event-weighting event-weighted-v1` requires
+  `--training-mode bc`, `--combat-event-training-mode validate`, and paired
+  `--combat-event-logs`.
+- The BC dataset now stores `(features, label, sample_weight)`.
+- For each labeled row, the trainer reuses the combat-event reward join logic
+  to compute a raw outcome adjustment, then maps it to a clamped CE sample
+  weight:
+  - positive adjustment: `1 + adjustment * positive_scale`
+  - negative adjustment: `1 + adjustment * negative_scale`
+  - clamped to `bc_event_weight_min..bc_event_weight_max`
+- The weighted CE loss scales both the per-row loss and output gradient.
+- Metadata and stdout diagnostics now record weighted rows, positive/negative
+  rows, clamp counts, raw adjustment sum, total/average weight, per-label
+  weight totals, and the underlying combat-event reward stats.
+- Added opt-in `--bc-label-balance off|inverse-sqrt|inverse-frequency` with
+  min/max factor clamps. This is needed because the first Phase 10A sanity
+  model with event weighting alone still produced an argmax collapse toward
+  `forward` on the merged human log; the labels are dominated by
+  forward/back/light-normal rows and event outcomes only modify a small subset
+  of rows.
+
+Validation:
+- `python3 -m py_compile tools/train_dqn_learner.py tools/rl_combat_event_training.py`
+- One-step smoke on `logs/phase9f-human-merged-{transitions,events}.ndjson`
+  with `--training-mode bc`, `--combat-event-training-mode validate`, and
+  `--bc-event-weighting event-weighted-v1`:
+  - labeled rows: `35424`
+  - event-weighted rows: `1210`
+  - positive/negative/neutral: `545/665/34214`
+  - average event weight: `0.997`
+  - refs/join validation: `missing_refs=0`, `errors=0`
+- Human-only 10B candidate train requested by user:
+  - transition log:
+    `logs/phase7a-event-journal-live-human-transitions.ndjson`
+  - event log:
+    `logs/phase7a-event-journal-live-human-events.ndjson`
+  - output model:
+    `model/bc-event-weighted-balanced-human-10b-v1`
+  - recipe:
+    `--training-mode bc`
+    `--combat-event-training-mode validate`
+    `--bc-event-weighting event-weighted-v1`
+    `--bc-label-balance inverse-sqrt`
+  - labeled rows: `23933` from `29869` transition rows.
+  - skipped rows: `attack-unknown=5936`.
+  - event validation: `3951` event rows, `missing_refs=0`, `errors=0`.
+  - event weighting: `1054` weighted rows, `536` positive,
+    `518` negative, `22879` neutral, `78` min-clamped,
+    raw adjustment sum `+92.33`, avg event weight `0.999`.
+  - label balance: avg factor `0.750`; high-volume labels were downweighted
+    (`forward=0.43`, `back=0.45`, `stand-lp=0.67`) and sparse labels were
+    upweighted (`crouch-hk`, `stand-lk`, `stand-mk`, `tatsu-*` at or near
+    `3.0`).
+  - trainer-side masked greedy sanity on the same first `5000` rows:
+    `forward=3855`, `back=1144`, `fireball-mp=1`. Top-3 masked view included
+    `guard-crouch=3572`, `stand-lp=1316`, and small fireball presence.
+- A merged-data balanced BC train also completed in the background after the
+  user redirected the dataset. Treat
+  `model/bc-event-weighted-balanced-human-merged-v1` as a discarded
+  experiment, not a candidate.
+
+Interpretation:
+- Phase 10A is not yet a live BC actor. It produces `policy=bc` model files
+  with event-aware supervised weights.
+- Phase 10B still needs probe-side `policy=bc` inference, valid-action masked
+  softmax/top-k sampling, and danger-state deterministic overrides before this
+  line can replace DQN in live play.

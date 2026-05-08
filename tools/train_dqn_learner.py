@@ -360,6 +360,143 @@ LOW_DEFENSE_TARGET_ACTION = "guard-crouch"
 LOW_DEFENSE_LOW_ATTACK_ACTIONS = frozenset({"crouch-lk", "crouch-mk", "crouch-hk"})
 LOW_DEFENSE_BAD_ACTIONS = frozenset({"guard-stand", "back", "forward"})
 DQN_TARGET_MODES = ("standard", "double")
+BC_EVENT_WEIGHTING_MODES = ("off", "event-weighted-v1")
+BC_LABEL_BALANCE_MODES = ("off", "inverse-sqrt", "inverse-frequency")
+
+
+@dataclass(frozen=True)
+class BCEventWeightConfig:
+    mode: str = "off"
+    reward_profile: str = "event-damage-v1"
+    reward_scale: float = 1.0
+    positive_scale: float = 0.25
+    negative_scale: float = 0.5
+    min_weight: float = 0.25
+    max_weight: float = 3.0
+
+    @property
+    def enabled(self) -> bool:
+        return self.mode != "off"
+
+    def as_reward_config(self) -> combat_events.CombatEventRewardConfig:
+        return combat_events.CombatEventRewardConfig(
+            enabled=self.enabled,
+            profile=self.reward_profile,
+            scale=self.reward_scale,
+        )
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "mode": self.mode,
+            "enabled": self.enabled,
+            "reward_profile": self.reward_profile,
+            "reward_scale": self.reward_scale,
+            "positive_scale": self.positive_scale,
+            "negative_scale": self.negative_scale,
+            "min_weight": self.min_weight,
+            "max_weight": self.max_weight,
+        }
+
+
+@dataclass
+class BCEventWeightStats:
+    checked_labeled_rows: int = 0
+    weighted_rows: int = 0
+    positive_rows: int = 0
+    negative_rows: int = 0
+    neutral_rows: int = 0
+    clamped_min_rows: int = 0
+    clamped_max_rows: int = 0
+    raw_adjustment_sum: float = 0.0
+    weight_sum: float = 0.0
+    label_weight_sum: dict[str, float] = field(default_factory=dict)
+    label_weight_count: dict[str, int] = field(default_factory=dict)
+
+    @property
+    def avg_weight(self) -> float:
+        return self.weight_sum / max(1, self.checked_labeled_rows)
+
+    def record(self, action_name: str, raw_adjustment: float, weight: float, config: BCEventWeightConfig) -> None:
+        self.checked_labeled_rows += 1
+        self.raw_adjustment_sum += raw_adjustment
+        self.weight_sum += weight
+        self.label_weight_sum[action_name] = self.label_weight_sum.get(action_name, 0.0) + weight
+        self.label_weight_count[action_name] = self.label_weight_count.get(action_name, 0) + 1
+        if raw_adjustment > 0.0:
+            self.positive_rows += 1
+        elif raw_adjustment < 0.0:
+            self.negative_rows += 1
+        else:
+            self.neutral_rows += 1
+        if weight != 1.0:
+            self.weighted_rows += 1
+        if weight <= config.min_weight and raw_adjustment < 0.0:
+            self.clamped_min_rows += 1
+        if weight >= config.max_weight and raw_adjustment > 0.0:
+            self.clamped_max_rows += 1
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "checked_labeled_rows": self.checked_labeled_rows,
+            "weighted_rows": self.weighted_rows,
+            "positive_rows": self.positive_rows,
+            "negative_rows": self.negative_rows,
+            "neutral_rows": self.neutral_rows,
+            "clamped_min_rows": self.clamped_min_rows,
+            "clamped_max_rows": self.clamped_max_rows,
+            "raw_adjustment_sum": self.raw_adjustment_sum,
+            "weight_sum": self.weight_sum,
+            "avg_weight": self.avg_weight,
+            "label_weight_sum": dict(sorted(self.label_weight_sum.items())),
+            "label_weight_count": dict(sorted(self.label_weight_count.items())),
+        }
+
+
+@dataclass(frozen=True)
+class BCLabelBalanceConfig:
+    mode: str = "off"
+    min_weight: float = 0.25
+    max_weight: float = 3.0
+
+    @property
+    def enabled(self) -> bool:
+        return self.mode != "off"
+
+    @property
+    def exponent(self) -> float:
+        if self.mode == "inverse-frequency":
+            return 1.0
+        if self.mode == "inverse-sqrt":
+            return 0.5
+        return 0.0
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "mode": self.mode,
+            "enabled": self.enabled,
+            "min_weight": self.min_weight,
+            "max_weight": self.max_weight,
+            "exponent": self.exponent,
+        }
+
+
+@dataclass
+class BCLabelBalanceStats:
+    balanced_rows: int = 0
+    factor_sum: float = 0.0
+    label_factors: dict[str, float] = field(default_factory=dict)
+
+    @property
+    def avg_factor(self) -> float:
+        return self.factor_sum / max(1, self.balanced_rows)
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "balanced_rows": self.balanced_rows,
+            "factor_sum": self.factor_sum,
+            "avg_factor": self.avg_factor,
+            "label_factors": dict(sorted(self.label_factors.items())),
+        }
 
 
 @dataclass(frozen=True)
@@ -2159,6 +2296,42 @@ def dqn_action_filter_config_from_args(args: argparse.Namespace) -> DQNActionFil
             "--dqn-require-movable-state-sources",
         ),
     )
+
+
+def bc_event_weight_config_from_args(args: argparse.Namespace) -> BCEventWeightConfig:
+    mode = str(args.bc_event_weighting)
+    if mode not in BC_EVENT_WEIGHTING_MODES:
+        raise SystemExit(
+            f"unknown --bc-event-weighting {mode!r}; expected one of {','.join(BC_EVENT_WEIGHTING_MODES)}"
+        )
+    profile = str(args.bc_event_reward_profile)
+    if profile not in combat_events.COMBAT_EVENT_REWARD_PROFILES:
+        raise SystemExit(
+            "unknown --bc-event-reward-profile "
+            f"{profile!r}; expected one of {','.join(combat_events.COMBAT_EVENT_REWARD_PROFILES)}"
+        )
+    min_weight = max(0.0, float(args.bc_event_weight_min))
+    max_weight = max(min_weight, float(args.bc_event_weight_max))
+    return BCEventWeightConfig(
+        mode=mode,
+        reward_profile=profile,
+        reward_scale=max(0.0, float(args.bc_event_reward_scale)),
+        positive_scale=max(0.0, float(args.bc_event_weight_positive_scale)),
+        negative_scale=max(0.0, float(args.bc_event_weight_negative_scale)),
+        min_weight=min_weight,
+        max_weight=max_weight,
+    )
+
+
+def bc_label_balance_config_from_args(args: argparse.Namespace) -> BCLabelBalanceConfig:
+    mode = str(args.bc_label_balance)
+    if mode not in BC_LABEL_BALANCE_MODES:
+        raise SystemExit(
+            f"unknown --bc-label-balance {mode!r}; expected one of {','.join(BC_LABEL_BALANCE_MODES)}"
+        )
+    min_weight = max(0.0, float(args.bc_label_balance_min))
+    max_weight = max(min_weight, float(args.bc_label_balance_max))
+    return BCLabelBalanceConfig(mode=mode, min_weight=min_weight, max_weight=max_weight)
 
 
 def count_rows_by_source(rows: list[dict[str, object]]) -> dict[str, int]:
@@ -5188,14 +5361,29 @@ def train_bc(
     log_interval: int,
     entropy_reg_weight: float = 0.0,
     initial_layers: list[dict[str, object]] | None = None,
-) -> tuple[list[dict[str, object]], dict[str, object], dict[str, int], dict[str, int]]:
+    combat_event_validation: combat_events.CombatEventTrainingValidation | None = None,
+    bc_event_weight_config: BCEventWeightConfig = BCEventWeightConfig(),
+    bc_label_balance_config: BCLabelBalanceConfig = BCLabelBalanceConfig(),
+) -> tuple[
+    list[dict[str, object]],
+    dict[str, object],
+    dict[str, int],
+    dict[str, int],
+    BCEventWeightStats,
+    combat_events.CombatEventRewardStats,
+    BCLabelBalanceStats,
+]:
     """Train a Behavior Cloning (supervised) model from labeled transition rows."""
     rng = random.Random(seed)
 
     # Build labeled dataset
     label_counts: dict[str, int] = {action: 0 for action in actions}
     skipped: dict[str, int] = collections.defaultdict(int)
-    dataset: list[tuple[list[float], int]] = []
+    dataset: list[tuple[list[float], int, float]] = []
+    bc_event_weight_stats = BCEventWeightStats()
+    bc_event_reward_stats = combat_events.CombatEventRewardStats()
+    bc_event_reward_config = bc_event_weight_config.as_reward_config()
+    bc_label_balance_stats = BCLabelBalanceStats()
 
     # Populate per-instance segment KW map from engine outcome rows before labeling
     global _BC_SEGMENT_KW_MAP
@@ -5214,12 +5402,54 @@ def train_bc(
                 reason = "no-label"
             skipped[reason] += 1
             continue
+        action_name = actions[label_index]
+        sample_weight = 1.0
+        if bc_event_weight_config.enabled:
+            raw_adjustment = combat_events.reward_adjustment_for_transition(
+                combat_event_validation.index if combat_event_validation is not None else None,
+                row,
+                action_name,
+                True,
+                bc_event_reward_config,
+                bc_event_reward_stats,
+            )
+            if raw_adjustment > 0.0:
+                sample_weight = 1.0 + raw_adjustment * bc_event_weight_config.positive_scale
+            elif raw_adjustment < 0.0:
+                sample_weight = 1.0 + raw_adjustment * bc_event_weight_config.negative_scale
+            sample_weight = max(
+                bc_event_weight_config.min_weight,
+                min(bc_event_weight_config.max_weight, sample_weight),
+            )
+            bc_event_weight_stats.record(action_name, raw_adjustment, sample_weight, bc_event_weight_config)
         features = rl.dqn_feature_vector(row)
-        dataset.append((features, label_index))
-        label_counts[actions[label_index]] += 1
+        dataset.append((features, label_index, sample_weight))
+        label_counts[action_name] += 1
 
     if not dataset:
         raise SystemExit("BC training: no labeled rows found")
+    if bc_label_balance_config.enabled:
+        nonzero_counts = [count for count in label_counts.values() if count > 0]
+        mean_count = sum(nonzero_counts) / max(1, len(nonzero_counts))
+        label_factors: dict[str, float] = {}
+        for action_name, count in label_counts.items():
+            if count <= 0:
+                continue
+            raw_factor = (mean_count / float(count)) ** bc_label_balance_config.exponent
+            factor = max(
+                bc_label_balance_config.min_weight,
+                min(bc_label_balance_config.max_weight, raw_factor),
+            )
+            label_factors[action_name] = factor
+        dataset = [
+            (features, label_index, weight * label_factors.get(actions[label_index], 1.0))
+            for features, label_index, weight in dataset
+        ]
+        bc_label_balance_stats = BCLabelBalanceStats(
+            balanced_rows=len(dataset),
+            factor_sum=sum(label_factors.get(actions[label_index], 1.0) for _features, label_index, _weight in dataset),
+            label_factors=label_factors,
+        )
 
     # Initialize layers
     input_dim = len(rl.DQN_FEATURE_NAMES)
@@ -5239,7 +5469,7 @@ def train_bc(
         batch = rng.choices(dataset, k=min(batch_size, len(dataset)))
         loss = 0.0
         entropy_reg_loss = 0.0
-        for features, target_index in batch:
+        for features, target_index, sample_weight in batch:
             values, activations, pre_activations = forward(layers, features)
             # Cross-entropy: softmax + NLL
             max_q = max(values)
@@ -5247,11 +5477,11 @@ def train_bc(
             sum_exp = sum(exp_q)
             log_probs = [math.log(max(e / sum_exp, 1e-15)) for e in exp_q]
             ce_loss = -log_probs[target_index]
-            loss += ce_loss
+            loss += sample_weight * ce_loss
 
             # Gradient for cross-entropy: softmax probs, subtract 1 from target
-            output_grad = [e / sum_exp for e in exp_q]
-            output_grad[target_index] -= 1.0
+            output_grad = [(e / sum_exp) * sample_weight for e in exp_q]
+            output_grad[target_index] -= sample_weight
             entropy_loss_delta, entropy_bonus, entropy_grad = entropy_regularization_grad(
                 values,
                 entropy_reg_weight,
@@ -5281,10 +5511,27 @@ def train_bc(
         "last_loss": last_loss,
         "avg_loss": avg_loss,
         "entropy_reg_weight": entropy_reg_weight,
+        "event_weighting": bc_event_weight_config.as_metadata(),
+        "event_weight_stats": bc_event_weight_stats.as_metadata(),
+        "event_reward_stats": bc_event_reward_stats.as_metadata(),
+        "label_balance": bc_label_balance_config.as_metadata(),
+        "label_balance_stats": bc_label_balance_stats.as_metadata(),
+        "combined_sample_weight_sum": sum(weight for _features, _label_index, weight in dataset),
+        "combined_avg_sample_weight": (
+            sum(weight for _features, _label_index, weight in dataset) / max(1, len(dataset))
+        ),
     }
     label_counts_typed: dict[str, int] = dict(label_counts)
     skipped_typed: dict[str, int] = dict(skipped)
-    return layers, train_stats, label_counts_typed, skipped_typed
+    return (
+        layers,
+        train_stats,
+        label_counts_typed,
+        skipped_typed,
+        bc_event_weight_stats,
+        bc_event_reward_stats,
+        bc_label_balance_stats,
+    )
 
 
 def int_row_field(row: dict[str, object], name: str, default: int = 0) -> int:
@@ -7311,6 +7558,72 @@ def main() -> None:
         help="Additional multiplier for combat event reward shaping before the global --reward-scale.",
     )
     parser.add_argument(
+        "--bc-event-weighting",
+        choices=BC_EVENT_WEIGHTING_MODES,
+        default="off",
+        help=(
+            "Opt-in Phase 10A event-weighted Behavior Cloning. "
+            "event-weighted-v1 turns paired combat-event outcomes into supervised CE sample weights."
+        ),
+    )
+    parser.add_argument(
+        "--bc-event-reward-profile",
+        choices=combat_events.COMBAT_EVENT_REWARD_PROFILES,
+        default="event-damage-v1",
+        help="Combat-event reward profile used to derive BC sample weights.",
+    )
+    parser.add_argument(
+        "--bc-event-reward-scale",
+        type=float,
+        default=1.0,
+        help="Multiplier applied while deriving event-weighted BC raw adjustments.",
+    )
+    parser.add_argument(
+        "--bc-event-weight-positive-scale",
+        type=float,
+        default=0.25,
+        help="Weight multiplier for positive event adjustment: weight = 1 + adjustment * scale.",
+    )
+    parser.add_argument(
+        "--bc-event-weight-negative-scale",
+        type=float,
+        default=0.5,
+        help="Weight multiplier for negative event adjustment: weight = 1 + adjustment * scale.",
+    )
+    parser.add_argument(
+        "--bc-event-weight-min",
+        type=float,
+        default=0.25,
+        help="Minimum CE sample weight for event-weighted BC.",
+    )
+    parser.add_argument(
+        "--bc-event-weight-max",
+        type=float,
+        default=3.0,
+        help="Maximum CE sample weight for event-weighted BC.",
+    )
+    parser.add_argument(
+        "--bc-label-balance",
+        choices=BC_LABEL_BALANCE_MODES,
+        default="off",
+        help=(
+            "Opt-in BC class-balance CE weighting. inverse-sqrt is the recommended first pass "
+            "for human logs dominated by forward/back/standing light rows."
+        ),
+    )
+    parser.add_argument(
+        "--bc-label-balance-min",
+        type=float,
+        default=0.35,
+        help="Minimum per-label balance multiplier for BC.",
+    )
+    parser.add_argument(
+        "--bc-label-balance-max",
+        type=float,
+        default=3.0,
+        help="Maximum per-label balance multiplier for BC.",
+    )
+    parser.add_argument(
         "--combat-event-unlabeled-movement-policy",
         choices=combat_events.COMBAT_EVENT_UNLABELED_MOVEMENT_POLICIES,
         default="keep",
@@ -8622,6 +8935,8 @@ def main() -> None:
         profile=str(args.combat_event_reward_profile),
         scale=max(0.0, float(args.combat_event_reward_scale)),
     )
+    bc_event_weight_config = bc_event_weight_config_from_args(args)
+    bc_label_balance_config = bc_label_balance_config_from_args(args)
     combat_event_unlabeled_movement_filter_config = (
         combat_event_unlabeled_movement_filter_config_from_args(args)
     )
@@ -8630,6 +8945,13 @@ def main() -> None:
     low_defense_requested = bool(args.low_defense_reward_shaping or args.low_defense_margin_loss)
     if combat_event_training_mode == "off" and combat_event_log_paths:
         raise SystemExit("--combat-event-logs requires --combat-event-training-mode validate or reward-shaping")
+    if bc_event_weight_config.enabled:
+        if str(args.training_mode) != "bc":
+            raise SystemExit("--bc-event-weighting is only supported with --training-mode bc")
+        if combat_event_training_mode != "validate":
+            raise SystemExit("--bc-event-weighting requires --combat-event-training-mode validate")
+        if not combat_event_log_paths:
+            raise SystemExit("--bc-event-weighting requires --combat-event-logs")
     if combat_event_unlabeled_movement_filter_config.enabled and combat_event_training_mode != "reward-shaping":
         raise SystemExit(
             "--combat-event-unlabeled-movement-policy requires "
@@ -8671,7 +8993,15 @@ def main() -> None:
         if low_defense_requested:
             raise SystemExit("--low-defense-* options are only supported for DQN training")
         # --- BC training path ---
-        bc_layers, bc_train_stats, bc_label_counts, bc_skipped = train_bc(
+        (
+            bc_layers,
+            bc_train_stats,
+            bc_label_counts,
+            bc_skipped,
+            bc_event_weight_stats,
+            bc_event_reward_stats,
+            bc_label_balance_stats,
+        ) = train_bc(
             rows,
             actions,
             hidden_sizes,
@@ -8682,6 +9012,9 @@ def main() -> None:
             args.log_interval,
             max(0.0, float(args.dqn_entropy_reg_weight)),
             init_model.layers if init_model is not None else None,
+            combat_event_validation,
+            bc_event_weight_config,
+            bc_label_balance_config,
         )
         replay_source_mix_summary = dict(replay_source_mix_stats.as_metadata()) if hasattr(replay_source_mix_stats, "as_metadata") else {}
         bc_metadata: dict[str, object] = {
@@ -8695,6 +9028,11 @@ def main() -> None:
             "skipped_labels": {str(k): int(v) for k, v in bc_skipped.items()},
             "total_labeled": sum(bc_label_counts.values()),
             "total_rows": len(rows),
+            "bc_event_weighting_config": bc_event_weight_config.as_metadata(),
+            "bc_event_weight_stats": bc_event_weight_stats.as_metadata(),
+            "bc_event_reward_stats": bc_event_reward_stats.as_metadata(),
+            "bc_label_balance_config": bc_label_balance_config.as_metadata(),
+            "bc_label_balance_stats": bc_label_balance_stats.as_metadata(),
             **bc_train_stats,
         }
         if combat_event_validation is not None:
@@ -8726,12 +9064,47 @@ def main() -> None:
             f"loss={bc_train_stats.get('last_loss', 0.0):.6f} "
             f"avg_loss={bc_train_stats.get('avg_loss', 0.0):.6f} "
             f"entropy_reg={max(0.0, float(args.dqn_entropy_reg_weight))} "
+            f"event_weighted={int(bc_event_weight_config.enabled)} "
+            f"weighted_rows={bc_event_weight_stats.weighted_rows} "
+            f"avg_weight={bc_event_weight_stats.avg_weight:.3f} "
+            f"label_balance={bc_label_balance_config.mode} "
+            f"label_balance_avg={bc_label_balance_stats.avg_factor:.3f} "
             f"skipped={dict(bc_skipped)} "
             f"top_labels=({label_parts[:300]})",
             flush=True,
         )
         if combat_event_validation is not None:
             print(f"BC diagnostics combat_event={combat_event_validation.summary_line()}", flush=True)
+        if bc_event_weight_config.enabled:
+            print(
+                "BC diagnostics event_weight="
+                f"checked:{bc_event_weight_stats.checked_labeled_rows} "
+                f"weighted:{bc_event_weight_stats.weighted_rows} "
+                f"pos:{bc_event_weight_stats.positive_rows} "
+                f"neg:{bc_event_weight_stats.negative_rows} "
+                f"neutral:{bc_event_weight_stats.neutral_rows} "
+                f"clamp_min:{bc_event_weight_stats.clamped_min_rows} "
+                f"clamp_max:{bc_event_weight_stats.clamped_max_rows} "
+                f"raw_sum:{bc_event_weight_stats.raw_adjustment_sum:.3f} "
+                f"weight_sum:{bc_event_weight_stats.weight_sum:.3f}",
+                flush=True,
+            )
+        if bc_label_balance_config.enabled:
+            top_factors = ",".join(
+                f"{action}:{factor:.2f}"
+                for action, factor in sorted(
+                    bc_label_balance_stats.label_factors.items(),
+                    key=lambda item: (-item[1], item[0]),
+                )[: args.diagnostic_top_n]
+            )
+            print(
+                "BC diagnostics label_balance="
+                f"mode:{bc_label_balance_config.mode} "
+                f"rows:{bc_label_balance_stats.balanced_rows} "
+                f"avg_factor:{bc_label_balance_stats.avg_factor:.3f} "
+                f"top_factors:{top_factors}",
+                flush=True,
+            )
         return
 
     dqn_action_filter_config = dqn_action_filter_config_from_args(args)

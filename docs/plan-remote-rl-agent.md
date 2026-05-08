@@ -2744,7 +2744,12 @@ Tasks:
     - `opportunity_type`: `none`, `punish_whiff`, `punish_recovery`, `anti_air`, `fireball_zoning`, `poke`, `pressure`, `throw_mixup`, `escape`, `unknown`.
     - `recommended_intent`: `wait`, `adjust_spacing`, `approach`, `retreat`, `hold_guard`, `low_guard`, `anti_air`, `poke`, `fireball_zoning`, `punish`, `pressure`, `throw`, `escape`, `unknown`.
     - `intent_reason`: short symbolic reason such as `too_far_no_threat`, `incoming_projectile`, `opponent_recovery`, `low_threat`, `jump_in_threat`, `close_advantage`, `self_not_actionable`.
-  - [ ] Phase 12A tactical state labeler: add an offline analyzer/tool that reads transition logs plus optional sibling combat-event logs and emits tactical labels and summaries. It must support summary-only mode and optional labeled NDJSON output. No model training and no runtime policy changes in 12A.
+  - [x] Phase 12A tactical state labeler: add an offline analyzer/tool that reads transition logs plus optional sibling combat-event logs and emits tactical labels and summaries. It must support summary-only mode and optional labeled NDJSON output. No model training and no runtime policy changes in 12A.
+    - Added `tools/label_rl_tactical_states.py`.
+    - Inputs: one or more transition NDJSON files plus optional sibling combat-event NDJSON files.
+    - Summary output reports spacing, corner, self/opponent phase, threat, opportunity, recommended intent, confidence, and representative examples.
+    - Optional labeled NDJSON output preserves the original transition row and adds `tactical_state_schema_version` plus `tactical_*` root-level labels.
+    - Smoke validation on `phase11e-actor-critic-spacing-threat-live-*` logs labels far/no-threat rows as `fireball_zoning` or `approach`, incoming projectile rows as `hold_guard`, close attack rows as `hold_guard`, and low attack rows as `low_guard`.
   - [ ] Phase 12A-1 label validation report: run the labeler on recent live logs and review per-bucket counts/examples for far neutral, incoming projectile, opponent attack/contact, low-defense, jump-in, punish, and round-boundary rows. Fix label heuristics before using labels for training.
   - [ ] Phase 12B intent classifier dataset: build a supervised dataset from Phase 12A labels using the existing DQN feature allowlist as inputs and `recommended_intent` as the target. Record label imbalance, ambiguous rows, and ignored/unknown-rate diagnostics.
   - [ ] Phase 12C high-level intent model: train an intent classifier `observation -> intent` with class balancing and confidence diagnostics. It is not allowed to output direct game actions yet. Promotion gate: intent confusion matrix must pass manual review on held-out live logs.

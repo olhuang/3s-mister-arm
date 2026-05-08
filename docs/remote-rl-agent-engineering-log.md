@@ -16864,3 +16864,64 @@ Next implementation step:
   - optional labeled NDJSON output;
   - examples per label bucket;
   - unknown/ambiguous rate diagnostics.
+
+## 2026-05-08: Phase 12A Tactical State Labeler
+
+Milestone:
+- Phase 12A offline tactical-state labeler.
+
+Purpose:
+- Create the first explicit high-level tactical layer before trying another
+  direct action policy.
+- The labeler answers: where are we, what phase is each side in, is there a
+  threat, is there an opportunity, and what high-level intent should this row
+  represent?
+
+Implementation:
+- Added `tools/label_rl_tactical_states.py`.
+- The tool reads transition NDJSON logs and optional sibling combat-event
+  NDJSON logs.
+- It emits a console summary by default and can optionally write labeled
+  transition NDJSON with:
+  - `tactical_state_schema_version`
+  - `tactical_spacing_bucket`
+  - `tactical_corner_context`
+  - `tactical_self_phase`
+  - `tactical_opponent_phase`
+  - `tactical_threat_type`
+  - `tactical_opportunity_type`
+  - `tactical_recommended_intent`
+  - `tactical_intent_reason`
+  - `tactical_label_confidence`
+- Combat-event rows are used only to build short punish windows from opponent
+  whiff/interrupted attack finalizations. They are not feature inputs and do
+  not alter training rewards in Phase 12A.
+
+Validation:
+- `python3 -m py_compile tools/label_rl_tactical_states.py`
+- Summary smoke:
+  - `python3 tools/label_rl_tactical_states.py --transitions logs/phase11e-actor-critic-spacing-threat-live-transitions.ndjson --combat-events logs/phase11e-actor-critic-spacing-threat-live-events.ndjson --examples 2 --limit 1000`
+  - Result: 1000 rows, 129 combat-event rows read, no parse errors.
+  - Main intent buckets: `hold_guard=66.1%`, `fireball_zoning=15.8%`,
+    `escape=5.9%`, `approach=4.6%`, `poke=4.2%`, `wait=3.1%`,
+    `low_guard=0.2%`, `pressure=0.1%`.
+  - Main threat buckets: `none=45.7%`, `multi_hit_pressure=21.6%`,
+    `corner_pressure=16.8%`, `close_attack=8.0%`,
+    `incoming_projectile=5.3%`, `throw_range=2.4%`, `low_attack=0.2%`.
+- Labeled-output smoke:
+  - `python3 tools/label_rl_tactical_states.py --transitions logs/phase11e-actor-critic-spacing-threat-live-transitions.ndjson --combat-events logs/phase11e-actor-critic-spacing-threat-live-events.ndjson --output /tmp/rl-tactical-labels-smoke.ndjson --summary-json /tmp/rl-tactical-labels-summary.json --examples 1 --limit 128`
+  - Result: 128 input rows, 128 labeled rows emitted, no parse errors.
+  - First output row preserved the transition fields and added the expected
+    `tactical_*` labels.
+
+Observed behavior:
+- Far/no-threat rows become `fireball_zoning` or `approach`.
+- Incoming projectile rows become `hold_guard`.
+- Nearby opponent attack/contact pressure rows become `hold_guard`.
+- Low attack examples become `low_guard`.
+- The current labels are heuristic diagnostics, not final supervised targets.
+
+Follow-up:
+- Phase 12A-1 should run a full label validation report across recent human
+  demo, low-defense, projectile, and actor-critic live logs before Phase 12B
+  creates an intent-classifier dataset.

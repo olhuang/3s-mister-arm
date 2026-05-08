@@ -16601,3 +16601,70 @@ Follow-up:
 - Phase 11D should add `--policy actor-critic` to `rl_probe_server.py` and
   live-test `actor-critic-awac-movement-balanced-human-11c3-v2`.
 - The model directories are local artifacts and remain untracked.
+
+## 2026-05-08: Phase 11D Probe Actor-Critic Inference
+
+Milestone:
+- Phase 11D / live probe support for `policy=actor-critic`.
+
+Purpose:
+- Let the Phase 11 actor-critic artifacts run through the same remote probe
+  action path as DQN/BC, so `actor-critic-awac-movement-balanced-human-11c3-v2`
+  can receive a real MiSTer live gate.
+
+Implementation:
+- Added `actor-critic` to `MODEL_POLICY_CHOICES`.
+- Extended `ActorModel` and `ActorModelStore` with:
+  - `actor_critic_model`
+  - `actor_critic` artifact coercion
+  - fallback version lookup for `actor-critic-v<N>.json`
+- Added actor-critic inference helpers:
+  - DQN feature-vector reuse through the artifact feature allowlist/scales
+  - independent actor/value MLP forward pass
+  - valid-action masked actor-logit ranking
+  - temperature/top-k sampling plus optional top-p filtering
+- Added CLI controls:
+  - `--actor-critic-valid-action-mask` defaulting to `action-start-v1`
+  - `--actor-critic-temperature`
+  - `--actor-critic-top-k`
+  - `--actor-critic-top-p`
+- Auto mask selection now understands `metadata.awac_config.valid_action_mask`
+  for actor-critic artifacts.
+- Verbose action logs now include actor-critic diagnostics:
+  - selected action
+  - mask/mask source
+  - inference config
+  - valid action count
+  - mask phase
+  - value prediction
+  - top actor logits
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py`
+- `python3 tools/rl_probe_server.py --help`
+  - confirmed `--policy` includes `actor-critic` and the actor-critic CLI
+    flags parse into help output.
+- Local artifact/mask smoke:
+  - loaded `model/actor-critic-awac-movement-balanced-human-11c3-v2/current.json`;
+  - confirmed `actor.policy=actor-critic`;
+  - confirmed non-empty `actor_critic_model`;
+  - confirmed auto mask resolves to `action-start-v1` from
+    `metadata.awac_config`;
+  - confirmed `policy_for_version()` can resolve `actor-critic-v<N>.json`.
+- Local single-transition inference smoke:
+  - input:
+    `logs/phase7a-event-journal-live-human-transitions.ndjson` first row
+  - output:
+    `actor-critic 1 36 36 value 0.044 action fireball-lp`
+  - top masked logits:
+    `stand-lp`, `stand-mp`, `forward-hp`, `fireball-mp`, `fireball-lp`
+
+Surprises:
+- The 11C artifact stores its mask policy under `metadata.awac_config`, not
+  `metadata.dqn_valid_action_mask_config`, so the probe needs the AWAC metadata
+  fallback for clean `auto` behavior.
+
+Follow-up:
+- Phase 11E should run the live MiSTer gate with:
+  `--policy actor-critic --model-dir model/actor-critic-awac-movement-balanced-human-11c3-v2`
+- Keep the model directory untracked until a live candidate is promoted.

@@ -165,6 +165,7 @@ MODEL_POLICY_CHOICES = (
     "tabular",
     "dqn",
     "bc",
+    "actor-critic",
 )
 POLICY_CHOICES = SCRIPTED_POLICY_CHOICES + MODEL_POLICY_CHOICES
 GUARD_MACRO_DECISION_STEPS = 6
@@ -388,6 +389,7 @@ class ActorModel:
     q_table: dict[str, dict[str, float]] = field(default_factory=dict)
     q_counts: dict[str, dict[str, int]] = field(default_factory=dict)
     dqn_model: dict[str, object] = field(default_factory=dict)
+    actor_critic_model: dict[str, object] = field(default_factory=dict)
     actions: tuple[str, ...] = TABULAR_DEFAULT_ACTIONS
     epsilon: float = 0.0
     fallback_policy: str = "hp"
@@ -476,6 +478,17 @@ class BCInferenceConfig:
             f"/danger_dx<={self.danger_max_abs_dx}"
             f"/danger_abs_y<={self.danger_max_abs_y}"
         )
+
+
+@dataclass(frozen=True)
+class ActorCriticInferenceConfig:
+    temperature: float = 0.8
+    top_k: int = 8
+    top_p: float = 0.0
+
+    def label(self) -> str:
+        top_p = "off" if self.top_p <= 0.0 or self.top_p >= 1.0 else f"{self.top_p:.3f}"
+        return f"temperature:{self.temperature:.3f}/top_k:{self.top_k}/top_p:{top_p}"
 
 
 @dataclass(frozen=True)
@@ -813,6 +826,96 @@ def _coerce_dqn_model(value: object) -> dict[str, object]:
     }
 
 
+def _coerce_actor_critic_layers(raw_layers: object, input_dim: int) -> list[dict[str, object]]:
+    if not isinstance(raw_layers, list):
+        return []
+    clean_layers: list[dict[str, object]] = []
+    current_dim = max(0, int(input_dim))
+    for index, raw_layer in enumerate(raw_layers):
+        if not isinstance(raw_layer, dict):
+            return []
+        raw_weights = raw_layer.get("weights")
+        raw_bias = raw_layer.get("bias")
+        if not isinstance(raw_weights, list) or not isinstance(raw_bias, list):
+            return []
+        weights: list[list[float]] = []
+        for row in raw_weights:
+            if not isinstance(row, list) or len(row) != current_dim:
+                return []
+            try:
+                weights.append([float(item) for item in row])
+            except (TypeError, ValueError):
+                return []
+        try:
+            bias = [float(item) for item in raw_bias]
+        except (TypeError, ValueError):
+            return []
+        if len(weights) != len(bias) or not weights:
+            return []
+        activation = str(raw_layer.get("activation", "linear") or "linear")
+        if activation not in {"relu", "linear"}:
+            return []
+        if index + 1 == len(raw_layers):
+            activation = "linear"
+        clean_layers.append({"weights": weights, "bias": bias, "activation": activation})
+        current_dim = len(bias)
+    return clean_layers
+
+
+def _coerce_actor_critic_model(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    try:
+        schema_version = int(value.get("schema_version", 0) or 0)
+    except (TypeError, ValueError):
+        return {}
+    if schema_version != 1:
+        return {}
+    architecture = str(value.get("architecture", "independent-mlp-v1") or "independent-mlp-v1")
+    if architecture != "independent-mlp-v1":
+        return {}
+
+    raw_feature_names = value.get("feature_names")
+    if isinstance(raw_feature_names, list):
+        feature_names = tuple(
+            name
+            for name in sanitized_dqn_feature_names(raw_feature_names, "actor-critic model")
+            if name in DQN_FEATURE_SCALES
+        )
+    else:
+        feature_names = DQN_FEATURE_NAMES
+    if not feature_names:
+        feature_names = DQN_FEATURE_NAMES
+
+    raw_feature_scales = value.get("feature_scales")
+    feature_scales = dict(DQN_FEATURE_SCALES)
+    if isinstance(raw_feature_scales, dict):
+        for name, scale in raw_feature_scales.items():
+            key = str(name)
+            if key not in DQN_FEATURE_SCALES:
+                continue
+            try:
+                feature_scales[key] = max(1e-6, float(scale))
+            except (TypeError, ValueError):
+                continue
+
+    actor_layers = _coerce_actor_critic_layers(value.get("actor_layers"), len(feature_names))
+    value_layers = _coerce_actor_critic_layers(value.get("value_layers"), len(feature_names))
+    if not actor_layers or not value_layers:
+        return {}
+    if len(actor_layers[-1]["bias"]) < 1 or len(value_layers[-1]["bias"]) < 1:
+        return {}
+    return {
+        "schema_version": schema_version,
+        "algorithm_version": str(value.get("algorithm_version", "") or ""),
+        "architecture": architecture,
+        "feature_names": list(feature_names),
+        "feature_scales": feature_scales,
+        "actor_layers": actor_layers,
+        "value_layers": value_layers,
+    }
+
+
 def replace_with_retries(src: str, dst: str, attempts: int = 8, delay_sec: float = 0.025) -> None:
     for attempt in range(max(1, attempts)):
         try:
@@ -898,6 +1001,7 @@ class ActorModelStore:
         q_table = _coerce_q_table(data.get("q"))
         q_counts = _coerce_q_counts(data.get("q_counts"))
         dqn_model = _coerce_dqn_model(data.get("dqn"))
+        actor_critic_model = _coerce_actor_critic_model(data.get("actor_critic"))
         actions = _coerce_action_names(data.get("actions"))
         try:
             epsilon = float(data.get("epsilon", 0.0) or 0.0)
@@ -922,6 +1026,7 @@ class ActorModelStore:
                     q_table=q_table,
                     q_counts=q_counts,
                     dqn_model=dqn_model,
+                    actor_critic_model=actor_critic_model,
                     actions=actions,
                     epsilon=epsilon,
                     fallback_policy=fallback_policy,
@@ -958,11 +1063,16 @@ class ActorModelStore:
         if not self._model_dir:
             with self._lock:
                 return self._active.policy
-        version_path = os.path.join(self._model_dir, f"actor-v{version}.json")
-        try:
-            with open(version_path, "r", encoding="utf-8") as stream:
-                data = json.load(stream)
-        except (OSError, json.JSONDecodeError):
+        data = None
+        for filename in (f"actor-v{version}.json", f"actor-critic-v{version}.json"):
+            version_path = os.path.join(self._model_dir, filename)
+            try:
+                with open(version_path, "r", encoding="utf-8") as stream:
+                    data = json.load(stream)
+                break
+            except (OSError, json.JSONDecodeError):
+                continue
+        if not isinstance(data, dict):
             with self._lock:
                 return self._active.policy
         policy = str(data.get("policy", "") or "")
@@ -996,6 +1106,7 @@ class ActorModelStore:
         q_table: dict[str, dict[str, float]] | None = None,
         q_counts: dict[str, dict[str, int]] | None = None,
         dqn_model: dict[str, object] | None = None,
+        actor_critic_model: dict[str, object] | None = None,
         actions: tuple[str, ...] = TABULAR_DEFAULT_ACTIONS,
         epsilon: float = 0.0,
         fallback_policy: str = "hp",
@@ -1013,6 +1124,7 @@ class ActorModelStore:
                     q_table=q_table or {},
                     q_counts=q_counts or {},
                     dqn_model=dqn_model or {},
+                    actor_critic_model=actor_critic_model or {},
                     actions=actions,
                     epsilon=epsilon,
                     fallback_policy=fallback_policy,
@@ -1036,6 +1148,7 @@ class ActorModelStore:
                 q_table=q_table or {},
                 q_counts=q_counts or {},
                 dqn_model=dqn_model or {},
+                actor_critic_model=actor_critic_model or {},
                 actions=actions,
                 epsilon=epsilon,
                 fallback_policy=fallback_policy,
@@ -1069,6 +1182,16 @@ class ActorModelStore:
                         "epsilon": model.epsilon,
                         "fallback_policy": model.fallback_policy,
                         "dqn": model.dqn_model,
+                        "updated_rows": model.updated_rows,
+                    }
+                )
+            elif model.policy == "actor-critic":
+                payload.update(
+                    {
+                        "actions": list(model.actions),
+                        "epsilon": model.epsilon,
+                        "fallback_policy": model.fallback_policy,
+                        "actor_critic": model.actor_critic_model,
                         "updated_rows": model.updated_rows,
                     }
                 )
@@ -1592,18 +1715,24 @@ def dqn_valid_action_mask_config_from_metadata(
     metadata: dict[str, object],
 ) -> tuple[DQNValidActionMaskConfig, str]:
     raw_config = metadata.get("dqn_valid_action_mask_config")
-    if not isinstance(raw_config, dict):
+    source = "metadata"
+    if isinstance(raw_config, dict):
+        if not metadata_flag_enabled(raw_config.get("enabled")):
+            return DQNValidActionMaskConfig(), "metadata:disabled"
+        raw_mode = raw_config.get("mode", "off")
+    else:
+        awac_config = metadata.get("awac_config")
+        raw_mode = awac_config.get("valid_action_mask") if isinstance(awac_config, dict) else None
+        source = "metadata:awac_config"
+    if raw_mode is None:
         return DQNValidActionMaskConfig(), "metadata:none"
-    if not metadata_flag_enabled(raw_config.get("enabled")):
-        return DQNValidActionMaskConfig(), "metadata:disabled"
-    raw_mode = raw_config.get("mode", "off")
     try:
         config = parse_dqn_valid_action_mask_config(str(raw_mode))
     except ValueError:
         return DQNValidActionMaskConfig(), f"metadata:invalid:{normalize_dqn_valid_action_mask_mode(raw_mode)}"
     if not config.enabled:
         return config, "metadata:off"
-    return config, "metadata"
+    return config, source
 
 
 def resolve_dqn_valid_action_mask_config(
@@ -1613,7 +1742,7 @@ def resolve_dqn_valid_action_mask_config(
 ) -> tuple[DQNValidActionMaskConfig, str]:
     if not auto_from_metadata:
         return cli_config, "cli"
-    if actor.policy not in ("dqn", "bc"):
+    if actor.policy not in ("dqn", "bc", "actor-critic"):
         return DQNValidActionMaskConfig(), f"auto:not-{actor.policy}"
     return dqn_valid_action_mask_config_from_metadata(actor.metadata)
 
@@ -1901,19 +2030,7 @@ def dqn_feature_vector(
     return features
 
 
-def dqn_predict_values(dqn_model: dict[str, object], row: dict[str, object]) -> list[float]:
-    feature_names = dqn_model.get("feature_names", list(DQN_FEATURE_NAMES))
-    if not isinstance(feature_names, list):
-        feature_names = list(DQN_FEATURE_NAMES)
-    else:
-        feature_names = list(sanitized_dqn_feature_names(feature_names, "dqn inference metadata"))
-        if not feature_names:
-            feature_names = list(DQN_FEATURE_NAMES)
-    feature_scales = dqn_model.get("feature_scales", dict(DQN_FEATURE_SCALES))
-    if not isinstance(feature_scales, dict):
-        feature_scales = dict(DQN_FEATURE_SCALES)
-    activations = dqn_feature_vector(row, feature_names, feature_scales)  # type: ignore[arg-type]
-    layers = dqn_model.get("layers")
+def mlp_predict_values(layers: object, activations: list[float]) -> list[float]:
     if not isinstance(layers, list):
         return []
     for layer in layers:
@@ -1936,6 +2053,46 @@ def dqn_predict_values(dqn_model: dict[str, object], row: dict[str, object]) -> 
             next_values = [max(0.0, value) for value in next_values]
         activations = next_values
     return activations
+
+
+def dqn_predict_values(dqn_model: dict[str, object], row: dict[str, object]) -> list[float]:
+    feature_names = dqn_model.get("feature_names", list(DQN_FEATURE_NAMES))
+    if not isinstance(feature_names, list):
+        feature_names = list(DQN_FEATURE_NAMES)
+    else:
+        feature_names = list(sanitized_dqn_feature_names(feature_names, "dqn inference metadata"))
+        if not feature_names:
+            feature_names = list(DQN_FEATURE_NAMES)
+    feature_scales = dqn_model.get("feature_scales", dict(DQN_FEATURE_SCALES))
+    if not isinstance(feature_scales, dict):
+        feature_scales = dict(DQN_FEATURE_SCALES)
+    activations = dqn_feature_vector(row, feature_names, feature_scales)  # type: ignore[arg-type]
+    return mlp_predict_values(dqn_model.get("layers"), activations)
+
+
+def actor_critic_feature_vector(actor_critic_model: dict[str, object], row: dict[str, object]) -> list[float]:
+    feature_names = actor_critic_model.get("feature_names", list(DQN_FEATURE_NAMES))
+    if not isinstance(feature_names, list):
+        feature_names = list(DQN_FEATURE_NAMES)
+    else:
+        feature_names = list(sanitized_dqn_feature_names(feature_names, "actor-critic inference metadata"))
+        if not feature_names:
+            feature_names = list(DQN_FEATURE_NAMES)
+    feature_scales = actor_critic_model.get("feature_scales", dict(DQN_FEATURE_SCALES))
+    if not isinstance(feature_scales, dict):
+        feature_scales = dict(DQN_FEATURE_SCALES)
+    return dqn_feature_vector(row, feature_names, feature_scales)  # type: ignore[arg-type]
+
+
+def actor_critic_predict_logits_value(
+    actor_critic_model: dict[str, object],
+    row: dict[str, object],
+) -> tuple[list[float], float | None]:
+    features = actor_critic_feature_vector(actor_critic_model, row)
+    logits = mlp_predict_values(actor_critic_model.get("actor_layers"), features)
+    value_values = mlp_predict_values(actor_critic_model.get("value_layers"), features)
+    value = float(value_values[0]) if value_values else None
+    return logits, value
 
 
 def dqn_support_prior_penalty(
@@ -3096,6 +3253,81 @@ def bc_actor_action_name(
     return bc_sample_ranked_action_name(ranked_actions, config)
 
 
+def actor_critic_ranked_action_scores(
+    actions: tuple[str, ...],
+    actor_critic_model: dict[str, object],
+    row: dict[str, object],
+    valid_action_mask_config: DQNValidActionMaskConfig = DQNValidActionMaskConfig(),
+) -> list[tuple[str, float]]:
+    logits, _value = actor_critic_predict_logits_value(actor_critic_model, row)
+    if not logits:
+        return []
+    scored_actions: list[tuple[str, float]] = []
+    for index, action in enumerate(actions):
+        if index >= len(logits) or action not in TABULAR_ACTION_NAMES:
+            continue
+        if not dqn_valid_action_for_row(action, row, valid_action_mask_config):
+            continue
+        scored_actions.append((action, float(logits[index])))
+    return sorted(scored_actions, key=lambda item: (item[1], item[0]), reverse=True)
+
+
+def actor_critic_sample_ranked_action_name(
+    ranked_actions: list[tuple[str, float]],
+    config: ActorCriticInferenceConfig,
+) -> str | None:
+    if not ranked_actions:
+        return None
+    top_k = max(0, int(config.top_k))
+    candidates = ranked_actions if top_k == 0 else ranked_actions[:top_k]
+    if not candidates:
+        return None
+    if config.temperature <= 0.0 or len(candidates) == 1:
+        return candidates[0][0]
+    max_score = max(score for _, score in candidates)
+    inv_temp = 1.0 / max(1e-6, float(config.temperature))
+    weights = [math.exp(max(-80.0, min(80.0, (score - max_score) * inv_temp))) for _, score in candidates]
+    if 0.0 < config.top_p < 1.0:
+        total = sum(weights)
+        if total > 0.0:
+            filtered_candidates: list[tuple[str, float]] = []
+            filtered_weights: list[float] = []
+            cumulative = 0.0
+            for candidate, weight in zip(candidates, weights):
+                filtered_candidates.append(candidate)
+                filtered_weights.append(weight)
+                cumulative += weight / total
+                if cumulative >= config.top_p:
+                    break
+            candidates = filtered_candidates
+            weights = filtered_weights
+    if not weights or sum(weights) <= 0.0:
+        return candidates[0][0]
+    return random.choices([action for action, _ in candidates], weights=weights, k=1)[0]
+
+
+def actor_critic_actor_action_name(
+    actor: ActorModel,
+    obs_row: dict[str, object] | None,
+    config: ActorCriticInferenceConfig,
+    valid_action_mask_config: DQNValidActionMaskConfig = DQNValidActionMaskConfig(),
+) -> str | None:
+    if actor.policy != "actor-critic" or not obs_row or not actor.actor_critic_model:
+        return None
+    if random.random() < actor.epsilon:
+        eligible_actions = dqn_valid_actions_for_row(obs_row, actor.actions, valid_action_mask_config)
+        if not eligible_actions:
+            return None
+        return random.choice(eligible_actions)
+    ranked_actions = actor_critic_ranked_action_scores(
+        actor.actions,
+        actor.actor_critic_model,
+        obs_row,
+        valid_action_mask_config,
+    )
+    return actor_critic_sample_ranked_action_name(ranked_actions, config)
+
+
 def active_macro_action_frame(
     macro_states: dict[tuple[int, int, int], dict[str, int | str]],
     nonce: int,
@@ -3189,6 +3421,7 @@ def policy_action_frame(
     dqn_fireball_zoning_prior_config: DQNFireballZoningPriorConfig = DQNFireballZoningPriorConfig(),
     dqn_threat_defense_prior_config: DQNThreatDefensePriorConfig = DQNThreatDefensePriorConfig(),
     bc_inference_config: BCInferenceConfig = BCInferenceConfig(),
+    actor_critic_inference_config: ActorCriticInferenceConfig = ActorCriticInferenceConfig(),
 ) -> PolicyActionFrame:
     if actor.policy in MODEL_POLICY_CHOICES:
         macro_action = active_macro_action_name(macro_states, nonce, run_id, episode_id)
@@ -3229,6 +3462,13 @@ def policy_action_frame(
             bc_inference_config,
             dqn_valid_action_mask_config,
         )
+    elif actor.policy == "actor-critic":
+        action_name = actor_critic_actor_action_name(
+            actor,
+            obs_row_override,
+            actor_critic_inference_config,
+            dqn_valid_action_mask_config,
+        )
     if action_name is not None:
         fixed = fixed_action_wire(action_name)
         if fixed is not None:
@@ -3259,6 +3499,7 @@ def policy_action_wire(
     dqn_fireball_zoning_prior_config: DQNFireballZoningPriorConfig = DQNFireballZoningPriorConfig(),
     dqn_threat_defense_prior_config: DQNThreatDefensePriorConfig = DQNThreatDefensePriorConfig(),
     bc_inference_config: BCInferenceConfig = BCInferenceConfig(),
+    actor_critic_inference_config: ActorCriticInferenceConfig = ActorCriticInferenceConfig(),
 ) -> int:
     return policy_action_frame(
         actor,
@@ -3279,6 +3520,7 @@ def policy_action_wire(
         dqn_fireball_zoning_prior_config,
         dqn_threat_defense_prior_config,
         bc_inference_config,
+        actor_critic_inference_config,
     ).action_wire
 
 
@@ -3288,15 +3530,52 @@ def format_dqn_verbose_diagnostics(
     target_action: PolicyActionFrame,
     valid_action_mask_config: DQNValidActionMaskConfig,
     valid_action_mask_source: str,
+    actor_critic_inference_config: ActorCriticInferenceConfig,
     projectile_timing_prior_config: DQNProjectileTimingPriorConfig,
     shoryuken_context_prior_config: DQNShoryukenContextPriorConfig,
     ground_normal_context_prior_config: DQNGroundNormalContextPriorConfig,
     fireball_zoning_prior_config: DQNFireballZoningPriorConfig,
     threat_defense_prior_config: DQNThreatDefensePriorConfig,
 ) -> str:
-    if actor.policy not in ("dqn", "bc"):
+    if actor.policy not in ("dqn", "bc", "actor-critic"):
         return ""
     action_name = policy_action_frame_name(target_action)
+    if actor.policy == "actor-critic":
+        if obs_row is None:
+            return (
+                f" ac_action={action_name}"
+                f" ac_mask={valid_action_mask_config.label()}"
+                f" ac_mask_source={valid_action_mask_source}"
+                f" ac_infer={actor_critic_inference_config.label()}"
+                " ac_valid=n/a"
+                " ac_value=n/a"
+            )
+        valid_actions = dqn_valid_actions_for_row(obs_row, actor.actions, valid_action_mask_config)
+        ranked_actions = actor_critic_ranked_action_scores(
+            actor.actions,
+            actor.actor_critic_model,
+            obs_row,
+            valid_action_mask_config,
+        )
+        _logits, value = actor_critic_predict_logits_value(actor.actor_critic_model, obs_row)
+        top = ",".join(f"{name}:{score:.3f}" for name, score in ranked_actions[:5]) if ranked_actions else "none"
+        value_label = "n/a" if value is None else f"{value:.3f}"
+        return (
+            f" ac_action={action_name}"
+            f" ac_mask={valid_action_mask_config.label()}"
+            f" ac_mask_source={valid_action_mask_source}"
+            f" ac_infer={actor_critic_inference_config.label()}"
+            f" ac_valid={len(valid_actions)}/{len(actor.actions)}"
+            f" ac_phase={dqn_self_mask_phase(obs_row)}"
+            f" ac_value={value_label}"
+            f" ac_top={top}"
+            f" self_r1={row_int_field(obs_row, 'obs_self_routine_1')}"
+            f" self_r2={row_int_field(obs_row, 'obs_self_routine_2')}"
+            f" self_atk={row_int_field(obs_row, 'obs_self_routine_attack_state')}"
+            f" self_contact={row_int_field(obs_row, 'obs_self_contact_reaction_state')}"
+            f" proj={row_int_field(obs_row, 'obs_projectile_active')}/{row_int_field(obs_row, 'obs_projectile_owner')}"
+            f" proj_t={row_int_field(obs_row, 'obs_projectile_time_to_self')}"
+        )
     if actor.policy == "bc":
         if obs_row is None:
             return (
@@ -3454,6 +3733,9 @@ def serve(
     bc_valid_action_mask_config: DQNValidActionMaskConfig,
     bc_valid_action_mask_auto: bool,
     bc_inference_config: BCInferenceConfig,
+    actor_critic_valid_action_mask_config: DQNValidActionMaskConfig,
+    actor_critic_valid_action_mask_auto: bool,
+    actor_critic_inference_config: ActorCriticInferenceConfig,
     dqn_projectile_timing_prior_config: DQNProjectileTimingPriorConfig,
     dqn_shoryuken_context_prior_config: DQNShoryukenContextPriorConfig,
     dqn_ground_normal_context_prior_config: DQNGroundNormalContextPriorConfig,
@@ -3523,16 +3805,25 @@ def serve(
         print(f"DQN threat-defense prior active {dqn_threat_defense_prior_config.label()}", flush=True)
     if policy == "bc" or model_store.current().policy == "bc":
         print(f"BC inference active {bc_inference_config.label()}", flush=True)
+    if policy == "actor-critic" or model_store.current().policy == "actor-critic":
+        print(f"Actor-critic inference active {actor_critic_inference_config.label()}", flush=True)
     active_model = model_store.current()
-    initial_cli_mask_config = bc_valid_action_mask_config if active_model.policy == "bc" else dqn_valid_action_mask_config
-    initial_mask_auto = bc_valid_action_mask_auto if active_model.policy == "bc" else dqn_valid_action_mask_auto
+    if active_model.policy == "bc":
+        initial_cli_mask_config = bc_valid_action_mask_config
+        initial_mask_auto = bc_valid_action_mask_auto
+    elif active_model.policy == "actor-critic":
+        initial_cli_mask_config = actor_critic_valid_action_mask_config
+        initial_mask_auto = actor_critic_valid_action_mask_auto
+    else:
+        initial_cli_mask_config = dqn_valid_action_mask_config
+        initial_mask_auto = dqn_valid_action_mask_auto
     initial_mask_config, initial_mask_source = resolve_dqn_valid_action_mask_config(
         active_model,
         initial_cli_mask_config,
         initial_mask_auto,
     )
     last_model_mask_status: tuple[str, int, str, str] | None = None
-    if active_model.policy in ("dqn", "bc"):
+    if active_model.policy in ("dqn", "bc", "actor-critic"):
         last_model_mask_status = (
             active_model.policy,
             active_model.version,
@@ -3554,14 +3845,21 @@ def serve(
         if len(data) >= OBS_HEADER.size:
             inference_start_ns = time.perf_counter_ns()
             active_model = model_store.current()
-            mask_cli_config = bc_valid_action_mask_config if active_model.policy == "bc" else dqn_valid_action_mask_config
-            mask_auto = bc_valid_action_mask_auto if active_model.policy == "bc" else dqn_valid_action_mask_auto
+            if active_model.policy == "bc":
+                mask_cli_config = bc_valid_action_mask_config
+                mask_auto = bc_valid_action_mask_auto
+            elif active_model.policy == "actor-critic":
+                mask_cli_config = actor_critic_valid_action_mask_config
+                mask_auto = actor_critic_valid_action_mask_auto
+            else:
+                mask_cli_config = dqn_valid_action_mask_config
+                mask_auto = dqn_valid_action_mask_auto
             effective_dqn_valid_action_mask_config, dqn_valid_action_mask_source = resolve_dqn_valid_action_mask_config(
                 active_model,
                 mask_cli_config,
                 mask_auto,
             )
-            if active_model.policy in ("dqn", "bc"):
+            if active_model.policy in ("dqn", "bc", "actor-critic"):
                 model_mask_status = (
                     active_model.policy,
                     active_model.version,
@@ -3634,6 +3932,7 @@ def serve(
                     dqn_fireball_zoning_prior_config,
                     dqn_threat_defense_prior_config,
                     bc_inference_config,
+                    actor_critic_inference_config,
                 )
                 payload = make_action_packet(
                     nonce,
@@ -3666,6 +3965,7 @@ def serve(
                         target_action,
                         effective_dqn_valid_action_mask_config,
                         dqn_valid_action_mask_source,
+                        actor_critic_inference_config,
                         dqn_projectile_timing_prior_config,
                         dqn_shoryuken_context_prior_config,
                         dqn_ground_normal_context_prior_config,
@@ -3976,6 +4276,33 @@ def main() -> None:
         help="Maximum absolute projectile rel_y treated as urgent for --bc-deterministic-danger",
     )
     parser.add_argument(
+        "--actor-critic-valid-action-mask",
+        choices=DQN_VALID_ACTION_MASK_CLI_MODES,
+        default="action-start-v1",
+        help=(
+            "Actor-critic action eligibility mask. Defaults to action-start-v1 so sampled actions respect "
+            "ground/jump/air start eligibility; auto reads metadata.awac_config.valid_action_mask when present."
+        ),
+    )
+    parser.add_argument(
+        "--actor-critic-temperature",
+        type=float,
+        default=0.8,
+        help="Softmax temperature for actor-critic top-k action sampling; 0 makes actor-critic deterministic argmax",
+    )
+    parser.add_argument(
+        "--actor-critic-top-k",
+        type=int,
+        default=8,
+        help="Number of highest-logit valid actor-critic actions to sample from; 0 samples from every valid action",
+    )
+    parser.add_argument(
+        "--actor-critic-top-p",
+        type=float,
+        default=0.0,
+        help="Optional nucleus threshold after top-k filtering for actor-critic sampling; 0 disables top-p",
+    )
+    parser.add_argument(
         "--dqn-projectile-timing-prior",
         action="store_true",
         help="Apply a soft jump-start Q penalty for close incoming opponent projectiles before DQN argmax",
@@ -4223,6 +4550,9 @@ def main() -> None:
     bc_valid_action_mask_auto, bc_valid_action_mask_config = parse_dqn_valid_action_mask_cli_config(
         str(args.bc_valid_action_mask)
     )
+    actor_critic_valid_action_mask_auto, actor_critic_valid_action_mask_config = parse_dqn_valid_action_mask_cli_config(
+        str(args.actor_critic_valid_action_mask)
+    )
     bc_inference_config = BCInferenceConfig(
         temperature=max(0.0, float(args.bc_temperature)),
         top_k=max(0, int(args.bc_top_k)),
@@ -4230,6 +4560,11 @@ def main() -> None:
         danger_max_time_to_self=max(0, int(args.bc_danger_max_time_to_self)),
         danger_max_abs_dx=max(0, int(args.bc_danger_max_abs_dx)),
         danger_max_abs_y=max(0, int(args.bc_danger_max_abs_y)),
+    )
+    actor_critic_inference_config = ActorCriticInferenceConfig(
+        temperature=max(0.0, float(args.actor_critic_temperature)),
+        top_k=max(0, int(args.actor_critic_top_k)),
+        top_p=max(0.0, min(1.0, float(args.actor_critic_top_p))),
     )
     projectile_prior_min_time = max(0, int(args.dqn_projectile_prior_min_time_to_self))
     projectile_prior_urgent_max_time = max(
@@ -4348,6 +4683,9 @@ def main() -> None:
         bc_valid_action_mask_config,
         bc_valid_action_mask_auto,
         bc_inference_config,
+        actor_critic_valid_action_mask_config,
+        actor_critic_valid_action_mask_auto,
+        actor_critic_inference_config,
         dqn_projectile_timing_prior_config,
         dqn_shoryuken_context_prior_config,
         dqn_ground_normal_context_prior_config,

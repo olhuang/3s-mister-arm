@@ -330,6 +330,12 @@ Runtime decoder implementation:
 - `src/rl/rl_session.c::RLSession_RyuNormalPolicyMetaFromIdentity` uses
   `current_attack` / normal `KW` for normals, with stance/jump class inferred
   from sampled input or airborne/crouch context.
+- For opponent-side Ryu/Ken normals, the attack-state row itself can be only
+  `R1=4/R2=0 + AK/KW=<button>`, which identifies the button but not stand vs
+  crouch. The runtime therefore carries the previous-frame ordinary routine
+  context and treats `R1=0/R2=8/9/10/29` immediately before attack start as
+  `crouch_normal`. This is required for low-defense training captures where
+  Ken/Ryu crouch LK/MK/HK are performed by the opponent.
 - `tools/analyze_rl_transitions.py::engine_state_action_name` implements the
   analyzer-only ordinary-state and Ryu attack labels from raw `obs_*_routine_1`
   / `obs_*_routine_2`.
@@ -412,6 +418,11 @@ for the first low-defense pass:
 Other stand/crouch/air normals remain untagged for Phase 9F until they are
 validated per character. The trainer target action is `guard-crouch`; bad
 competitors are `guard-stand`, `back`, and `forward`.
+
+Implementation note: event logs captured before the previous-frame crouch
+context fix can label opponent-side crouch kicks as `stand-lk`, `stand-mk`, or
+`stand-hk`. Re-record low-defense data after the fix before using those labels
+for Phase 9F reward or margin shaping.
 
 ## Sub Actions
 

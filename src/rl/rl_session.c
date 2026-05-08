@@ -999,6 +999,29 @@ static bool RLSession_RoutineIsCrouchGuardCandidate(u16 routine_1, u16 routine_2
     return routine_2 == 29 || routine_2 == 31 || routine_2 == 32 || routine_2 == 33;
 }
 
+static bool RLSession_RoutineIsPreAttackCrouchCandidate(u16 routine_1, u16 routine_2) {
+    if (routine_1 != 0) {
+        return false;
+    }
+    return routine_2 == 8 || routine_2 == 9 || routine_2 == 10 || routine_2 == 29;
+}
+
+static bool RLSession_ObservationPreAttackCrouchForSide(const RLObservationV1* obs,
+                                                        RLCombatEventSide side) {
+    if (obs == NULL || !obs->valid) {
+        return false;
+    }
+    if (side == RL_COMBAT_EVENT_SIDE_SELF) {
+        return RLSession_RoutineIsPreAttackCrouchCandidate(obs->self_prev_routine[1],
+                                                           obs->self_prev_routine[2]);
+    }
+    if (side == RL_COMBAT_EVENT_SIDE_OPPONENT) {
+        return RLSession_RoutineIsPreAttackCrouchCandidate(obs->opp_prev_routine[1],
+                                                           obs->opp_prev_routine[2]);
+    }
+    return false;
+}
+
 static bool RLSession_ObservationIsStandGuardCandidate(const RLObservationV1* obs) {
     return obs != NULL && obs->valid && RLSession_RoutineIsStandGuardCandidate(obs->self_routine[1], obs->self_routine[2]);
 }
@@ -1449,6 +1472,7 @@ static bool RLSession_RyuNormalPolicyMetaFromIdentity(const RLDecisionLedgerEntr
     const u16 current_attack = is_self ? obs->self_current_attack : obs->opp_current_attack;
     const u8 kind_of_waza = is_self ? obs->self_kind_of_waza : obs->opp_kind_of_waza;
     const bool airborne = is_self ? obs->self_airborne : obs->opp_airborne;
+    const bool pre_attack_crouch = RLSession_ObservationPreAttackCrouchForSide(obs, side);
     const u16 sub = RLSession_NormalSubActionFromAttackIdentity(current_attack, kind_of_waza);
     if (sub == RL_POLICY_SUB_ACTION_NONE) {
         return false;
@@ -1462,7 +1486,8 @@ static bool RLSession_RyuNormalPolicyMetaFromIdentity(const RLDecisionLedgerEntr
 
     if (airborne) {
         *action_id = RL_POLICY_ACTION_AIR_NORMAL;
-    } else if (is_self && entry != NULL && RLSession_MoveIntentIsCrouch(entry->executed_move_intent)) {
+    } else if ((is_self && entry != NULL && RLSession_MoveIntentIsCrouch(entry->executed_move_intent)) ||
+               pre_attack_crouch) {
         *action_id = RL_POLICY_ACTION_CROUCH_NORMAL;
     } else {
         *action_id = RL_POLICY_ACTION_STAND_NORMAL;

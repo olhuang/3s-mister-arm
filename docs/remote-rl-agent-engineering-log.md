@@ -15859,3 +15859,45 @@ Interpretation:
   deliberate low attack hit/block cases.
 - Next data collection should include Ryu/Ken crouch LK/MK/HK hitting
   `guard-stand`/back/forward and being blocked by `guard-crouch`.
+
+## 2026-05-08: Phase 9F-1 Opponent Normal Stance Label Fix
+
+Milestone:
+- Combat event attribution Phase 9F-1 / Ryu-Ken opponent low-normal source
+  labels.
+
+Purpose:
+- Fix the live finding that a Ken low-defense capture consisted of down LK/MK/HK
+  attacks, but event source rows normalized to `stand-lk`, `stand-mk`, and
+  `stand-hk`, yielding `low_rows=0` for Phase 9F.
+- Make opponent-side low-defense data usable without relying on opponent input
+  metadata, which is not available for CPU/human opponents.
+
+Implementation:
+- Added previous-frame routine context to `RLObservationV1` for self and
+  opponent.
+- In `RLSession_RyuNormalPolicyMetaFromIdentity`, non-airborne normal source
+  labels now use previous-frame ordinary crouch context as a stance hint:
+  `R1=0/R2=8`, `9`, `10`, or `29` immediately before the attack start maps the
+  source to `crouch_normal`.
+- The fix applies to the shared Ryu/Ken normal identity path. Specials,
+  throws, projectiles, and air normals are unchanged.
+
+Validation:
+- Existing low-defense log inspection showed Ken opponent down kicks emitted
+  `R1=4/R2=0` with button-only `AK/KW`:
+  - LK: `AK=256`, `KW=1`
+  - MK: `AK=512`, `KW=3`
+  - HK: `AK=1024`, `KW=5`
+- The paired transition context immediately before those attack starts was
+  mostly ordinary crouch-start/crouch (`R1=0/R2=8` or `9`), confirming that the
+  stance signal exists one frame before attack state but not inside the attack
+  row itself.
+
+Interpretation:
+- Low-defense captures made before this fix should be treated as label-bugged
+  for opponent crouch normals and should be re-recorded before Phase 9F
+  training.
+- Future captures should show Ken/Ryu opponent down LK/MK/HK as
+  `crouch-lk`, `crouch-mk`, and `crouch-hk`, allowing low-defense reward
+  shaping and margin diagnostics to activate.

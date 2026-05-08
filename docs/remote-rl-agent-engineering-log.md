@@ -16735,3 +16735,68 @@ Follow-up:
   `--actor-critic-spacing-prior`.
 - If behavior improves, implement range-aware AWAC labels/advantages so the
   learned actor owns this behavior without a large runtime prior.
+
+## 2026-05-08: Phase 11E-2 Threat-Aware Spacing Prior
+
+Milestone:
+- Phase 11E-2 / keep the actor-critic spacing prior from walking into threats.
+
+Purpose:
+- The first live run with `--actor-critic-spacing-prior` fixed "far-range
+  stationary attacks", but overshot into "always walk forward and attack,
+  rarely defend".
+- The missing rule was threat context: the prior only suppressed itself for
+  incoming projectiles, not for opponent attack state or self contact reaction.
+
+Implementation:
+- Extended `ActorCriticSpacingPriorConfig` with threat-defense parameters:
+  - `threat_attack_max_abs_dx`
+  - `threat_guard_bonus`
+  - `threat_back_bonus`
+  - `threat_forward_penalty`
+  - `threat_attack_penalty`
+- Added CLI controls:
+  - `--actor-critic-spacing-threat-attack-max-abs-dx`
+  - `--actor-critic-spacing-threat-guard-bonus`
+  - `--actor-critic-spacing-threat-back-bonus`
+  - `--actor-critic-spacing-threat-forward-penalty`
+  - `--actor-critic-spacing-threat-attack-penalty`
+- Threat rows now include:
+  - self contact reaction
+  - opponent attack state within configured distance
+  - incoming opponent projectile threat
+- In threat rows the spacing prior now:
+  - boosts `guard-stand` / `guard-crouch`
+  - gives a smaller bonus to `back`
+  - penalizes `forward`
+  - penalizes unsafe close attacks/specials
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py`
+- `git diff --check`
+- Replay validation on
+  `logs/phase11e-actor-critic-spacing-live-transitions.ndjson`:
+  - rows: `2873`
+  - threat rows: `425`
+  - old deterministic threat choices:
+    `back=76.0%`, `fireball-mp=12.9%`, `forward=7.3%`
+  - new deterministic threat choices:
+    `guard-crouch=50.8%`, `guard-stand=38.6%`, `back=10.6%`
+  - contact rows specifically became:
+    `guard-crouch=43.4%`, `guard-stand=43.4%`, `back=13.2%`
+  - whole-log deterministic distribution remains spacing-aware:
+    `forward=27.3%`, `guard-crouch=26.9%`, `fireball-mp=22.0%`,
+    `back=16.5%`, `guard-stand=7.2%`
+
+Interpretation:
+- This should address the live observation "一直前進後攻擊不會防" without
+  fully reverting to guard/back collapse.
+- It is still a runtime bridge. If this version feels better live, Phase 11
+  should move the same range/threat buckets into AWAC training.
+
+Follow-up:
+- Re-run Phase 11E live gate with `--actor-critic-spacing-prior`.
+- Watch specifically for:
+  - no-threat far rows: approach/fireball
+  - opponent attack/contact rows: guard/back
+  - close neutral rows: attack/throw still available

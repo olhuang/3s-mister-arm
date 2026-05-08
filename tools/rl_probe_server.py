@@ -508,6 +508,11 @@ class ActorCriticSpacingPriorConfig:
     threat_suppress_max_time_to_self: int = 12
     threat_suppress_max_abs_dx: int = 144
     threat_suppress_max_abs_y: int = 96
+    threat_attack_max_abs_dx: int = 160
+    threat_guard_bonus: float = 0.90
+    threat_back_bonus: float = 0.45
+    threat_forward_penalty: float = 1.10
+    threat_attack_penalty: float = 0.75
 
     def label(self) -> str:
         if not self.enabled:
@@ -522,6 +527,8 @@ class ActorCriticSpacingPriorConfig:
             f"/close_attack-{self.close_attack_far_penalty:.3f}"
             f"/dp-{self.shoryuken_far_penalty:.3f}"
             f"/fireball+{self.fireball_bonus:.3f}@{self.fireball_min_abs_dx}-{self.fireball_max_abs_dx}"
+            f"/threat_guard+{self.threat_guard_bonus:.3f}"
+            f"/threat_forward-{self.threat_forward_penalty:.3f}"
         )
 
 
@@ -1717,6 +1724,13 @@ def actor_critic_spacing_prior_suppressed_by_threat(
     row: dict[str, object],
     config: ActorCriticSpacingPriorConfig,
 ) -> bool:
+    if row_int_field(row, "obs_self_contact_reaction_state") != 0:
+        return True
+    if (
+        row_int_field(row, "obs_opp_routine_attack_state") != 0
+        and row_int_field(row, "obs_abs_dx") <= config.threat_attack_max_abs_dx
+    ):
+        return True
     if row_int_field(row, "obs_projectile_active") == 0:
         return False
     if row_int_field(row, "obs_projectile_owner") != 2:
@@ -1731,6 +1745,31 @@ def actor_critic_spacing_prior_suppressed_by_threat(
         and abs(rel_y) <= config.threat_suppress_max_abs_y
         and vel_x < 0
     )
+
+
+def actor_critic_threat_defense_adjustment(
+    action: str,
+    row: dict[str, object],
+    config: ActorCriticSpacingPriorConfig,
+) -> float:
+    if not actor_critic_spacing_prior_suppressed_by_threat(row, config):
+        return 0.0
+    if action == "guard-crouch" or action == "guard-stand":
+        return max(0.0, config.threat_guard_bonus)
+    if action == "back":
+        return max(0.0, config.threat_back_bonus)
+    if action == "forward":
+        return -max(0.0, config.threat_forward_penalty)
+    if (
+        action in STAND_NORMAL_ACTION_NAMES
+        or action in CROUCH_NORMAL_ACTION_NAMES
+        or action in SHORYUKEN_ACTION_NAMES
+        or action in TATSU_ACTION_NAMES
+        or action == "forward-hp"
+        or action == "throw"
+    ):
+        return -max(0.0, config.threat_attack_penalty)
+    return 0.0
 
 
 def actor_critic_close_attack_action(action: str) -> bool:
@@ -1752,7 +1791,7 @@ def actor_critic_spacing_prior_adjustment(
     if row_int_field(row, "obs_self_airborne") != 0 or row_int_field(row, "obs_self_jump_phase") != 0:
         return 0.0
     if actor_critic_spacing_prior_suppressed_by_threat(row, config):
-        return 0.0
+        return actor_critic_threat_defense_adjustment(action, row, config)
 
     abs_dx = row_int_field(row, "obs_abs_dx")
     adjustment = 0.0
@@ -4496,6 +4535,36 @@ def main() -> None:
         help="Maximum obs_abs_dx where actor-critic fireball spacing bonus applies",
     )
     parser.add_argument(
+        "--actor-critic-spacing-threat-attack-max-abs-dx",
+        type=int,
+        default=160,
+        help="Maximum obs_abs_dx where opponent attack state suppresses approach spacing and activates defense bias",
+    )
+    parser.add_argument(
+        "--actor-critic-spacing-threat-guard-bonus",
+        type=float,
+        default=0.90,
+        help="Actor-critic logit bonus for guard-stand/guard-crouch while spacing prior sees a threat",
+    )
+    parser.add_argument(
+        "--actor-critic-spacing-threat-back-bonus",
+        type=float,
+        default=0.45,
+        help="Actor-critic logit bonus for back while spacing prior sees a threat",
+    )
+    parser.add_argument(
+        "--actor-critic-spacing-threat-forward-penalty",
+        type=float,
+        default=1.10,
+        help="Actor-critic logit penalty for forward while spacing prior sees a threat",
+    )
+    parser.add_argument(
+        "--actor-critic-spacing-threat-attack-penalty",
+        type=float,
+        default=0.75,
+        help="Actor-critic logit penalty for close attacks/specials while spacing prior sees a threat",
+    )
+    parser.add_argument(
         "--dqn-projectile-timing-prior",
         action="store_true",
         help="Apply a soft jump-start Q penalty for close incoming opponent projectiles before DQN argmax",
@@ -4786,6 +4855,11 @@ def main() -> None:
         fireball_bonus=max(0.0, float(args.actor_critic_spacing_fireball_bonus)),
         fireball_min_abs_dx=actor_critic_spacing_fireball_min_dx,
         fireball_max_abs_dx=actor_critic_spacing_fireball_max_dx,
+        threat_attack_max_abs_dx=max(0, int(args.actor_critic_spacing_threat_attack_max_abs_dx)),
+        threat_guard_bonus=max(0.0, float(args.actor_critic_spacing_threat_guard_bonus)),
+        threat_back_bonus=max(0.0, float(args.actor_critic_spacing_threat_back_bonus)),
+        threat_forward_penalty=max(0.0, float(args.actor_critic_spacing_threat_forward_penalty)),
+        threat_attack_penalty=max(0.0, float(args.actor_critic_spacing_threat_attack_penalty)),
     )
     projectile_prior_min_time = max(0, int(args.dqn_projectile_prior_min_time_to_self))
     projectile_prior_urgent_max_time = max(

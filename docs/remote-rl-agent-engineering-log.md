@@ -16104,3 +16104,90 @@ Interpretation:
   successful attack/projectile/throw labels to outrank generic movement, and
   low/projectile defense labels to outrank bad defensive choices in matching
   threat contexts.
+
+## 2026-05-08: Phase 10C-1 Positive-Event BC Family Margin
+
+Milestone:
+- Phase 10C explicit BC objective.
+
+Purpose:
+- Fix the repeated live failure where BC policies imitate high-volume
+  forward/back rows and never turn event-proven successful actions into
+  decisive policy preferences.
+
+Implementation:
+- Added opt-in BC-only trainer flags in `tools/train_dqn_learner.py`:
+  - `--bc-family-margin off|positive-event-v1`
+  - `--bc-family-margin-weight`
+  - `--bc-family-margin-target-margin`
+  - `--bc-family-margin-min-positive-adjustment`
+  - `--bc-family-margin-negative-actions`
+- `positive-event-v1` requires `--training-mode bc`,
+  `--combat-event-training-mode validate`, paired `--combat-event-logs`, and
+  `--bc-event-weighting event-weighted-v1`.
+- During BC dataset construction, each labeled row now keeps its raw
+  combat-event reward adjustment.
+- Rows with positive event adjustment and a meaningful target label are
+  margin-eligible. Meaningful labels currently include:
+  - grounded/air normals
+  - fireball/shoryuken/tatsu
+  - `forward-hp`
+  - `throw`
+  - `guard-crouch`
+- For eligible rows, the extra objective requires the target label logit to
+  outrank the best configured generic negative action by
+  `--bc-family-margin-target-margin`.
+- Default generic negatives are `forward,back,guard-stand,guard-crouch`.
+  The target action is excluded from the negative set for that sample.
+- Added metadata and stdout diagnostics for eligible rows, sampled rows,
+  violations, margin loss, target actions, and selected negative actions.
+
+Validation:
+- `python3 -m py_compile tools/train_dqn_learner.py tools/rl_combat_event_training.py`
+- 10-step smoke on the human-only paired log:
+  - margin eligible rows: `233`
+  - sampled rows: `5`
+  - violations: `5`
+  - no validation errors.
+- Full candidate:
+  `model/bc-event-weighted-family-margin-human-10c-v2`
+  trained from:
+  - `logs/phase7a-event-journal-live-human-transitions.ndjson`
+  - `logs/phase7a-event-journal-live-human-events.ndjson`
+  with:
+  - `--bc-event-weighting event-weighted-v1`
+  - `--bc-family-margin positive-event-v1`
+  - `--bc-family-margin-weight 0.35`
+  - `--bc-family-margin-target-margin 0.7`
+  - `--bc-label-balance inverse-frequency`
+  - `--steps 3000`
+- Full train stats:
+  - rows `29869`, labeled `23933`.
+  - event validation `3951` rows, `missing_refs=0`, `errors=0`.
+  - family margin eligible `233`, sampled `3648`, violations `3648`,
+    total margin loss `817.646423`.
+  - margin targets: `stand-hp=1037`, `crouch-mk=902`, `stand-lp=768`,
+    `stand-lk=419`, `crouch-hk=209`, `fireball-hp=140`,
+    `fireball-mp=81`, `stand-mk=65`, `fireball-lp=27`.
+  - selected negatives: `back=3311`, `forward=337`.
+
+Local sanity:
+- First 5000 rows, `action-start-v1` mask.
+- `10c-v1`, `temperature=0.8`, `top_k=5`:
+  `back=1526`, `forward=1472`, `guard-crouch=1169`,
+  `stand-hp=343`, `stand-lp=154`, `shoryuken-hp=106`,
+  `shoryuken-mp=72`, `throw=43`.
+- `10c-v2`, `temperature=0.8`, `top_k=8`:
+  `back=1438`, `forward=1395`, `guard-crouch=1000`,
+  `crouch-mk=216`, `stand-hp=203`, `guard-stand=203`,
+  `throw=156`, `stand-lp=144`, `shoryuken-lp=95`,
+  `shoryuken-hp=85`.
+
+Interpretation:
+- `10c-v2` still has many movement decisions, but the margin objective
+  visibly lifts crouch-MK, throw, and Shoryuken candidates compared with
+  the 10B/10C-v1 models.
+- It is a better next live candidate than 10C-v1. If it remains stiff live,
+  the next objective should not be stronger class balancing; it should add
+  event-return/AWR style sequence credit or direct action-family sampling in
+  the live actor.

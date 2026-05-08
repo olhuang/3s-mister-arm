@@ -362,6 +362,7 @@ LOW_DEFENSE_BAD_ACTIONS = frozenset({"guard-stand", "back", "forward"})
 DQN_TARGET_MODES = ("standard", "double")
 BC_EVENT_WEIGHTING_MODES = ("off", "event-weighted-v1")
 BC_LABEL_BALANCE_MODES = ("off", "inverse-sqrt", "inverse-frequency")
+BC_FAMILY_MARGIN_MODES = ("off", "positive-event-v1")
 
 
 @dataclass(frozen=True)
@@ -496,6 +497,54 @@ class BCLabelBalanceStats:
             "factor_sum": self.factor_sum,
             "avg_factor": self.avg_factor,
             "label_factors": dict(sorted(self.label_factors.items())),
+        }
+
+
+@dataclass(frozen=True)
+class BCFamilyMarginConfig:
+    mode: str = "off"
+    loss_weight: float = 0.0
+    target_q_margin: float = 0.5
+    min_positive_adjustment: float = 0.05
+    negative_actions: frozenset[str] = field(default_factory=frozenset)
+
+    @property
+    def enabled(self) -> bool:
+        return self.mode != "off" and self.loss_weight > 0.0
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "mode": self.mode,
+            "enabled": self.enabled,
+            "loss_weight": self.loss_weight,
+            "target_q_margin": self.target_q_margin,
+            "min_positive_adjustment": self.min_positive_adjustment,
+            "negative_actions": sorted(self.negative_actions),
+        }
+
+
+@dataclass
+class BCFamilyMarginStats:
+    eligible_rows: int = 0
+    sampled_rows: int = 0
+    violation_rows: int = 0
+    loss_total: float = 0.0
+    target_action_counts: dict[str, int] = field(default_factory=dict)
+    negative_action_counts: dict[str, int] = field(default_factory=dict)
+
+    @property
+    def avg_loss(self) -> float:
+        return self.loss_total / max(1, self.sampled_rows)
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "eligible_rows": self.eligible_rows,
+            "sampled_rows": self.sampled_rows,
+            "violation_rows": self.violation_rows,
+            "loss_total": self.loss_total,
+            "avg_loss": self.avg_loss,
+            "target_action_counts": dict(sorted(self.target_action_counts.items())),
+            "negative_action_counts": dict(sorted(self.negative_action_counts.items())),
         }
 
 
@@ -2332,6 +2381,24 @@ def bc_label_balance_config_from_args(args: argparse.Namespace) -> BCLabelBalanc
     min_weight = max(0.0, float(args.bc_label_balance_min))
     max_weight = max(min_weight, float(args.bc_label_balance_max))
     return BCLabelBalanceConfig(mode=mode, min_weight=min_weight, max_weight=max_weight)
+
+
+def bc_family_margin_config_from_args(args: argparse.Namespace) -> BCFamilyMarginConfig:
+    mode = str(args.bc_family_margin)
+    if mode not in BC_FAMILY_MARGIN_MODES:
+        raise SystemExit(
+            f"unknown --bc-family-margin {mode!r}; expected one of {','.join(BC_FAMILY_MARGIN_MODES)}"
+        )
+    return BCFamilyMarginConfig(
+        mode=mode,
+        loss_weight=max(0.0, float(args.bc_family_margin_weight)),
+        target_q_margin=max(0.0, float(args.bc_family_margin_target_margin)),
+        min_positive_adjustment=max(0.0, float(args.bc_family_margin_min_positive_adjustment)),
+        negative_actions=parse_action_name_set(
+            str(args.bc_family_margin_negative_actions),
+            "--bc-family-margin-negative-actions",
+        ),
+    )
 
 
 def count_rows_by_source(rows: list[dict[str, object]]) -> dict[str, int]:
@@ -5350,6 +5417,71 @@ def derive_bc_label(row: dict[str, object], actions: tuple[str, ...]) -> int | N
     return None
 
 
+BC_OFFENSIVE_MARGIN_ACTIONS = (
+    frozenset(getattr(rl, "STAND_NORMAL_ACTION_NAMES", ()))
+    | frozenset(getattr(rl, "CROUCH_NORMAL_ACTION_NAMES", ()))
+    | frozenset(getattr(rl, "AIR_NORMAL_ACTION_NAMES", ()))
+    | frozenset(getattr(rl, "FIREBALL_ACTION_NAMES", ()))
+    | frozenset(getattr(rl, "SHORYUKEN_ACTION_NAMES", ()))
+    | frozenset(getattr(rl, "TATSU_ACTION_NAMES", ()))
+    | frozenset({"forward-hp", "throw"})
+)
+BC_DEFENSIVE_MARGIN_ACTIONS = frozenset({"guard-crouch"})
+
+
+@dataclass
+class BCDatasetSample:
+    features: list[float]
+    label_index: int
+    sample_weight: float
+    raw_adjustment: float
+    family_margin_eligible: bool
+
+
+def bc_family_margin_eligible(action_name: str, raw_adjustment: float, config: BCFamilyMarginConfig) -> bool:
+    if not config.enabled or raw_adjustment < config.min_positive_adjustment:
+        return False
+    return action_name in BC_OFFENSIVE_MARGIN_ACTIONS or action_name in BC_DEFENSIVE_MARGIN_ACTIONS
+
+
+def apply_bc_family_margin_loss(
+    values: list[float],
+    output_grad: list[float],
+    actions: tuple[str, ...],
+    sample: BCDatasetSample,
+    config: BCFamilyMarginConfig,
+    stats: BCFamilyMarginStats,
+) -> float:
+    if not config.enabled or not sample.family_margin_eligible:
+        return 0.0
+    target_index = sample.label_index
+    if target_index < 0 or target_index >= len(values) or target_index >= len(actions):
+        return 0.0
+    target_action = actions[target_index]
+    negative_indices = [
+        index
+        for index, action in enumerate(actions[: len(values)])
+        if action != target_action and action in config.negative_actions
+    ]
+    if not negative_indices:
+        return 0.0
+    stats.sampled_rows += 1
+    stats.target_action_counts[target_action] = stats.target_action_counts.get(target_action, 0) + 1
+    best_negative_index = max(negative_indices, key=lambda index: (values[index], actions[index]))
+    best_negative_action = actions[best_negative_index]
+    stats.negative_action_counts[best_negative_action] = stats.negative_action_counts.get(best_negative_action, 0) + 1
+    violation = float(values[best_negative_index]) - float(values[target_index]) + config.target_q_margin
+    if violation <= 0.0:
+        return 0.0
+    loss_weight = config.loss_weight * max(0.0, sample.raw_adjustment)
+    loss = 0.5 * loss_weight * violation * violation
+    output_grad[best_negative_index] += loss_weight * violation
+    output_grad[target_index] -= loss_weight * violation
+    stats.violation_rows += 1
+    stats.loss_total += loss
+    return loss
+
+
 def train_bc(
     rows: list[dict[str, object]],
     actions: tuple[str, ...],
@@ -5364,6 +5496,7 @@ def train_bc(
     combat_event_validation: combat_events.CombatEventTrainingValidation | None = None,
     bc_event_weight_config: BCEventWeightConfig = BCEventWeightConfig(),
     bc_label_balance_config: BCLabelBalanceConfig = BCLabelBalanceConfig(),
+    bc_family_margin_config: BCFamilyMarginConfig = BCFamilyMarginConfig(),
 ) -> tuple[
     list[dict[str, object]],
     dict[str, object],
@@ -5372,6 +5505,7 @@ def train_bc(
     BCEventWeightStats,
     combat_events.CombatEventRewardStats,
     BCLabelBalanceStats,
+    BCFamilyMarginStats,
 ]:
     """Train a Behavior Cloning (supervised) model from labeled transition rows."""
     rng = random.Random(seed)
@@ -5379,11 +5513,16 @@ def train_bc(
     # Build labeled dataset
     label_counts: dict[str, int] = {action: 0 for action in actions}
     skipped: dict[str, int] = collections.defaultdict(int)
-    dataset: list[tuple[list[float], int, float]] = []
+    dataset: list[BCDatasetSample] = []
     bc_event_weight_stats = BCEventWeightStats()
     bc_event_reward_stats = combat_events.CombatEventRewardStats()
-    bc_event_reward_config = bc_event_weight_config.as_reward_config()
+    bc_event_reward_config = combat_events.CombatEventRewardConfig(
+        enabled=bc_event_weight_config.enabled or bc_family_margin_config.enabled,
+        profile=bc_event_weight_config.reward_profile,
+        scale=bc_event_weight_config.reward_scale,
+    )
     bc_label_balance_stats = BCLabelBalanceStats()
+    bc_family_margin_stats = BCFamilyMarginStats()
 
     # Populate per-instance segment KW map from engine outcome rows before labeling
     global _BC_SEGMENT_KW_MAP
@@ -5404,7 +5543,8 @@ def train_bc(
             continue
         action_name = actions[label_index]
         sample_weight = 1.0
-        if bc_event_weight_config.enabled:
+        raw_adjustment = 0.0
+        if bc_event_weight_config.enabled or bc_family_margin_config.enabled:
             raw_adjustment = combat_events.reward_adjustment_for_transition(
                 combat_event_validation.index if combat_event_validation is not None else None,
                 row,
@@ -5413,6 +5553,7 @@ def train_bc(
                 bc_event_reward_config,
                 bc_event_reward_stats,
             )
+        if bc_event_weight_config.enabled:
             if raw_adjustment > 0.0:
                 sample_weight = 1.0 + raw_adjustment * bc_event_weight_config.positive_scale
             elif raw_adjustment < 0.0:
@@ -5423,7 +5564,18 @@ def train_bc(
             )
             bc_event_weight_stats.record(action_name, raw_adjustment, sample_weight, bc_event_weight_config)
         features = rl.dqn_feature_vector(row)
-        dataset.append((features, label_index, sample_weight))
+        family_margin_eligible = bc_family_margin_eligible(action_name, raw_adjustment, bc_family_margin_config)
+        if family_margin_eligible:
+            bc_family_margin_stats.eligible_rows += 1
+        dataset.append(
+            BCDatasetSample(
+                features=features,
+                label_index=label_index,
+                sample_weight=sample_weight,
+                raw_adjustment=raw_adjustment,
+                family_margin_eligible=family_margin_eligible,
+            )
+        )
         label_counts[action_name] += 1
 
     if not dataset:
@@ -5442,12 +5594,18 @@ def train_bc(
             )
             label_factors[action_name] = factor
         dataset = [
-            (features, label_index, weight * label_factors.get(actions[label_index], 1.0))
-            for features, label_index, weight in dataset
+            BCDatasetSample(
+                features=sample.features,
+                label_index=sample.label_index,
+                sample_weight=sample.sample_weight * label_factors.get(actions[sample.label_index], 1.0),
+                raw_adjustment=sample.raw_adjustment,
+                family_margin_eligible=sample.family_margin_eligible,
+            )
+            for sample in dataset
         ]
         bc_label_balance_stats = BCLabelBalanceStats(
             balanced_rows=len(dataset),
-            factor_sum=sum(label_factors.get(actions[label_index], 1.0) for _features, label_index, _weight in dataset),
+            factor_sum=sum(label_factors.get(actions[sample.label_index], 1.0) for sample in dataset),
             label_factors=label_factors,
         )
 
@@ -5469,8 +5627,11 @@ def train_bc(
         batch = rng.choices(dataset, k=min(batch_size, len(dataset)))
         loss = 0.0
         entropy_reg_loss = 0.0
-        for features, target_index, sample_weight in batch:
-            values, activations, pre_activations = forward(layers, features)
+        family_margin_loss = 0.0
+        for sample in batch:
+            target_index = sample.label_index
+            sample_weight = sample.sample_weight
+            values, activations, pre_activations = forward(layers, sample.features)
             # Cross-entropy: softmax + NLL
             max_q = max(values)
             exp_q = [math.exp(q - max_q) for q in values]
@@ -5491,6 +5652,16 @@ def train_bc(
                 entropy_reg_loss += entropy_bonus
                 for index, grad_value in enumerate(entropy_grad):
                     output_grad[index] += grad_value
+            sample_margin_loss = apply_bc_family_margin_loss(
+                values,
+                output_grad,
+                actions,
+                sample,
+                bc_family_margin_config,
+                bc_family_margin_stats,
+            )
+            loss += sample_margin_loss
+            family_margin_loss += sample_margin_loss
             add_backward_grads(layers, grads, activations, pre_activations, output_grad)
 
         apply_grads(layers, grads, learning_rate, batch_size)
@@ -5499,11 +5670,13 @@ def train_bc(
         last_loss = loss / max(1, batch_size)
         avg_loss = last_loss if step == 1 else (0.98 * avg_loss + 0.02 * last_loss)
         last_entropy_reg_loss = entropy_reg_loss / max(1, batch_size)
+        last_family_margin_loss = family_margin_loss / max(1, batch_size)
 
         if log_interval > 0 and (step == 1 or step % log_interval == 0 or step == steps):
             print(
                 f"BC step={step} loss={last_loss:.6f} avg_loss={avg_loss:.6f} "
-                f"entropy_reg={last_entropy_reg_loss:.6f}",
+                f"entropy_reg={last_entropy_reg_loss:.6f} "
+                f"family_margin={last_family_margin_loss:.6f}",
                 flush=True,
             )
 
@@ -5516,9 +5689,11 @@ def train_bc(
         "event_reward_stats": bc_event_reward_stats.as_metadata(),
         "label_balance": bc_label_balance_config.as_metadata(),
         "label_balance_stats": bc_label_balance_stats.as_metadata(),
-        "combined_sample_weight_sum": sum(weight for _features, _label_index, weight in dataset),
+        "family_margin": bc_family_margin_config.as_metadata(),
+        "family_margin_stats": bc_family_margin_stats.as_metadata(),
+        "combined_sample_weight_sum": sum(sample.sample_weight for sample in dataset),
         "combined_avg_sample_weight": (
-            sum(weight for _features, _label_index, weight in dataset) / max(1, len(dataset))
+            sum(sample.sample_weight for sample in dataset) / max(1, len(dataset))
         ),
     }
     label_counts_typed: dict[str, int] = dict(label_counts)
@@ -5531,6 +5706,7 @@ def train_bc(
         bc_event_weight_stats,
         bc_event_reward_stats,
         bc_label_balance_stats,
+        bc_family_margin_stats,
     )
 
 
@@ -7624,6 +7800,39 @@ def main() -> None:
         help="Maximum per-label balance multiplier for BC.",
     )
     parser.add_argument(
+        "--bc-family-margin",
+        choices=BC_FAMILY_MARGIN_MODES,
+        default="off",
+        help=(
+            "Opt-in Phase 10C BC margin objective. positive-event-v1 uses positive combat-event "
+            "adjustments to make meaningful attack/projectile/throw/guard-crouch labels outrank "
+            "generic movement/defense choices."
+        ),
+    )
+    parser.add_argument(
+        "--bc-family-margin-weight",
+        type=float,
+        default=0.2,
+        help="BC family-margin loss weight multiplier applied to positive event reward adjustment.",
+    )
+    parser.add_argument(
+        "--bc-family-margin-target-margin",
+        type=float,
+        default=0.5,
+        help="Required logit margin between the positive-event BC target and the best configured negative action.",
+    )
+    parser.add_argument(
+        "--bc-family-margin-min-positive-adjustment",
+        type=float,
+        default=0.05,
+        help="Minimum positive combat-event reward adjustment required before a BC row is margin-eligible.",
+    )
+    parser.add_argument(
+        "--bc-family-margin-negative-actions",
+        default="forward,back,guard-stand,guard-crouch",
+        help="Comma-separated actions treated as generic negatives for --bc-family-margin positive-event-v1.",
+    )
+    parser.add_argument(
         "--combat-event-unlabeled-movement-policy",
         choices=combat_events.COMBAT_EVENT_UNLABELED_MOVEMENT_POLICIES,
         default="keep",
@@ -8937,6 +9146,7 @@ def main() -> None:
     )
     bc_event_weight_config = bc_event_weight_config_from_args(args)
     bc_label_balance_config = bc_label_balance_config_from_args(args)
+    bc_family_margin_config = bc_family_margin_config_from_args(args)
     combat_event_unlabeled_movement_filter_config = (
         combat_event_unlabeled_movement_filter_config_from_args(args)
     )
@@ -8952,6 +9162,15 @@ def main() -> None:
             raise SystemExit("--bc-event-weighting requires --combat-event-training-mode validate")
         if not combat_event_log_paths:
             raise SystemExit("--bc-event-weighting requires --combat-event-logs")
+    if bc_family_margin_config.enabled:
+        if str(args.training_mode) != "bc":
+            raise SystemExit("--bc-family-margin is only supported with --training-mode bc")
+        if combat_event_training_mode != "validate":
+            raise SystemExit("--bc-family-margin requires --combat-event-training-mode validate")
+        if not combat_event_log_paths:
+            raise SystemExit("--bc-family-margin requires --combat-event-logs")
+        if not bc_event_weight_config.enabled:
+            raise SystemExit("--bc-family-margin currently requires --bc-event-weighting event-weighted-v1")
     if combat_event_unlabeled_movement_filter_config.enabled and combat_event_training_mode != "reward-shaping":
         raise SystemExit(
             "--combat-event-unlabeled-movement-policy requires "
@@ -9001,6 +9220,7 @@ def main() -> None:
             bc_event_weight_stats,
             bc_event_reward_stats,
             bc_label_balance_stats,
+            bc_family_margin_stats,
         ) = train_bc(
             rows,
             actions,
@@ -9015,6 +9235,7 @@ def main() -> None:
             combat_event_validation,
             bc_event_weight_config,
             bc_label_balance_config,
+            bc_family_margin_config,
         )
         replay_source_mix_summary = dict(replay_source_mix_stats.as_metadata()) if hasattr(replay_source_mix_stats, "as_metadata") else {}
         bc_metadata: dict[str, object] = {
@@ -9033,6 +9254,8 @@ def main() -> None:
             "bc_event_reward_stats": bc_event_reward_stats.as_metadata(),
             "bc_label_balance_config": bc_label_balance_config.as_metadata(),
             "bc_label_balance_stats": bc_label_balance_stats.as_metadata(),
+            "bc_family_margin_config": bc_family_margin_config.as_metadata(),
+            "bc_family_margin_stats": bc_family_margin_stats.as_metadata(),
             **bc_train_stats,
         }
         if combat_event_validation is not None:
@@ -9069,6 +9292,8 @@ def main() -> None:
             f"avg_weight={bc_event_weight_stats.avg_weight:.3f} "
             f"label_balance={bc_label_balance_config.mode} "
             f"label_balance_avg={bc_label_balance_stats.avg_factor:.3f} "
+            f"family_margin={bc_family_margin_config.mode} "
+            f"family_margin_eligible={bc_family_margin_stats.eligible_rows} "
             f"skipped={dict(bc_skipped)} "
             f"top_labels=({label_parts[:300]})",
             flush=True,
@@ -9103,6 +9328,33 @@ def main() -> None:
                 f"rows:{bc_label_balance_stats.balanced_rows} "
                 f"avg_factor:{bc_label_balance_stats.avg_factor:.3f} "
                 f"top_factors:{top_factors}",
+                flush=True,
+            )
+        if bc_family_margin_config.enabled:
+            top_targets = ",".join(
+                f"{action}:{count}"
+                for action, count in sorted(
+                    bc_family_margin_stats.target_action_counts.items(),
+                    key=lambda item: (-item[1], item[0]),
+                )[: args.diagnostic_top_n]
+            )
+            top_negatives = ",".join(
+                f"{action}:{count}"
+                for action, count in sorted(
+                    bc_family_margin_stats.negative_action_counts.items(),
+                    key=lambda item: (-item[1], item[0]),
+                )[: args.diagnostic_top_n]
+            )
+            print(
+                "BC diagnostics family_margin="
+                f"mode:{bc_family_margin_config.mode} "
+                f"eligible:{bc_family_margin_stats.eligible_rows} "
+                f"sampled:{bc_family_margin_stats.sampled_rows} "
+                f"violations:{bc_family_margin_stats.violation_rows} "
+                f"loss:{bc_family_margin_stats.loss_total:.6f} "
+                f"avg_loss:{bc_family_margin_stats.avg_loss:.6f} "
+                f"targets:{top_targets} "
+                f"negatives:{top_negatives}",
                 flush=True,
             )
         return

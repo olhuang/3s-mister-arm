@@ -15570,3 +15570,87 @@ Interpretation:
 - Next trainer work should move to Phase 9D event-aware sampling/source-family
   balancing, or constrain event-primary adoption to short warm-start budgets
   until balanced replay proves stable.
+
+## 2026-05-08: Phase 9D Event-Aware Source-Family Batch Sampling
+
+Milestone:
+- Combat event attribution Phase 9D / event-aware DQN batch sampling
+
+Purpose:
+- Fix the Phase 9C finding that `event-damage-v1` reward can be mechanically
+  correct but still be pulled toward guard/back by uniform replay composition.
+- Preserve movement examples while forcing each DQN batch to see combat-labeled
+  attack, projectile, defense, punish/throw, and meaningful movement rows.
+
+Changes:
+- Added opt-in trainer CLI:
+  - `--combat-event-batch-sampling off|balanced-v1`
+  - `--combat-event-batch-ratios`
+- Added source-family batch pools:
+  - `attack`
+  - `projectile`
+  - `defense`
+  - `punish_throw`
+  - `movement`
+  - `unlabeled_passive`
+- Extended `tools/rl_combat_event_training.py` transition labels with source
+  event kinds/results and defensive results so the trainer can classify rows
+  without adding combat fields to DQN features.
+- Added model metadata and stdout diagnostics:
+  - `combat_event_batch_sampling_config`
+  - `combat_event_batch_sampling_stats`
+  - per-pool counts
+  - per-batch target counts
+- Safety/defaults:
+  - default is `off`
+  - requires `--combat-event-training-mode reward-shaping`
+  - currently requires normal `--batch-sampling uniform`
+  - DQN only; BC training rejects the option
+  - DQN feature names and transition schema remain unchanged
+
+Validation:
+- `python3 -m py_compile tools/rl_combat_event_training.py tools/train_dqn_learner.py`
+- Default/off smoke on the 30-round Ryu vs Ken paired log:
+  - experiences stayed at `12076`
+  - no combat-event batch sampler was used
+- `balanced-v1` smoke:
+  - pool counts: `attack=797`, `projectile=481`, `defense=487`,
+    `punish_throw=69`, `movement=1684`, `unlabeled_passive=8558`
+  - default batch target for batch size 8:
+    `attack=2`, `projectile=2`, `defense=1`, `punish_throw=1`,
+    `movement=2`, `unlabeled_passive=0`
+
+Candidate training results:
+- `model/dqn-combat-event-ryu-ken-v1-event-balanced-v1`
+  - recipe: `event-damage-v1 + balanced-v1` default ratios
+  - same-log compare with `action-start-v1` mask:
+    `attack_rate=4.5%`, `fireball_rate=3.6%`, `shoryuken_rate=0.4%`,
+    `defense_rate=87.4%`
+  - interpretation: default ratios are too conservative for this dataset.
+- `model/dqn-combat-event-ryu-ken-v1-event-balanced-attack-v1`
+  - recipe: attack-heavy ratios
+    `attack=0.45,projectile=0.25,defense=0.05,punish_throw=0.03,movement=0.22,unlabeled_passive=0.00`
+  - same-log compare with `action-start-v1` mask:
+    `attack_rate=11.7%`, `fireball_rate=6.4%`, `shoryuken_rate=3.6%`,
+    `defense_rate=76.4%`
+  - interpretation: ratio direction helps, but training without valid-action
+    masking still overvalues some invalid/contextual actions in raw diagnostics.
+- `model/dqn-combat-event-ryu-ken-v1-event-balanced-attack-mask-v1`
+  - recipe: same attack-heavy ratios plus
+    `--dqn-valid-action-mask action-start-v1`
+  - same-log compare over 5000 rows with `action-start-v1` mask:
+    `attack_rate=13.0%`, `fireball_rate=5.4%`, `shoryuken_rate=4.7%`,
+    `defense_rate=61.1%`, top=`back:36.2%`
+  - interpretation: this is the best offline Phase 9D candidate so far. It
+    restores attack/projectile pressure better than base v62 on this log while
+    reducing the defensive drift seen in `event-damage-v1` long runs.
+
+Next:
+- Do not promote from same-log compare alone.
+- Live-test `dqn-combat-event-ryu-ken-v1-event-balanced-attack-mask-v1` before
+  calling Phase 9D useful for training.
+- Watch specifically for:
+  - attack variety across normals/specials
+  - fireball/shoryuken frequency in valid contexts
+  - no throw spam
+  - no return to guard/back-only behavior

@@ -2697,6 +2697,52 @@ Validation required:
   - defense rate should not stay around `80%+`.
   - top action should not collapse entirely to guard/back.
 
+Phase 9D event-aware source-family batch sampling status:
+
+- `tools/train_dqn_learner.py` now supports an opt-in DQN batch sampler:
+  - `--combat-event-batch-sampling off|balanced-v1`
+  - `--combat-event-batch-ratios attack=...,projectile=...,defense=...,punish_throw=...,movement=...,unlabeled_passive=...`
+- This is replay sampling only. It does not change DQN features, transition
+  schema, event parsing, reward tables, or live inference.
+- `balanced-v1` requires:
+  - `--combat-event-training-mode reward-shaping`
+  - normal `--batch-sampling uniform`
+  - DQN training, not BC training
+- Every DQN experience is assigned to one combat-event batch pool:
+  - `attack`: self attack/source-event rows and non-movement attack actions.
+  - `projectile`: projectile source rows and fireball actions.
+  - `defense`: defensive attribution or incoming projectile-threat movement.
+  - `punish_throw`: punish/throw source rows and throw actions.
+  - `movement`: meaningful movement rows with reward, HP/stun delta, source
+    labels, or terminal/boundary semantics.
+  - `unlabeled_passive`: zero-reward passive movement with no combat label.
+- The default `balanced-v1` ratio is conservative:
+  - `movement=0.30`
+  - `attack=0.25`
+  - `projectile=0.20`
+  - `defense=0.15`
+  - `punish_throw=0.10`
+  - `unlabeled_passive=0.00`
+- Metadata records both config and realized diagnostics:
+  - `combat_event_batch_sampling_config`
+  - `combat_event_batch_sampling_stats`
+  - per-pool counts and per-batch target counts
+- First validation on the 30-round Ryu vs Ken paired log:
+  - pool counts: `attack=797`, `projectile=481`, `defense=487`,
+    `punish_throw=69`, `movement=1684`, `unlabeled_passive=8558`.
+  - default ratio produced a still-defense-heavy candidate.
+  - attack-heavy ratio
+    `attack=0.45,projectile=0.25,defense=0.05,punish_throw=0.03,movement=0.22,unlabeled_passive=0.00`
+    improved same-log attack/projectile selection.
+  - adding `--dqn-valid-action-mask action-start-v1` produced the best offline
+    candidate in this pass: `attack_rate=13.0%`, `fireball_rate=5.4%`,
+    `shoryuken_rate=4.7%`, `defense_rate=61.1%` on the 5000-row compare.
+- Promotion rule:
+  - do not promote Phase 9D candidates from same-log metrics alone.
+  - next live test should start from the valid-mask attack-heavy candidate and
+    verify attack variety, projectile use, defense sanity, and no throw/DP
+    collapse.
+
 Data recollection gate:
 
 - Phase 9 trainer adoption requires fresh paired transition/event logs. Old

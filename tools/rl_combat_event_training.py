@@ -14,6 +14,7 @@ COMBAT_EVENT_SCHEMA_VERSION = 1
 COMBAT_EVENT_TRAINING_MODES = ("off", "validate", "reward-shaping")
 COMBAT_EVENT_REWARD_PROFILES = ("safe-v1", "event-damage-v1")
 COMBAT_EVENT_UNLABELED_MOVEMENT_POLICIES = ("keep", "downsample", "drop")
+COMBAT_EVENT_BATCH_SAMPLING_MODES = ("off", "balanced-v1")
 
 
 SAFE_V1_REWARD_TABLE: dict[tuple[str, str], float] = {
@@ -200,6 +201,9 @@ class CombatEventTransitionLabel:
     has_defensive_attribution: bool = False
     source_event_rows: int = 0
     defensive_attribution_rows: int = 0
+    source_event_kinds: tuple[str, ...] = ()
+    source_event_results: tuple[str, ...] = ()
+    defensive_results: tuple[str, ...] = ()
 
     @property
     def has_combat_label(self) -> bool:
@@ -713,6 +717,9 @@ def transition_label_for_row(
         has_defensive_attribution=bool(defensive_attributions),
         source_event_rows=len(source_events),
         defensive_attribution_rows=len(defensive_attributions),
+        source_event_kinds=tuple(str(event.get("event_kind", "")) for event in source_events),
+        source_event_results=tuple(str(event.get("result", "")) for event in source_events),
+        defensive_results=tuple(str(event.get("defense_result", "")) for event in defensive_attributions),
     )
 
 

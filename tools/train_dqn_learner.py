@@ -40,6 +40,7 @@ class Experience:
     projectile_batch_reason: str = ""
     grounded_normal_defense_eligible: bool = False
     grounded_normal_defense_bc_eligible: bool = False
+    combat_event_batch_group: str = "unlabeled_passive"
 
 
 EXECUTION_SOURCE_NAMES = {
@@ -327,6 +328,14 @@ MOVEMENT_REGRESSION_ACTION_GROUP_ACTIONS = {
 PROJECTILE_OWNER_OPPONENT = 2
 REWARD_PROJECTILE_RESPONSE_PROFILES = ("off", "incoming-v1")
 BATCH_SAMPLING_MODES = ("uniform", "balanced")
+COMBAT_EVENT_BATCH_GROUPS = (
+    "attack",
+    "projectile",
+    "defense",
+    "punish_throw",
+    "movement",
+    "unlabeled_passive",
+)
 BATCH_GROUPS = ("projectile", "movement", "normal", "special")
 SPECIAL_ACTION_PREFIXES = ("fireball-", "shoryuken-", "tatsu-")
 SPECIAL_ACTIONS = frozenset(
@@ -557,6 +566,40 @@ class BatchSamplingConfig:
 
 @dataclass(frozen=True)
 class BatchSamplingDiagnostics:
+    mode: str
+    ratios: dict[str, float]
+    pool_counts: dict[str, int]
+    target_counts: dict[str, int]
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "mode": self.mode,
+            "ratios": self.ratios,
+            "pool_counts": self.pool_counts,
+            "target_counts": self.target_counts,
+        }
+
+
+@dataclass(frozen=True)
+class CombatEventBatchSamplingConfig:
+    mode: str = "off"
+    ratios: dict[str, float] = field(default_factory=dict)
+
+    @property
+    def enabled(self) -> bool:
+        return self.mode != "off"
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "mode": self.mode,
+            "enabled": self.enabled,
+            "ratios": {group: self.ratios.get(group, 0.0) for group in COMBAT_EVENT_BATCH_GROUPS},
+            "groups": list(COMBAT_EVENT_BATCH_GROUPS),
+        }
+
+
+@dataclass(frozen=True)
+class CombatEventBatchSamplingDiagnostics:
     mode: str
     ratios: dict[str, float]
     pool_counts: dict[str, int]
@@ -2102,12 +2145,86 @@ def parse_batch_ratios(value: str, flag_name: str) -> dict[str, float]:
     return {group: ratios[group] / total for group in BATCH_GROUPS}
 
 
+def canonical_combat_event_batch_group_name(raw_group: str) -> str | None:
+    normalized = raw_group.strip().lower().replace("_", "-")
+    aliases = {
+        "attack": "attack",
+        "attacks": "attack",
+        "normal": "attack",
+        "normals": "attack",
+        "special": "attack",
+        "specials": "attack",
+        "projectile": "projectile",
+        "projectiles": "projectile",
+        "fireball": "projectile",
+        "fireballs": "projectile",
+        "proj": "projectile",
+        "defense": "defense",
+        "defence": "defense",
+        "defensive": "defense",
+        "punish": "punish_throw",
+        "punishes": "punish_throw",
+        "throw": "punish_throw",
+        "throws": "punish_throw",
+        "punish-throw": "punish_throw",
+        "punish+throw": "punish_throw",
+        "movement": "movement",
+        "move": "movement",
+        "spacing": "movement",
+        "unlabeled": "unlabeled_passive",
+        "unlabelled": "unlabeled_passive",
+        "passive": "unlabeled_passive",
+        "unlabeled-passive": "unlabeled_passive",
+    }
+    return aliases.get(normalized)
+
+
+def parse_combat_event_batch_ratios(value: str, flag_name: str) -> dict[str, float]:
+    ratios: dict[str, float] = {group: 0.0 for group in COMBAT_EVENT_BATCH_GROUPS}
+    if not value.strip():
+        return ratios
+    for raw_item in value.split(","):
+        item = raw_item.strip()
+        if not item:
+            continue
+        if "=" not in item:
+            raise SystemExit(f"Invalid {flag_name} item: {item!r}; expected group=ratio")
+        raw_group, raw_ratio = (part.strip() for part in item.split("=", 1))
+        group = canonical_combat_event_batch_group_name(raw_group)
+        if group is None:
+            raise SystemExit(f"Unknown combat-event batch group in {flag_name}: {raw_group}")
+        try:
+            ratio = float(raw_ratio)
+        except ValueError as exc:
+            raise SystemExit(f"Invalid ratio for {group}: {raw_ratio}") from exc
+        ratios[group] = max(0.0, ratio)
+    total = sum(ratios.values())
+    if total <= 0.0:
+        raise SystemExit(f"{flag_name} must contain at least one positive ratio")
+    return {group: ratios[group] / total for group in COMBAT_EVENT_BATCH_GROUPS}
+
+
 def batch_sampling_config_from_args(args: argparse.Namespace) -> BatchSamplingConfig:
     mode = str(args.batch_sampling)
     if mode not in BATCH_SAMPLING_MODES:
         raise SystemExit(f"unknown --batch-sampling {mode!r}; expected one of {','.join(BATCH_SAMPLING_MODES)}")
     ratios = parse_batch_ratios(str(args.balanced_batch_ratios), "--balanced-batch-ratios")
     return BatchSamplingConfig(mode=mode, ratios=ratios)
+
+
+def combat_event_batch_sampling_config_from_args(args: argparse.Namespace) -> CombatEventBatchSamplingConfig:
+    mode = str(args.combat_event_batch_sampling)
+    if mode not in combat_events.COMBAT_EVENT_BATCH_SAMPLING_MODES:
+        raise SystemExit(
+            f"unknown --combat-event-batch-sampling {mode!r}; "
+            f"expected one of {','.join(combat_events.COMBAT_EVENT_BATCH_SAMPLING_MODES)}"
+        )
+    ratios = (
+        parse_combat_event_batch_ratios(str(args.combat_event_batch_ratios), "--combat-event-batch-ratios")
+        if mode != "off"
+        else {group: 0.0 for group in COMBAT_EVENT_BATCH_GROUPS}
+    )
+    return CombatEventBatchSamplingConfig(mode=mode, ratios=ratios)
 
 
 def projectile_batch_config_from_args(args: argparse.Namespace) -> ProjectileBatchConfig:
@@ -2222,6 +2339,40 @@ def experience_batch_group(exp: Experience, actions: tuple[str, ...]) -> str:
     return "normal"
 
 
+def combat_event_batch_group_for_transition(
+    row: dict[str, object],
+    action_name: str,
+    action_start: bool,
+    reward: float,
+    projectile_response_outcome_result: ProjectileResponseOutcome,
+    combat_event_validation: combat_events.CombatEventTrainingValidation | None,
+) -> str:
+    label = combat_events.transition_label_for_row(
+        combat_event_validation.index if combat_event_validation is not None else None,
+        row,
+        action_start,
+    )
+    source_kinds = set(label.source_event_kinds)
+
+    if "throw" in source_kinds or "punish" in source_kinds or action_name == "throw":
+        return "punish_throw"
+    if "projectile" in source_kinds or action_name.startswith("fireball-"):
+        return "projectile"
+    if "attack" in source_kinds:
+        return "attack"
+
+    if action_name not in UNLABELED_MOVEMENT_FILTER_ACTIONS:
+        return "projectile" if action_name.startswith("fireball-") else "attack"
+
+    if label.has_defensive_attribution:
+        return "defense"
+    if projectile_response_outcome_result.threat or incoming_projectile_threat_for_filter(row):
+        return "defense"
+    if label.has_source_event or reward != 0.0 or has_hp_or_stun_delta(row) or bool(row.get("done", False)):
+        return "movement"
+    return "unlabeled_passive"
+
+
 def build_batch_pools(
     experiences: list[Experience],
     actions: tuple[str, ...],
@@ -2230,6 +2381,18 @@ def build_batch_pools(
     for exp in experiences:
         if 0 <= exp.action_index < len(actions):
             pools[experience_batch_group(exp, actions)].append(exp)
+    return pools
+
+
+def build_combat_event_batch_pools(
+    experiences: list[Experience],
+) -> dict[str, list[Experience]]:
+    pools: dict[str, list[Experience]] = {group: [] for group in COMBAT_EVENT_BATCH_GROUPS}
+    for exp in experiences:
+        group = exp.combat_event_batch_group
+        if group not in pools:
+            group = "unlabeled_passive"
+        pools[group].append(exp)
     return pools
 
 
@@ -2243,18 +2406,26 @@ def projectile_batch_stats_from_experiences(
     return stats
 
 
-def balanced_target_counts(batch_size: int, ratios: dict[str, float]) -> dict[str, int]:
-    raw_counts = {group: max(0.0, ratios.get(group, 0.0)) * batch_size for group in BATCH_GROUPS}
-    counts = {group: int(math.floor(raw_counts[group])) for group in BATCH_GROUPS}
+def balanced_target_counts_for_groups(
+    batch_size: int,
+    ratios: dict[str, float],
+    groups: tuple[str, ...],
+) -> dict[str, int]:
+    raw_counts = {group: max(0.0, ratios.get(group, 0.0)) * batch_size for group in groups}
+    counts = {group: int(math.floor(raw_counts[group])) for group in groups}
     remaining = max(0, batch_size - sum(counts.values()))
     remainders = sorted(
-        ((raw_counts[group] - counts[group], group) for group in BATCH_GROUPS),
+        ((raw_counts[group] - counts[group], group) for group in groups),
         key=lambda item: (item[0], item[1]),
         reverse=True,
     )
     for index in range(remaining):
         counts[remainders[index % len(remainders)][1]] += 1
     return counts
+
+
+def balanced_target_counts(batch_size: int, ratios: dict[str, float]) -> dict[str, int]:
+    return balanced_target_counts_for_groups(batch_size, ratios, BATCH_GROUPS)
 
 
 def batch_sampling_diagnostics(
@@ -2272,6 +2443,24 @@ def batch_sampling_diagnostics(
     )
 
 
+def combat_event_batch_sampling_diagnostics(
+    experiences: list[Experience],
+    batch_size: int,
+    config: CombatEventBatchSamplingConfig,
+) -> CombatEventBatchSamplingDiagnostics:
+    pools = build_combat_event_batch_pools(experiences)
+    return CombatEventBatchSamplingDiagnostics(
+        mode=config.mode,
+        ratios=dict(config.ratios),
+        pool_counts={group: len(pools[group]) for group in COMBAT_EVENT_BATCH_GROUPS},
+        target_counts=(
+            balanced_target_counts_for_groups(batch_size, config.ratios, COMBAT_EVENT_BATCH_GROUPS)
+            if config.enabled
+            else {}
+        ),
+    )
+
+
 def sample_training_batch(
     experiences: list[Experience],
     pools: dict[str, list[Experience]],
@@ -2286,6 +2475,30 @@ def sample_training_batch(
     batch: list[Experience] = []
     fallback_pool = experiences
     for group in BATCH_GROUPS:
+        count = max(0, int(target_counts.get(group, 0)))
+        if count <= 0:
+            continue
+        pool = pools.get(group) or fallback_pool
+        batch.extend(rng.choices(pool, k=count))
+    if len(batch) < batch_size:
+        batch.extend(rng.choices(fallback_pool, k=batch_size - len(batch)))
+    elif len(batch) > batch_size:
+        batch = batch[:batch_size]
+    rng.shuffle(batch)
+    return batch
+
+
+def sample_grouped_training_batch(
+    experiences: list[Experience],
+    pools: dict[str, list[Experience]],
+    groups: tuple[str, ...],
+    target_counts: dict[str, int],
+    batch_size: int,
+    rng: random.Random,
+) -> list[Experience]:
+    batch: list[Experience] = []
+    fallback_pool = experiences
+    for group in groups:
         count = max(0, int(target_counts.get(group, 0)))
         if count <= 0:
             continue
@@ -3236,6 +3449,15 @@ def add_engine_outcome_experience(
                     reward,
                     special_expert_margin_config,
                 ),
+                combat_event_batch_group=(
+                    "punish_throw"
+                    if action_name == "throw"
+                    else "projectile"
+                    if action_name.startswith("fireball-")
+                    else "movement"
+                    if action_name in UNLABELED_MOVEMENT_FILTER_ACTIONS
+                    else "attack"
+                ),
             )
         )
     stats.included_events += 1
@@ -3542,6 +3764,14 @@ def build_experiences(
                 projectile_response_outcome_result,
                 projectile_batch_config,
             )
+            combat_event_batch_group = combat_event_batch_group_for_transition(
+                row,
+                action_name,
+                action_start,
+                reward,
+                projectile_response_outcome_result,
+                combat_event_validation,
+            )
             exp = Experience(
                 state=rl.dqn_feature_vector(row),
                 action_index=action_to_index[action_name],
@@ -3595,6 +3825,7 @@ def build_experiences(
                     action_name,
                     grounded_normal_defense_bc_config,
                 ),
+                combat_event_batch_group=combat_event_batch_group,
             )
             multiplier = projectile_response_oversample_config.multiplier_for(projectile_response_outcome_result)
             for _ in range(multiplier):
@@ -5232,6 +5463,7 @@ def train_dqn(
     seed: int,
     log_interval: int,
     batch_sampling_config: BatchSamplingConfig,
+    combat_event_batch_sampling_config: CombatEventBatchSamplingConfig,
     target_mode: str,
     unsupported_action_regularization_config: DQNUnsupportedActionRegularizationConfig,
     movement_regression_config: MovementRegressionLossConfig,
@@ -5268,9 +5500,19 @@ def train_dqn(
     )
     target_layers = copy.deepcopy(layers)
     batch_pools = build_batch_pools(experiences, actions)
+    combat_event_batch_pools = build_combat_event_batch_pools(experiences)
     batch_target_counts = (
         balanced_target_counts(batch_size, batch_sampling_config.ratios)
         if batch_sampling_config.mode == "balanced"
+        else {}
+    )
+    combat_event_batch_target_counts = (
+        balanced_target_counts_for_groups(
+            batch_size,
+            combat_event_batch_sampling_config.ratios,
+            COMBAT_EVENT_BATCH_GROUPS,
+        )
+        if combat_event_batch_sampling_config.enabled
         else {}
     )
     last_loss = 0.0
@@ -5363,14 +5605,24 @@ def train_dqn(
     valid_action_mask_stats = DQNValidActionMaskTrainingStats()
 
     for step in range(1, steps + 1):
-        batch = sample_training_batch(
-            experiences,
-            batch_pools,
-            batch_target_counts,
-            batch_size,
-            rng,
-            batch_sampling_config,
-        )
+        if combat_event_batch_sampling_config.enabled:
+            batch = sample_grouped_training_batch(
+                experiences,
+                combat_event_batch_pools,
+                COMBAT_EVENT_BATCH_GROUPS,
+                combat_event_batch_target_counts,
+                batch_size,
+                rng,
+            )
+        else:
+            batch = sample_training_batch(
+                experiences,
+                batch_pools,
+                batch_target_counts,
+                batch_size,
+                rng,
+                batch_sampling_config,
+            )
         grads = zero_grads(layers)
         loss = 0.0
         unsupported_regularization_loss = 0.0
@@ -5789,6 +6041,12 @@ def train_dqn(
         pool_counts={group: len(batch_pools[group]) for group in BATCH_GROUPS},
         target_counts=dict(batch_target_counts),
     )
+    combat_event_batch_diag = CombatEventBatchSamplingDiagnostics(
+        mode=combat_event_batch_sampling_config.mode,
+        ratios=dict(combat_event_batch_sampling_config.ratios),
+        pool_counts={group: len(combat_event_batch_pools[group]) for group in COMBAT_EVENT_BATCH_GROUPS},
+        target_counts=dict(combat_event_batch_target_counts),
+    )
     unsupported_action_regularization_stats.last_loss = last_unsupported_regularization_loss
     unsupported_action_regularization_stats.avg_loss = avg_unsupported_regularization_loss
     movement_regression_stats.last_loss = last_movement_regression_loss
@@ -5814,6 +6072,7 @@ def train_dqn(
             "avg_loss": avg_loss,
             "entropy_reg_weight": entropy_reg_weight,
             "batch_sampling": batch_diag.as_metadata(),
+            "combat_event_batch_sampling": combat_event_batch_diag.as_metadata(),
         },
         unsupported_action_regularization_stats,
         movement_regression_stats,
@@ -6382,6 +6641,23 @@ def main() -> None:
         type=int,
         default=20260507,
         help="Stable seed for deterministic unlabeled movement downsampling.",
+    )
+    parser.add_argument(
+        "--combat-event-batch-sampling",
+        choices=combat_events.COMBAT_EVENT_BATCH_SAMPLING_MODES,
+        default="off",
+        help=(
+            "Opt-in combat-event source-family batch sampler. off uses the normal replay sampler; "
+            "balanced-v1 samples each DQN batch by combat-event groups."
+        ),
+    )
+    parser.add_argument(
+        "--combat-event-batch-ratios",
+        default="movement=0.30,attack=0.25,projectile=0.20,defense=0.15,punish_throw=0.10,unlabeled_passive=0.00",
+        help=(
+            "Comma-separated group ratios used by --combat-event-batch-sampling balanced-v1. "
+            "Groups: attack,projectile,defense,punish_throw,movement,unlabeled_passive."
+        ),
     )
     parser.add_argument(
         "--drop-initial-episodes-per-run",
@@ -7561,6 +7837,7 @@ def main() -> None:
     combat_event_unlabeled_movement_filter_config = (
         combat_event_unlabeled_movement_filter_config_from_args(args)
     )
+    combat_event_batch_sampling_config = combat_event_batch_sampling_config_from_args(args)
     if combat_event_training_mode == "off" and combat_event_log_paths:
         raise SystemExit("--combat-event-logs requires --combat-event-training-mode validate or reward-shaping")
     if combat_event_unlabeled_movement_filter_config.enabled and combat_event_training_mode != "reward-shaping":
@@ -7568,6 +7845,13 @@ def main() -> None:
             "--combat-event-unlabeled-movement-policy requires "
             "--combat-event-training-mode reward-shaping"
         )
+    if combat_event_batch_sampling_config.enabled:
+        if combat_event_training_mode != "reward-shaping":
+            raise SystemExit(
+                "--combat-event-batch-sampling requires --combat-event-training-mode reward-shaping"
+            )
+        if str(args.batch_sampling) != "uniform":
+            raise SystemExit("--combat-event-batch-sampling currently requires --batch-sampling uniform")
     if combat_event_training_mode != "off":
         if not combat_event_log_paths:
             raise SystemExit(f"--combat-event-training-mode {combat_event_training_mode} requires --combat-event-logs")
@@ -7586,6 +7870,8 @@ def main() -> None:
             raise SystemExit("--combat-event-training-mode reward-shaping is only supported for DQN training")
         if combat_event_unlabeled_movement_filter_config.enabled:
             raise SystemExit("--combat-event-unlabeled-movement-policy is only supported for DQN training")
+        if combat_event_batch_sampling_config.enabled:
+            raise SystemExit("--combat-event-batch-sampling is only supported for DQN training")
         # --- BC training path ---
         bc_layers, bc_train_stats, bc_label_counts, bc_skipped = train_bc(
             rows,
@@ -7754,6 +8040,7 @@ def main() -> None:
         args.seed,
         args.log_interval,
         batch_sampling_config,
+        combat_event_batch_sampling_config,
         args.dqn_target_mode,
         unsupported_action_regularization_config,
         movement_regression_config,
@@ -7773,6 +8060,11 @@ def main() -> None:
         actions,
         max(1, args.batch_size),
         batch_sampling_config,
+    )
+    combat_event_batch_sampling_diag = combat_event_batch_sampling_diagnostics(
+        experiences,
+        max(1, args.batch_size),
+        combat_event_batch_sampling_config,
     )
     greedy_diag = evaluate_greedy_actions(
         layers,
@@ -7824,6 +8116,8 @@ def main() -> None:
         reward_sources.append(f"combat-event-{combat_event_reward_config.profile}")
     if combat_event_unlabeled_movement_filter_stats.dropped_rows > 0:
         reward_sources.append("event-unlabeled-movement-filter")
+    if combat_event_batch_sampling_config.enabled:
+        reward_sources.append(f"combat-event-batch-{combat_event_batch_sampling_config.mode}")
     reward_source = "+".join(reward_sources) if reward_sources else "none"
     metadata = {
         "transition_logs": args.transition_logs,
@@ -7853,6 +8147,8 @@ def main() -> None:
         "combat_event_unlabeled_movement_filter_stats": (
             combat_event_unlabeled_movement_filter_stats.as_metadata()
         ),
+        "combat_event_batch_sampling_config": combat_event_batch_sampling_config.as_metadata(),
+        "combat_event_batch_sampling_stats": combat_event_batch_sampling_diag.as_metadata(),
         "experiences": len(experiences),
         "actions_subset": list(actions),
         "actions_subset_size": len(actions),
@@ -8167,6 +8463,15 @@ def main() -> None:
         f"pools:{','.join(f'{group}:{batch_sampling_diag.pool_counts.get(group, 0)}' for group in BATCH_GROUPS)}",
         flush=True,
     )
+    if combat_event_batch_sampling_config.enabled:
+        print(
+            "DQN diagnostics "
+            f"combat_event_batch_sampling=mode:{combat_event_batch_sampling_diag.mode} "
+            f"ratios:{','.join(f'{group}:{combat_event_batch_sampling_diag.ratios.get(group, 0.0):.2f}' for group in COMBAT_EVENT_BATCH_GROUPS)} "
+            f"target:{','.join(f'{group}:{combat_event_batch_sampling_diag.target_counts.get(group, 0)}' for group in COMBAT_EVENT_BATCH_GROUPS)} "
+            f"pools:{','.join(f'{group}:{combat_event_batch_sampling_diag.pool_counts.get(group, 0)}' for group in COMBAT_EVENT_BATCH_GROUPS)}",
+            flush=True,
+        )
     print(
         "DQN diagnostics "
         f"projectile_batch=enabled:{int(projectile_batch_config.enabled)} "

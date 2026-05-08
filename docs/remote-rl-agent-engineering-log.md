@@ -16925,3 +16925,100 @@ Follow-up:
 - Phase 12A-1 should run a full label validation report across recent human
   demo, low-defense, projectile, and actor-critic live logs before Phase 12B
   creates an intent-classifier dataset.
+
+## 2026-05-08: Phase 12D/12E Tactical Live Policy
+
+Milestone:
+- Phase 12D conservative intent-conditioned decoder.
+- Phase 12E live-testable hierarchical probe policy.
+
+Purpose:
+- Get to a live-testable high-level tactical policy without waiting for a new
+  supervised intent model.
+- The immediate question is whether an explicit tactical rule layer behaves
+  better than the flat DQN/BC/AWAC candidates that kept collapsing into one
+  habit such as standing attacks, forward-attack, or passive guard.
+
+Implementation:
+- Added `--policy tactical` to `tools/rl_probe_server.py`.
+- Added live tactical state helpers:
+  - spacing bucket
+  - corner context
+  - self phase
+  - opponent phase
+  - incoming projectile / close attack / jump-in / corner threat
+  - opportunity
+  - recommended intent
+  - decoded action
+- Added `TacticalPolicyConfig` and CLI tuning knobs:
+  - `--tactical-valid-action-mask`
+  - `--tactical-close-max-abs-dx`
+  - `--tactical-poke-max-abs-dx`
+  - `--tactical-fireball-max-abs-dx`
+  - `--tactical-too-far-min-abs-dx`
+  - `--tactical-corner-edge-max-dist`
+  - `--tactical-incoming-projectile-max-time-to-self`
+  - `--tactical-incoming-projectile-max-dx`
+  - `--tactical-jump-in-max-abs-dx`
+  - `--tactical-threat-attack-max-abs-dx`
+- `--verbose` now prints tactical diagnostics for the live policy:
+  - `tactical_intent`
+  - `tactical_reason`
+  - `tactical_conf`
+  - `tactical_spacing`
+  - `tactical_corner`
+  - `tactical_self`
+  - `tactical_opp`
+  - `tactical_threat`
+  - `tactical_opportunity`
+  - `tactical_decoded`
+- The decoder sends `neutral` while self is already attacking. This avoids the
+  first draft's bad behavior where self-attacking/recovery rows still emitted
+  `guard-crouch`, which could buffer unwanted defensive inputs.
+
+Important limitation:
+- The live UDP observation payload is smaller than transition rows. It does not
+  contain full engine action labels, target HP delta, or combat-event journal
+  joins.
+- Therefore `--policy tactical` can live-test broad tactical rules now, but
+  low-attack recognition and event-derived punish windows remain offline labels
+  until a future schema-versioned runtime observation expansion.
+
+Validation:
+- `python3 -m py_compile tools/rl_probe_server.py`
+- CLI smoke:
+  - `python3 tools/rl_probe_server.py --help | rg -n "tactical|policy" | head -n 80`
+  - Result: `--policy tactical` and tactical tuning flags are exposed.
+- Replay smoke on `logs/phase11e-actor-critic-spacing-threat-live-transitions.ndjson`:
+  - first 1000 current-schema rows decoded to:
+    - actions: `guard-crouch=504`, `neutral=181`, `back=73`,
+      `forward=68`, `fireball-mp=67`, `fireball-hp=44`,
+      `jump-back-start=17`, `jump-forward-start=13`,
+      `crouch-mk=11`, `stand-mp=11`, `crouch-hk=10`,
+      `stand-lp=1`
+    - intents: `hold_guard=479`, `wait=186`, `fireball_zoning=160`,
+      `escape=59`, `approach=47`, `poke=42`, `air_poke=26`,
+      `pressure=1`
+    - threats: `none=460`, `multi_hit_pressure=216`,
+      `corner_pressure=171`, `close_attack=96`,
+      `incoming_projectile=37`, `throw_range=20`
+- Replay smoke on `logs/phase7a-event-journal-live-human-transitions.ndjson`:
+  - first 2000 current-schema rows decoded to mixed movement, guard, neutral,
+    fireball, air, and close-range actions instead of a single-action collapse.
+- Local bind smoke required unsandboxed local UDP bind:
+  - `timeout 1s python3 tools/rl_probe_server.py --policy tactical --host 127.0.0.1 --port 37399 --action-port 37400`
+  - Result: server starts and prints tactical policy config, then exits by
+    timeout.
+
+Live-test command:
+- PowerShell one-liner:
+  - `python "\\wsl.localhost\Ubuntu\home\olhua\src\3s-mister-arm\tools\rl_probe_server.py" --host 0.0.0.0 --port 37330 --action-port 37331 --policy tactical --transition-log "\\wsl.localhost\Ubuntu\home\olhua\src\3s-mister-arm\logs\phase12-tactical-live-transitions.ndjson" --combat-event-log "\\wsl.localhost\Ubuntu\home\olhua\src\3s-mister-arm\logs\phase12-tactical-live-events.ndjson" --verbose --verbose-ping-interval 0`
+
+Follow-up:
+- Run Phase 12E-1 tactical live gate.
+- Watch specifically:
+  - far/no-threat: forward or fireball zoning, not idle LP;
+  - incoming projectile: guard/back response;
+  - close opponent attack: guard/back response;
+  - self attacking: neutral continuation, not buffered guard spam;
+  - close/no-threat: poke/throw/pressure attempts.

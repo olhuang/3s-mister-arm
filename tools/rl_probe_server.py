@@ -166,6 +166,7 @@ MODEL_POLICY_CHOICES = (
     "dqn",
     "bc",
     "actor-critic",
+    "tactical",
 )
 POLICY_CHOICES = SCRIPTED_POLICY_CHOICES + MODEL_POLICY_CHOICES
 GUARD_MACRO_DECISION_STEPS = 6
@@ -530,6 +531,47 @@ class ActorCriticSpacingPriorConfig:
             f"/threat_guard+{self.threat_guard_bonus:.3f}"
             f"/threat_forward-{self.threat_forward_penalty:.3f}"
         )
+
+
+@dataclass(frozen=True)
+class TacticalPolicyConfig:
+    close_max_abs_dx: int = 64
+    poke_max_abs_dx: int = 120
+    fireball_max_abs_dx: int = 260
+    too_far_min_abs_dx: int = 220
+    corner_edge_max_dist: int = 48
+    incoming_projectile_max_time_to_self: int = 18
+    incoming_projectile_max_dx: int = 220
+    incoming_projectile_max_abs_y: int = 96
+    jump_in_max_abs_dx: int = 128
+    threat_attack_max_abs_dx: int = 144
+    valid_action_mask_mode: str = "action-start-v1"
+
+    def label(self) -> str:
+        return (
+            f"close<={self.close_max_abs_dx}"
+            f"/poke<={self.poke_max_abs_dx}"
+            f"/fireball<={self.fireball_max_abs_dx}"
+            f"/too_far>={self.too_far_min_abs_dx}"
+            f"/proj_t<={self.incoming_projectile_max_time_to_self}"
+            f"/proj_dx<={self.incoming_projectile_max_dx}"
+            f"/threat_dx<={self.threat_attack_max_abs_dx}"
+            f"/mask:{self.valid_action_mask_mode}"
+        )
+
+
+@dataclass(frozen=True)
+class TacticalPolicyDecision:
+    spacing_bucket: str
+    corner_context: str
+    self_phase: str
+    opponent_phase: str
+    threat_type: str
+    opportunity_type: str
+    recommended_intent: str
+    intent_reason: str
+    label_confidence: str
+    action_name: str
 
 
 @dataclass(frozen=True)
@@ -1987,6 +2029,303 @@ def dqn_valid_action_indices_for_row(
         for index in range(count)
         if dqn_valid_action_for_row(str(actions[index]), row, config)
     )
+
+
+def tactical_spacing_bucket(row: dict[str, object], config: TacticalPolicyConfig) -> str:
+    abs_dx = abs(row_int_field(row, "obs_abs_dx"))
+    if abs_dx <= config.close_max_abs_dx // 2:
+        return "throw_range"
+    if abs_dx <= config.close_max_abs_dx:
+        return "close"
+    if abs_dx <= config.poke_max_abs_dx:
+        return "poke"
+    if abs_dx <= config.fireball_max_abs_dx:
+        return "fireball"
+    return "too_far"
+
+
+def tactical_corner_context(row: dict[str, object], config: TacticalPolicyConfig) -> str:
+    self_cornered = min(
+        row_int_field(row, "obs_self_front_edge_dist"),
+        row_int_field(row, "obs_self_back_edge_dist"),
+    ) <= config.corner_edge_max_dist
+    opponent_cornered = min(
+        row_int_field(row, "obs_opp_front_edge_dist"),
+        row_int_field(row, "obs_opp_back_edge_dist"),
+    ) <= config.corner_edge_max_dist
+    if self_cornered and opponent_cornered:
+        return "both_cornered"
+    if self_cornered:
+        return "self_cornered"
+    if opponent_cornered:
+        return "opponent_cornered"
+    return "mid_screen"
+
+
+def tactical_self_phase(row: dict[str, object]) -> str:
+    if row_int_field(row, "obs_self_contact_reaction_state") != 0:
+        return "contact_reaction"
+    if row_int_field(row, "obs_self_airborne") != 0 or row_int_field(row, "obs_self_jump_phase") != 0:
+        return "airborne"
+    if row_int_field(row, "obs_self_routine_attack_state") != 0 or row_int_field(row, "obs_self_routine_1") == 4:
+        return "attacking"
+    if row_int_field(row, "obs_self_ground_action_start_allowed") != 0:
+        return "actionable"
+    return "unknown"
+
+
+def tactical_opponent_phase(row: dict[str, object]) -> str:
+    if row_int_field(row, "obs_opp_contact_reaction_state") != 0:
+        return "contact_reaction"
+    if (
+        row_int_field(row, "obs_projectile_active") != 0
+        and row_int_field(row, "obs_projectile_owner") == 2
+        and row_int_field(row, "obs_opp_routine_attack_state") == 0
+    ):
+        return "projectile_active"
+    if row_int_field(row, "obs_opp_airborne") != 0 or row_int_field(row, "obs_opp_jump_phase") != 0:
+        return "jumping"
+    if row_int_field(row, "obs_opp_routine_attack_state") != 0 or row_int_field(row, "obs_opp_routine_1") == 4:
+        return "attacking"
+    return "neutral"
+
+
+def tactical_incoming_projectile_threat(row: dict[str, object], config: TacticalPolicyConfig) -> bool:
+    if row_int_field(row, "obs_projectile_active") == 0 or row_int_field(row, "obs_projectile_owner") != 2:
+        return False
+    rel_x = row_int_field(row, "obs_projectile_rel_x")
+    rel_y = row_int_field(row, "obs_projectile_rel_y")
+    vel_x = row_int_field(row, "obs_projectile_vel_x")
+    time_to_self = row_int_field(row, "obs_projectile_time_to_self")
+    return (
+        1 <= time_to_self <= config.incoming_projectile_max_time_to_self
+        and 0 < rel_x <= config.incoming_projectile_max_dx
+        and abs(rel_y) <= config.incoming_projectile_max_abs_y
+        and vel_x < 0
+    )
+
+
+def tactical_threat_type(
+    row: dict[str, object],
+    spacing: str,
+    self_phase_value: str,
+    opponent_phase_value: str,
+    config: TacticalPolicyConfig,
+) -> str:
+    abs_dx = abs(row_int_field(row, "obs_abs_dx"))
+    if self_phase_value == "contact_reaction" and row_int_field(row, "obs_opp_routine_attack_state") != 0:
+        return "multi_hit_pressure"
+    if tactical_incoming_projectile_threat(row, config):
+        return "incoming_projectile"
+    if opponent_phase_value == "jumping" and abs_dx <= config.jump_in_max_abs_dx:
+        return "jump_in"
+    if spacing == "throw_range" and row_int_field(row, "obs_opp_routine_attack_state") != 0:
+        return "throw_range"
+    if row_int_field(row, "obs_opp_routine_attack_state") != 0 and abs_dx <= config.threat_attack_max_abs_dx:
+        return "close_attack"
+    if tactical_corner_context(row, config) == "self_cornered" and abs_dx <= config.poke_max_abs_dx:
+        return "corner_pressure"
+    return "none"
+
+
+def tactical_opportunity_type(
+    row: dict[str, object],
+    spacing: str,
+    self_phase_value: str,
+    opponent_phase_value: str,
+    threat: str,
+) -> tuple[str, str]:
+    if self_phase_value != "actionable":
+        return "none", "self_not_actionable"
+    if threat != "none":
+        if threat == "jump_in":
+            return "anti_air", "jump_in_threat"
+        return "none", f"threat_{threat}"
+    if opponent_phase_value == "jumping" and spacing in {"close", "poke", "fireball"}:
+        return "anti_air", "opponent_jumping"
+    if opponent_phase_value == "contact_reaction" and spacing in {"throw_range", "close", "poke"}:
+        return "pressure", "opponent_contact_reaction"
+    if spacing == "throw_range":
+        return "throw_mixup", "throw_range_no_threat"
+    if spacing == "poke":
+        return "poke", "poke_range_no_threat"
+    if spacing == "fireball":
+        return "fireball_zoning", "fireball_range_no_threat"
+    if spacing == "too_far":
+        return "none", "too_far_no_threat"
+    return "none", "neutral_no_clear_opportunity"
+
+
+def tactical_recommended_intent(
+    row: dict[str, object],
+    spacing: str,
+    corner: str,
+    self_phase_value: str,
+    threat: str,
+    opportunity: str,
+    opportunity_reason: str,
+) -> tuple[str, str, str]:
+    if self_phase_value == "attacking":
+        return "wait", "self_attacking", "medium"
+    if self_phase_value not in {"actionable", "airborne"}:
+        return "hold_guard", "self_not_actionable", "medium"
+    if threat == "incoming_projectile":
+        return "hold_guard", "incoming_projectile", "high"
+    if threat == "jump_in":
+        return ("anti_air" if self_phase_value == "actionable" else "hold_guard"), "jump_in_threat", "high"
+    if threat in {"close_attack", "multi_hit_pressure"}:
+        return "hold_guard", threat, "high"
+    if threat == "throw_range":
+        return "escape", "throw_range_threat", "medium"
+    if threat == "corner_pressure":
+        return "escape", "corner_pressure", "medium"
+
+    if self_phase_value == "airborne":
+        return "air_poke", "airborne_no_clear_threat", "low"
+    if opportunity == "anti_air":
+        return "anti_air", opportunity_reason, "high"
+    if opportunity == "pressure":
+        return "pressure", opportunity_reason, "medium"
+    if opportunity == "throw_mixup":
+        return "throw", opportunity_reason, "medium"
+    if opportunity == "poke":
+        return "poke", opportunity_reason, "medium"
+    if opportunity == "fireball_zoning":
+        return "fireball_zoning", opportunity_reason, "medium"
+
+    if spacing == "too_far":
+        return "approach", "too_far_no_threat", "medium"
+    if spacing == "fireball":
+        return "adjust_spacing", "fireball_range_no_clear_opportunity", "low"
+    if corner == "self_cornered":
+        return "escape", "self_cornered_no_clear_opportunity", "low"
+    return "wait", "neutral_no_clear_opportunity", "low"
+
+
+def tactical_rotate_candidates(row: dict[str, object], candidates: tuple[str, ...], salt: int = 0) -> tuple[str, ...]:
+    if len(candidates) <= 1:
+        return candidates
+    decision_id = row_int_field(row, "decision_id")
+    episode_id = row_int_field(row, "episode_id")
+    index = (decision_id + episode_id * 3 + salt) % len(candidates)
+    return candidates[index:] + candidates[:index]
+
+
+def tactical_first_valid_action(
+    row: dict[str, object],
+    candidates: tuple[str, ...],
+    config: TacticalPolicyConfig,
+) -> str | None:
+    mask_config = DQNValidActionMaskConfig(config.valid_action_mask_mode)
+    for candidate in candidates:
+        action = canonical_tabular_action_name(candidate)
+        if action is not None and dqn_valid_action_for_row(action, row, mask_config):
+            return action
+    return None
+
+
+def tactical_decode_action(
+    row: dict[str, object],
+    intent: str,
+    config: TacticalPolicyConfig,
+) -> str:
+    self_phase_value = tactical_self_phase(row)
+    if self_phase_value == "attacking":
+        return "neutral"
+    if self_phase_value == "airborne":
+        candidates = ("air-mk", "air-hk", "air-mp", "back")
+    elif intent == "hold_guard":
+        candidates = ("guard-crouch", "guard-stand", "back")
+    elif intent == "low_guard":
+        candidates = ("guard-crouch", "back", "guard-stand")
+    elif intent == "anti_air":
+        candidates = tactical_rotate_candidates(row, ("shoryuken-mp", "crouch-hp", "stand-hp", "back"), 1)
+    elif intent == "punish":
+        candidates = tactical_rotate_candidates(row, ("crouch-mk", "stand-hp", "throw", "shoryuken-mp"), 2)
+    elif intent == "pressure":
+        candidates = tactical_rotate_candidates(row, ("crouch-mk", "stand-mp", "throw", "stand-lp"), 3)
+    elif intent == "throw":
+        candidates = tactical_rotate_candidates(row, ("throw", "crouch-lk", "guard-crouch"), 4)
+    elif intent == "poke":
+        candidates = tactical_rotate_candidates(row, ("crouch-mk", "stand-mp", "fireball-mp", "crouch-hk"), 5)
+    elif intent == "fireball_zoning":
+        abs_dx = abs(row_int_field(row, "obs_abs_dx"))
+        if abs_dx >= config.too_far_min_abs_dx:
+            candidates = tactical_rotate_candidates(row, ("forward", "fireball-mp", "fireball-hp"), 6)
+        else:
+            candidates = tactical_rotate_candidates(row, ("fireball-mp", "forward", "fireball-hp", "back"), 7)
+    elif intent == "approach":
+        candidates = tactical_rotate_candidates(row, ("forward", "forward", "fireball-mp", "jump-forward-start"), 8)
+    elif intent == "escape":
+        candidates = tactical_rotate_candidates(row, ("back", "guard-crouch", "jump-back-start"), 9)
+    elif intent == "air_poke":
+        candidates = ("air-mk", "air-hk", "air-mp", "back")
+    elif intent == "adjust_spacing":
+        candidates = tactical_rotate_candidates(row, ("forward", "back", "fireball-mp"), 10)
+    else:
+        candidates = ("guard-crouch", "forward", "back")
+    action = tactical_first_valid_action(row, candidates, config)
+    if action is not None:
+        return action
+    fallback = tactical_first_valid_action(row, ("guard-crouch", "guard-stand", "back", "forward"), config)
+    return fallback or "forward"
+
+
+def tactical_policy_decision(row: dict[str, object], config: TacticalPolicyConfig) -> TacticalPolicyDecision:
+    spacing = tactical_spacing_bucket(row, config)
+    corner = tactical_corner_context(row, config)
+    self_phase_value = tactical_self_phase(row)
+    opponent_phase_value = tactical_opponent_phase(row)
+    threat = tactical_threat_type(row, spacing, self_phase_value, opponent_phase_value, config)
+    opportunity, opportunity_reason = tactical_opportunity_type(
+        row,
+        spacing,
+        self_phase_value,
+        opponent_phase_value,
+        threat,
+    )
+    intent, reason, confidence = tactical_recommended_intent(
+        row,
+        spacing,
+        corner,
+        self_phase_value,
+        threat,
+        opportunity,
+        opportunity_reason,
+    )
+    action_name = tactical_decode_action(row, intent, config)
+    return TacticalPolicyDecision(
+        spacing_bucket=spacing,
+        corner_context=corner,
+        self_phase=self_phase_value,
+        opponent_phase=opponent_phase_value,
+        threat_type=threat,
+        opportunity_type=opportunity,
+        recommended_intent=intent,
+        intent_reason=reason,
+        label_confidence=confidence,
+        action_name=action_name,
+    )
+
+
+def tactical_macro_should_cancel(action: str, row: dict[str, object], config: TacticalPolicyConfig) -> bool:
+    if action not in FIREBALL_ACTION_NAMES + TATSU_ACTION_NAMES + SHORYUKEN_ACTION_NAMES:
+        return False
+    spacing = tactical_spacing_bucket(row, config)
+    self_phase_value = tactical_self_phase(row)
+    opponent_phase_value = tactical_opponent_phase(row)
+    threat = tactical_threat_type(row, spacing, self_phase_value, opponent_phase_value, config)
+    return threat in {"incoming_projectile", "close_attack", "multi_hit_pressure", "throw_range"}
+
+
+def tactical_actor_action_name(
+    actor: ActorModel,
+    obs_row: dict[str, object] | None,
+    config: TacticalPolicyConfig,
+) -> str | None:
+    if actor.policy != "tactical" or not obs_row:
+        return None
+    return tactical_policy_decision(obs_row, config).action_name
 
 
 def is_current_transition_schema_row(row: dict[str, object]) -> bool:
@@ -3565,6 +3904,7 @@ def policy_action_frame(
     bc_inference_config: BCInferenceConfig = BCInferenceConfig(),
     actor_critic_inference_config: ActorCriticInferenceConfig = ActorCriticInferenceConfig(),
     actor_critic_spacing_prior_config: ActorCriticSpacingPriorConfig = ActorCriticSpacingPriorConfig(),
+    tactical_policy_config: TacticalPolicyConfig = TacticalPolicyConfig(),
 ) -> PolicyActionFrame:
     if actor.policy in MODEL_POLICY_CHOICES:
         macro_action = active_macro_action_name(macro_states, nonce, run_id, episode_id)
@@ -3577,6 +3917,13 @@ def policy_action_frame(
                 obs_row_override,
                 dqn_shoryuken_context_prior_config,
             )
+        ):
+            macro_states.pop((nonce, run_id, episode_id), None)
+        if (
+            actor.policy == "tactical"
+            and macro_action is not None
+            and obs_row_override is not None
+            and tactical_macro_should_cancel(macro_action, obs_row_override, tactical_policy_config)
         ):
             macro_states.pop((nonce, run_id, episode_id), None)
         macro_frame = active_macro_action_frame(macro_states, nonce, run_id, episode_id)
@@ -3613,6 +3960,12 @@ def policy_action_frame(
             dqn_valid_action_mask_config,
             actor_critic_spacing_prior_config,
         )
+    elif actor.policy == "tactical":
+        action_name = tactical_actor_action_name(
+            actor,
+            obs_row_override,
+            tactical_policy_config,
+        )
     if action_name is not None:
         fixed = fixed_action_wire(action_name)
         if fixed is not None:
@@ -3645,6 +3998,7 @@ def policy_action_wire(
     bc_inference_config: BCInferenceConfig = BCInferenceConfig(),
     actor_critic_inference_config: ActorCriticInferenceConfig = ActorCriticInferenceConfig(),
     actor_critic_spacing_prior_config: ActorCriticSpacingPriorConfig = ActorCriticSpacingPriorConfig(),
+    tactical_policy_config: TacticalPolicyConfig = TacticalPolicyConfig(),
 ) -> int:
     return policy_action_frame(
         actor,
@@ -3667,6 +4021,7 @@ def policy_action_wire(
         bc_inference_config,
         actor_critic_inference_config,
         actor_critic_spacing_prior_config,
+        tactical_policy_config,
     ).action_wire
 
 
@@ -3683,7 +4038,37 @@ def format_dqn_verbose_diagnostics(
     ground_normal_context_prior_config: DQNGroundNormalContextPriorConfig,
     fireball_zoning_prior_config: DQNFireballZoningPriorConfig,
     threat_defense_prior_config: DQNThreatDefensePriorConfig,
+    tactical_policy_config: TacticalPolicyConfig,
 ) -> str:
+    if actor.policy == "tactical":
+        action_name = policy_action_frame_name(target_action)
+        if obs_row is None:
+            return f" tactical_action={action_name} tactical_obs=n/a tactical_config={tactical_policy_config.label()}"
+        decision = tactical_policy_decision(obs_row, tactical_policy_config)
+        return (
+            f" tactical_action={action_name}"
+            f" tactical_config={tactical_policy_config.label()}"
+            f" tactical_intent={decision.recommended_intent}"
+            f" tactical_reason={decision.intent_reason}"
+            f" tactical_conf={decision.label_confidence}"
+            f" tactical_spacing={decision.spacing_bucket}"
+            f" tactical_corner={decision.corner_context}"
+            f" tactical_self={decision.self_phase}"
+            f" tactical_opp={decision.opponent_phase}"
+            f" tactical_threat={decision.threat_type}"
+            f" tactical_opportunity={decision.opportunity_type}"
+            f" tactical_decoded={decision.action_name}"
+            f" tactical_phase={dqn_self_mask_phase(obs_row)}"
+            f" self_r1={row_int_field(obs_row, 'obs_self_routine_1')}"
+            f" self_r2={row_int_field(obs_row, 'obs_self_routine_2')}"
+            f" self_atk={row_int_field(obs_row, 'obs_self_routine_attack_state')}"
+            f" self_contact={row_int_field(obs_row, 'obs_self_contact_reaction_state')}"
+            f" opp_r1={row_int_field(obs_row, 'obs_opp_routine_1')}"
+            f" opp_r2={row_int_field(obs_row, 'obs_opp_routine_2')}"
+            f" opp_atk={row_int_field(obs_row, 'obs_opp_routine_attack_state')}"
+            f" proj={row_int_field(obs_row, 'obs_projectile_active')}/{row_int_field(obs_row, 'obs_projectile_owner')}"
+            f" proj_t={row_int_field(obs_row, 'obs_projectile_time_to_self')}"
+        )
     if actor.policy not in ("dqn", "bc", "actor-critic"):
         return ""
     action_name = policy_action_frame_name(target_action)
@@ -3893,6 +4278,7 @@ def serve(
     actor_critic_valid_action_mask_auto: bool,
     actor_critic_inference_config: ActorCriticInferenceConfig,
     actor_critic_spacing_prior_config: ActorCriticSpacingPriorConfig,
+    tactical_policy_config: TacticalPolicyConfig,
     dqn_projectile_timing_prior_config: DQNProjectileTimingPriorConfig,
     dqn_shoryuken_context_prior_config: DQNShoryukenContextPriorConfig,
     dqn_ground_normal_context_prior_config: DQNGroundNormalContextPriorConfig,
@@ -3966,6 +4352,8 @@ def serve(
         print(f"Actor-critic inference active {actor_critic_inference_config.label()}", flush=True)
     if actor_critic_spacing_prior_config.enabled:
         print(f"Actor-critic spacing prior active {actor_critic_spacing_prior_config.label()}", flush=True)
+    if policy == "tactical" or model_store.current().policy == "tactical":
+        print(f"Tactical policy active {tactical_policy_config.label()}", flush=True)
     active_model = model_store.current()
     if active_model.policy == "bc":
         initial_cli_mask_config = bc_valid_action_mask_config
@@ -4062,6 +4450,15 @@ def serve(
                 obs_row = parse_obs_spacing_payload(data[OBS_HEADER.size:])
                 if obs_row is not None:
                     obs_payload_valid = True
+                    obs_row.update(
+                        {
+                            "run_id": run_id,
+                            "episode_id": episode_id,
+                            "decision_id": decision_id,
+                            "obs_frame": obs_frame,
+                            "target_frame": target_frame,
+                        }
+                    )
                     obs_state_key = tabular_state_key(obs_row)
                 elif verbose:
                     print(f"{addr} bad_obs_payload obs_len={obs_len}")
@@ -4093,6 +4490,7 @@ def serve(
                     bc_inference_config,
                     actor_critic_inference_config,
                     actor_critic_spacing_prior_config,
+                    tactical_policy_config,
                 )
                 payload = make_action_packet(
                     nonce,
@@ -4132,6 +4530,7 @@ def serve(
                         dqn_ground_normal_context_prior_config,
                         dqn_fireball_zoning_prior_config,
                         dqn_threat_defense_prior_config,
+                        tactical_policy_config,
                     )
                     print(
                         f"{target} OBS-ACTION policy={active_model.policy} reply={obs_reply_mode} "
@@ -4565,6 +4964,66 @@ def main() -> None:
         help="Actor-critic logit penalty for close attacks/specials while spacing prior sees a threat",
     )
     parser.add_argument(
+        "--tactical-valid-action-mask",
+        choices=DQN_VALID_ACTION_MASK_MODES,
+        default="action-start-v1",
+        help="Action eligibility mask used by --policy tactical",
+    )
+    parser.add_argument(
+        "--tactical-close-max-abs-dx",
+        type=int,
+        default=64,
+        help="Maximum obs_abs_dx treated as close range by --policy tactical",
+    )
+    parser.add_argument(
+        "--tactical-poke-max-abs-dx",
+        type=int,
+        default=120,
+        help="Maximum obs_abs_dx treated as poke range by --policy tactical",
+    )
+    parser.add_argument(
+        "--tactical-fireball-max-abs-dx",
+        type=int,
+        default=260,
+        help="Maximum obs_abs_dx treated as fireball zoning range by --policy tactical",
+    )
+    parser.add_argument(
+        "--tactical-too-far-min-abs-dx",
+        type=int,
+        default=220,
+        help="Minimum obs_abs_dx where --policy tactical strongly prefers approach before fireball",
+    )
+    parser.add_argument(
+        "--tactical-corner-edge-max-dist",
+        type=int,
+        default=48,
+        help="Maximum edge distance treated as cornered by --policy tactical",
+    )
+    parser.add_argument(
+        "--tactical-incoming-projectile-max-time-to-self",
+        type=int,
+        default=18,
+        help="Maximum obs_projectile_time_to_self treated as incoming projectile threat by --policy tactical",
+    )
+    parser.add_argument(
+        "--tactical-incoming-projectile-max-dx",
+        type=int,
+        default=220,
+        help="Maximum positive obs_projectile_rel_x treated as incoming projectile threat by --policy tactical",
+    )
+    parser.add_argument(
+        "--tactical-jump-in-max-abs-dx",
+        type=int,
+        default=128,
+        help="Maximum obs_abs_dx where opponent airborne state is treated as jump-in threat by --policy tactical",
+    )
+    parser.add_argument(
+        "--tactical-threat-attack-max-abs-dx",
+        type=int,
+        default=144,
+        help="Maximum obs_abs_dx where opponent attack state is treated as close attack threat by --policy tactical",
+    )
+    parser.add_argument(
         "--dqn-projectile-timing-prior",
         action="store_true",
         help="Apply a soft jump-start Q penalty for close incoming opponent projectiles before DQN argmax",
@@ -4861,6 +5320,22 @@ def main() -> None:
         threat_forward_penalty=max(0.0, float(args.actor_critic_spacing_threat_forward_penalty)),
         threat_attack_penalty=max(0.0, float(args.actor_critic_spacing_threat_attack_penalty)),
     )
+    tactical_close_max_dx = max(0, int(args.tactical_close_max_abs_dx))
+    tactical_poke_max_dx = max(tactical_close_max_dx, int(args.tactical_poke_max_abs_dx))
+    tactical_fireball_max_dx = max(tactical_poke_max_dx, int(args.tactical_fireball_max_abs_dx))
+    tactical_policy_config = TacticalPolicyConfig(
+        close_max_abs_dx=tactical_close_max_dx,
+        poke_max_abs_dx=tactical_poke_max_dx,
+        fireball_max_abs_dx=tactical_fireball_max_dx,
+        too_far_min_abs_dx=max(tactical_poke_max_dx, int(args.tactical_too_far_min_abs_dx)),
+        corner_edge_max_dist=max(0, int(args.tactical_corner_edge_max_dist)),
+        incoming_projectile_max_time_to_self=max(0, int(args.tactical_incoming_projectile_max_time_to_self)),
+        incoming_projectile_max_dx=max(0, int(args.tactical_incoming_projectile_max_dx)),
+        incoming_projectile_max_abs_y=96,
+        jump_in_max_abs_dx=max(0, int(args.tactical_jump_in_max_abs_dx)),
+        threat_attack_max_abs_dx=max(0, int(args.tactical_threat_attack_max_abs_dx)),
+        valid_action_mask_mode=str(args.tactical_valid_action_mask),
+    )
     projectile_prior_min_time = max(0, int(args.dqn_projectile_prior_min_time_to_self))
     projectile_prior_urgent_max_time = max(
         projectile_prior_min_time,
@@ -4982,6 +5457,7 @@ def main() -> None:
         actor_critic_valid_action_mask_auto,
         actor_critic_inference_config,
         actor_critic_spacing_prior_config,
+        tactical_policy_config,
         dqn_projectile_timing_prior_config,
         dqn_shoryuken_context_prior_config,
         dqn_ground_normal_context_prior_config,

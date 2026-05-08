@@ -40,6 +40,7 @@ class Experience:
     projectile_batch_reason: str = ""
     grounded_normal_defense_eligible: bool = False
     grounded_normal_defense_bc_eligible: bool = False
+    low_defense_margin_eligible: bool = False
     combat_event_batch_group: str = "unlabeled_passive"
 
 
@@ -355,6 +356,9 @@ GROUNDED_NORMAL_DEFENSE_UNSAFE_ACTIONS = frozenset(
     | frozenset(getattr(rl, "STAND_NORMAL_ACTION_NAMES", ()))
     | frozenset(getattr(rl, "CROUCH_NORMAL_ACTION_NAMES", ()))
 )
+LOW_DEFENSE_TARGET_ACTION = "guard-crouch"
+LOW_DEFENSE_LOW_ATTACK_ACTIONS = frozenset({"crouch-lk", "crouch-mk", "crouch-hk"})
+LOW_DEFENSE_BAD_ACTIONS = frozenset({"guard-stand", "back", "forward"})
 DQN_TARGET_MODES = ("standard", "double")
 
 
@@ -1671,6 +1675,108 @@ class GroundedNormalDefenseBCStats:
             "avg_loss": self.avg_loss,
             "target_action_counts": dict(sorted(self.target_action_counts.items())),
             "sampled_by_time_bucket": dict(sorted(self.sampled_by_time_bucket.items())),
+        }
+
+
+@dataclass(frozen=True)
+class LowDefenseConfig:
+    reward_shaping: bool = False
+    hit_penalty: float = 0.5
+    block_bonus: float = 0.2
+    margin_loss: bool = False
+    margin: float = 0.08
+    loss_weight: float = 0.5
+    batch_size: int = 0
+    eligible_sources: frozenset[str] = field(default_factory=lambda: frozenset({"cpu-demo", "human-demo", "remote"}))
+    valid_action_mask_mode: str = "action-start-v1"
+    max_abs_dx: int = 144
+
+    @property
+    def reward_enabled(self) -> bool:
+        return self.reward_shaping and (self.hit_penalty > 0.0 or self.block_bonus > 0.0)
+
+    @property
+    def margin_enabled(self) -> bool:
+        return self.margin_loss and self.margin > 0.0 and self.loss_weight > 0.0
+
+    @property
+    def enabled(self) -> bool:
+        return self.reward_enabled or self.margin_enabled
+
+    def as_shared_mask_config(self) -> rl.DQNValidActionMaskConfig:
+        return rl.parse_dqn_valid_action_mask_config(self.valid_action_mask_mode)
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "reward_shaping": self.reward_shaping,
+            "reward_enabled": self.reward_enabled,
+            "hit_penalty": self.hit_penalty,
+            "block_bonus": self.block_bonus,
+            "margin_loss": self.margin_loss,
+            "margin_enabled": self.margin_enabled,
+            "margin": self.margin,
+            "loss_weight": self.loss_weight,
+            "batch_size": self.batch_size,
+            "eligible_sources": sorted(self.eligible_sources),
+            "valid_action_mask_mode": self.valid_action_mask_mode,
+            "max_abs_dx": self.max_abs_dx,
+            "low_attack_actions": sorted(LOW_DEFENSE_LOW_ATTACK_ACTIONS),
+            "target_action": LOW_DEFENSE_TARGET_ACTION,
+            "bad_actions": sorted(LOW_DEFENSE_BAD_ACTIONS),
+        }
+
+
+@dataclass
+class LowDefenseStats:
+    checked_rows: int = 0
+    low_event_rows: int = 0
+    hit_penalty_events: int = 0
+    no_action_hit_penalty_events: int = 0
+    block_bonus_events: int = 0
+    reward_total: float = 0.0
+    by_source_action: dict[str, int] = field(default_factory=dict)
+    rewarded_source_results: set[tuple[int, int, int, str, str]] = field(default_factory=set, repr=False)
+    eligible_experiences: int = 0
+    sampled_events: int = 0
+    violation_events: int = 0
+    empty_valid_events: int = 0
+    empty_target_events: int = 0
+    empty_competitor_events: int = 0
+    empty_context_events: int = 0
+    loss_total: float = 0.0
+    last_loss: float = 0.0
+    avg_loss: float = 0.0
+    sampled_by_time_bucket: dict[str, int] = field(default_factory=dict)
+    violation_by_time_bucket: dict[str, int] = field(default_factory=dict)
+    blocker_counts: dict[str, int] = field(default_factory=dict)
+
+    @property
+    def net_adjustment(self) -> float:
+        return self.reward_total
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "checked_rows": self.checked_rows,
+            "low_event_rows": self.low_event_rows,
+            "hit_penalty_events": self.hit_penalty_events,
+            "no_action_hit_penalty_events": self.no_action_hit_penalty_events,
+            "block_bonus_events": self.block_bonus_events,
+            "reward_total": self.reward_total,
+            "by_source_action": dict(sorted(self.by_source_action.items())),
+            "rewarded_source_results": len(self.rewarded_source_results),
+            "eligible_experiences": self.eligible_experiences,
+            "sampled_events": self.sampled_events,
+            "violation_events": self.violation_events,
+            "empty_valid_events": self.empty_valid_events,
+            "empty_target_events": self.empty_target_events,
+            "empty_competitor_events": self.empty_competitor_events,
+            "empty_context_events": self.empty_context_events,
+            "loss_total": self.loss_total,
+            "last_loss": self.last_loss,
+            "avg_loss": self.avg_loss,
+            "sampled_by_time_bucket": dict(sorted(self.sampled_by_time_bucket.items())),
+            "violation_by_time_bucket": dict(sorted(self.violation_by_time_bucket.items())),
+            "blocker_counts": dict(sorted(self.blocker_counts.items())),
         }
 
 
@@ -3523,6 +3629,135 @@ def grounded_normal_defense_bc_eligible(
     return is_grounded_normal_defense_context(row, GroundedNormalDefenseMarginConfig(max_abs_dx=config.max_abs_dx))
 
 
+def combat_event_policy_action_name(event: dict[str, object]) -> str:
+    for prefix in ("engine", "policy"):
+        action_name = rl.action_name_from_policy_meta(
+            int_field(event, f"{prefix}_action_id"),
+            int_field(event, f"{prefix}_sub_action_id"),
+        )
+        if action_name:
+            return action_name
+    return ""
+
+
+def low_defense_attributions_for_row(
+    index: combat_events.CombatEventIndex | None,
+    row: dict[str, object],
+    max_abs_dx: int,
+) -> list[tuple[dict[str, object], dict[str, object], str]]:
+    if index is None:
+        return []
+    if int_field(row, "obs_abs_dx") > max_abs_dx:
+        return []
+
+    key = (
+        int_field(row, "run_id"),
+        int_field(row, "episode_id"),
+        int_field(row, "decision_id"),
+    )
+    matches: list[tuple[dict[str, object], dict[str, object], str]] = []
+    for attribution in index.by_decision.get(key, []):
+        if str(attribution.get("event_kind", "")) != "attribution":
+            continue
+        if str(attribution.get("target_side", "")) != "self":
+            continue
+        if str(attribution.get("source_family", "")) != "attack":
+            continue
+        if str(attribution.get("failure_reason", "none")) != "none":
+            continue
+        defense_result = str(attribution.get("defense_result", "unknown"))
+        if defense_result not in ("hit", "blocked", "blocked_chip"):
+            continue
+        source_event_id = int_field(attribution, "source_event_id")
+        if source_event_id <= 0:
+            continue
+        source_event = index.by_event_key.get(
+            (
+                int_field(attribution, "run_id"),
+                int_field(attribution, "episode_id"),
+                source_event_id,
+            )
+        )
+        if source_event is None or str(source_event.get("event_kind", "")) != "attack":
+            continue
+        source_action = combat_event_policy_action_name(source_event)
+        if source_action not in LOW_DEFENSE_LOW_ATTACK_ACTIONS:
+            continue
+        matches.append((attribution, source_event, source_action))
+    return matches
+
+
+def low_defense_context_for_row(
+    row: dict[str, object],
+    combat_event_validation: combat_events.CombatEventTrainingValidation | None,
+    config: LowDefenseConfig,
+) -> bool:
+    if combat_event_validation is None:
+        return False
+    return bool(low_defense_attributions_for_row(combat_event_validation.index, row, config.max_abs_dx))
+
+
+def low_defense_reward_adjustment(
+    row: dict[str, object],
+    action_name: str | None,
+    combat_event_validation: combat_events.CombatEventTrainingValidation | None,
+    config: LowDefenseConfig,
+    stats: LowDefenseStats,
+) -> float:
+    if not config.reward_enabled or combat_event_validation is None:
+        return 0.0
+
+    stats.checked_rows += 1
+    adjustment = 0.0
+    for attribution, _source_event, source_action in low_defense_attributions_for_row(
+        combat_event_validation.index,
+        row,
+        config.max_abs_dx,
+    ):
+        stats.low_event_rows += 1
+        stats.by_source_action[source_action] = stats.by_source_action.get(source_action, 0) + 1
+        defense_result = str(attribution.get("defense_result", "unknown"))
+        reward_key = (
+            int_field(attribution, "run_id"),
+            int_field(attribution, "episode_id"),
+            int_field(attribution, "source_event_id"),
+            defense_result,
+            action_name or "none",
+        )
+        if reward_key in stats.rewarded_source_results:
+            continue
+        stats.rewarded_source_results.add(reward_key)
+
+        if defense_result == "hit" and (action_name in LOW_DEFENSE_BAD_ACTIONS or action_name is None):
+            adjustment -= config.hit_penalty
+            stats.reward_total -= config.hit_penalty
+            stats.hit_penalty_events += 1
+            if action_name is None:
+                stats.no_action_hit_penalty_events += 1
+        elif defense_result in ("blocked", "blocked_chip") and action_name == LOW_DEFENSE_TARGET_ACTION:
+            adjustment += config.block_bonus
+            stats.reward_total += config.block_bonus
+            stats.block_bonus_events += 1
+
+    return adjustment
+
+
+def low_defense_margin_eligible(
+    row: dict[str, object],
+    source_name: str,
+    action_name: str,
+    combat_event_validation: combat_events.CombatEventTrainingValidation | None,
+    config: LowDefenseConfig,
+) -> bool:
+    if not config.margin_loss:
+        return False
+    if source_name not in config.eligible_sources:
+        return False
+    if action_name != LOW_DEFENSE_TARGET_ACTION and action_name not in LOW_DEFENSE_BAD_ACTIONS:
+        return False
+    return low_defense_context_for_row(row, combat_event_validation, config)
+
+
 def apply_grounded_normal_defense_bc_loss(
     exp: Experience,
     values: list[float],
@@ -3781,6 +4016,7 @@ def build_experiences(
     projectile_defensive_expert_margin_config: ProjectileDefensiveExpertMarginConfig,
     grounded_normal_defense_margin_config: GroundedNormalDefenseMarginConfig,
     grounded_normal_defense_bc_config: GroundedNormalDefenseBCConfig,
+    low_defense_config: LowDefenseConfig,
     engine_outcome_config: EngineOutcomeConfig,
     action_filter_config: DQNActionFilterConfig,
     combat_event_validation: combat_events.CombatEventTrainingValidation | None,
@@ -3805,6 +4041,7 @@ def build_experiences(
     combat_events.CombatEventRewardStats,
     CombatEventUnlabeledMovementFilterStats,
     CombatEventMovementCreditStats,
+    LowDefenseStats,
 ]:
     action_to_index = {action: index for index, action in enumerate(actions)}
     build_stats = BuildDiagnostics()
@@ -3830,6 +4067,7 @@ def build_experiences(
     combat_event_reward_stats = combat_events.CombatEventRewardStats()
     combat_event_unlabeled_movement_filter_stats = CombatEventUnlabeledMovementFilterStats()
     combat_event_movement_credit_stats = CombatEventMovementCreditStats()
+    low_defense_stats = LowDefenseStats()
 
     for episode_rows in by_episode.values():
         episode_rows.sort(key=row_order_key)
@@ -3961,12 +4199,20 @@ def build_experiences(
             else:
                 projectile_response_adjustment = 0.0
                 projectile_response_outcome_result = ProjectileResponseOutcome()
+            low_defense_adjustment = low_defense_reward_adjustment(
+                row,
+                action_name,
+                combat_event_validation,
+                low_defense_config,
+                low_defense_stats,
+            )
             reward = base_reward + (
                 -risk_cost
                 + guard_adjustment
                 + spacing_adjustment
                 + position_adjustment
                 + projectile_response_adjustment
+                + low_defense_adjustment
             ) * reward_scale
             combat_event_reward_adjustment = combat_events.reward_adjustment_for_transition(
                 combat_event_validation.index if combat_event_validation is not None else None,
@@ -4130,6 +4376,13 @@ def build_experiences(
                     action_name,
                     grounded_normal_defense_bc_config,
                 ),
+                low_defense_margin_eligible=low_defense_margin_eligible(
+                    row,
+                    source_name,
+                    action_name,
+                    combat_event_validation,
+                    low_defense_config,
+                ),
                 combat_event_batch_group=combat_event_batch_group,
             )
             multiplier = projectile_response_oversample_config.multiplier_for(projectile_response_outcome_result)
@@ -4167,6 +4420,7 @@ def build_experiences(
         combat_event_reward_stats,
         combat_event_unlabeled_movement_filter_stats,
         combat_event_movement_credit_stats,
+        low_defense_stats,
     )
 
 
@@ -4513,6 +4767,30 @@ def grounded_normal_defense_bc_config_from_args(
             "--grounded-normal-defense-bc-sources",
         ),
         max_abs_dx=max(0, int(args.grounded_normal_defense_bc_max_abs_dx)),
+    )
+
+
+def low_defense_config_from_args(args: argparse.Namespace) -> LowDefenseConfig:
+    mode = str(args.low_defense_valid_action_mask)
+    if mode not in rl.DQN_VALID_ACTION_MASK_MODES:
+        raise SystemExit(
+            f"unknown --low-defense-valid-action-mask {mode!r}; "
+            f"expected one of {','.join(rl.DQN_VALID_ACTION_MASK_MODES)}"
+        )
+    return LowDefenseConfig(
+        reward_shaping=bool(args.low_defense_reward_shaping),
+        hit_penalty=max(0.0, float(args.low_defense_hit_penalty)),
+        block_bonus=max(0.0, float(args.low_defense_block_bonus)),
+        margin_loss=bool(args.low_defense_margin_loss),
+        margin=max(0.0, float(args.low_defense_margin)),
+        loss_weight=max(0.0, float(args.low_defense_margin_weight)),
+        batch_size=max(0, int(args.low_defense_margin_batch_size)),
+        eligible_sources=parse_source_name_set(
+            str(args.low_defense_margin_sources),
+            "--low-defense-margin-sources",
+        ),
+        valid_action_mask_mode=mode,
+        max_abs_dx=max(0, int(args.low_defense_max_abs_dx)),
     )
 
 
@@ -5425,6 +5703,61 @@ def apply_grounded_normal_defense_margin_loss(
     return weighted_loss
 
 
+def apply_low_defense_margin_loss(
+    exp: Experience,
+    values: list[float],
+    actions: tuple[str, ...],
+    output_grad: list[float],
+    config: LowDefenseConfig,
+    shared_valid_action_mask_config: rl.DQNValidActionMaskConfig,
+    stats: LowDefenseStats,
+) -> float:
+    if not config.margin_enabled or not exp.low_defense_margin_eligible:
+        return 0.0
+
+    value_count = min(len(actions), len(values))
+    valid_indices = rl.dqn_valid_action_indices_for_row(
+        exp.row,
+        actions,
+        shared_valid_action_mask_config,
+        value_count,
+    )
+    if not valid_indices:
+        stats.empty_valid_events += 1
+        return 0.0
+
+    target_indices = [i for i in valid_indices if actions[i] == LOW_DEFENSE_TARGET_ACTION]
+    competitor_indices = [i for i in valid_indices if actions[i] in LOW_DEFENSE_BAD_ACTIONS]
+    if not target_indices:
+        stats.empty_target_events += 1
+        return 0.0
+    if not competitor_indices:
+        stats.empty_competitor_events += 1
+        return 0.0
+
+    stats.sampled_events += 1
+    time_bucket = _grounded_normal_defense_time_bucket(exp.row)
+    stats.sampled_by_time_bucket[time_bucket] = stats.sampled_by_time_bucket.get(time_bucket, 0) + 1
+
+    target_index = target_indices[0]
+    best_competitor_index = max(competitor_indices, key=lambda i: (values[i], actions[i]))
+    gap = float(values[best_competitor_index]) + config.margin - float(values[target_index])
+    if gap <= 0.0:
+        return 0.0
+
+    clipped_gap = max(-10.0, min(10.0, gap))
+    weighted_loss = config.loss_weight * 0.5 * clipped_gap * clipped_gap
+    output_grad[best_competitor_index] += config.loss_weight * clipped_gap
+    output_grad[target_index] -= config.loss_weight * clipped_gap
+
+    blocker_action = actions[best_competitor_index]
+    stats.violation_events += 1
+    stats.loss_total += weighted_loss
+    stats.blocker_counts[blocker_action] = stats.blocker_counts.get(blocker_action, 0) + 1
+    stats.violation_by_time_bucket[time_bucket] = stats.violation_by_time_bucket.get(time_bucket, 0) + 1
+    return weighted_loss
+
+
 def apply_projectile_late_defensive_margin_loss(
     exp: Experience,
     values: list[float],
@@ -5780,6 +6113,7 @@ def train_dqn(
     projectile_timing_group_margin_config: ProjectileTimingGroupMarginConfig,
     grounded_normal_defense_margin_config: GroundedNormalDefenseMarginConfig,
     grounded_normal_defense_bc_config: GroundedNormalDefenseBCConfig,
+    low_defense_config: LowDefenseConfig,
     valid_action_mask_config: DQNValidActionMaskTrainingConfig,
     entropy_reg_weight: float = 0.0,
     initial_layers: list[dict[str, object]] | None = None,
@@ -5795,6 +6129,7 @@ def train_dqn(
     ProjectileTimingGroupMarginStats,
     GroundedNormalDefenseMarginStats,
     GroundedNormalDefenseBCStats,
+    LowDefenseStats,
     DQNValidActionMaskTrainingStats,
 ]:
     rng = random.Random(seed)
@@ -5843,6 +6178,8 @@ def train_dqn(
     avg_grounded_normal_defense_margin_loss = 0.0
     last_grounded_normal_defense_bc_loss = 0.0
     avg_grounded_normal_defense_bc_loss = 0.0
+    last_low_defense_margin_loss = 0.0
+    avg_low_defense_margin_loss = 0.0
     unsupported_action_indices, unsupported_action_regularization_stats = dqn_unsupported_action_indices(
         actions,
         action_counts,
@@ -5901,6 +6238,12 @@ def train_dqn(
     grounded_normal_defense_bc_pool = [
         exp for exp in experiences if exp.grounded_normal_defense_bc_eligible
     ]
+    low_defense_stats = LowDefenseStats(
+        eligible_experiences=sum(1 for exp in experiences if exp.low_defense_margin_eligible)
+    )
+    low_defense_pool = [
+        exp for exp in experiences if exp.low_defense_margin_eligible
+    ]
     shared_valid_action_mask_config = valid_action_mask_config.as_shared_config()
     projectile_expert_margin_mask_config = projectile_expert_margin_config.as_shared_mask_config()
     special_expert_margin_mask_config = special_expert_margin_config.as_shared_mask_config()
@@ -5908,6 +6251,7 @@ def train_dqn(
     projectile_defensive_expert_margin_mask_config = projectile_defensive_expert_margin_config.as_shared_mask_config()
     projectile_timing_group_margin_mask_config = projectile_timing_group_margin_config.as_shared_mask_config()
     grounded_normal_defense_mask_config = grounded_normal_defense_margin_config.as_shared_mask_config()
+    low_defense_mask_config = low_defense_config.as_shared_mask_config()
     valid_action_mask_stats = DQNValidActionMaskTrainingStats()
 
     for step in range(1, steps + 1):
@@ -5940,6 +6284,7 @@ def train_dqn(
         projectile_timing_group_margin_loss = 0.0
         grounded_normal_defense_margin_loss = 0.0
         grounded_normal_defense_bc_loss = 0.0
+        low_defense_margin_loss = 0.0
         entropy_reg_loss = 0.0
         for exp in batch:
             values, activations, pre_activations = forward(layers, exp.state)
@@ -6110,6 +6455,17 @@ def train_dqn(
             )
             grounded_normal_defense_bc_loss += exp_grounded_defense_bc_loss
             loss += exp_grounded_defense_bc_loss
+            exp_low_defense_loss = apply_low_defense_margin_loss(
+                exp,
+                values,
+                actions,
+                output_grad,
+                low_defense_config,
+                low_defense_mask_config,
+                low_defense_stats,
+            )
+            low_defense_margin_loss += exp_low_defense_loss
+            loss += exp_low_defense_loss
             entropy_loss_delta, entropy_bonus, entropy_grad = entropy_regularization_grad(
                 values,
                 entropy_reg_weight,
@@ -6245,6 +6601,24 @@ def train_dqn(
                 loss += exp_defense_bc_loss
                 if exp_defense_bc_loss > 0.0:
                     add_backward_grads(layers, grads, activations, pre_activations, output_grad)
+        if low_defense_config.margin_enabled and low_defense_pool:
+            for _ in range(max(0, low_defense_config.batch_size)):
+                exp = rng.choice(low_defense_pool)
+                values, activations, pre_activations = forward(layers, exp.state)
+                output_grad = [0.0 for _ in values]
+                exp_low_defense_loss = apply_low_defense_margin_loss(
+                    exp,
+                    values,
+                    actions,
+                    output_grad,
+                    low_defense_config,
+                    low_defense_mask_config,
+                    low_defense_stats,
+                )
+                low_defense_margin_loss += exp_low_defense_loss
+                loss += exp_low_defense_loss
+                if exp_low_defense_loss > 0.0:
+                    add_backward_grads(layers, grads, activations, pre_activations, output_grad)
         apply_grads(layers, grads, learning_rate, batch_size)
         last_loss = loss / max(1, batch_size)
         avg_loss = last_loss if step == 1 else (0.98 * avg_loss + 0.02 * last_loss)
@@ -6323,6 +6697,12 @@ def train_dqn(
                 + 0.02 * last_grounded_normal_defense_bc_loss
             )
         )
+        last_low_defense_margin_loss = low_defense_margin_loss / max(1, batch_size)
+        avg_low_defense_margin_loss = (
+            last_low_defense_margin_loss
+            if step == 1
+            else (0.98 * avg_low_defense_margin_loss + 0.02 * last_low_defense_margin_loss)
+        )
         if target_sync_steps > 0 and step % target_sync_steps == 0:
             target_layers = copy.deepcopy(layers)
         if log_interval > 0 and (step == 1 or step % log_interval == 0 or step == steps):
@@ -6337,7 +6717,8 @@ def train_dqn(
                 f"projectile_def_expert_margin={last_projectile_defensive_expert_margin_loss:.6f} "
                 f"projectile_timing_group_margin={last_projectile_timing_group_margin_loss:.6f} "
                 f"grounded_def_margin={last_grounded_normal_defense_margin_loss:.6f} "
-                f"grounded_def_bc={last_grounded_normal_defense_bc_loss:.6f}",
+                f"grounded_def_bc={last_grounded_normal_defense_bc_loss:.6f} "
+                f"low_def_margin={last_low_defense_margin_loss:.6f}",
                 flush=True,
             )
 
@@ -6371,6 +6752,8 @@ def train_dqn(
     grounded_normal_defense_stats.avg_loss = avg_grounded_normal_defense_margin_loss
     grounded_normal_defense_bc_stats.last_loss = last_grounded_normal_defense_bc_loss
     grounded_normal_defense_bc_stats.avg_loss = avg_grounded_normal_defense_bc_loss
+    low_defense_stats.last_loss = last_low_defense_margin_loss
+    low_defense_stats.avg_loss = avg_low_defense_margin_loss
     return (
         layers,
         {
@@ -6389,6 +6772,7 @@ def train_dqn(
         projectile_timing_group_margin_stats,
         grounded_normal_defense_stats,
         grounded_normal_defense_bc_stats,
+        low_defense_stats,
         valid_action_mask_stats,
     )
 
@@ -7977,6 +8361,66 @@ def main() -> None:
         help="Maximum obs_abs_dx for grounded normal defense BC loss rows",
     )
     parser.add_argument(
+        "--low-defense-reward-shaping",
+        action="store_true",
+        help=(
+            "Apply event-log low attack defense shaping: penalize guard-stand/back/forward/no-label "
+            "when crouch-lk/mk/hk hits self, and reward guard-crouch when it blocks low"
+        ),
+    )
+    parser.add_argument(
+        "--low-defense-hit-penalty",
+        type=float,
+        default=0.5,
+        help="Raw reward penalty for failing to crouch-guard an event-log low attack",
+    )
+    parser.add_argument(
+        "--low-defense-block-bonus",
+        type=float,
+        default=0.2,
+        help="Raw reward bonus when guard-crouch blocks an event-log low attack",
+    )
+    parser.add_argument(
+        "--low-defense-margin-loss",
+        action="store_true",
+        help="Add a valid-action-masked margin loss so guard-crouch ranks above guard-stand/back/forward in low-threat rows",
+    )
+    parser.add_argument(
+        "--low-defense-margin",
+        type=float,
+        default=0.08,
+        help="Q margin required between guard-crouch and the best guard-stand/back/forward competitor",
+    )
+    parser.add_argument(
+        "--low-defense-margin-weight",
+        type=float,
+        default=0.5,
+        help="Auxiliary loss weight for --low-defense-margin-loss",
+    )
+    parser.add_argument(
+        "--low-defense-margin-batch-size",
+        type=int,
+        default=0,
+        help="Additional low-threat rows sampled per training step for low-defense margin-only updates",
+    )
+    parser.add_argument(
+        "--low-defense-margin-sources",
+        default="cpu-demo,human-demo,remote",
+        help="Comma-separated execution sources eligible for low-defense margin rows",
+    )
+    parser.add_argument(
+        "--low-defense-valid-action-mask",
+        choices=rl.DQN_VALID_ACTION_MASK_MODES,
+        default="action-start-v1",
+        help="Valid-action mask used for low-defense margin target and competitors",
+    )
+    parser.add_argument(
+        "--low-defense-max-abs-dx",
+        type=int,
+        default=144,
+        help="Maximum obs_abs_dx for event-log low-defense reward and margin rows",
+    )
+    parser.add_argument(
         "--engine-outcome-training-mode",
         default=None,
         help=(
@@ -8183,6 +8627,7 @@ def main() -> None:
     )
     combat_event_batch_sampling_config = combat_event_batch_sampling_config_from_args(args)
     combat_event_movement_credit_config = combat_event_movement_credit_config_from_args(args)
+    low_defense_requested = bool(args.low_defense_reward_shaping or args.low_defense_margin_loss)
     if combat_event_training_mode == "off" and combat_event_log_paths:
         raise SystemExit("--combat-event-logs requires --combat-event-training-mode validate or reward-shaping")
     if combat_event_unlabeled_movement_filter_config.enabled and combat_event_training_mode != "reward-shaping":
@@ -8199,6 +8644,8 @@ def main() -> None:
             raise SystemExit("--combat-event-batch-sampling currently requires --batch-sampling uniform")
     if combat_event_movement_credit_config.enabled and combat_event_training_mode != "reward-shaping":
         raise SystemExit("--combat-event-movement-credit requires --combat-event-training-mode reward-shaping")
+    if low_defense_requested and combat_event_training_mode != "reward-shaping":
+        raise SystemExit("--low-defense-* options require --combat-event-training-mode reward-shaping")
     if combat_event_training_mode != "off":
         if not combat_event_log_paths:
             raise SystemExit(f"--combat-event-training-mode {combat_event_training_mode} requires --combat-event-logs")
@@ -8221,6 +8668,8 @@ def main() -> None:
             raise SystemExit("--combat-event-batch-sampling is only supported for DQN training")
         if combat_event_movement_credit_config.enabled:
             raise SystemExit("--combat-event-movement-credit is only supported for DQN training")
+        if low_defense_requested:
+            raise SystemExit("--low-defense-* options are only supported for DQN training")
         # --- BC training path ---
         bc_layers, bc_train_stats, bc_label_counts, bc_skipped = train_bc(
             rows,
@@ -8300,6 +8749,7 @@ def main() -> None:
     projectile_timing_group_margin_config = projectile_timing_group_margin_config_from_args(args)
     grounded_normal_defense_margin_config = grounded_normal_defense_config_from_args(args)
     grounded_normal_defense_bc_config = grounded_normal_defense_bc_config_from_args(args)
+    low_defense_config = low_defense_config_from_args(args)
     engine_outcome_config = engine_outcome_config_from_args(args)
     conservative_action_penalty_config = conservative_action_penalty_config_from_args(args)
     unsupported_action_regularization_config = dqn_unsupported_action_regularization_config_from_args(args)
@@ -8324,6 +8774,7 @@ def main() -> None:
         combat_event_reward_stats,
         combat_event_unlabeled_movement_filter_stats,
         combat_event_movement_credit_stats,
+        low_defense_reward_stats,
     ) = build_experiences(
         rows,
         actions,
@@ -8343,6 +8794,7 @@ def main() -> None:
         projectile_defensive_expert_margin_config,
         grounded_normal_defense_margin_config,
         grounded_normal_defense_bc_config,
+        low_defense_config,
         engine_outcome_config,
         dqn_action_filter_config,
         combat_event_validation,
@@ -8377,6 +8829,7 @@ def main() -> None:
         projectile_timing_group_margin_stats,
         grounded_normal_defense_stats,
         grounded_normal_defense_bc_stats,
+        low_defense_margin_stats,
         valid_action_mask_stats,
     ) = train_dqn(
         experiences,
@@ -8402,6 +8855,7 @@ def main() -> None:
         projectile_timing_group_margin_config,
         grounded_normal_defense_margin_config,
         grounded_normal_defense_bc_config,
+        low_defense_config,
         valid_action_mask_config,
         max(0.0, float(args.dqn_entropy_reg_weight)),
         init_model.layers if init_model is not None else None,
@@ -8459,6 +8913,10 @@ def main() -> None:
         reward_sources.append("projectile-defensive-expert-margin")
     if projectile_timing_group_margin_config.enabled:
         reward_sources.append("projectile-timing-group-margin")
+    if low_defense_reward_stats.net_adjustment != 0.0:
+        reward_sources.append("low-defense-shaping")
+    if low_defense_config.margin_enabled:
+        reward_sources.append("low-defense-margin")
     if movement_regression_config.enabled:
         reward_sources.append("movement-regression-loss")
     if combat_events.uses_transition_hp_delta(combat_event_reward_config) and str(args.training_mode_hp_delta_mode) == "damage-only":
@@ -8596,6 +9054,9 @@ def main() -> None:
         "grounded_normal_defense_margin_stats": grounded_normal_defense_stats.as_metadata(),
         "grounded_normal_defense_bc_config": grounded_normal_defense_bc_config.as_metadata(),
         "grounded_normal_defense_bc_stats": grounded_normal_defense_bc_stats.as_metadata(),
+        "low_defense_config": low_defense_config.as_metadata(),
+        "low_defense_reward_stats": low_defense_reward_stats.as_metadata(),
+        "low_defense_margin_stats": low_defense_margin_stats.as_metadata(),
         "engine_outcome_training_mode": engine_outcome_config.training_mode,
         "engine_outcome_window_decisions": engine_outcome_config.window_decisions,
         "engine_outcome_action_windows": engine_outcome_config.action_windows,
@@ -8700,6 +9161,12 @@ def main() -> None:
         f"movement_loss={movement_regression_stats.last_loss:.6f} "
         f"event_move_credit={combat_event_movement_credit_stats.applied_rows}/"
         f"{combat_event_movement_credit_stats.total_credit:.3f} "
+        f"low_defense={low_defense_reward_stats.hit_penalty_events}/"
+        f"{low_defense_reward_stats.block_bonus_events}/"
+        f"{low_defense_reward_stats.reward_total:.3f} "
+        f"low_def_margin={low_defense_margin_stats.violation_events}/"
+        f"{low_defense_margin_stats.sampled_events} "
+        f"low_def_margin_loss={low_defense_margin_stats.last_loss:.6f} "
         f"loss={train_stats['last_loss']:.6f} avg_loss={train_stats['avg_loss']:.6f} "
         f"included={build_stats.included_action_rows} excluded={build_stats.excluded_action_rows} "
         f"engine_input_fallback={build_stats.engine_outcome_input_fallback_rows} "
@@ -9207,6 +9674,40 @@ def main() -> None:
         f"avg:{grounded_normal_defense_bc_stats.avg_loss:.6f} "
         f"targets:{format_counts(grounded_normal_defense_bc_stats.target_action_counts, grounded_normal_defense_bc_stats.sampled_events, args.diagnostic_top_n)} "
         f"sampled_t:{format_counts(grounded_normal_defense_bc_stats.sampled_by_time_bucket, grounded_normal_defense_bc_stats.sampled_events, args.diagnostic_top_n)}",
+        flush=True,
+    )
+    print(
+        "DQN diagnostics "
+        f"low_defense=reward_enabled:{int(low_defense_config.reward_enabled)} "
+        f"margin_enabled:{int(low_defense_config.margin_enabled)} "
+        f"hit_penalty:{low_defense_config.hit_penalty:.6f} "
+        f"block_bonus:{low_defense_config.block_bonus:.6f} "
+        f"margin:{low_defense_config.margin:.6f} "
+        f"weight:{low_defense_config.loss_weight:.6f} "
+        f"batch_size:{low_defense_config.batch_size} "
+        f"valid_mask:{low_defense_config.valid_action_mask_mode} "
+        f"max_abs_dx<={low_defense_config.max_abs_dx} "
+        f"sources:{','.join(sorted(low_defense_config.eligible_sources)) or 'none'} "
+        f"checked:{low_defense_reward_stats.checked_rows} "
+        f"low_rows:{low_defense_reward_stats.low_event_rows} "
+        f"hit_penalty_events:{low_defense_reward_stats.hit_penalty_events} "
+        f"no_action_hits:{low_defense_reward_stats.no_action_hit_penalty_events} "
+        f"block_bonus_events:{low_defense_reward_stats.block_bonus_events} "
+        f"reward:{low_defense_reward_stats.reward_total:.6f} "
+        f"source_actions:{format_counts(low_defense_reward_stats.by_source_action, low_defense_reward_stats.low_event_rows, args.diagnostic_top_n)} "
+        f"eligible:{low_defense_margin_stats.eligible_experiences} "
+        f"sampled:{low_defense_margin_stats.sampled_events} "
+        f"violations:{low_defense_margin_stats.violation_events} "
+        f"empty_valid:{low_defense_margin_stats.empty_valid_events} "
+        f"empty_target:{low_defense_margin_stats.empty_target_events} "
+        f"empty_competitor:{low_defense_margin_stats.empty_competitor_events} "
+        f"empty_context:{low_defense_margin_stats.empty_context_events} "
+        f"loss:{low_defense_margin_stats.loss_total:.6f} "
+        f"last:{low_defense_margin_stats.last_loss:.6f} "
+        f"avg:{low_defense_margin_stats.avg_loss:.6f} "
+        f"blockers:{format_counts(low_defense_margin_stats.blocker_counts, low_defense_margin_stats.violation_events, args.diagnostic_top_n)} "
+        f"sampled_t:{format_counts(low_defense_margin_stats.sampled_by_time_bucket, low_defense_margin_stats.sampled_events, args.diagnostic_top_n)} "
+        f"violation_t:{format_counts(low_defense_margin_stats.violation_by_time_bucket, low_defense_margin_stats.violation_events, args.diagnostic_top_n)}",
         flush=True,
     )
     print(

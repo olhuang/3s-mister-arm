@@ -15788,3 +15788,74 @@ Interpretation:
 - If the next goal is to improve movement learning, collect targeted data where
   movement clearly sets up offense/defense or revise the gate/window to create
   more eligible anchors without duplicating full event rewards.
+
+## 2026-05-08: Phase 9F Low-Defense Trainer Hook
+
+Milestone:
+- Combat event attribution Phase 9F / low attack defense shaping and margin.
+
+Purpose:
+- Address the live symptom where the DQN can stand/back/forward and get hit by
+  crouching low attacks.
+- Keep this separate from Phase 9E movement credit: low defense is not a
+  movement-credit problem, it is a target-action preference problem in
+  low-threat rows.
+
+Implementation:
+- Added opt-in trainer flags:
+  - `--low-defense-reward-shaping`
+  - `--low-defense-hit-penalty`
+  - `--low-defense-block-bonus`
+  - `--low-defense-margin-loss`
+  - `--low-defense-margin`
+  - `--low-defense-margin-weight`
+  - `--low-defense-margin-batch-size`
+  - `--low-defense-margin-sources`
+  - `--low-defense-valid-action-mask`
+  - `--low-defense-max-abs-dx`
+- Low threats are recognized from combat attribution rows where:
+  - `target_side == self`
+  - `source_family == attack`
+  - `defense_result` is `hit`, `blocked`, or `blocked_chip`
+  - the linked source attack normalizes to `crouch-lk`, `crouch-mk`, or
+    `crouch-hk`.
+- Reward shaping:
+  - low hit plus `guard-stand`, `back`, `forward`, or no recognized action:
+    apply `--low-defense-hit-penalty`.
+  - low block/chip plus `guard-crouch`: apply
+    `--low-defense-block-bonus`.
+- Margin shaping:
+  - in eligible low-threat rows, apply a valid-action-masked margin requiring
+    `guard-crouch` to rank above `guard-stand`, `back`, and `forward`.
+  - extra low-defense margin-only samples are controlled by
+    `--low-defense-margin-batch-size`.
+- Metadata and diagnostics now record low rows, hit penalties, crouch-block
+  bonuses, source-action distribution, eligible margin rows, sampled rows,
+  violations, blockers, and loss totals.
+- Updated the Phase 9 checklist and action taxonomy to mark Ryu/Ken
+  `crouch-lk`, `crouch-mk`, and `crouch-hk` as the initial low-defense source
+  actions.
+
+Validation:
+- `python3 -m py_compile tools/train_dqn_learner.py`
+- One-step smoke on the current 30-round Ryu/Ken paired log with
+  `event-damage-v1`, `delayed-v1`, unlabeled movement downsampling,
+  event-aware batch sampling, and low-defense shaping/margin enabled.
+- Smoke passed and published `/tmp/rl-low-defense-smoke/current.json`.
+- Phase 9F diagnostics on the current log:
+  - `low_defense=reward_enabled:1 margin_enabled:1`
+  - `checked:32473`
+  - `low_rows:0`
+  - `hit_penalty_events:0`
+  - `block_bonus_events:0`
+  - `eligible:0`
+  - `sampled:0`
+
+Interpretation:
+- The trainer hook is active and safe, but the current Phase 9 paired dataset
+  does not contain source events tagged as `crouch-lk`, `crouch-mk`, or
+  `crouch-hk`.
+- Do not expect Phase 9F to change a candidate until the next capture includes
+  deliberate low attack hit/block cases.
+- Next data collection should include Ryu/Ken crouch LK/MK/HK hitting
+  `guard-stand`/back/forward and being blocked by `guard-crouch`.

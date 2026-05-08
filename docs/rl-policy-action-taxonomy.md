@@ -397,6 +397,22 @@ How to add another character:
 | 15 | crouch_normal | lp, mp, hp, lk, mk, hk | `down+<button>` |
 | 16 | air_normal | lp, mp, hp, lk, mk, hk | `<button>` while `obs_self_air_attack_allowed` |
 
+### Low-Defense Training Tags
+
+Phase 9F trainer shaping uses the normalized policy/action names rather than
+raw R2/KW/AK values. For Ryu and Ken, treat these source actions as low attacks
+for the first low-defense pass:
+
+| normalized action | height tag | Phase 9F use |
+|---|---|---|
+| `crouch-lk` | low | low hit penalizes non-crouch defense; low block rewards `guard-crouch` |
+| `crouch-mk` | low | low hit penalizes non-crouch defense; low block rewards `guard-crouch` |
+| `crouch-hk` | low | low hit penalizes non-crouch defense; low block rewards `guard-crouch` |
+
+Other stand/crouch/air normals remain untagged for Phase 9F until they are
+validated per character. The trainer target action is `guard-crouch`; bad
+competitors are `guard-stand`, `back`, and `forward`.
+
 ## Sub Actions
 
 | sub_action_id | name |

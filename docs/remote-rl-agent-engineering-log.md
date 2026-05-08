@@ -16276,3 +16276,61 @@ Interpretation:
 - If live behavior is still too stiff, the next direction should likely be
   actor-side action-family sampling or a different policy architecture rather
   than more scalar BC weighting.
+
+## 2026-05-08: Phase 11A/11B Actor-Critic Foundation
+
+Milestone:
+- Phase 11A/11B / non-DQN actor-critic training line.
+
+Purpose:
+- Document and start the next training direction after Phase 10 BC live gates
+  remained too stiff.
+- Keep the validated transition + combat-event data contract, but prepare an
+  actor/value policy format and event-return dataset builder for AWAC/PPO style
+  training.
+
+Implementation:
+- Added `tools/train_actor_critic.py`.
+- Phase 11A artifact contract:
+  - publishes `policy=actor-critic`;
+  - writes `actor_critic.schema_version=1`;
+  - stores the existing DQN feature names/scales as the actor-critic input
+    contract;
+  - stores independent actor/value MLP payloads under `actor_critic`;
+  - records `algorithm_version=offline-awac-bootstrap-v1`.
+- Phase 11B dataset builder:
+  - reads paired transition/event logs;
+  - validates combat-event schema, references, transition-log cleanliness, and
+    transition/event joins through `rl_combat_event_training.py`;
+  - derives action labels through the same Phase 10 BC path, including the
+    segment KW map for Ryu/Ken specials;
+  - applies the existing combat-event reward profiles;
+  - computes truncated discounted event returns per `(run_id, episode_id)`;
+  - subtracts a configurable baseline (`zero`, `mean`, `episode-mean`) to
+    produce advantages;
+  - records action-family, action-count, reward, return, and advantage
+    diagnostics.
+
+Validation:
+- `python3 -m py_compile tools/train_actor_critic.py tools/train_dqn_learner.py tools/rl_combat_event_training.py`
+- Guard check:
+  - Running with `--limit 5000` against the full event log correctly failed
+    validation with missing start/attribution joins, proving the paired-log
+    validation catches partial transition logs.
+- Full smoke:
+  - `python3 tools/train_actor_critic.py --transitions logs/phase7a-event-journal-live-human-transitions.ndjson --combat-event-logs logs/phase7a-event-journal-live-human-events.ndjson --output-dir /tmp/rl-actor-critic-11ab-smoke --summary-path /tmp/rl-actor-critic-11ab-smoke/summary.json --diagnostic-top-n 8`
+  - transitions `29869`, labeled `23933`, skipped `5936`;
+  - event reward rows `1054`, reward sum `92.330000`;
+  - return sum `1043.373704`;
+  - advantage rows positive/negative/zero `11047/12886/0`;
+  - combat-event validation errors `0`;
+  - published `/tmp/rl-actor-critic-11ab-smoke/current.json` with
+    `policy=actor-critic`, schema `1`, architecture `independent-mlp-v1`,
+    `36` actions, and `23933` updated rows.
+
+Follow-up:
+- Phase 11C should implement the actual offline AWAC/AWR update:
+  actor loss from clipped positive advantages, value regression to event
+  returns, entropy regularization, and action-mask-aware diagnostics.
+- Phase 11D should add probe-side `--policy actor-critic` inference only after
+  11C local action-family stats are better than Phase 10C/10D.

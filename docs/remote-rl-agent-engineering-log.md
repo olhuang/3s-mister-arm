@@ -17022,3 +17022,79 @@ Follow-up:
   - close opponent attack: guard/back response;
   - self attacking: neutral continuation, not buffered guard spam;
   - close/no-threat: poke/throw/pressure attempts.
+
+## 2026-05-08: Phase 12B/12C/12F/12G Tactical Intent Trainer and Gate
+
+Milestone:
+- Phase 12B intent-classifier dataset builder.
+- Phase 12C high-level `observation -> intent` trainer.
+- Phase 12F combat-event feedback diagnostics.
+- Phase 12G offline promotion gate.
+
+Purpose:
+- Move beyond hand-tuned tactical rules by training only the high-level intent
+  layer while keeping the final action decoder conservative and inspectable.
+- Keep the model contract safe: transition features are still the existing DQN
+  allowlist, and combat-event rows are labels/reward diagnostics only.
+
+Implementation:
+- Added `tools/train_tactical_intent.py`.
+- The tool reads one or more transition logs plus optional combat-event logs,
+  labels each current-schema row through `tools/label_rl_tactical_states.py`,
+  builds a supervised dataset from the DQN feature vector, trains a small MLP
+  classifier, and writes optional `policy=tactical` artifacts.
+- Artifact shape:
+  - `tactical-intent-vN.json`
+  - `actor-vN.json`
+  - `current.json`
+  - nested `tactical_intent` payload with schema version, intent names,
+    feature names/scales, and MLP layers.
+- Added `--balanced-loss` plus `--class-weight-power` to avoid the all-or-
+  nothing class balancing that can let rare intent labels dominate training.
+- Added empirical output-bias initialization from training label priors so
+  missing/very rare intent classes do not start artificially attractive.
+- Added `phase12g_gate` metadata:
+  - minimum labeled rows
+  - holdout top-1 rate
+  - max top-prediction ratio
+  - predicted-intent diversity
+- `tools/rl_probe_server.py` can now load a `tactical_intent` artifact for
+  `--policy tactical`. When present, the probe predicts learned intent and
+  then calls the same conservative `intent + observation -> action` decoder.
+  Without an artifact, `--policy tactical` remains the heuristic live baseline.
+- `--verbose` prints `tactical_source=learned` or `heuristic`.
+
+Validation:
+- Compile checks:
+  - `python3 -m py_compile tools/rl_probe_server.py tools/train_tactical_intent.py tools/label_rl_tactical_states.py`
+- CLI smoke:
+  - `python3 tools/train_tactical_intent.py --help | rg -n "balanced|class-weight|output-dir"`
+- Short dataset/training smoke:
+  - `python3 tools/train_tactical_intent.py --transitions logs/phase11e-actor-critic-spacing-threat-live-transitions.ndjson --combat-event-logs logs/phase11e-actor-critic-spacing-threat-live-events.ndjson --output-dir /tmp/rl-tactical-intent-smoke --summary-path /tmp/rl-tactical-intent-smoke-summary.json --labeled-output /tmp/rl-tactical-intent-smoke-dataset.ndjson --limit 1000 --steps 20 --batch-size 64 --balanced-loss --log-interval 10`
+  - Result: 1000 rows labeled, artifact and labeled NDJSON written.
+- Multi-log gate trials on:
+  - `logs/phase7a-event-journal-live-human-transitions.ndjson`
+  - `logs/phase9f-human-low-defense-live-transitions.ndjson`
+  - `logs/phase11e-actor-critic-spacing-threat-live-transitions.ndjson`
+  - and their sibling combat-event logs.
+- Observed candidate behavior:
+  - unbalanced: holdout top1 around `0.604`, but `hold_guard=99.6%` predicted,
+    failing single-intent collapse gate.
+  - balanced loss before prior-bias: could pass a loose diversity gate, but
+    over-predicted rare/unsupported live intents such as `anti_air` and
+    `low_guard`.
+  - prior-bias plus stronger class weighting: returned to `hold_guard=100%`,
+    failing predicted-intent diversity.
+
+Conclusion:
+- Phase 12B/C/F/G tooling is in place.
+- The learned intent candidate is **not promoted**. The gate is doing useful
+  work by catching both majority collapse and rare-intent overcorrection.
+- For the next live pass, keep using heuristic `--policy tactical` with verbose
+  diagnostics. A future learned-intent attempt needs either better curated
+  tactical labels, stronger per-bucket sampling, or an expanded runtime
+  observation schema before it should be trusted live.
+
+Live-test command:
+- PowerShell one-liner for the currently recommended heuristic tactical policy:
+  - `python "\\wsl.localhost\Ubuntu\home\olhua\src\3s-mister-arm\tools\rl_probe_server.py" --host 0.0.0.0 --port 37330 --action-port 37331 --policy tactical --transition-log "\\wsl.localhost\Ubuntu\home\olhua\src\3s-mister-arm\logs\phase12g-tactical-live-transitions.ndjson" --combat-event-log "\\wsl.localhost\Ubuntu\home\olhua\src\3s-mister-arm\logs\phase12g-tactical-live-events.ndjson" --verbose --verbose-ping-interval 0`

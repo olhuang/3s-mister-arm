@@ -391,6 +391,7 @@ class ActorModel:
     q_counts: dict[str, dict[str, int]] = field(default_factory=dict)
     dqn_model: dict[str, object] = field(default_factory=dict)
     actor_critic_model: dict[str, object] = field(default_factory=dict)
+    tactical_intent_model: dict[str, object] = field(default_factory=dict)
     actions: tuple[str, ...] = TABULAR_DEFAULT_ACTIONS
     epsilon: float = 0.0
     fallback_policy: str = "hp"
@@ -572,6 +573,7 @@ class TacticalPolicyDecision:
     intent_reason: str
     label_confidence: str
     action_name: str
+    intent_source: str = "heuristic"
 
 
 @dataclass(frozen=True)
@@ -999,6 +1001,66 @@ def _coerce_actor_critic_model(value: object) -> dict[str, object]:
     }
 
 
+def _coerce_tactical_intent_model(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    try:
+        schema_version = int(value.get("schema_version", 0) or 0)
+    except (TypeError, ValueError):
+        return {}
+    if schema_version != 1:
+        return {}
+    raw_intents = value.get("intent_names")
+    if not isinstance(raw_intents, list):
+        return {}
+    intent_names: list[str] = []
+    for item in raw_intents:
+        name = str(item)
+        if name and name not in intent_names:
+            intent_names.append(name)
+    if not intent_names:
+        return {}
+
+    raw_feature_names = value.get("feature_names")
+    if isinstance(raw_feature_names, list):
+        feature_names = tuple(
+            name
+            for name in sanitized_dqn_feature_names(raw_feature_names, "tactical intent model")
+            if name in DQN_FEATURE_SCALES
+        )
+    else:
+        feature_names = DQN_FEATURE_NAMES
+    if not feature_names:
+        feature_names = DQN_FEATURE_NAMES
+
+    raw_feature_scales = value.get("feature_scales")
+    feature_scales = dict(DQN_FEATURE_SCALES)
+    if isinstance(raw_feature_scales, dict):
+        for name, scale in raw_feature_scales.items():
+            key = str(name)
+            if key not in DQN_FEATURE_SCALES:
+                continue
+            try:
+                feature_scales[key] = max(1e-6, float(scale))
+            except (TypeError, ValueError):
+                continue
+
+    layers = _coerce_actor_critic_layers(value.get("layers"), len(feature_names))
+    if not layers:
+        return {}
+    output_size = len(layers[-1].get("bias", []))
+    if output_size != len(intent_names):
+        return {}
+    return {
+        "schema_version": schema_version,
+        "algorithm_version": str(value.get("algorithm_version", "") or ""),
+        "intent_names": intent_names,
+        "feature_names": list(feature_names),
+        "feature_scales": feature_scales,
+        "layers": layers,
+    }
+
+
 def replace_with_retries(src: str, dst: str, attempts: int = 8, delay_sec: float = 0.025) -> None:
     for attempt in range(max(1, attempts)):
         try:
@@ -1085,6 +1147,7 @@ class ActorModelStore:
         q_counts = _coerce_q_counts(data.get("q_counts"))
         dqn_model = _coerce_dqn_model(data.get("dqn"))
         actor_critic_model = _coerce_actor_critic_model(data.get("actor_critic"))
+        tactical_intent_model = _coerce_tactical_intent_model(data.get("tactical_intent"))
         actions = _coerce_action_names(data.get("actions"))
         try:
             epsilon = float(data.get("epsilon", 0.0) or 0.0)
@@ -1110,6 +1173,7 @@ class ActorModelStore:
                     q_counts=q_counts,
                     dqn_model=dqn_model,
                     actor_critic_model=actor_critic_model,
+                    tactical_intent_model=tactical_intent_model,
                     actions=actions,
                     epsilon=epsilon,
                     fallback_policy=fallback_policy,
@@ -1147,7 +1211,7 @@ class ActorModelStore:
             with self._lock:
                 return self._active.policy
         data = None
-        for filename in (f"actor-v{version}.json", f"actor-critic-v{version}.json"):
+        for filename in (f"actor-v{version}.json", f"actor-critic-v{version}.json", f"tactical-intent-v{version}.json"):
             version_path = os.path.join(self._model_dir, filename)
             try:
                 with open(version_path, "r", encoding="utf-8") as stream:
@@ -1190,6 +1254,7 @@ class ActorModelStore:
         q_counts: dict[str, dict[str, int]] | None = None,
         dqn_model: dict[str, object] | None = None,
         actor_critic_model: dict[str, object] | None = None,
+        tactical_intent_model: dict[str, object] | None = None,
         actions: tuple[str, ...] = TABULAR_DEFAULT_ACTIONS,
         epsilon: float = 0.0,
         fallback_policy: str = "hp",
@@ -1208,6 +1273,7 @@ class ActorModelStore:
                     q_counts=q_counts or {},
                     dqn_model=dqn_model or {},
                     actor_critic_model=actor_critic_model or {},
+                    tactical_intent_model=tactical_intent_model or {},
                     actions=actions,
                     epsilon=epsilon,
                     fallback_policy=fallback_policy,
@@ -1232,6 +1298,7 @@ class ActorModelStore:
                 q_counts=q_counts or {},
                 dqn_model=dqn_model or {},
                 actor_critic_model=actor_critic_model or {},
+                tactical_intent_model=tactical_intent_model or {},
                 actions=actions,
                 epsilon=epsilon,
                 fallback_policy=fallback_policy,
@@ -1275,6 +1342,16 @@ class ActorModelStore:
                         "epsilon": model.epsilon,
                         "fallback_policy": model.fallback_policy,
                         "actor_critic": model.actor_critic_model,
+                        "updated_rows": model.updated_rows,
+                    }
+                )
+            elif model.policy == "tactical":
+                payload.update(
+                    {
+                        "actions": list(model.actions),
+                        "epsilon": model.epsilon,
+                        "fallback_policy": model.fallback_policy,
+                        "tactical_intent": model.tactical_intent_model,
                         "updated_rows": model.updated_rows,
                     }
                 )
@@ -2272,6 +2349,16 @@ def tactical_decode_action(
 
 
 def tactical_policy_decision(row: dict[str, object], config: TacticalPolicyConfig) -> TacticalPolicyDecision:
+    return tactical_policy_decision_with_intent(row, config, None, None, "heuristic")
+
+
+def tactical_policy_decision_with_intent(
+    row: dict[str, object],
+    config: TacticalPolicyConfig,
+    intent_override: str | None,
+    intent_confidence_override: float | None,
+    intent_source: str,
+) -> TacticalPolicyDecision:
     spacing = tactical_spacing_bucket(row, config)
     corner = tactical_corner_context(row, config)
     self_phase_value = tactical_self_phase(row)
@@ -2293,6 +2380,17 @@ def tactical_policy_decision(row: dict[str, object], config: TacticalPolicyConfi
         opportunity,
         opportunity_reason,
     )
+    if intent_override:
+        intent = intent_override
+        reason = f"{intent_source}:{reason}"
+        if intent_confidence_override is None:
+            confidence = "medium"
+        elif intent_confidence_override >= 0.70:
+            confidence = "high"
+        elif intent_confidence_override >= 0.40:
+            confidence = "medium"
+        else:
+            confidence = "low"
     action_name = tactical_decode_action(row, intent, config)
     return TacticalPolicyDecision(
         spacing_bucket=spacing,
@@ -2305,7 +2403,46 @@ def tactical_policy_decision(row: dict[str, object], config: TacticalPolicyConfi
         intent_reason=reason,
         label_confidence=confidence,
         action_name=action_name,
+        intent_source=intent_source,
     )
+
+
+def tactical_intent_feature_vector(model: dict[str, object], row: dict[str, object]) -> list[float]:
+    feature_names = model.get("feature_names", list(DQN_FEATURE_NAMES))
+    if not isinstance(feature_names, list):
+        feature_names = list(DQN_FEATURE_NAMES)
+    else:
+        feature_names = list(sanitized_dqn_feature_names(feature_names, "tactical intent inference metadata"))
+        if not feature_names:
+            feature_names = list(DQN_FEATURE_NAMES)
+    feature_scales = model.get("feature_scales", dict(DQN_FEATURE_SCALES))
+    if not isinstance(feature_scales, dict):
+        feature_scales = dict(DQN_FEATURE_SCALES)
+    return dqn_feature_vector(row, feature_names, feature_scales)  # type: ignore[arg-type]
+
+
+def tactical_intent_prediction(
+    model: dict[str, object],
+    row: dict[str, object],
+) -> tuple[str, float] | None:
+    intent_names = model.get("intent_names")
+    if not isinstance(intent_names, list) or not intent_names:
+        return None
+    features = tactical_intent_feature_vector(model, row)
+    logits = mlp_predict_values(model.get("layers"), features)
+    if not logits:
+        return None
+    count = min(len(intent_names), len(logits))
+    if count <= 0:
+        return None
+    max_logit = max(float(logits[index]) for index in range(count))
+    exp_values = [math.exp(max(-80.0, min(80.0, float(logits[index]) - max_logit))) for index in range(count)]
+    total = sum(exp_values)
+    if total <= 0.0:
+        return None
+    probs = [value / total for value in exp_values]
+    best_index = max(range(count), key=lambda index: (probs[index], str(intent_names[index])))
+    return str(intent_names[best_index]), probs[best_index]
 
 
 def tactical_macro_should_cancel(action: str, row: dict[str, object], config: TacticalPolicyConfig) -> bool:
@@ -2325,7 +2462,11 @@ def tactical_actor_action_name(
 ) -> str | None:
     if actor.policy != "tactical" or not obs_row:
         return None
-    return tactical_policy_decision(obs_row, config).action_name
+    prediction = tactical_intent_prediction(actor.tactical_intent_model, obs_row) if actor.tactical_intent_model else None
+    if prediction is None:
+        return tactical_policy_decision(obs_row, config).action_name
+    intent, confidence = prediction
+    return tactical_policy_decision_with_intent(obs_row, config, intent, confidence, "learned").action_name
 
 
 def is_current_transition_schema_row(row: dict[str, object]) -> bool:
@@ -4044,11 +4185,22 @@ def format_dqn_verbose_diagnostics(
         action_name = policy_action_frame_name(target_action)
         if obs_row is None:
             return f" tactical_action={action_name} tactical_obs=n/a tactical_config={tactical_policy_config.label()}"
-        decision = tactical_policy_decision(obs_row, tactical_policy_config)
+        prediction = tactical_intent_prediction(actor.tactical_intent_model, obs_row) if actor.tactical_intent_model else None
+        if prediction is None:
+            decision = tactical_policy_decision(obs_row, tactical_policy_config)
+        else:
+            decision = tactical_policy_decision_with_intent(
+                obs_row,
+                tactical_policy_config,
+                prediction[0],
+                prediction[1],
+                "learned",
+            )
         return (
             f" tactical_action={action_name}"
             f" tactical_config={tactical_policy_config.label()}"
             f" tactical_intent={decision.recommended_intent}"
+            f" tactical_source={decision.intent_source}"
             f" tactical_reason={decision.intent_reason}"
             f" tactical_conf={decision.label_confidence}"
             f" tactical_spacing={decision.spacing_bucket}"

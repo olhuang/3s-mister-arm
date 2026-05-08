@@ -16800,3 +16800,67 @@ Follow-up:
   - no-threat far rows: approach/fireball
   - opponent attack/contact rows: guard/back
   - close neutral rows: attack/throw still available
+
+## 2026-05-08: Phase 12 Hierarchical Tactical-State Plan
+
+Milestone:
+- Phase 12 planning / move from flat action policy tuning to an explicit
+  high-level fighting-game state and intent layer.
+
+Purpose:
+- Recent Phase 11 actor-critic live gates showed a useful but limited pattern:
+  the model can be pushed toward attack, approach, fireball, or guard through
+  priors, but it does not reliably understand why a fighting-game state calls
+  for spacing, threat reaction, defense, poke, punish, or pressure.
+- The next main line should teach that high-level rule layer explicitly instead
+  of continuing to tune a flat `observation -> action` policy.
+
+Plan:
+- Add Phase 12 to `docs/plan-remote-rl-agent.md`.
+- Phase 12 introduces a tactical intermediate representation per transition
+  row:
+  - `spacing_bucket`
+  - `self_phase`
+  - `opponent_phase`
+  - `threat_type`
+  - `opportunity_type`
+  - `recommended_intent`
+  - `intent_reason`
+- The initial labeler is offline only. It reads existing transition logs and
+  optional sibling combat-event logs; it does not change runtime inference,
+  reward shaping, or model artifacts.
+- The intended training flow is:
+  1. build and validate tactical labels;
+  2. train an intent classifier `observation -> intent`;
+  3. add an intent-conditioned action decoder;
+  4. add a hierarchical probe policy that logs intent/confidence/reason/action;
+  5. use combat-event outcomes to refine intent success/failure.
+
+Important design boundary:
+- Phase 12 tactical labels are labels/diagnostics first, not new observation
+  features.
+- Runtime feature inputs remain the existing DQN allowlist unless a later
+  schema-versioned observation change is explicitly planned and validated.
+- Combat event rows remain the source of outcome labels/rewards, not direct
+  model features.
+
+Why this replaces the current direction:
+- DQN, BC, and AWAC all had the same structural weakness: they learn direct
+  action preferences but not a durable tactical state machine.
+- Hand-authored priors can prove a missing rule, but are becoming a patchwork.
+- A tactical-state layer gives the model something closer to human fighting-game
+  rules:
+  - too far and no threat -> adjust spacing / approach / fireball;
+  - incoming projectile -> defend / evade / parry decision;
+  - opponent active nearby -> guard / back / interrupt only if appropriate;
+  - opponent recovery or whiff -> punish;
+  - jump-in threat -> anti-air;
+  - low threat -> low guard;
+  - close advantage -> pressure / throw mixup.
+
+Next implementation step:
+- Phase 12A `tools/label_rl_tactical_states.py`:
+  - summary-only mode;
+  - optional labeled NDJSON output;
+  - examples per label bucket;
+  - unknown/ambiguous rate diagnostics.

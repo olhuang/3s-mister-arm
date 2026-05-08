@@ -2780,6 +2780,8 @@ Phase 9E delayed movement credit status:
   - default scale is `0.35`.
   - crossing an earlier attack/projectile/punish/throw source experience stops
     the backward search.
+  - crossing an episode boundary stops the backward search, so a first
+    decision in the next round cannot credit movement from the previous round.
 - Metadata records:
   - `combat_event_movement_credit_config`
   - `combat_event_movement_credit_stats`
@@ -2791,12 +2793,28 @@ Phase 9E delayed movement credit status:
     capped-row skips
 - First validation on the 30-round Ryu vs Ken paired log:
   - one-step smoke passed.
-  - credited `198` movement rows from `103` anchors.
-  - net credit was only `+0.131` (`+0.320` positive, `-0.189` negative).
+  - the first trainer smoke credited `198` movement rows from `103` anchors.
+  - the later dry-run analyzer found that `3` of those rows crossed an episode
+    boundary; the trainer now stops at episode boundaries.
+  - revised dry-run stats at scale `0.35`: credited `195` movement rows from
+    `102` anchors, net `+0.128` (`+0.317` positive, `-0.189` negative), with
+    zero cross-episode credits.
   - credit by action was mostly `forward`.
   - 2000-step candidate with Phase 9D attack-heavy sampling, `action-start-v1`
     valid mask, `delayed-v1`, and passive/far guard costs produced the same
     5000-row compare distribution as the Phase 9D best candidate.
+- Phase 9E-2 analyzer:
+  - `tools/analyze_rl_movement_credit.py` reuses the trainer's combat-event
+    reward and delayed-credit gates to dry-run paired logs without training.
+  - Example command:
+    `python3 tools/analyze_rl_movement_credit.py logs/phase7a-event-journal-live-transitions.ndjson --combat-event-logs logs/phase7a-event-journal-live-events.ndjson --scales 0.35,1.0,2.0 --examples 2`
+  - Current 30-round Ryu/Ken scale comparison:
+    - scale `0.35`: net `+0.128`, rows `195`.
+    - scale `1.0`: net `+0.365`, rows `195`.
+    - scale `2.0`: net `+0.731`, rows `195`.
+  - Guard-cost candidate diagnostics showed `6127` selected guard starts, all
+    opponent-attacking and inside threat range, so this capture still does not
+    exercise passive/far guard penalties.
 - Guard-cost note:
   - `--reward-passive-guard-cost 0.05` and `--reward-far-guard-cost 0.08`
     were included in the first candidate recipe, but did not trigger on this

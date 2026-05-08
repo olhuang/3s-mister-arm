@@ -15728,3 +15728,63 @@ Interpretation:
 - Next useful work is targeted data or a revised Phase 9E-2 gate/scale that
   creates more eligible movement-before-event anchors without duplicating full
   event rewards.
+
+## 2026-05-08: Phase 9E-2 Movement Credit Dry-Run Analyzer
+
+Milestone:
+- Combat event attribution Phase 9E-2 / delayed movement credit diagnostics
+
+Purpose:
+- Measure delayed movement credit before spending time on another DQN run.
+- Compare credit scales on the same paired logs.
+- Catch drift between the trainer's actual delayed-credit implementation and
+  our mental model.
+
+Implementation:
+- Added `tools/analyze_rl_movement_credit.py`.
+- The analyzer reads transition logs plus sibling combat event logs, validates
+  the C/Python event join contract, and then dry-runs the trainer's
+  `event-damage-v1` reward anchors and `delayed-v1` movement-credit gates.
+- It prints event validation, transition/action-start counts, combat-event
+  reward sums, credited anchors/rows, skips, by-action and by-reason credit,
+  example anchors, credited prior movement rows, and guard passive/far-cost
+  candidate counts.
+- It supports scale comparison with `--scales`, for example `0.35,1.0,2.0`.
+- The dry-run exposed a small trainer edge case: because the trainer replay
+  list is global, delayed-credit backward search could credit a previous
+  episode if the next episode began near recent prior movement rows.
+- Fixed that by stopping delayed-credit backward search at episode boundaries.
+
+Validation:
+- `python3 -m py_compile tools/analyze_rl_movement_credit.py tools/rl_combat_event_training.py tools/train_dqn_learner.py`
+- Dry-run command:
+  `python3 tools/analyze_rl_movement_credit.py logs/phase7a-event-journal-live-transitions.ndjson --combat-event-logs logs/phase7a-event-journal-live-events.ndjson --scales 0.35,1.0,2.0 --examples 2`
+- Paired log validation:
+  - transition rows: `32473`
+  - combat event rows: `3748`
+  - schemas: `{1: 3748}`
+  - start joins: `2210/2210`
+  - end joins: `2188/2221`
+  - missing refs: `0`
+  - fatal errors: `0`
+- Guard diagnostic:
+  - selected guard starts: `6127`
+  - all were opponent-attacking and in threat range.
+  - passive/far guard costs still need a capture that actually contains passive
+    or far guard starts.
+- Revised movement-credit stats after the episode-boundary guard:
+  - scale `0.35`: `195` credited rows from `102` anchors, net `+0.128`
+    (`+0.317` positive, `-0.189` negative), cross-episode credits `0`.
+  - scale `1.0`: `195` credited rows, net `+0.365`.
+  - scale `2.0`: `195` credited rows, net `+0.731`.
+- The scale changes only magnitude, not eligibility, so the current v1 gate is
+  still the main bottleneck.
+
+Interpretation:
+- The analyzer is now the preferred pre-training sanity check for Phase 9E
+  changes.
+- Current delayed movement credit remains too sparse to expect a major policy
+  shift by itself.
+- If the next goal is to improve movement learning, collect targeted data where
+  movement clearly sets up offense/defense or revise the gate/window to create
+  more eligible anchors without duplicating full event rewards.

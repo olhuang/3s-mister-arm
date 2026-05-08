@@ -2597,10 +2597,13 @@ def apply_combat_event_movement_credit(
         return
 
     anchor_decision_id = int_field(row, "decision_id")
+    anchor_episode = episode_key(row)
     candidates: list[int] = []
     for exp_index in range(len(experiences) - 1, -1, -1):
         exp = experiences[exp_index]
         exp_row = exp.row
+        if episode_key(exp_row) != anchor_episode:
+            break
         prior_decision_id = int_field(exp_row, "decision_id")
         if anchor_decision_id - prior_decision_id > config.window_decisions:
             break

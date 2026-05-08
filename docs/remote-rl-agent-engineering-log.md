@@ -16392,3 +16392,60 @@ Interpretation:
 - Next useful step is a longer local 11C train on the human paired log, followed
   by action-family diagnostics. Probe-side `--policy actor-critic` should wait
   until the local distribution is clearly better than the Phase 10 BC models.
+
+## 2026-05-08: Phase 11C-1 Local Actor Distribution Gate
+
+Milestone:
+- Phase 11C-1 / actor-critic local distribution diagnostics and first longer
+  AWAC candidate.
+
+Purpose:
+- Avoid repeating the Phase 10 pattern of shipping a model to live test before
+  checking whether the policy is already collapsed locally.
+- Train a modest AWAC candidate and inspect masked actor top actions/families
+  on the same human paired log.
+
+Implementation:
+- Added post-train actor diagnostics to `tools/train_actor_critic.py`:
+  - masked top-1 and top-3 match against the derived label;
+  - average target action probability;
+  - average masked entropy;
+  - top predicted actions;
+  - top predicted action families;
+  - value prediction average.
+- Diagnostics are written to metadata under `actor_eval_stats` and printed at
+  the end of the trainer run.
+
+Validation:
+- `python3 -m py_compile tools/train_actor_critic.py tools/train_dqn_learner.py tools/rl_combat_event_training.py`
+- 20-step diagnostic smoke:
+  - `eval_rows=2000`;
+  - `top1_match=384/2000`, `top3_match=1155/2000`;
+  - top action `back=1111/55.5%`.
+- 300-step candidate:
+  - `python3 tools/train_actor_critic.py --training-mode offline-awac --transitions logs/phase7a-event-journal-live-human-transitions.ndjson --combat-event-logs logs/phase7a-event-journal-live-human-events.ndjson --output-dir model/actor-critic-awac-human-11c-v1 --summary-path model/actor-critic-awac-human-11c-v1/summary.json --awac-steps 300 --awac-batch-size 128 --awac-log-interval 50 --eval-limit 5000 --diagnostic-top-n 12`
+  - combat-event validation errors `0`;
+  - dataset: transitions `29869`, labeled `23933`, skipped `5936`;
+  - event reward rows `1054`, reward sum `92.330000`;
+  - final averages: actor loss `2.507010`, value loss `0.367563`,
+    entropy `0.002227`, average advantage weight `1.163303`;
+  - actor eval rows `5000`;
+  - `top1_match=1811/5000`, `top3_match=4464/5000`;
+  - `target_prob=0.172240`, entropy `2.208759`;
+  - top families: `movement-defense=4329/86.6%`, `projectile=481/9.6%`,
+    `normal=103/2.1%`, `special=62/1.2%`;
+  - top actions: `back=4135/82.7%`, `fireball-mp=394/7.9%`,
+    `forward=192/3.8%`.
+
+Interpretation:
+- The longer AWAC candidate is numerically stable, but it fails the local
+  distribution gate badly. It should not go to Phase 11D live inference.
+- The failure mode is now clear: uniform AWAC sampling/loss still lets a single
+  movement-defense action dominate the actor, even while top-3 label match is
+  high.
+
+Follow-up:
+- Phase 11C-2 should balance the actor update by action family or positive
+  event source family before any probe-side actor-critic inference work.
+- Candidate model output under `model/actor-critic-awac-human-11c-v1` is a
+  local artifact only and is not part of the committed source tree.

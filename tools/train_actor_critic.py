@@ -193,6 +193,34 @@ class OfflineAwacStats:
         }
 
 
+@dataclass
+class ActorPolicyEvalStats:
+    rows: int = 0
+    top1_match_rows: int = 0
+    top3_match_rows: int = 0
+    top_action_counts: collections.Counter[str] = field(default_factory=collections.Counter)
+    top_family_counts: collections.Counter[str] = field(default_factory=collections.Counter)
+    label_action_counts: collections.Counter[str] = field(default_factory=collections.Counter)
+    target_prob_sum: float = 0.0
+    entropy_sum: float = 0.0
+    value_prediction_sum: float = 0.0
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "rows": self.rows,
+            "top1_match_rows": self.top1_match_rows,
+            "top1_match_rate": self.top1_match_rows / max(1, self.rows),
+            "top3_match_rows": self.top3_match_rows,
+            "top3_match_rate": self.top3_match_rows / max(1, self.rows),
+            "top_action_counts": dict(sorted(self.top_action_counts.items())),
+            "top_family_counts": dict(sorted(self.top_family_counts.items())),
+            "label_action_counts": dict(sorted(self.label_action_counts.items())),
+            "target_prob_avg": self.target_prob_sum / max(1, self.rows),
+            "entropy_avg": self.entropy_sum / max(1, self.rows),
+            "value_prediction_avg": self.value_prediction_sum / max(1, self.rows),
+        }
+
+
 def parse_hidden_sizes(value: str) -> list[int]:
     sizes = [int(item) for item in value.split(",") if item.strip()]
     return [max(1, size) for size in sizes] or [64, 64]
@@ -511,6 +539,53 @@ def train_offline_awac(
     return actor_layers, value_layers, stats
 
 
+def masked_policy_probs(
+    logits: list[float],
+    valid_indices: tuple[int, ...],
+) -> dict[int, float]:
+    if not logits:
+        return {}
+    indices = tuple(index for index in valid_indices if 0 <= index < len(logits)) or tuple(range(len(logits)))
+    max_logit = max(logits[index] for index in indices)
+    exp_values = {index: math.exp(logits[index] - max_logit) for index in indices}
+    sum_exp = sum(exp_values.values())
+    if sum_exp <= 0.0:
+        uniform = 1.0 / max(1, len(indices))
+        return {index: uniform for index in indices}
+    return {index: value / sum_exp for index, value in exp_values.items()}
+
+
+def evaluate_actor_policy(
+    actor_layers: list[dict[str, object]],
+    value_layers: list[dict[str, object]],
+    samples: list[ActorCriticSample],
+    actions: tuple[str, ...],
+    limit: int,
+) -> ActorPolicyEvalStats:
+    stats = ActorPolicyEvalStats()
+    for sample in samples[: max(0, limit)]:
+        logits, _, _ = dqn.forward(actor_layers, sample.features)
+        probs = masked_policy_probs(logits, sample.valid_action_indices)
+        if not probs:
+            continue
+        ranked_indices = sorted(probs, key=lambda index: (probs[index], actions[index]), reverse=True)
+        top_index = ranked_indices[0]
+        top_action = actions[top_index]
+        value_prediction, _, _ = dqn.forward(value_layers, sample.features)
+        stats.rows += 1
+        stats.top_action_counts[top_action] += 1
+        stats.top_family_counts[action_family(top_action)] += 1
+        stats.label_action_counts[sample.action_name] += 1
+        stats.target_prob_sum += probs.get(sample.action_index, 0.0)
+        stats.entropy_sum += -sum(prob * math.log(max(prob, 1e-15)) for prob in probs.values())
+        stats.value_prediction_sum += float(value_prediction[0]) if value_prediction else 0.0
+        if top_index == sample.action_index:
+            stats.top1_match_rows += 1
+        if sample.action_index in ranked_indices[:3]:
+            stats.top3_match_rows += 1
+    return stats
+
+
 def next_model_version(model_dir: str, requested: int | None) -> int:
     if requested is not None:
         return max(0, requested)
@@ -646,6 +721,7 @@ def main() -> None:
     parser.add_argument("--awac-entropy", type=float, default=0.001, help="Masked policy entropy regularization")
     parser.add_argument("--awac-value-loss-weight", type=float, default=1.0, help="Value regression loss weight")
     parser.add_argument("--awac-log-interval", type=int, default=200, help="Offline AWAC progress print interval")
+    parser.add_argument("--eval-limit", type=int, default=5000, help="Samples used for local actor policy diagnostics")
     parser.add_argument(
         "--allow-validation-errors",
         action="store_true",
@@ -720,6 +796,13 @@ def main() -> None:
         value_layers = dqn.init_network(len(rl.DQN_FEATURE_NAMES), hidden_sizes, 1, rng)
         awac_stats = OfflineAwacStats()
         algorithm_version = ACTOR_CRITIC_ALGORITHM_VERSION
+    actor_eval_stats = evaluate_actor_policy(
+        actor_layers,
+        value_layers,
+        samples,
+        actions,
+        max(0, int(args.eval_limit)),
+    )
     metadata: dict[str, Any] = {
         "phase": "11C" if awac_config.enabled else "11A/11B",
         "actor_critic_schema_version": ACTOR_CRITIC_SCHEMA_VERSION,
@@ -733,6 +816,7 @@ def main() -> None:
         "combat_event_training": validation.as_metadata(),
         "combat_event_reward_stats": reward_stats.as_metadata(),
         "dataset_stats": dataset_stats.as_metadata(),
+        "actor_eval_stats": actor_eval_stats.as_metadata(),
         "hidden_sizes": hidden_sizes,
     }
 
@@ -771,6 +855,17 @@ def main() -> None:
         f"Actor-Critic {'11C' if awac_config.enabled else '11B'} "
         f"families={top_counts(dataset_stats.family_counts, int(args.diagnostic_top_n))} "
         f"actions={top_counts(dataset_stats.action_counts, int(args.diagnostic_top_n))}",
+        flush=True,
+    )
+    print(
+        f"Actor-Critic {'11C' if awac_config.enabled else '11B'} "
+        f"eval_rows={actor_eval_stats.rows} "
+        f"top1_match={actor_eval_stats.top1_match_rows}/{actor_eval_stats.rows} "
+        f"top3_match={actor_eval_stats.top3_match_rows}/{actor_eval_stats.rows} "
+        f"target_prob={actor_eval_stats.as_metadata()['target_prob_avg']:.6f} "
+        f"entropy={actor_eval_stats.as_metadata()['entropy_avg']:.6f} "
+        f"top_families={top_counts(actor_eval_stats.top_family_counts, int(args.diagnostic_top_n))} "
+        f"top_actions={top_counts(actor_eval_stats.top_action_counts, int(args.diagnostic_top_n))}",
         flush=True,
     )
     if awac_config.enabled:

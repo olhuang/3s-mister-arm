@@ -16449,3 +16449,76 @@ Follow-up:
   event source family before any probe-side actor-critic inference work.
 - Candidate model output under `model/actor-critic-awac-human-11c-v1` is a
   local artifact only and is not part of the committed source tree.
+
+## 2026-05-08: Phase 11C-2 Action-Family Balanced AWAC
+
+Milestone:
+- Phase 11C-2 / repair actor-critic AWAC collapse with balanced actor batches.
+
+Purpose:
+- Test whether the Phase 11C `back` collapse is mainly caused by uniform
+  actor batches being dominated by movement-defense rows.
+- Keep the model offline-only until local actor distribution is healthier.
+
+Implementation:
+- Added `--awac-sampling uniform|family-balanced-v1`.
+- Added `--awac-family-ratios`, defaulting to:
+  - `positive-event=0.25`
+  - `projectile=0.20`
+  - `normal=0.20`
+  - `special=0.15`
+  - `throw=0.10`
+  - `movement-defense=0.10`
+- The trainer now builds AWAC pools for:
+  - `all`
+  - action families such as `movement-defense`, `projectile`, `normal`,
+    `special`, `throw`, `air-normal`
+  - `positive-event` / `negative-event`
+  - `positive-advantage` / `negative-advantage`
+- Family-balanced batches allocate per-pool counts from the configured ratios,
+  skip empty pools, fill from `all` if needed, and record sampled pool counts
+  in `awac_stats`.
+
+Validation:
+- `python3 -m py_compile tools/train_actor_critic.py tools/train_dqn_learner.py tools/rl_combat_event_training.py`
+- 20-step family-balanced smoke:
+  - `--awac-sampling family-balanced-v1`
+  - validation errors `0`;
+  - pool samples matched the default ratio approximately:
+    `positive-event=25.0%`, `normal=20.3%`, `projectile=20.3%`,
+    `special=15.6%`, `movement-defense=9.4%`, `throw=9.4%`;
+  - eval top action still `back=54.3%` after only 20 steps.
+- 300-step default-ratio candidate:
+  - `model/actor-critic-awac-family-balanced-human-11c2-v1`
+  - validation errors `0`;
+  - final averages: actor loss `2.868410`, value loss `0.502417`,
+    entropy `0.002223`, advantage weight `1.262056`;
+  - eval rows `5000`;
+  - top families: `movement-defense=52.2%`, `projectile=26.5%`,
+    `normal=17.7%`, `special=3.0%`;
+  - top actions: `back=52.2%`, `fireball-mp=21.8%`,
+    `stand-lp=11.8%`.
+- 300-step aggressive non-movement-quota candidate:
+  - `model/actor-critic-awac-family-balanced-human-11c2-v2`
+  - ratios:
+    `positive-event=0.35,normal=0.25,projectile=0.20,special=0.15,throw=0.05`
+  - validation errors `0`;
+  - final averages: actor loss `3.136968`, value loss `0.576020`,
+    entropy `0.002322`, advantage weight `1.321896`;
+  - top families: `movement-defense=48.9%`, `normal=24.1%`,
+    `projectile=23.2%`, `special=3.1%`;
+  - top actions: `back=48.9%`, `stand-lp=21.9%`,
+    `fireball-mp=18.7%`, `shoryuken-mp=3.0%`.
+
+Interpretation:
+- Action-family balancing clearly helps: `back` dropped from the uniform AWAC
+  candidate's `82.7%` to `52.2%`, then `48.9%`.
+- It is still not a live candidate. The remaining failure is more specific:
+  inside movement-defense, `back` dominates the policy whenever the state does
+  not strongly prefer an attack family.
+- Phase 11D probe inference should remain blocked.
+
+Follow-up:
+- Phase 11C-3 should split movement-defense by state/mask phase and movement
+  subaction (`back`, `forward`, `guard-*`, jump-start), then balance or
+  regularize those subactions without removing movement competence.

@@ -29,6 +29,11 @@ import train_dqn_learner as dqn
 ACTOR_CRITIC_SCHEMA_VERSION = 1
 ACTOR_CRITIC_ALGORITHM_VERSION = "offline-awac-bootstrap-v1"
 ACTOR_CRITIC_AWAC_ALGORITHM_VERSION = "offline-awac-v1"
+AWAC_SAMPLING_MODES = ("uniform", "family-balanced-v1")
+DEFAULT_AWAC_FAMILY_RATIOS = (
+    "positive-event=0.25,projectile=0.20,normal=0.20,"
+    "special=0.15,throw=0.10,movement-defense=0.10"
+)
 
 
 @dataclass(frozen=True)
@@ -136,6 +141,8 @@ class OfflineAwacConfig:
     entropy_reg_weight: float = 0.001
     value_loss_weight: float = 1.0
     valid_action_mask: str = "action-start-v1"
+    sampling_mode: str = "uniform"
+    family_ratios: dict[str, float] = field(default_factory=dict)
     log_interval: int = 200
 
     def as_metadata(self) -> dict[str, object]:
@@ -152,6 +159,8 @@ class OfflineAwacConfig:
             "entropy_reg_weight": self.entropy_reg_weight,
             "value_loss_weight": self.value_loss_weight,
             "valid_action_mask": self.valid_action_mask,
+            "sampling_mode": self.sampling_mode,
+            "family_ratios": dict(sorted(self.family_ratios.items())),
             "log_interval": self.log_interval,
         }
 
@@ -172,6 +181,8 @@ class OfflineAwacStats:
     entropy_bonus_last: float = 0.0
     entropy_bonus_avg: float = 0.0
     advantage_weight_sum: float = 0.0
+    pool_sample_counts: collections.Counter[str] = field(default_factory=collections.Counter)
+    empty_pool_counts: collections.Counter[str] = field(default_factory=collections.Counter)
 
     def as_metadata(self) -> dict[str, object]:
         avg_weight = self.advantage_weight_sum / max(1, self.sampled_rows)
@@ -190,6 +201,8 @@ class OfflineAwacStats:
             "entropy_bonus_last": self.entropy_bonus_last,
             "entropy_bonus_avg": self.entropy_bonus_avg,
             "advantage_weight_avg": avg_weight,
+            "pool_sample_counts": dict(sorted(self.pool_sample_counts.items())),
+            "empty_pool_counts": dict(sorted(self.empty_pool_counts.items())),
         }
 
 
@@ -228,6 +241,31 @@ def parse_hidden_sizes(value: str) -> list[int]:
 
 def parse_path_list(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def parse_ratio_map(value: str, flag_name: str) -> dict[str, float]:
+    ratios: dict[str, float] = {}
+    if not value.strip():
+        return ratios
+    for raw_item in value.split(","):
+        item = raw_item.strip()
+        if not item:
+            continue
+        if "=" not in item:
+            raise SystemExit(f"{flag_name}: expected name=value item, got {item!r}")
+        name, raw_value = item.split("=", 1)
+        key = name.strip()
+        if not key:
+            raise SystemExit(f"{flag_name}: empty pool name")
+        try:
+            ratio = float(raw_value)
+        except ValueError as exc:
+            raise SystemExit(f"{flag_name}: ratio for {key!r} is not numeric") from exc
+        if ratio < 0.0:
+            raise SystemExit(f"{flag_name}: ratio for {key!r} must be >= 0")
+        if ratio > 0.0:
+            ratios[key] = ratios.get(key, 0.0) + ratio
+    return ratios
 
 
 def int_field(row: dict[str, object], name: str, default: int = 0) -> int:
@@ -451,6 +489,87 @@ def masked_entropy_grad(logits: list[float], valid_indices: tuple[int, ...], wei
     return -bonus, bonus, grad
 
 
+def build_awac_sample_pools(samples: list[ActorCriticSample]) -> dict[str, list[ActorCriticSample]]:
+    pools: dict[str, list[ActorCriticSample]] = collections.defaultdict(list)
+    for sample in samples:
+        pools["all"].append(sample)
+        pools[sample.family].append(sample)
+        if sample.event_reward > 0.0:
+            pools["positive-event"].append(sample)
+        elif sample.event_reward < 0.0:
+            pools["negative-event"].append(sample)
+        if sample.advantage > 0.0:
+            pools["positive-advantage"].append(sample)
+        elif sample.advantage < 0.0:
+            pools["negative-advantage"].append(sample)
+    return pools
+
+
+def balanced_pool_counts(
+    batch_size: int,
+    ratios: dict[str, float],
+    pools: dict[str, list[ActorCriticSample]],
+    stats: OfflineAwacStats,
+) -> dict[str, int]:
+    available: list[tuple[str, float]] = []
+    for name, ratio in sorted(ratios.items()):
+        if ratio <= 0.0:
+            continue
+        if not pools.get(name):
+            stats.empty_pool_counts[name] += 1
+            continue
+        available.append((name, ratio))
+    if not available:
+        return {"all": batch_size}
+    total_ratio = sum(ratio for _name, ratio in available)
+    if total_ratio <= 0.0:
+        return {"all": batch_size}
+
+    counts: dict[str, int] = {}
+    fractions: list[tuple[float, str]] = []
+    assigned = 0
+    for name, ratio in available:
+        raw_count = batch_size * ratio / total_ratio
+        count = int(math.floor(raw_count))
+        counts[name] = count
+        assigned += count
+        fractions.append((raw_count - count, name))
+    for _fraction, name in sorted(fractions, reverse=True)[: max(0, batch_size - assigned)]:
+        counts[name] += 1
+    return {name: count for name, count in counts.items() if count > 0}
+
+
+def sample_awac_batch(
+    samples: list[ActorCriticSample],
+    pools: dict[str, list[ActorCriticSample]],
+    rng: random.Random,
+    config: OfflineAwacConfig,
+    stats: OfflineAwacStats,
+) -> list[ActorCriticSample]:
+    batch_size = min(config.batch_size, len(samples))
+    if config.sampling_mode == "uniform":
+        stats.pool_sample_counts["uniform"] += batch_size
+        return rng.choices(samples, k=batch_size)
+    if config.sampling_mode != "family-balanced-v1":
+        stats.pool_sample_counts["uniform-fallback"] += batch_size
+        return rng.choices(samples, k=batch_size)
+
+    batch: list[ActorCriticSample] = []
+    counts = balanced_pool_counts(batch_size, config.family_ratios, pools, stats)
+    for pool_name, count in counts.items():
+        pool = pools.get(pool_name) or samples
+        batch.extend(rng.choices(pool, k=count))
+        stats.pool_sample_counts[pool_name] += count
+    if len(batch) < batch_size:
+        fill_count = batch_size - len(batch)
+        batch.extend(rng.choices(samples, k=fill_count))
+        stats.pool_sample_counts["fill"] += fill_count
+    if len(batch) > batch_size:
+        batch = batch[:batch_size]
+    rng.shuffle(batch)
+    return batch
+
+
 def train_offline_awac(
     samples: list[ActorCriticSample],
     actions: tuple[str, ...],
@@ -467,9 +586,10 @@ def train_offline_awac(
     actor_grads = dqn.zero_grads(actor_layers)
     value_grads = dqn.zero_grads(value_layers)
     stats = OfflineAwacStats()
+    pools = build_awac_sample_pools(samples)
 
     for step in range(1, config.steps + 1):
-        batch = rng.choices(samples, k=min(config.batch_size, len(samples)))
+        batch = sample_awac_batch(samples, pools, rng, config, stats)
         actor_loss = 0.0
         value_loss = 0.0
         entropy_bonus_total = 0.0
@@ -720,6 +840,21 @@ def main() -> None:
     )
     parser.add_argument("--awac-entropy", type=float, default=0.001, help="Masked policy entropy regularization")
     parser.add_argument("--awac-value-loss-weight", type=float, default=1.0, help="Value regression loss weight")
+    parser.add_argument(
+        "--awac-sampling",
+        default="uniform",
+        choices=AWAC_SAMPLING_MODES,
+        help="Offline AWAC batch sampler. family-balanced-v1 samples from configured action/event pools.",
+    )
+    parser.add_argument(
+        "--awac-family-ratios",
+        default=DEFAULT_AWAC_FAMILY_RATIOS,
+        help=(
+            "Comma-separated pool ratios for --awac-sampling family-balanced-v1. "
+            "Pools include movement-defense, projectile, normal, special, throw, "
+            "air-normal, positive-event, negative-event, positive-advantage, negative-advantage."
+        ),
+    )
     parser.add_argument("--awac-log-interval", type=int, default=200, help="Offline AWAC progress print interval")
     parser.add_argument("--eval-limit", type=int, default=5000, help="Samples used for local actor policy diagnostics")
     parser.add_argument(
@@ -779,6 +914,8 @@ def main() -> None:
         entropy_reg_weight=max(0.0, float(args.awac_entropy)),
         value_loss_weight=max(0.0, float(args.awac_value_loss_weight)),
         valid_action_mask=str(args.valid_action_mask),
+        sampling_mode=str(args.awac_sampling),
+        family_ratios=parse_ratio_map(str(args.awac_family_ratios), "--awac-family-ratios"),
         log_interval=max(0, int(args.awac_log_interval)),
     )
     if awac_config.enabled:
@@ -875,7 +1012,8 @@ def main() -> None:
             f"actor_loss_avg={awac_stats.actor_loss_avg:.6f} "
             f"value_loss_avg={awac_stats.value_loss_avg:.6f} "
             f"entropy_avg={awac_stats.entropy_bonus_avg:.6f} "
-            f"adv_weight_avg={awac_stats.as_metadata()['advantage_weight_avg']:.6f}",
+            f"adv_weight_avg={awac_stats.as_metadata()['advantage_weight_avg']:.6f} "
+            f"pools={top_counts(awac_stats.pool_sample_counts, int(args.diagnostic_top_n))}",
             flush=True,
         )
 

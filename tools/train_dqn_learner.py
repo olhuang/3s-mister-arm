@@ -314,6 +314,14 @@ MOVEMENT_REGRESSION_MOVEMENT_ACTIONS = frozenset(
 UNLABELED_MOVEMENT_FILTER_ACTIONS = frozenset(
     {"forward", "back", "guard-stand", "guard-crouch"}
 ) | JUMP_START_ACTIONS
+COMBAT_EVENT_MOVEMENT_CREDIT_FORWARD_ACTIONS = frozenset({"forward", "jump-forward-start"})
+COMBAT_EVENT_MOVEMENT_CREDIT_BACK_ACTIONS = frozenset({"back", "jump-back-start"})
+COMBAT_EVENT_MOVEMENT_CREDIT_NEUTRAL_JUMP_ACTIONS = frozenset({"jump-neutral-start"})
+COMBAT_EVENT_MOVEMENT_CREDIT_ACTIONS = (
+    COMBAT_EVENT_MOVEMENT_CREDIT_FORWARD_ACTIONS
+    | COMBAT_EVENT_MOVEMENT_CREDIT_BACK_ACTIONS
+    | COMBAT_EVENT_MOVEMENT_CREDIT_NEUTRAL_JUMP_ACTIONS
+)
 MOVEMENT_REGRESSION_ACTION_GROUPS = frozenset(
     ("stand-normal", "crouch-normal", "air-normal", "fireball", "shoryuken", "tatsu")
 )
@@ -906,6 +914,99 @@ class CombatEventUnlabeledMovementFilterStats:
             "by_action_kept_unlabeled": dict(sorted(self.by_action_kept_unlabeled.items())),
             "by_action_dropped": dict(sorted(self.by_action_dropped.items())),
             "protected_by_reason": dict(sorted(self.protected_by_reason.items())),
+        }
+
+
+@dataclass(frozen=True)
+class CombatEventMovementCreditConfig:
+    mode: str = "off"
+    window_decisions: int = 6
+    max_rows: int = 3
+    scale: float = 0.35
+    decay: tuple[float, ...] = (0.5, 0.3, 0.2)
+    row_abs_cap: float = 0.0
+
+    @property
+    def enabled(self) -> bool:
+        return (
+            self.mode != "off"
+            and self.window_decisions > 0
+            and self.max_rows > 0
+            and self.scale > 0.0
+            and bool(self.decay)
+        )
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "mode": self.mode,
+            "enabled": self.enabled,
+            "window_decisions": self.window_decisions,
+            "max_rows": self.max_rows,
+            "scale": self.scale,
+            "decay": list(self.decay),
+            "row_abs_cap": self.row_abs_cap,
+            "actions": sorted(COMBAT_EVENT_MOVEMENT_CREDIT_ACTIONS),
+        }
+
+
+@dataclass
+class CombatEventMovementCreditStats:
+    checked_anchor_rows: int = 0
+    eligible_anchor_rows: int = 0
+    applied_anchor_rows: int = 0
+    candidate_rows: int = 0
+    applied_rows: int = 0
+    skipped_no_reward: int = 0
+    skipped_no_label: int = 0
+    skipped_direction_mismatch: int = 0
+    skipped_no_candidate: int = 0
+    skipped_cross_source_boundary: int = 0
+    capped_rows: int = 0
+    total_credit: float = 0.0
+    total_positive_credit: float = 0.0
+    total_negative_credit: float = 0.0
+    by_action: dict[str, float] = field(default_factory=dict)
+    by_reason: dict[str, float] = field(default_factory=dict)
+    rows_by_action: dict[str, int] = field(default_factory=dict)
+    rows_by_reason: dict[str, int] = field(default_factory=dict)
+    credit_abs_by_exp_index: dict[int, float] = field(default_factory=dict, repr=False)
+
+    @property
+    def net_adjustment(self) -> float:
+        return self.total_credit
+
+    def add_credit(self, action_name: str, reason: str, credit: float) -> None:
+        self.applied_rows += 1
+        self.total_credit += credit
+        if credit > 0.0:
+            self.total_positive_credit += credit
+        elif credit < 0.0:
+            self.total_negative_credit += credit
+        self.by_action[action_name] = self.by_action.get(action_name, 0.0) + credit
+        self.by_reason[reason] = self.by_reason.get(reason, 0.0) + credit
+        self.rows_by_action[action_name] = self.rows_by_action.get(action_name, 0) + 1
+        self.rows_by_reason[reason] = self.rows_by_reason.get(reason, 0) + 1
+
+    def as_metadata(self) -> dict[str, object]:
+        return {
+            "checked_anchor_rows": self.checked_anchor_rows,
+            "eligible_anchor_rows": self.eligible_anchor_rows,
+            "applied_anchor_rows": self.applied_anchor_rows,
+            "candidate_rows": self.candidate_rows,
+            "applied_rows": self.applied_rows,
+            "skipped_no_reward": self.skipped_no_reward,
+            "skipped_no_label": self.skipped_no_label,
+            "skipped_direction_mismatch": self.skipped_direction_mismatch,
+            "skipped_no_candidate": self.skipped_no_candidate,
+            "skipped_cross_source_boundary": self.skipped_cross_source_boundary,
+            "capped_rows": self.capped_rows,
+            "total_credit": self.total_credit,
+            "total_positive_credit": self.total_positive_credit,
+            "total_negative_credit": self.total_negative_credit,
+            "by_action": dict(sorted(self.by_action.items())),
+            "by_reason": dict(sorted(self.by_reason.items())),
+            "rows_by_action": dict(sorted(self.rows_by_action.items())),
+            "rows_by_reason": dict(sorted(self.rows_by_reason.items())),
         }
 
 
@@ -2204,6 +2305,25 @@ def parse_combat_event_batch_ratios(value: str, flag_name: str) -> dict[str, flo
     return {group: ratios[group] / total for group in COMBAT_EVENT_BATCH_GROUPS}
 
 
+def parse_positive_float_tuple(value: str, flag_name: str) -> tuple[float, ...]:
+    weights: list[float] = []
+    if not value.strip():
+        raise SystemExit(f"{flag_name} must contain at least one positive value")
+    for raw_item in value.split(","):
+        item = raw_item.strip()
+        if not item:
+            continue
+        try:
+            weight = float(item)
+        except ValueError as exc:
+            raise SystemExit(f"Invalid {flag_name} value: {item}") from exc
+        if weight > 0.0:
+            weights.append(weight)
+    if not weights:
+        raise SystemExit(f"{flag_name} must contain at least one positive value")
+    return tuple(weights)
+
+
 def batch_sampling_config_from_args(args: argparse.Namespace) -> BatchSamplingConfig:
     mode = str(args.batch_sampling)
     if mode not in BATCH_SAMPLING_MODES:
@@ -2225,6 +2345,26 @@ def combat_event_batch_sampling_config_from_args(args: argparse.Namespace) -> Co
         else {group: 0.0 for group in COMBAT_EVENT_BATCH_GROUPS}
     )
     return CombatEventBatchSamplingConfig(mode=mode, ratios=ratios)
+
+
+def combat_event_movement_credit_config_from_args(args: argparse.Namespace) -> CombatEventMovementCreditConfig:
+    mode = str(args.combat_event_movement_credit)
+    if mode not in combat_events.COMBAT_EVENT_MOVEMENT_CREDIT_MODES:
+        raise SystemExit(
+            f"unknown --combat-event-movement-credit {mode!r}; "
+            f"expected one of {','.join(combat_events.COMBAT_EVENT_MOVEMENT_CREDIT_MODES)}"
+        )
+    return CombatEventMovementCreditConfig(
+        mode=mode,
+        window_decisions=max(0, int(args.combat_event_movement_credit_window)),
+        max_rows=max(0, int(args.combat_event_movement_credit_max_rows)),
+        scale=max(0.0, float(args.combat_event_movement_credit_scale)),
+        decay=parse_positive_float_tuple(
+            str(args.combat_event_movement_credit_decay),
+            "--combat-event-movement-credit-decay",
+        ),
+        row_abs_cap=max(0.0, float(args.combat_event_movement_credit_row_cap)),
+    )
 
 
 def projectile_batch_config_from_args(args: argparse.Namespace) -> ProjectileBatchConfig:
@@ -2371,6 +2511,150 @@ def combat_event_batch_group_for_transition(
     if label.has_source_event or reward != 0.0 or has_hp_or_stun_delta(row) or bool(row.get("done", False)):
         return "movement"
     return "unlabeled_passive"
+
+
+def combat_event_movement_credit_kind(
+    row: dict[str, object],
+    action_name: str | None,
+    action_start: bool,
+    combat_event_reward_adjustment: float,
+    combat_event_validation: combat_events.CombatEventTrainingValidation | None,
+) -> tuple[str, frozenset[str]]:
+    if combat_event_reward_adjustment == 0.0 or action_name is None:
+        return "", frozenset()
+    label = combat_events.transition_label_for_row(
+        combat_event_validation.index if combat_event_validation is not None else None,
+        row,
+        action_start,
+    )
+    source_kinds = set(label.source_event_kinds)
+    defensive_results = set(label.defensive_results)
+    has_self_source = bool(source_kinds.intersection({"attack", "projectile", "throw"}))
+    has_defense = bool(defensive_results)
+
+    # Mixed offense/defense rows are valid combat rows, but too ambiguous for
+    # this first delayed movement credit pass.
+    if has_self_source and has_defense:
+        return "", frozenset()
+
+    if has_self_source and combat_event_reward_adjustment > 0.0:
+        return "self_offense_success", COMBAT_EVENT_MOVEMENT_CREDIT_FORWARD_ACTIONS
+    if defensive_results.intersection({"blocked", "parry", "evaded"}) and combat_event_reward_adjustment > 0.0:
+        return (
+            "defense_success",
+            COMBAT_EVENT_MOVEMENT_CREDIT_BACK_ACTIONS | COMBAT_EVENT_MOVEMENT_CREDIT_NEUTRAL_JUMP_ACTIONS,
+        )
+    if defensive_results.intersection({"hit", "thrown", "blocked_chip"}) and combat_event_reward_adjustment < 0.0:
+        return (
+            "defense_failure",
+            COMBAT_EVENT_MOVEMENT_CREDIT_FORWARD_ACTIONS | COMBAT_EVENT_MOVEMENT_CREDIT_NEUTRAL_JUMP_ACTIONS,
+        )
+    return "", frozenset()
+
+
+def combat_event_movement_credit_weights(config: CombatEventMovementCreditConfig, count: int) -> list[float]:
+    if count <= 0:
+        return []
+    weights = list(config.decay[:count])
+    while len(weights) < count:
+        weights.append(weights[-1] * 0.5)
+    total = sum(weights)
+    if total <= 0.0:
+        return []
+    return [weight / total for weight in weights]
+
+
+def apply_combat_event_movement_credit(
+    experiences: list[Experience],
+    actions: tuple[str, ...],
+    row: dict[str, object],
+    action_name: str | None,
+    action_start: bool,
+    combat_event_reward_adjustment: float,
+    reward_scale: float,
+    combat_event_validation: combat_events.CombatEventTrainingValidation | None,
+    config: CombatEventMovementCreditConfig,
+    stats: CombatEventMovementCreditStats,
+    action_rewards: dict[str, float],
+    source_stats: SourceReplayDiagnostics | None = None,
+) -> None:
+    if not config.enabled:
+        return
+    stats.checked_anchor_rows += 1
+    if combat_event_reward_adjustment == 0.0:
+        stats.skipped_no_reward += 1
+        return
+
+    reason, allowed_actions = combat_event_movement_credit_kind(
+        row,
+        action_name,
+        action_start,
+        combat_event_reward_adjustment,
+        combat_event_validation,
+    )
+    if not reason or not allowed_actions:
+        stats.skipped_no_label += 1
+        return
+
+    anchor_decision_id = int_field(row, "decision_id")
+    candidates: list[int] = []
+    for exp_index in range(len(experiences) - 1, -1, -1):
+        exp = experiences[exp_index]
+        exp_row = exp.row
+        prior_decision_id = int_field(exp_row, "decision_id")
+        if anchor_decision_id - prior_decision_id > config.window_decisions:
+            break
+        prior_action = actions[exp.action_index]
+        if exp.combat_event_batch_group in ("attack", "projectile", "punish_throw"):
+            stats.skipped_cross_source_boundary += 1
+            break
+        if prior_action not in COMBAT_EVENT_MOVEMENT_CREDIT_ACTIONS:
+            continue
+        stats.candidate_rows += 1
+        if prior_action not in allowed_actions:
+            stats.skipped_direction_mismatch += 1
+            continue
+        candidates.append(exp_index)
+        if len(candidates) >= config.max_rows:
+            break
+
+    if not candidates:
+        stats.skipped_no_candidate += 1
+        return
+
+    weights = combat_event_movement_credit_weights(config, len(candidates))
+    if not weights:
+        stats.skipped_no_candidate += 1
+        return
+
+    budget = combat_event_reward_adjustment * reward_scale * config.scale
+    if budget == 0.0:
+        stats.skipped_no_reward += 1
+        return
+
+    applied_for_anchor = False
+    stats.eligible_anchor_rows += 1
+    for exp_index, weight in zip(candidates, weights):
+        credit = budget * weight
+        if credit == 0.0:
+            continue
+        if config.row_abs_cap > 0.0:
+            used_abs = stats.credit_abs_by_exp_index.get(exp_index, 0.0)
+            remaining_abs = max(0.0, config.row_abs_cap - used_abs)
+            if remaining_abs <= 0.0:
+                stats.capped_rows += 1
+                continue
+            if abs(credit) > remaining_abs:
+                credit = math.copysign(remaining_abs, credit)
+                stats.capped_rows += 1
+            stats.credit_abs_by_exp_index[exp_index] = used_abs + abs(credit)
+        if add_delayed_reward(experiences, exp_index, credit, actions, action_rewards, source_stats):
+            prior_action = actions[experiences[exp_index].action_index]
+            stats.add_credit(prior_action, reason, credit)
+            applied_for_anchor = True
+
+    if applied_for_anchor:
+        stats.applied_anchor_rows += 1
 
 
 def build_batch_pools(
@@ -2619,11 +2903,12 @@ def reward_guard_adjustment(
     episode_rows: list[dict[str, object]],
     row_index: int,
     action_name: str,
+    action_start: bool,
     config: RewardGuardConfig,
     stats: RewardGuardStats,
 ) -> float:
     row = episode_rows[row_index]
-    if action_name not in GUARD_ACTIONS or not is_action_start(row):
+    if action_name not in GUARD_ACTIONS or not action_start:
         return 0.0
 
     opponent_attacking = int_field(row, "obs_opp_routine_attack_state") != 0
@@ -3498,6 +3783,7 @@ def build_experiences(
     combat_event_validation: combat_events.CombatEventTrainingValidation | None,
     combat_event_reward_config: combat_events.CombatEventRewardConfig,
     combat_event_unlabeled_movement_filter_config: CombatEventUnlabeledMovementFilterConfig,
+    combat_event_movement_credit_config: CombatEventMovementCreditConfig,
 ) -> tuple[
     list[Experience],
     dict[str, int],
@@ -3515,6 +3801,7 @@ def build_experiences(
     EngineOutcomeStats,
     combat_events.CombatEventRewardStats,
     CombatEventUnlabeledMovementFilterStats,
+    CombatEventMovementCreditStats,
 ]:
     action_to_index = {action: index for index, action in enumerate(actions)}
     build_stats = BuildDiagnostics()
@@ -3539,6 +3826,7 @@ def build_experiences(
     engine_outcome_stats = EngineOutcomeStats()
     combat_event_reward_stats = combat_events.CombatEventRewardStats()
     combat_event_unlabeled_movement_filter_stats = CombatEventUnlabeledMovementFilterStats()
+    combat_event_movement_credit_stats = CombatEventMovementCreditStats()
 
     for episode_rows in by_episode.values():
         episode_rows.sort(key=row_order_key)
@@ -3643,7 +3931,7 @@ def build_experiences(
                 else 0.0
             )
             guard_adjustment = (
-                reward_guard_adjustment(episode_rows, index, action_name, reward_guard_config, guard_stats)
+                reward_guard_adjustment(episode_rows, index, action_name, action_start, reward_guard_config, guard_stats)
                 if action_name is not None
                 else 0.0
             )
@@ -3687,6 +3975,20 @@ def build_experiences(
             )
             if combat_event_reward_adjustment != 0.0:
                 reward += combat_event_reward_adjustment * reward_scale
+            apply_combat_event_movement_credit(
+                experiences,
+                actions,
+                row,
+                action_name,
+                action_start,
+                combat_event_reward_adjustment,
+                reward_scale,
+                combat_event_validation,
+                combat_event_movement_credit_config,
+                combat_event_movement_credit_stats,
+                action_rewards,
+                source_stats,
+            )
             if action_name is None:
                 if reward != 0.0:
                     if add_delayed_reward_to_indices(
@@ -3861,6 +4163,7 @@ def build_experiences(
         engine_outcome_stats,
         combat_event_reward_stats,
         combat_event_unlabeled_movement_filter_stats,
+        combat_event_movement_credit_stats,
     )
 
 
@@ -6660,6 +6963,44 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--combat-event-movement-credit",
+        choices=combat_events.COMBAT_EVENT_MOVEMENT_CREDIT_MODES,
+        default="off",
+        help=(
+            "Opt-in delayed movement credit from later combat-event rewards. "
+            "delayed-v1 allocates a capped fraction of resolved event reward to recent forward/back/jump starts."
+        ),
+    )
+    parser.add_argument(
+        "--combat-event-movement-credit-window",
+        type=int,
+        default=6,
+        help="Maximum prior decision gap eligible for delayed movement credit.",
+    )
+    parser.add_argument(
+        "--combat-event-movement-credit-max-rows",
+        type=int,
+        default=3,
+        help="Maximum prior movement action-start rows credited by one combat event anchor.",
+    )
+    parser.add_argument(
+        "--combat-event-movement-credit-scale",
+        type=float,
+        default=0.35,
+        help="Fraction of the scaled combat-event reward budget allocated to prior movement rows.",
+    )
+    parser.add_argument(
+        "--combat-event-movement-credit-decay",
+        default="0.50,0.30,0.20",
+        help="Comma-separated positive weights from nearest to oldest prior movement row.",
+    )
+    parser.add_argument(
+        "--combat-event-movement-credit-row-cap",
+        type=float,
+        default=0.0,
+        help="Optional absolute cap for total delayed movement credit per experience; 0 disables the cap.",
+    )
+    parser.add_argument(
         "--drop-initial-episodes-per-run",
         type=int,
         default=0,
@@ -7838,6 +8179,7 @@ def main() -> None:
         combat_event_unlabeled_movement_filter_config_from_args(args)
     )
     combat_event_batch_sampling_config = combat_event_batch_sampling_config_from_args(args)
+    combat_event_movement_credit_config = combat_event_movement_credit_config_from_args(args)
     if combat_event_training_mode == "off" and combat_event_log_paths:
         raise SystemExit("--combat-event-logs requires --combat-event-training-mode validate or reward-shaping")
     if combat_event_unlabeled_movement_filter_config.enabled and combat_event_training_mode != "reward-shaping":
@@ -7852,6 +8194,8 @@ def main() -> None:
             )
         if str(args.batch_sampling) != "uniform":
             raise SystemExit("--combat-event-batch-sampling currently requires --batch-sampling uniform")
+    if combat_event_movement_credit_config.enabled and combat_event_training_mode != "reward-shaping":
+        raise SystemExit("--combat-event-movement-credit requires --combat-event-training-mode reward-shaping")
     if combat_event_training_mode != "off":
         if not combat_event_log_paths:
             raise SystemExit(f"--combat-event-training-mode {combat_event_training_mode} requires --combat-event-logs")
@@ -7872,6 +8216,8 @@ def main() -> None:
             raise SystemExit("--combat-event-unlabeled-movement-policy is only supported for DQN training")
         if combat_event_batch_sampling_config.enabled:
             raise SystemExit("--combat-event-batch-sampling is only supported for DQN training")
+        if combat_event_movement_credit_config.enabled:
+            raise SystemExit("--combat-event-movement-credit is only supported for DQN training")
         # --- BC training path ---
         bc_layers, bc_train_stats, bc_label_counts, bc_skipped = train_bc(
             rows,
@@ -7974,6 +8320,7 @@ def main() -> None:
         engine_outcome_stats,
         combat_event_reward_stats,
         combat_event_unlabeled_movement_filter_stats,
+        combat_event_movement_credit_stats,
     ) = build_experiences(
         rows,
         actions,
@@ -7998,6 +8345,7 @@ def main() -> None:
         combat_event_validation,
         combat_event_reward_config,
         combat_event_unlabeled_movement_filter_config,
+        combat_event_movement_credit_config,
     )
     if not experiences:
         raise SystemExit("No DQN experiences built from transition logs")
@@ -8118,6 +8466,8 @@ def main() -> None:
         reward_sources.append("event-unlabeled-movement-filter")
     if combat_event_batch_sampling_config.enabled:
         reward_sources.append(f"combat-event-batch-{combat_event_batch_sampling_config.mode}")
+    if combat_event_movement_credit_stats.applied_rows > 0:
+        reward_sources.append(f"combat-event-movement-credit-{combat_event_movement_credit_config.mode}")
     reward_source = "+".join(reward_sources) if reward_sources else "none"
     metadata = {
         "transition_logs": args.transition_logs,
@@ -8149,6 +8499,8 @@ def main() -> None:
         ),
         "combat_event_batch_sampling_config": combat_event_batch_sampling_config.as_metadata(),
         "combat_event_batch_sampling_stats": combat_event_batch_sampling_diag.as_metadata(),
+        "combat_event_movement_credit_config": combat_event_movement_credit_config.as_metadata(),
+        "combat_event_movement_credit_stats": combat_event_movement_credit_stats.as_metadata(),
         "experiences": len(experiences),
         "actions_subset": list(actions),
         "actions_subset_size": len(actions),
@@ -8343,6 +8695,8 @@ def main() -> None:
         f"movement_reg={movement_regression_stats.violation_events}/"
         f"{movement_regression_stats.sampled_events} "
         f"movement_loss={movement_regression_stats.last_loss:.6f} "
+        f"event_move_credit={combat_event_movement_credit_stats.applied_rows}/"
+        f"{combat_event_movement_credit_stats.total_credit:.3f} "
         f"loss={train_stats['last_loss']:.6f} avg_loss={train_stats['avg_loss']:.6f} "
         f"included={build_stats.included_action_rows} excluded={build_stats.excluded_action_rows} "
         f"engine_input_fallback={build_stats.engine_outcome_input_fallback_rows} "
@@ -8415,6 +8769,27 @@ def main() -> None:
             f"protected_dropped:{combat_event_unlabeled_movement_filter_stats.protected_dropped_rows} "
             f"drop_actions:{format_counts(combat_event_unlabeled_movement_filter_stats.by_action_dropped, combat_event_unlabeled_movement_filter_stats.dropped_rows, args.diagnostic_top_n)} "
             f"protected_reasons:{format_counts(combat_event_unlabeled_movement_filter_stats.protected_by_reason, combat_event_unlabeled_movement_filter_stats.protected_rows, args.diagnostic_top_n)}",
+            flush=True,
+        )
+    if combat_event_movement_credit_config.enabled:
+        print(
+            "DQN diagnostics "
+            f"combat_event_movement_credit=mode:{combat_event_movement_credit_config.mode} "
+            f"window:{combat_event_movement_credit_config.window_decisions} "
+            f"max_rows:{combat_event_movement_credit_config.max_rows} "
+            f"scale:{combat_event_movement_credit_config.scale:.3f} "
+            f"checked:{combat_event_movement_credit_stats.checked_anchor_rows} "
+            f"eligible:{combat_event_movement_credit_stats.eligible_anchor_rows} "
+            f"applied_anchors:{combat_event_movement_credit_stats.applied_anchor_rows} "
+            f"applied_rows:{combat_event_movement_credit_stats.applied_rows} "
+            f"credit:{combat_event_movement_credit_stats.total_credit:.3f} "
+            f"pos:{combat_event_movement_credit_stats.total_positive_credit:.3f} "
+            f"neg:{combat_event_movement_credit_stats.total_negative_credit:.3f} "
+            f"by_action:{format_float_counts(combat_event_movement_credit_stats.by_action, args.diagnostic_top_n)} "
+            f"by_reason:{format_float_counts(combat_event_movement_credit_stats.by_reason, args.diagnostic_top_n)} "
+            f"skip_no_label:{combat_event_movement_credit_stats.skipped_no_label} "
+            f"skip_no_candidate:{combat_event_movement_credit_stats.skipped_no_candidate} "
+            f"direction_mismatch:{combat_event_movement_credit_stats.skipped_direction_mismatch}",
             flush=True,
         )
     print(

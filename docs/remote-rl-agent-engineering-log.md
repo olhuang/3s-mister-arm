@@ -15654,3 +15654,77 @@ Next:
   - fireball/shoryuken frequency in valid contexts
   - no throw spam
   - no return to guard/back-only behavior
+
+## 2026-05-08: Phase 9E Delayed Movement Credit Foundation
+
+Milestone:
+- Combat event attribution Phase 9E / delayed movement credit
+
+Purpose:
+- Avoid throwing away movement rows.
+- Give `forward`, `back`, and jump-start actions a small share of later
+  resolved combat-event reward when they plausibly set up that event.
+
+Implementation:
+- Added opt-in trainer CLI:
+  - `--combat-event-movement-credit off|delayed-v1`
+  - `--combat-event-movement-credit-window`
+  - `--combat-event-movement-credit-max-rows`
+  - `--combat-event-movement-credit-scale`
+  - `--combat-event-movement-credit-decay`
+  - `--combat-event-movement-credit-row-cap`
+- `delayed-v1` uses the current combat-event reward adjustment as the anchor
+  budget, then allocates `budget * movement_credit_scale` to recent movement
+  experiences using nearest-to-oldest decay weights.
+- V1 direction gates:
+  - self offense success credits `forward` / `jump-forward-start`.
+  - defense success credits `back` / `jump-back-start` /
+    `jump-neutral-start`.
+  - defense failure penalizes `forward` / `jump-forward-start` /
+    `jump-neutral-start`.
+  - mixed offense+defense, unknown/no-reward, and direction-mismatch rows are
+    skipped.
+- The backward search stops at prior attack/projectile/punish/throw source
+  experiences and never crosses episode boundaries.
+- Guard is not part of movement credit. Guard still uses defense attribution
+  plus `--reward-passive-guard-cost` and `--reward-far-guard-cost`.
+- Guard shaping now uses the trainer-selected `action_start` instead of raw row
+  action-step fields, so `training_action_source=auto` can correctly exercise
+  guard costs when the data actually contains passive/far guard starts.
+
+Validation:
+- `python3 -m py_compile tools/rl_combat_event_training.py tools/train_dqn_learner.py`
+- Help output shows all new `--combat-event-movement-credit*` flags.
+- One-step smoke on the 30-round Ryu vs Ken paired log:
+  - command included `event-damage-v1`, `delayed-v1`,
+    `--reward-passive-guard-cost 0.05`, and `--reward-far-guard-cost 0.08`.
+  - experiences stayed at `12076`.
+  - movement credit applied to `198` rows from `103` anchors.
+  - net credit was `+0.131`, with `+0.320` positive and `-0.189` negative.
+  - by action: `forward=+0.126`, `jump-forward-start=+0.009`,
+    `jump-neutral-start=-0.003`.
+  - by reason: `self_offense_success=+0.320`,
+    `defense_failure=-0.189`.
+- Guard-cost sanity:
+  - even after the `action_start` fix, passive/far guard cost remained `0` on
+    this log.
+  - ad-hoc count showed selected guard starts were all opponent-attacking and
+    inside threat range, so this capture does not exercise passive/far guard
+    penalties.
+- 2000-step candidate:
+  - `model/dqn-combat-event-ryu-ken-v1-event-move-credit-v1`
+  - recipe: Phase 9D attack-heavy event batch sampling +
+    `--dqn-valid-action-mask action-start-v1` + `delayed-v1` +
+    passive/far guard costs.
+  - publish passed with `event_move_credit=198/0.131`.
+  - same-log 5000-row compare matched the Phase 9D best candidate exactly:
+    `attack_rate=13.0%`, `fireball_rate=5.4%`, `shoryuken_rate=4.7%`,
+    `defense_rate=61.1%`, top=`back:36.2%`.
+
+Interpretation:
+- The implementation is safe and opt-in, but the first v1 credit is too small
+  to move the policy on this dataset.
+- Do not promote `dqn-combat-event-ryu-ken-v1-event-move-credit-v1`.
+- Next useful work is targeted data or a revised Phase 9E-2 gate/scale that
+  creates more eligible movement-before-event anchors without duplicating full
+  event rewards.

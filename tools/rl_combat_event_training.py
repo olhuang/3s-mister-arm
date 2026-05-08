@@ -15,6 +15,7 @@ COMBAT_EVENT_TRAINING_MODES = ("off", "validate", "reward-shaping")
 COMBAT_EVENT_REWARD_PROFILES = ("safe-v1", "event-damage-v1")
 COMBAT_EVENT_UNLABELED_MOVEMENT_POLICIES = ("keep", "downsample", "drop")
 COMBAT_EVENT_BATCH_SAMPLING_MODES = ("off", "balanced-v1")
+COMBAT_EVENT_MOVEMENT_CREDIT_MODES = ("off", "delayed-v1")
 
 
 SAFE_V1_REWARD_TABLE: dict[tuple[str, str], float] = {

@@ -2743,6 +2743,71 @@ Phase 9D event-aware source-family batch sampling status:
     verify attack variety, projectile use, defense sanity, and no throw/DP
     collapse.
 
+Phase 9E delayed movement credit status:
+
+- `tools/train_dqn_learner.py` now supports an opt-in movement credit mode:
+  - `--combat-event-movement-credit off|delayed-v1`
+  - `--combat-event-movement-credit-window`
+  - `--combat-event-movement-credit-max-rows`
+  - `--combat-event-movement-credit-scale`
+  - `--combat-event-movement-credit-decay`
+  - `--combat-event-movement-credit-row-cap`
+- This is delayed reward assignment only. It does not change DQN features,
+  transition schema, combat event parsing, reward tables, or live inference.
+- `delayed-v1` uses the already-computed combat-event reward adjustment as the
+  anchor budget, then allocates a capped fraction of that scaled budget to
+  recent movement experiences.
+- First v1 movement actions:
+  - `forward`
+  - `back`
+  - `jump-forward-start`
+  - `jump-neutral-start`
+  - `jump-back-start`
+- Guard is intentionally excluded. Guard still uses defense attribution rewards
+  and the existing passive/far guard cost knobs.
+- Direction gates:
+  - self offense success can credit `forward` and `jump-forward-start`.
+  - defense success can credit `back`, `jump-back-start`, and
+    `jump-neutral-start`.
+  - defense failure can penalize `forward`, `jump-forward-start`, and
+    `jump-neutral-start`.
+  - mixed offense/defense anchor rows, unknown/no-reward rows, and direction
+    mismatches are skipped.
+- Stop/cap behavior:
+  - max prior decision window defaults to `6`.
+  - max credited rows per event defaults to `3`.
+  - default decay is `0.50,0.30,0.20`.
+  - default scale is `0.35`.
+  - crossing an earlier attack/projectile/punish/throw source experience stops
+    the backward search.
+- Metadata records:
+  - `combat_event_movement_credit_config`
+  - `combat_event_movement_credit_stats`
+  - checked/eligible/applied anchors
+  - applied rows
+  - positive/negative/net credit
+  - credit by movement action and reason
+  - no-label, no-candidate, direction-mismatch, cross-source-boundary, and
+    capped-row skips
+- First validation on the 30-round Ryu vs Ken paired log:
+  - one-step smoke passed.
+  - credited `198` movement rows from `103` anchors.
+  - net credit was only `+0.131` (`+0.320` positive, `-0.189` negative).
+  - credit by action was mostly `forward`.
+  - 2000-step candidate with Phase 9D attack-heavy sampling, `action-start-v1`
+    valid mask, `delayed-v1`, and passive/far guard costs produced the same
+    5000-row compare distribution as the Phase 9D best candidate.
+- Guard-cost note:
+  - `--reward-passive-guard-cost 0.05` and `--reward-far-guard-cost 0.08`
+    were included in the first candidate recipe, but did not trigger on this
+    capture because all selected guard starts were both opponent-attacking and
+    inside the configured threat range. These knobs remain useful for far or
+    passive guard data, but this specific log does not exercise them.
+- Promotion rule:
+  - do not promote `dqn-combat-event-ryu-ken-v1-event-move-credit-v1`.
+  - keep Phase 9E as trainer infrastructure and revisit scale/gates with
+    targeted movement-before-event captures.
+
 Data recollection gate:
 
 - Phase 9 trainer adoption requires fresh paired transition/event logs. Old

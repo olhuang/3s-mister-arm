@@ -2,6 +2,58 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-14: Phase 12H Stage-Aware OBS Schema Bump
+
+Milestone:
+- Phase 12H stage-aware spacing schema implementation.
+
+Files changed:
+- `src/rl/rl_protocol.h`
+- `src/rl/rl_session.c`
+- `tools/rl_probe_server.py`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Promote the calibrated stage-aware spacing plan into the live observation
+  payload, transition rows, Python parser, and default model feature allowlist.
+
+Implementation notes:
+- Bumped `RL_OBSERVATION_SCHEMA_VERSION` / `OBS_SPACING_PAYLOAD_VERSION` to
+  `6`.
+- Bumped `RL_TRANSITION_SCHEMA_VERSION` to `10`.
+- Added live OBS and transition fields:
+  - `obs_self_stage_back_edge_dist`
+  - `obs_opp_stage_back_edge_dist`
+  - `obs_self_corner_state`
+  - `obs_opp_corner_state`
+  - `obs_corner_pressure_state`
+  - `obs_range_threat_bucket`
+- Stage-back distance uses `bg_w.bgw[1].l_limit2`, `bg_w.bgw[1].r_limit2`,
+  `bg_w.pos_offset`, `satse[player_number]`, and current facing.
+- First thresholds are the current Phase 12H calibration values:
+  - cornered `<= 32`, near corner `<= 96`
+  - normal range `<= 154`
+  - jump-in range `<= 236`
+  - projectile range `>= 237`
+- `tools/rl_probe_server.py` now parses payload v6 and includes transition
+  schema 10 in its supported schema set.
+- Default `DQN_FEATURE_NAMES` now uses stage-aware spacing/corner/range
+  features in place of the four viewport edge-distance fields. The old
+  view-edge feature scales remain available so older model metadata can still
+  load against logs/payloads that contain those fields.
+- Heuristic tactical corner context prefers the new corner-state fields when
+  present and falls back to legacy viewport edge fields for older logs.
+
+Validation:
+- `git diff --check` passed.
+- `python3 -m py_compile tools/rl_probe_server.py tools/train_dqn_learner.py tools/train_actor_critic.py tools/train_tactical_intent.py tools/label_rl_tactical_states.py` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed and rebuilt
+  `src/rl/rl_protocol.c`, `src/rl/rl_session.c`, and related RL/runtime files.
+- Follow-up live gate should verify v6 handshake/payload parsing, transition
+  schema 10 rows, and sensible `obs_range_threat_bucket` / corner-state values
+  during round start, true corner, camera-scroll, and side-switch cases.
+
 ## 2026-05-14: Phase 12H Ryu Range Calibration Notes
 
 Milestone:

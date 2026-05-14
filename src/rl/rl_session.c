@@ -7,8 +7,10 @@
 #include "sf33rd/AcrSDK/common/pad.h"
 #include "main.h"
 #include "sf33rd/Source/Game/engine/plcnt.h"
+#include "sf33rd/Source/Game/engine/pls02.h"
 #include "sf33rd/Source/Game/engine/stun.h"
 #include "sf33rd/Source/Game/engine/workuser.h"
+#include "sf33rd/Source/Game/stage/bg.h"
 #include "sf33rd/Source/Game/system/work_sys.h"
 
 #include <SDL3/SDL.h>
@@ -159,6 +161,12 @@ typedef struct RLDecisionLedgerEntry {
     s16 obs_self_back_edge_dist;
     s16 obs_opp_front_edge_dist;
     s16 obs_opp_back_edge_dist;
+    s16 obs_self_stage_back_edge_dist;
+    s16 obs_opp_stage_back_edge_dist;
+    u8 obs_self_corner_state;
+    u8 obs_opp_corner_state;
+    u8 obs_corner_pressure_state;
+    u8 obs_range_threat_bucket;
     u8 obs_opp_in_front;
     u16 obs_self_routine_1;
     u16 obs_self_routine_2;
@@ -308,7 +316,11 @@ static const RLLocalFakeAction kLocalFakeAgentSequence[] = {
 #define RL_DEMO_GUARD_THREAT_DX 144
 #define RL_CHARACTER_RYU 2u
 #define RL_CHARACTER_KEN 11u
-#define RL_TRANSITION_SCHEMA_VERSION 9u
+#define RL_TRANSITION_SCHEMA_VERSION 10u
+#define RL_STAGE_CORNERED_MAX_DIST 32
+#define RL_STAGE_NEAR_CORNER_MAX_DIST 96
+#define RL_RANGE_NORMAL_MAX_DX 154
+#define RL_RANGE_JUMP_IN_MAX_DX 236
 #define RL_INPUT_LABEL_SOURCE_NONE 0u
 #define RL_INPUT_LABEL_SOURCE_DEMO_INPUT 1u
 #define RL_DEMO_ATTRIBUTION_NONE 0u
@@ -1893,6 +1905,71 @@ static s16 RLSession_BackEdgeDistance(s8 facing_sign, s32 x) {
                            : RLSession_ClampNonnegativeDistanceS16(x - scrl);
 }
 
+static s16 RLSession_StageLeftEdge(void) {
+    return bg_w.bgw[1].l_limit2 - bg_w.pos_offset;
+}
+
+static s16 RLSession_StageRightEdge(void) {
+    return bg_w.bgw[1].r_limit2 + bg_w.pos_offset;
+}
+
+static s16 RLSession_StageLeftEdgeDistance(s16 player) {
+    const s16 radius = satse[plw[player].player_number];
+    return RLSession_ClampNonnegativeDistanceS16((s32)plw[player].wu.position_x - radius - RLSession_StageLeftEdge());
+}
+
+static s16 RLSession_StageRightEdgeDistance(s16 player) {
+    const s16 radius = satse[plw[player].player_number];
+    return RLSession_ClampNonnegativeDistanceS16((s32)RLSession_StageRightEdge() -
+                                                 ((s32)plw[player].wu.position_x + radius));
+}
+
+static s16 RLSession_StageBackEdgeDistance(s16 player, s8 facing_sign) {
+    return (facing_sign < 0) ? RLSession_StageRightEdgeDistance(player)
+                             : RLSession_StageLeftEdgeDistance(player);
+}
+
+static u8 RLSession_CornerState(s16 stage_back_edge_dist) {
+    if (stage_back_edge_dist <= RL_STAGE_CORNERED_MAX_DIST) {
+        return 2u;
+    }
+    if (stage_back_edge_dist <= RL_STAGE_NEAR_CORNER_MAX_DIST) {
+        return 1u;
+    }
+    return 0u;
+}
+
+static u8 RLSession_RangeThreatBucket(s16 dx) {
+    s16 abs_dx = dx;
+    if (abs_dx < 0) {
+        abs_dx = (abs_dx == -32768) ? 32767 : (s16)-abs_dx;
+    }
+    if (abs_dx <= RL_RANGE_NORMAL_MAX_DX) {
+        return 0u;
+    }
+    if (abs_dx <= RL_RANGE_JUMP_IN_MAX_DX) {
+        return 1u;
+    }
+    return 2u;
+}
+
+static u8 RLSession_CornerPressureState(u8 self_corner_state, u8 opp_corner_state, s16 dx) {
+    s16 abs_dx = dx;
+    if (abs_dx < 0) {
+        abs_dx = (abs_dx == -32768) ? 32767 : (s16)-abs_dx;
+    }
+    if (abs_dx > RL_RANGE_JUMP_IN_MAX_DX) {
+        return 0u;
+    }
+    if (self_corner_state != 0u && opp_corner_state == 0u) {
+        return 1u;
+    }
+    if (opp_corner_state != 0u && self_corner_state == 0u) {
+        return 2u;
+    }
+    return 0u;
+}
+
 static void RLSession_FillObsSpacingPayload(RLObsSpacingPayloadV1* payload, const RLObservationV1* obs) {
     s16 self;
     s16 opp;
@@ -1918,6 +1995,13 @@ static void RLSession_FillObsSpacingPayload(RLObsSpacingPayloadV1* payload, cons
     payload->obs_self_back_edge_dist = RLSession_BackEdgeDistance(obs->self_facing_sign, self_x);
     payload->obs_opp_front_edge_dist = RLSession_FrontEdgeDistance(obs->opp_facing_sign, opp_x);
     payload->obs_opp_back_edge_dist = RLSession_BackEdgeDistance(obs->opp_facing_sign, opp_x);
+    payload->obs_self_stage_back_edge_dist = RLSession_StageBackEdgeDistance(self, obs->self_facing_sign);
+    payload->obs_opp_stage_back_edge_dist = RLSession_StageBackEdgeDistance(opp, obs->opp_facing_sign);
+    payload->obs_self_corner_state = RLSession_CornerState(payload->obs_self_stage_back_edge_dist);
+    payload->obs_opp_corner_state = RLSession_CornerState(payload->obs_opp_stage_back_edge_dist);
+    payload->obs_corner_pressure_state =
+        RLSession_CornerPressureState(payload->obs_self_corner_state, payload->obs_opp_corner_state, payload->obs_abs_dx);
+    payload->obs_range_threat_bucket = RLSession_RangeThreatBucket(payload->obs_abs_dx);
     payload->obs_self_routine_1 = obs->self_routine[1];
     payload->obs_self_routine_2 = obs->self_routine[2];
     payload->obs_opp_routine_1 = obs->opp_routine[1];
@@ -1953,6 +2037,12 @@ static void RLSession_CaptureObservationSpacing(RLDecisionLedgerEntry* entry, co
     entry->obs_self_back_edge_dist = payload.obs_self_back_edge_dist;
     entry->obs_opp_front_edge_dist = payload.obs_opp_front_edge_dist;
     entry->obs_opp_back_edge_dist = payload.obs_opp_back_edge_dist;
+    entry->obs_self_stage_back_edge_dist = payload.obs_self_stage_back_edge_dist;
+    entry->obs_opp_stage_back_edge_dist = payload.obs_opp_stage_back_edge_dist;
+    entry->obs_self_corner_state = payload.obs_self_corner_state;
+    entry->obs_opp_corner_state = payload.obs_opp_corner_state;
+    entry->obs_corner_pressure_state = payload.obs_corner_pressure_state;
+    entry->obs_range_threat_bucket = payload.obs_range_threat_bucket;
     entry->obs_opp_in_front = payload.obs_opp_in_front;
     entry->obs_self_routine_1 = obs->self_routine[1];
     entry->obs_self_routine_2 = obs->self_routine[2];
@@ -2191,6 +2281,12 @@ static RLTransitionFormatStatus RLSession_FormatTransitionLogLine(const RLDecisi
                         "\"obs_abs_dx\":%d,\"obs_abs_dy\":%d,"
                         "\"obs_self_front_edge_dist\":%d,\"obs_self_back_edge_dist\":%d,"
                         "\"obs_opp_front_edge_dist\":%d,\"obs_opp_back_edge_dist\":%d,"
+                        "\"obs_self_stage_back_edge_dist\":%d,"
+                        "\"obs_opp_stage_back_edge_dist\":%d,"
+                        "\"obs_self_corner_state\":%u,"
+                        "\"obs_opp_corner_state\":%u,"
+                        "\"obs_corner_pressure_state\":%u,"
+                        "\"obs_range_threat_bucket\":%u,"
                         "\"obs_opp_in_front\":%u,"
                         "\"obs_self_routine_1\":%u,\"obs_self_routine_2\":%u,"
                         "\"obs_opp_routine_1\":%u,\"obs_opp_routine_2\":%u,"
@@ -2293,6 +2389,12 @@ static RLTransitionFormatStatus RLSession_FormatTransitionLogLine(const RLDecisi
                         entry->obs_self_back_edge_dist,
                         entry->obs_opp_front_edge_dist,
                         entry->obs_opp_back_edge_dist,
+                        entry->obs_self_stage_back_edge_dist,
+                        entry->obs_opp_stage_back_edge_dist,
+                        entry->obs_self_corner_state,
+                        entry->obs_opp_corner_state,
+                        entry->obs_corner_pressure_state,
+                        entry->obs_range_threat_bucket,
                         entry->obs_opp_in_front,
                         entry->obs_self_routine_1,
                         entry->obs_self_routine_2,

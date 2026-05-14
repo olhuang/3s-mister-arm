@@ -32,8 +32,8 @@ TYPE_OBS = 5
 PACKET = struct.Struct("<IHHQIIQ")
 ACTION_PACKET = struct.Struct("<IHHQQIIIHHHHI")
 OBS_HEADER = struct.Struct("<IHHQQIIIIHHI")
-OBS_SPACING_PAYLOAD = struct.Struct("<HHhhhhhhHHHHBBBBBBBBBBBBhhhh")
-OBS_SPACING_PAYLOAD_VERSION = 5
+OBS_SPACING_PAYLOAD = struct.Struct("<HHhhhhhhhhHHHHBBBBBBBBBBBBBBBBhhhh")
+OBS_SPACING_PAYLOAD_VERSION = 6
 TRANSITION_BATCH_HEADER = struct.Struct("<IHHQQIII")
 TRANSITION_BATCH_ACK = struct.Struct("<IHHQQII")
 ACTION_SET_VERSION = 5
@@ -171,8 +171,8 @@ MODEL_POLICY_CHOICES = (
 POLICY_CHOICES = SCRIPTED_POLICY_CHOICES + MODEL_POLICY_CHOICES
 GUARD_MACRO_DECISION_STEPS = 6
 DEMO_EXECUTION_SOURCES = frozenset({4, 5})
-TRANSITION_SCHEMA_VERSION = 9
-SUPPORTED_TRANSITION_SCHEMA_VERSIONS = frozenset({5, 6, 7, 8, 9})
+TRANSITION_SCHEMA_VERSION = 10
+SUPPORTED_TRANSITION_SCHEMA_VERSIONS = frozenset({5, 6, 7, 8, 9, 10})
 TRAINING_MODE_TYPES = frozenset({3, 4})
 TRAINING_ACTION_SOURCES = ("auto", "policy", "input", "engine", "prefer-engine")
 
@@ -321,10 +321,12 @@ TABULAR_ACTION_NAMES_BY_POLICY_META.update(
 DQN_BASE_FEATURE_NAMES = (
     "obs_abs_dx",
     "obs_abs_dy",
-    "obs_self_front_edge_dist",
-    "obs_self_back_edge_dist",
-    "obs_opp_front_edge_dist",
-    "obs_opp_back_edge_dist",
+    "obs_self_stage_back_edge_dist",
+    "obs_opp_stage_back_edge_dist",
+    "obs_self_corner_state",
+    "obs_opp_corner_state",
+    "obs_corner_pressure_state",
+    "obs_range_threat_bucket",
     "obs_opp_in_front",
     "obs_opp_routine_attack_state",
     "obs_self_airborne",
@@ -358,6 +360,12 @@ DQN_FEATURE_NAMES = (
 DQN_FEATURE_SCALES = {
     "obs_abs_dx": 384.0,
     "obs_abs_dy": 192.0,
+    "obs_self_stage_back_edge_dist": 864.0,
+    "obs_opp_stage_back_edge_dist": 864.0,
+    "obs_self_corner_state": 2.0,
+    "obs_opp_corner_state": 2.0,
+    "obs_corner_pressure_state": 2.0,
+    "obs_range_threat_bucket": 2.0,
     "obs_self_front_edge_dist": 384.0,
     "obs_self_back_edge_dist": 384.0,
     "obs_opp_front_edge_dist": 384.0,
@@ -1588,11 +1596,17 @@ def parse_obs_spacing_payload(payload: bytes) -> dict[str, object] | None:
         obs_self_back_edge_dist,
         obs_opp_front_edge_dist,
         obs_opp_back_edge_dist,
+        obs_self_stage_back_edge_dist,
+        obs_opp_stage_back_edge_dist,
         obs_self_routine_1,
         obs_self_routine_2,
         obs_opp_routine_1,
         obs_opp_routine_2,
         obs_opp_in_front,
+        obs_self_corner_state,
+        obs_opp_corner_state,
+        obs_corner_pressure_state,
+        obs_range_threat_bucket,
         obs_self_routine_attack_state,
         obs_opp_routine_attack_state,
         obs_self_contact_reaction_state,
@@ -1618,6 +1632,12 @@ def parse_obs_spacing_payload(payload: bytes) -> dict[str, object] | None:
         "obs_self_back_edge_dist": obs_self_back_edge_dist,
         "obs_opp_front_edge_dist": obs_opp_front_edge_dist,
         "obs_opp_back_edge_dist": obs_opp_back_edge_dist,
+        "obs_self_stage_back_edge_dist": obs_self_stage_back_edge_dist,
+        "obs_opp_stage_back_edge_dist": obs_opp_stage_back_edge_dist,
+        "obs_self_corner_state": obs_self_corner_state,
+        "obs_opp_corner_state": obs_opp_corner_state,
+        "obs_corner_pressure_state": obs_corner_pressure_state,
+        "obs_range_threat_bucket": obs_range_threat_bucket,
         "obs_self_routine_1": obs_self_routine_1,
         "obs_self_routine_2": obs_self_routine_2,
         "obs_opp_routine_1": obs_opp_routine_1,
@@ -2122,14 +2142,20 @@ def tactical_spacing_bucket(row: dict[str, object], config: TacticalPolicyConfig
 
 
 def tactical_corner_context(row: dict[str, object], config: TacticalPolicyConfig) -> str:
-    self_cornered = min(
-        row_int_field(row, "obs_self_front_edge_dist"),
-        row_int_field(row, "obs_self_back_edge_dist"),
-    ) <= config.corner_edge_max_dist
-    opponent_cornered = min(
-        row_int_field(row, "obs_opp_front_edge_dist"),
-        row_int_field(row, "obs_opp_back_edge_dist"),
-    ) <= config.corner_edge_max_dist
+    self_corner_state = row_int_field(row, "obs_self_corner_state")
+    opponent_corner_state = row_int_field(row, "obs_opp_corner_state")
+    if "obs_self_corner_state" in row and "obs_opp_corner_state" in row:
+        self_cornered = self_corner_state != 0
+        opponent_cornered = opponent_corner_state != 0
+    else:
+        self_cornered = min(
+            row_int_field(row, "obs_self_front_edge_dist"),
+            row_int_field(row, "obs_self_back_edge_dist"),
+        ) <= config.corner_edge_max_dist
+        opponent_cornered = min(
+            row_int_field(row, "obs_opp_front_edge_dist"),
+            row_int_field(row, "obs_opp_back_edge_dist"),
+        ) <= config.corner_edge_max_dist
     if self_cornered and opponent_cornered:
         return "both_cornered"
     if self_cornered:

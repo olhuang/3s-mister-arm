@@ -2778,7 +2778,7 @@ Tasks:
     - `tools/train_tactical_intent.py` now emits a `phase12g_gate` block with minimum labeled rows, holdout top-1, top-prediction-ratio, and predicted-intent-diversity checks.
     - Current offline learned-intent candidates do not pass a strict promotion interpretation: unbalanced training collapses to `hold_guard`, stronger balancing over-predicts rare intents, and prior-bias variants still collapse. This means the Phase 12G gate is working and should block learned-intent promotion for now.
     - Live test should continue with the heuristic `--policy tactical` path until a better intent dataset/balancing strategy passes the gate and manual confusion review.
-  - [ ] Phase 12H stage-aware spacing schema plan: replace tactical corner reasoning that used viewport edge distance with true stage/corner spacing.
+  - [x] Phase 12H stage-aware spacing schema plan: replace tactical corner reasoning that used viewport edge distance with true stage/corner spacing.
     - Current `obs_self_front_edge_dist`, `obs_self_back_edge_dist`, `obs_opp_front_edge_dist`, and `obs_opp_back_edge_dist` are viewport/camera-edge distances derived from `scrl` / `scrr`, not true stage corner distances. Keep them available for debug/A-B as view-edge fields, but do not treat them as corner state.
     - Proposed live spacing feature set:
       - `obs_abs_dx`
@@ -2819,6 +2819,12 @@ Tasks:
         - `projectile_range`: `obs_abs_dx >= 237`
       - keep throw as a separate close-pressure subrange (`obs_abs_dx <= 73`) rather than the top-level range bucket boundary.
       - these are Ryu calibration values, not final all-character thresholds. Validate at least common pokes, jump attacks, fireballs, and a second character before promoting them into default model features.
+    - Schema v6 / transition schema v10 implementation:
+      - live UDP `RLObsSpacingPayloadV1` now carries `obs_self_stage_back_edge_dist`, `obs_opp_stage_back_edge_dist`, `obs_self_corner_state`, `obs_opp_corner_state`, `obs_corner_pressure_state`, and `obs_range_threat_bucket`.
+      - transition NDJSON exports the same fields.
+      - `tools/rl_probe_server.py` parses `OBS_SPACING_PAYLOAD_VERSION=6`.
+      - default DQN/BC/actor-critic/tactical-intent feature names now use the stage-aware spacing fields instead of the four viewport edge-distance fields. The old view-edge scales remain available so older model metadata can still be read when needed.
+      - heuristic tactical corner context now prefers `obs_self_corner_state` / `obs_opp_corner_state` when present and falls back to legacy view-edge fields for older logs.
     - Validation plan:
       - round start should show `obs_abs_dx ~= 176`, `obs_abs_dy = 0`, stage-back distances larger than viewport back distance `104`, `corner_state = open`, and `corner_pressure_state = none`.
       - true stage corner tests should drive the backed-up side's stage-back distance near zero and set its corner state to `cornered`.

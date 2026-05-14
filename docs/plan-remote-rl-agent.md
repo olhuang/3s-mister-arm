@@ -2778,6 +2778,45 @@ Tasks:
     - `tools/train_tactical_intent.py` now emits a `phase12g_gate` block with minimum labeled rows, holdout top-1, top-prediction-ratio, and predicted-intent-diversity checks.
     - Current offline learned-intent candidates do not pass a strict promotion interpretation: unbalanced training collapses to `hold_guard`, stronger balancing over-predicts rare intents, and prior-bias variants still collapse. This means the Phase 12G gate is working and should block learned-intent promotion for now.
     - Live test should continue with the heuristic `--policy tactical` path until a better intent dataset/balancing strategy passes the gate and manual confusion review.
+  - [ ] Phase 12H stage-aware spacing schema plan: replace tactical corner reasoning that used viewport edge distance with true stage/corner spacing.
+    - Current `obs_self_front_edge_dist`, `obs_self_back_edge_dist`, `obs_opp_front_edge_dist`, and `obs_opp_back_edge_dist` are viewport/camera-edge distances derived from `scrl` / `scrr`, not true stage corner distances. Keep them available for debug/A-B as view-edge fields, but do not treat them as corner state.
+    - Proposed live spacing feature set:
+      - `obs_abs_dx`
+      - `obs_abs_dy`
+      - `obs_self_stage_back_edge_dist`
+      - `obs_opp_stage_back_edge_dist`
+      - `obs_self_corner_state`
+      - `obs_opp_corner_state`
+      - `obs_corner_pressure_state`
+      - `obs_range_threat_bucket`
+    - Stage edge source:
+      - `stage_left = bg_w.bgw[1].l_limit2 - bg_w.pos_offset`
+      - `stage_right = bg_w.bgw[1].r_limit2 + bg_w.pos_offset`
+      - player boundary distances should account for `satse[player_number]`, so the state describes the character's movable body edge rather than only center position.
+      - facing-relative back edge means facing-right uses left-stage distance, and facing-left uses right-stage distance.
+    - Corner states:
+      - `0 = open`
+      - `1 = near_corner`
+      - `2 = cornered`
+      - initial thresholds are calibration placeholders only, for example `cornered <= 32`, `near <= 96`, and `open > 96`.
+    - Corner pressure state:
+      - `0 = none`
+      - `1 = self_under_corner_pressure`
+      - `2 = opp_under_corner_pressure`
+      - first-pass rule should require one side near/cornered, the other side not near/cornered, and `obs_abs_dx` inside the calibrated pressure range.
+    - Range threat bucket:
+      - `0 = normal_range`: grounded normals can hit.
+      - `1 = jump_in_range`: grounded normals mostly cannot reach, but forward jump attack can reach.
+      - `2 = projectile_range`: only projectile or approach can realistically reach.
+      - do not treat the old tabular `close <= 48`, `mid <= 144`, `far > 144` thresholds as final. Calibrate against grounded normal hit/block/whiff, forward-jump attack reach, projectile-only zoning, and round-start `obs_abs_dx ~= 176`.
+    - Validation plan:
+      - round start should show `obs_abs_dx ~= 176`, `obs_abs_dy = 0`, stage-back distances larger than viewport back distance `104`, `corner_state = open`, and `corner_pressure_state = none`.
+      - true stage corner tests should drive the backed-up side's stage-back distance near zero and set its corner state to `cornered`.
+      - camera-scroll tests should prove viewport back distance can shrink without falsely setting stage corner state.
+      - side-switch tests should prove stage-back distance follows facing direction rather than fixed left/right.
+      - range-bucket tests should summarize normal, forward-jump attack, and projectile outcomes by bucket before changing model defaults.
+    - Calibration overlay:
+      - before bumping the live OBS schema, show `obs_abs_dx`, `obs_abs_dy`, `obs_self_stage_back_edge_dist`, and `obs_opp_stage_back_edge_dist` in the RL debug Fight overlay so live tests can choose real thresholds from visual play.
 - [ ] Evaluate higher control rate after latency p95/p99 is stable
 - [ ] Review derived movement/action-phase candidates from the Human-Fighter Observer Gap Review before changing the observation schema
 

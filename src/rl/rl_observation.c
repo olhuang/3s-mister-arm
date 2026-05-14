@@ -5,9 +5,11 @@
 #include "sf33rd/AcrSDK/common/pad.h"
 #include "sf33rd/Source/Game/effect/effect.h"
 #include "sf33rd/Source/Game/engine/plcnt.h"
+#include "sf33rd/Source/Game/engine/pls02.h"
 #include "sf33rd/Source/Game/engine/stun.h"
 #include "sf33rd/Source/Game/system/sys_sub.h"
 #include "sf33rd/Source/Game/engine/workuser.h"
+#include "sf33rd/Source/Game/stage/bg.h"
 #include "sf33rd/Source/Game/system/work_sys.h"
 
 #include <SDL3/SDL.h>
@@ -63,6 +65,8 @@ typedef struct RLObservationDebugState {
     s16 self_right_corner;
     s16 opp_left_corner;
     s16 opp_right_corner;
+    s16 self_stage_back_edge_dist;
+    s16 opp_stage_back_edge_dist;
     s16 opp_dx;
     s16 opp_dy;
     Uint32 obs_build_avg_us;
@@ -236,6 +240,29 @@ static u16 agent_input_swkey(s16 agent) {
 static s16 safe_stage_width(void) {
     const s16 width = scrr - scrl;
     return (width > 0) ? width : 1;
+}
+
+static s16 stage_left_edge(void) {
+    return bg_w.bgw[1].l_limit2 - bg_w.pos_offset;
+}
+
+static s16 stage_right_edge(void) {
+    return bg_w.bgw[1].r_limit2 + bg_w.pos_offset;
+}
+
+static s16 stage_left_edge_distance_for_player(s16 player) {
+    const s16 radius = satse[plw[player].player_number];
+    return clamp_s16_nonnegative(plw[player].wu.position_x - radius - stage_left_edge());
+}
+
+static s16 stage_right_edge_distance_for_player(s16 player) {
+    const s16 radius = satse[plw[player].player_number];
+    return clamp_s16_nonnegative(stage_right_edge() - (plw[player].wu.position_x + radius));
+}
+
+static s16 stage_back_edge_distance_for_player(s16 player, s8 facing_sign) {
+    return (facing_sign < 0) ? stage_right_edge_distance_for_player(player)
+                             : stage_left_edge_distance_for_player(player);
 }
 
 static bool projectile_type_ignored(u8 type) {
@@ -480,6 +507,10 @@ void RLObservation_OnFrameEnd() {
     debug.self_right_corner = clamp_s16_nonnegative(scrr - plw[self].wu.position_x);
     debug.opp_left_corner = clamp_s16_nonnegative(plw[opp].wu.position_x - scrl);
     debug.opp_right_corner = clamp_s16_nonnegative(scrr - plw[opp].wu.position_x);
+    obs.self_facing_sign = (plw[self].wu.rl_flag == 0) ? -1 : 1;
+    obs.opp_facing_sign = (plw[opp].wu.rl_flag == 0) ? -1 : 1;
+    debug.self_stage_back_edge_dist = stage_back_edge_distance_for_player(self, obs.self_facing_sign);
+    debug.opp_stage_back_edge_dist = stage_back_edge_distance_for_player(opp, obs.opp_facing_sign);
     obs.self_hp_ratio = clamp_ratio(debug.self_hp, debug.self_hp_start);
     obs.opp_hp_ratio = clamp_ratio(debug.opp_hp, debug.opp_hp_start);
     obs.self_airborne = (u8)(plw[self].wu.position_y != 0);
@@ -502,8 +533,6 @@ void RLObservation_OnFrameEnd() {
     obs.self_right_corner_ratio = clamp_ratio(debug.self_right_corner, stage_width);
     obs.opp_left_corner_ratio = clamp_ratio(debug.opp_left_corner, stage_width);
     obs.opp_right_corner_ratio = clamp_ratio(debug.opp_right_corner, stage_width);
-    obs.self_facing_sign = (plw[self].wu.rl_flag == 0) ? -1 : 1;
-    obs.opp_facing_sign = (plw[opp].wu.rl_flag == 0) ? -1 : 1;
     obs.opp_in_front = (u8)((obs.self_facing_sign < 0) ? (plw[opp].wu.position_x < plw[self].wu.position_x)
                                                        : (plw[opp].wu.position_x > plw[self].wu.position_x));
     obs.self_guard_flag = plw[self].guard_flag;
@@ -786,6 +815,14 @@ void RLObservation_FormatDebugOverlay(char* out, size_t out_size, const char* se
                             latest_debug.self_right_corner,
                             latest_debug.opp_left_corner,
                             latest_debug.opp_right_corner);
+        append_overlay_line(out,
+                            out_size,
+                            &used,
+                            "ODX%d ODY%d SSB%d OSB%d",
+                            dx_abs,
+                            latest_debug.opp_dy,
+                            latest_debug.self_stage_back_edge_dist,
+                            latest_debug.opp_stage_back_edge_dist);
         append_overlay_line(out,
                             out_size,
                             &used,

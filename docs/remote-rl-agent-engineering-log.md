@@ -2,6 +2,47 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-14: Phase 12H Stage-Aware Spacing Calibration Plan
+
+Milestone:
+- Phase 12H stage-aware spacing schema planning and live overlay calibration.
+
+Files changed:
+- `src/rl/rl_observation.c`
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Stop treating viewport edge distances as true corner distances.
+- Record the plan for stage-aware back-edge, corner-state, corner-pressure,
+  and normal/jump/projectile range-bucket features.
+- Add a short Fight overlay line so live testing can visually calibrate
+  `obs_abs_dx`, `obs_abs_dy`, `obs_self_stage_back_edge_dist`, and
+  `obs_opp_stage_back_edge_dist` before changing the live OBS schema.
+
+Implementation notes:
+- The plan now distinguishes view-edge distances derived from `scrl` / `scrr`
+  from true stage distances derived from `bg_w.bgw[1].l_limit2`,
+  `bg_w.bgw[1].r_limit2`, and `bg_w.pos_offset`.
+- The overlay uses `satse[player_number]` so stage-back distance is measured
+  from the player body edge that the engine uses for boundary correction, not
+  only from the player center.
+- Added Fight overlay text `ODX/ODY/SSB/OSB`:
+  - `ODX`: absolute opponent X distance from the current observation.
+  - `ODY`: opponent Y distance.
+  - `SSB`: self stage back-edge distance.
+  - `OSB`: opponent stage back-edge distance.
+- This is calibration/debug-only. The live UDP payload, transition schema, and
+  model feature allowlist are unchanged in this slice.
+
+Validation:
+- `git diff --check` passed.
+- `tools/mister/build-game.sh --flavor telemetry` passed and rebuilt
+  `src/rl/rl_observation.c`.
+- Follow-up live Fight overlay check should record `ODX/ODY/SSB/OSB` at round
+  start, during camera scroll, after true corner pressure, and after side
+  switches.
+
 ## 2026-05-07: Combat Event Phase 2 Duplicate Attack-Start Debounce
 
 Milestone:

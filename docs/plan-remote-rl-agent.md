@@ -2809,12 +2809,24 @@ Tasks:
       - `1 = jump_in_range`: grounded normals mostly cannot reach, but forward jump attack can reach.
       - `2 = projectile_range`: only projectile or approach can realistically reach.
       - do not treat the old tabular `close <= 48`, `mid <= 144`, `far > 144` thresholds as final. Calibrate against grounded normal hit/block/whiff, forward-jump attack reach, projectile-only zoning, and round-start `obs_abs_dx ~= 176`.
+      - first Ryu live measurements from the `ODX/ODY/SSB/OSB` overlay:
+        - throw reaches at `obs_abs_dx <= 73`.
+        - crouch HK can make grounded normal contact at `obs_abs_dx <= 154`.
+        - forward-jump HK can connect at `obs_abs_dx < 237`.
+      - first Ryu-derived range-bucket candidate:
+        - `normal_range`: `obs_abs_dx <= 154`
+        - `jump_in_range`: `155 <= obs_abs_dx < 237`
+        - `projectile_range`: `obs_abs_dx >= 237`
+      - keep throw as a separate close-pressure subrange (`obs_abs_dx <= 73`) rather than the top-level range bucket boundary.
+      - these are Ryu calibration values, not final all-character thresholds. Validate at least common pokes, jump attacks, fireballs, and a second character before promoting them into default model features.
     - Validation plan:
       - round start should show `obs_abs_dx ~= 176`, `obs_abs_dy = 0`, stage-back distances larger than viewport back distance `104`, `corner_state = open`, and `corner_pressure_state = none`.
       - true stage corner tests should drive the backed-up side's stage-back distance near zero and set its corner state to `cornered`.
       - camera-scroll tests should prove viewport back distance can shrink without falsely setting stage corner state.
       - side-switch tests should prove stage-back distance follows facing direction rather than fixed left/right.
       - range-bucket tests should summarize normal, forward-jump attack, and projectile outcomes by bucket before changing model defaults.
+      - with the Ryu-derived candidate, round start `obs_abs_dx ~= 176` lands in `jump_in_range`, not projectile-only range. Verify whether this matches actual forward-jump threat before hard-coding thresholds.
+      - SSB/OSB live corner validation: both values reached `0` at true corner, confirming the stage-back calculation is directionally correct for the calibration overlay.
     - Calibration overlay:
       - before bumping the live OBS schema, show `obs_abs_dx`, `obs_abs_dy`, `obs_self_stage_back_edge_dist`, and `obs_opp_stage_back_edge_dist` in the RL debug Fight overlay so live tests can choose real thresholds from visual play.
 - [ ] Evaluate higher control rate after latency p95/p99 is stable

@@ -2,6 +2,45 @@
 
 This log tracks implementation progress, engineering decisions, test results, and open issues for the remote RL agent work.
 
+## 2026-05-14: Phase 12H Ryu Range Calibration Notes
+
+Milestone:
+- Phase 12H stage-aware spacing and range-bucket calibration.
+
+Files changed:
+- `docs/plan-remote-rl-agent.md`
+- `docs/remote-rl-agent-engineering-log.md`
+
+Purpose:
+- Record the first live Ryu distance measurements from the `ODX/ODY/SSB/OSB`
+  overlay before turning range buckets into model features.
+
+Implementation notes:
+- Live SSB/OSB check reached `0` at true corner, confirming the stage-back
+  calculation is correct enough for calibration.
+- First Ryu reach measurements:
+  - throw reaches at `obs_abs_dx <= 73`.
+  - crouch HK can make grounded normal contact at `obs_abs_dx <= 154`.
+  - forward-jump HK can connect at `obs_abs_dx < 237`.
+- First candidate range buckets for Ryu:
+  - `normal_range`: `obs_abs_dx <= 154`
+  - `jump_in_range`: `155 <= obs_abs_dx < 237`
+  - `projectile_range`: `obs_abs_dx >= 237`
+- Treat throw as a close-pressure subrange (`obs_abs_dx <= 73`) rather than
+  the main normal/jump/projectile boundary.
+- These are Ryu-specific calibration values. Validate common pokes, jump
+  attacks, projectile reach, and at least one second character before making
+  them global defaults.
+
+Validation:
+- User live overlay observation:
+  - SSB/OSB at corner: `0`.
+  - Ryu throw: `obs_abs_dx <= 73`.
+  - Ryu crouch HK: `obs_abs_dx <= 154`.
+  - Ryu forward-jump HK: `obs_abs_dx < 237`.
+- Follow-up: verify round-start `obs_abs_dx ~= 176` as `jump_in_range` against
+  actual forward-jump threat before hard-coding the thresholds.
+
 ## 2026-05-14: Phase 12H Stage-Aware Spacing Calibration Plan
 
 Milestone:
